@@ -48,7 +48,6 @@ describe('release version resolution workflow', () => {
   it('supports non-semver preview tags such as only-preview', () => {
     const outputs = runResolveVersionScript({
       REQUESTED_VERSION: 'only-preview',
-      MIAOMIAO_PREVIEW: 'false',
       GITHUB_EVENT_NAME: 'workflow_dispatch',
     });
     expect(outputs.tag).toBe('only-preview');
@@ -58,7 +57,6 @@ describe('release version resolution workflow', () => {
   it('normalizes bare semver to v-prefixed tag', () => {
     const outputs = runResolveVersionScript({
       REQUESTED_VERSION: '1.2.3',
-      MIAOMIAO_PREVIEW: 'false',
       GITHUB_EVENT_NAME: 'workflow_dispatch',
     });
     expect(outputs.tag).toBe('v1.2.3');
@@ -68,7 +66,6 @@ describe('release version resolution workflow', () => {
   it('preserves v-prefixed semver tag', () => {
     const outputs = runResolveVersionScript({
       REQUESTED_VERSION: 'v2.0.0-rc.1',
-      MIAOMIAO_PREVIEW: 'false',
       GITHUB_EVENT_NAME: 'workflow_dispatch',
     });
     expect(outputs.tag).toBe('v2.0.0-rc.1');
@@ -78,27 +75,15 @@ describe('release version resolution workflow', () => {
   it('defaults to source version when requested version is empty', () => {
     const outputs = runResolveVersionScript({
       REQUESTED_VERSION: '',
-      MIAOMIAO_PREVIEW: 'false',
       GITHUB_EVENT_NAME: 'workflow_dispatch',
     });
     expect(outputs.tag).toBe('v0.3.6');
     expect(outputs.version).toBe('0.3.6');
   });
 
-  it('resolves rolling miaomiao preview tag and version', () => {
-    const outputs = runResolveVersionScript({
-      REQUESTED_VERSION: '',
-      MIAOMIAO_PREVIEW: 'true',
-      GITHUB_EVENT_NAME: 'workflow_call',
-    });
-    expect(outputs.tag).toBe('v0.3.6-miaomiao.10.1');
-    expect(outputs.version).toBe('0.3.6-miaomiao.10.1');
-  });
-
   it('resolves pull request tag and version', () => {
     const outputs = runResolveVersionScript({
       REQUESTED_VERSION: '',
-      MIAOMIAO_PREVIEW: 'false',
       GITHUB_EVENT_NAME: 'pull_request',
     });
     expect(outputs.tag).toBe('v0.3.6-pr.42.10.1');

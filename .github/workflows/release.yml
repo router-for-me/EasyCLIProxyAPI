@@ -4,16 +4,6 @@ run-name: >-
   ${{ github.event_name == 'pull_request' && 'PR test build' || 'Portable release' }} ${{ github.event.pull_request.number || (github.ref_type == 'tag' && github.ref_name) || inputs.release_tag || github.ref_name }}
 
 on:
-  workflow_call:
-    inputs:
-      preview:
-        description: Build and publish the rolling miaomiao preview
-        required: true
-        type: boolean
-      source_sha:
-        description: Exact merged commit to build
-        required: true
-        type: string
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, edited]
   workflow_dispatch:
@@ -36,7 +26,7 @@ on:
       - 'preview-*'
 
 concurrency:
-  group: portable-${{ github.ref }}-${{ inputs.preview && inputs.source_sha || (github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref_type == 'branch' && 'cache' || 'release') }}
+  group: portable-${{ github.ref }}-${{ (github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref_type == 'branch' && 'cache' || 'release') }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 
 permissions:
@@ -54,7 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.source_sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Resolve release version
         id: resolve
@@ -62,7 +52,6 @@ jobs:
         env:
           REQUESTED_VERSION: ${{ (github.ref_type == 'tag' && github.ref_name) || inputs.release_tag }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          MIAOMIAO_PREVIEW: ${{ inputs.preview }}
           EVENT_NAME: ${{ github.event_name }}
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
@@ -84,11 +73,7 @@ jobs:
             is_preview_run=true
           fi
 
-          if [[ "$MIAOMIAO_PREVIEW" == "true" ]]; then
-            base_version="${source_version%%[-+]*}"
-            release_tag="v${base_version}-miaomiao.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
-            version="$(node scripts/version.mjs "${release_tag#v}")"
-          elif [[ "$event_name" == "pull_request" ]]; then
+          if [[ "$event_name" == "pull_request" ]]; then
             # Replace any existing prerelease/build suffix for an unambiguous test version.
             base_version="${source_version%%[-+]*}"
             release_tag="v${base_version}-pr.${PR_NUMBER}.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
@@ -163,7 +148,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
-      PACKAGE_RELEASE: ${{ inputs.preview || github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' || github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == 'preview') }}
+      PACKAGE_RELEASE: ${{ github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' || github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == 'preview') }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -427,7 +412,7 @@ jobs:
   publish:
     name: Publish GitHub release
     if: >-
-      !inputs.preview && github.event_name != 'pull_request'
+      github.event_name != 'pull_request'
       && (startsWith(github.ref, 'refs/tags/') || inputs.release_tag != '' || github.ref == 'refs/heads/preview')
     needs:
       - version
@@ -561,92 +546,3 @@ jobs:
               done <<< "$older_tags"
             fi
           fi
-
-  publish-preview:
-    name: Update rolling miaomiao preview
-    if: inputs.preview && github.repository == 'router-for-me/EasyCLIProxyAPI'
-    needs: [version, build]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    concurrency:
-      group: miaomiao-preview-publication
-      cancel-in-progress: false
-    steps:
-      # Publishing handles artifacts only; it never executes the merged source.
-      - uses: actions/download-artifact@v8
-        with:
-          path: artifacts
-          merge-multiple: true
-      - name: Publish latest successful branch head
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-          APP_VERSION: ${{ needs.version.outputs.version }}
-          RELEASE_TAG: miaomiao-preview
-        run: |
-          set -euo pipefail
-
-          current_sha="$(gh api "repos/$GH_REPO/git/ref/heads/miaomiao" --jq '.object.sha')"
-          if [[ "$current_sha" != "$SOURCE_SHA" ]]; then
-            echo "A newer commit is on miaomiao; skipping this outdated preview." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          # Check the complete matrix before changing the rolling release.
-          packages=()
-          for platform in Windows Linux Darwin; do
-            case "$platform" in
-              Windows) suffix=zip ;;
-              Linux) suffix=tar.gz ;;
-              Darwin) suffix=dmg ;;
-            esac
-            for arch in amd64 aarch64; do
-              package="artifacts/EasyCLIProxyAPI-v${APP_VERSION}-${platform}-${arch}.${suffix}"
-              test -s "$package"
-              packages+=("$package")
-            done
-          done
-
-          notes="$RUNNER_TEMP/miaomiao-preview.md"
-          cat > "$notes" <<EOF
-          Rolling test build of the miaomiao branch. This preview is replaced after successful builds.
-
-          Version: ${APP_VERSION}
-          Commit: https://github.com/${GH_REPO}/commit/${SOURCE_SHA}
-          Build: https://github.com/${GH_REPO}/actions/runs/${GITHUB_RUN_ID}
-
-          Download the package for your system below. macOS packages are signed and notarized.
-          EOF
-
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            # Distinct versioned filenames keep the previous packages until uploads succeed.
-            gh release upload "$RELEASE_TAG" "${packages[@]}" --clobber
-            gh api --method PATCH "repos/$GH_REPO/git/refs/tags/$RELEASE_TAG" \
-              -f sha="$SOURCE_SHA" -F force=true
-            gh release edit "$RELEASE_TAG" --title 'Miaomiao Preview' \
-              --notes-file "$notes" --prerelease --latest=false
-          else
-            gh release create "$RELEASE_TAG" "${packages[@]}" --target "$SOURCE_SHA" \
-              --title 'Miaomiao Preview' --notes-file "$notes" --prerelease --latest=false
-          fi
-
-          # Keep only this build's assets so the fixed download page stays small.
-          gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" \
-            --jq '.assets[] | [.id, .name] | @tsv' > "$RUNNER_TEMP/miaomiao-assets.tsv"
-          while IFS=$'\t' read -r asset_id asset_name; do
-            keep=false
-            for package in "${packages[@]}"; do
-              if [[ "$asset_name" == "${package#artifacts/}" ]]; then
-                keep=true
-                break
-              fi
-            done
-            if [[ "$keep" == false ]]; then
-              gh api --method DELETE "repos/$GH_REPO/releases/assets/$asset_id"
-            fi
-          done < "$RUNNER_TEMP/miaomiao-assets.tsv"
-          echo "[Download Miaomiao Preview](https://github.com/$GH_REPO/releases/tag/$RELEASE_TAG) — $SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
