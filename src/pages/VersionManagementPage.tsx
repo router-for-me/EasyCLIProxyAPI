@@ -22,10 +22,9 @@ import type {
 } from '../services/coreVersions';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getVersion } from '../services/platform';
-import { getUpdateChannel, listUpdateChannels, setUpdateChannel } from '../services/appUpdates';
+import { getUpdateChannel, listUpdateChannels, setUpdateChannel, type AppUpdateInfo } from '../services/appUpdates';
 import {
   Download,
-  ExternalLink,
   Info,
   RefreshCw,
   Package,
@@ -82,6 +81,15 @@ export function getAppReleaseUrl(channel = 'stable'): string {
     return `${APP_RELEASE_TAG_BASE_URL}/${normalized}`;
   }
   return APP_RELEASE_URL;
+}
+
+export function resolveAppDownloadUrl(
+  info: Pick<AppUpdateInfo, 'downloadUrl' | 'releaseUrl' | 'updateChannel'> | null | undefined,
+  channel = 'stable',
+): string {
+  return info?.downloadUrl?.trim()
+    || info?.releaseUrl?.trim()
+    || getAppReleaseUrl(channel || info?.updateChannel || 'stable');
 }
 export const DEFAULT_VERSION_DOWNLOAD_SOURCE = 'github';
 const recordVersionManagementVisit = createVersionManagementVisitTracker();
@@ -473,7 +481,7 @@ export function VersionManagementPage() {
   const [availableChannels, setAvailableChannels] = useState<string[]>(['stable', 'preview']);
   const [channelListLoading, setChannelListLoading] = useState(true);
   const [channelError, setChannelError] = useState('');
-  const activeChannel = updateChannel || appUpdate?.updateChannel || '';
+  const activeChannel = appUpdate?.updateChannel || updateChannel || '';
   const currentAppBuiltAt = appUpdate?.currentBuildAt && Number.isFinite(Date.parse(appUpdate.currentBuildAt))
     ? formatDate(appUpdate.currentBuildAt, {
         year: 'numeric',
@@ -489,6 +497,13 @@ export function VersionManagementPage() {
   useEffect(() => {
     let cancelled = false;
     setChannelListLoading(true);
+    void getUpdateChannel()
+      .then((channel) => {
+        if (!cancelled && channel) {
+          setUpdateChannelState(channel);
+        }
+      })
+      .catch(() => {});
     void listUpdateChannels()
       .then((channels) => {
         if (!cancelled && Array.isArray(channels) && channels.length > 0) {
@@ -520,6 +535,16 @@ export function VersionManagementPage() {
   );
 
   const appHasUpdate = Boolean(appUpdate?.updateAvailable);
+  const showInstallNow = Boolean(appHasUpdate && appUpdate?.autoUpdateSupported);
+  const appActionCount = showInstallNow ? 3 : 2;
+  const appDownloadLabel = t(activeChannel.startsWith('preview') ? 'appUpdate.downloadPreview' : 'appUpdate.downloadStable');
+  const appDownloadTitle = latestAppVersion
+    ? [
+        t('appUpdate.downloadTitle', { version: latestAppVersion }),
+        appUpdate?.downloadFileName,
+      ].filter(Boolean).join(' · ')
+    : appDownloadLabel;
+  const appUnsupportedReason = localizeAppUpdateUnsupportedReason(appUpdate?.unsupportedReason, t);
   const appVersionStatusLabel: string | null = appUpdateTask.running
     ? t(`appUpdate.phase.${appUpdateTask.phase}` as Parameters<typeof t>[0])
     : appUpdateError
@@ -756,6 +781,12 @@ export function VersionManagementPage() {
                     : ''}
                 </span>
               </div>
+              {appUpdate && !appUpdate.autoUpdateSupported && appUnsupportedReason ? (
+                <div className="version-alert-banner neutral version-unsupported-reason">
+                  <Info size={14} aria-hidden="true" />
+                  <span title={appUpdate.unsupportedReason ?? undefined}>{appUnsupportedReason}</span>
+                </div>
+              ) : null}
               {activeChannel.startsWith('preview') ? (
                 <>
                   <div className="version-alert-banner neutral version-channel-row">
@@ -796,7 +827,7 @@ export function VersionManagementPage() {
             </div>
           </div>
 
-          <div className={`version-card-actions app-actions ${appHasUpdate && appUpdate?.autoUpdateSupported ? 'has-install-now' : ''}`}>
+          <div className={`version-card-actions app-actions actions-count-${appActionCount}${showInstallNow ? ' has-install-now' : ''}`}>
             <button
               type="button"
               className="secondary-button"
@@ -807,7 +838,7 @@ export function VersionManagementPage() {
               <span>{checkingAppUpdate ? t('appUpdate.checking') : t('appUpdate.check')}</span>
             </button>
 
-            {appHasUpdate && appUpdate?.autoUpdateSupported ? (
+            {showInstallNow ? (
               <button
                 type="button"
                 className="primary-button"
@@ -821,11 +852,12 @@ export function VersionManagementPage() {
 
             <button
               type="button"
-              className={appHasUpdate && !appUpdate?.autoUpdateSupported ? 'primary-button' : 'secondary-button'}
-              onClick={() => void openAppRelease()}
+              className={appUpdate?.autoUpdateSupported ? 'secondary-button' : 'primary-button'}
+              title={appDownloadTitle}
+              onClick={() => void openAppRelease(resolveAppDownloadUrl(appUpdate, activeChannel))}
             >
-              <ExternalLink size={15} aria-hidden="true" />
-              <span>{t(activeChannel.startsWith('preview') ? 'appUpdate.downloadPreview' : 'appUpdate.downloadStable')}</span>
+              <Download size={15} aria-hidden="true" />
+              <span>{appDownloadLabel}</span>
             </button>
           </div>
         </article>
@@ -1135,6 +1167,21 @@ export function VersionManagementPage() {
 
     </section>
   );
+}
+
+function localizeAppUpdateUnsupportedReason(
+  reason: string | null | undefined,
+  t: ReturnType<typeof useI18n>['t'],
+): string | null {
+  const trimmed = reason?.trim();
+  if (!trimmed) return null;
+  if (trimmed === 'This application is not a portable version that supports automatic upgrades. Manually download the first supported version') {
+    return t('appUpdate.unsupported.notPortable');
+  }
+  if (trimmed === 'The update manifest does not include the current platform or architecture') {
+    return t('appUpdate.unsupported.platformArch');
+  }
+  return trimmed;
 }
 
 function localizeInstallPhase(

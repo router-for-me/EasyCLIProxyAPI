@@ -1,0 +1,376 @@
+@layer components {
+.ecpa-plugins-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 0 0 24px;
+}
+
+.ecpa-plugins-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  min-width: 0;
+}
+
+.ecpa-plugin-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 280px;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  box-sizing: border-box;
+  padding: 0 8px 0 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-tertiary);
+}
+
+.ecpa-plugin-search > svg {
+  flex: none;
+}
+
+.ecpa-plugin-search input {
+  appearance: none;
+  border: 0;
+  border-radius: var(--radius-none);
+  background: transparent;
+  color: var(--text-primary);
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 9px 0;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.ecpa-plugin-search input:focus,
+.ecpa-plugin-search input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.ecpa-plugin-search input::-webkit-search-cancel-button,
+.ecpa-plugin-search input::-webkit-search-decoration {
+  -webkit-appearance: none;
+}
+
+.ecpa-plugin-search:focus-within {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 12%, transparent);
+}
+
+.ecpa-plugin-search-clear {
+  flex: none;
+}
+
+.ecpa-plugin-search-clear:disabled {
+  visibility: hidden;
+}
+
+.ecpa-token-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 380px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ecpa-token-label {
+  flex: none;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.ecpa-token-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 220px;
+  min-width: 0;
+  min-height: 40px;
+  box-sizing: border-box;
+  padding: 0 6px 0 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-tertiary);
+}
+
+.ecpa-token-input-wrap > svg {
+  flex: none;
+}
+
+.ecpa-token-input-wrap input {
+  appearance: none;
+  border: 0;
+  border-radius: var(--radius-none);
+  background: transparent;
+  color: var(--text-primary);
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 9px 0;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.ecpa-token-input-wrap input:focus,
+.ecpa-token-input-wrap input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.ecpa-token-input-wrap:focus-within {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 12%, transparent);
+}
+
+.ecpa-tag-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ecpa-tag-chip.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: auto;
+  min-height: 30px;
+  margin: 0;
+  padding: 4px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.ecpa-tag-chip.filter-chip:hover:not(:disabled) {
+  border-color: var(--primary-color);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.ecpa-tag-chip.filter-chip.active {
+  border-color: var(--primary-color);
+  background: var(--ui-accent-soft);
+  color: var(--primary-color);
+  font-weight: 600;
+}
+
+.ecpa-tag-chip.filter-chip:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.ecpa-plugin-banners {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ecpa-plugin-banner {
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.ecpa-plugin-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  min-width: 0;
+}
+
+.ecpa-plugin-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  gap: 12px;
+  border: var(--card-border-width) solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+}
+
+.ecpa-plugin-card:hover {
+  border-color: var(--primary-color);
+  box-shadow: var(--ui-card-hover-shadow);
+}
+
+.ecpa-plugin-card:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.ecpa-plugin-card-title {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) fit-content(38%);
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.ecpa-plugin-card-title > div {
+  min-width: 0;
+}
+
+.ecpa-plugin-card-title h2 {
+  font-size: 15px;
+  margin: 0 0 4px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.ecpa-plugin-card-title code {
+  display: block;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.ecpa-plugin-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  color: var(--primary-color);
+  background: var(--ui-accent-soft);
+}
+
+.ecpa-plugin-icon img.plugin-logo {
+  width: 100%;
+  height: 100%;
+  padding: 4px;
+  object-fit: contain;
+  border-radius: inherit;
+}
+
+.ecpa-plugin-version {
+  justify-self: end;
+  display: inline-flex;
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.ecpa-plugin-description {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ecpa-plugin-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  margin: 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.ecpa-plugin-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ecpa-plugin-card-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.ecpa-plugin-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 12px;
+  margin-top: auto;
+  border-top: 1px solid var(--border-color);
+}
+
+.ecpa-plugin-card-actions > button {
+  width: auto;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.ecpa-plugin-card-actions > button svg {
+  flex-shrink: 0;
+}
+
+.ecpa-plugin-card-actions .primary-button {
+  margin-left: auto;
+}
+
+.ecpa-plugin-empty {
+  min-height: 250px;
+}
+
+@media (max-width: 1100px) {
+  .ecpa-plugin-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .ecpa-plugin-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ecpa-plugin-search,
+  .ecpa-token-field {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+}
+}

@@ -49,7 +49,8 @@ export function RoutingPage() {
   };
   const disabled = busy || needsRefresh || !!board?.partial.length;
   const describeChange = (change: NonNullable<typeof diff>['changes'][number]) => {
-    const name = change.kind === 'setting' ? t(`routing.${change.field as keyof RoutingBoard['settings']}`) : board?.members.find(member => member.key === change.key)?.name;
+    const member = board?.members.find(item => item.key === change.key);
+      const name = change.kind === 'setting' ? t(`routing.${change.field as keyof RoutingBoard['settings']}`) : (member?.remark || member?.name);
     const field = change.kind === 'priority' ? t('routing.priority') : change.kind === 'weight' ? t('routing.weightIndex', { index: Number(change.field) + 1 }) : '';
     const display = (value: unknown) => typeof value === 'boolean' ? t(value ? 'routing.on' : 'routing.off') : value === null || value === '' ? t('routing.inherited') : value === 'round-robin' || value === 'weighted-round-robin' || value === 'fill-first' ? t(`routing.${value}`) : String(value);
     return { name, field, detail: t('routing.changeDetail', { from: display(change.from), to: display(change.to) }) };

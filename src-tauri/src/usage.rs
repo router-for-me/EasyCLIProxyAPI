@@ -5795,6 +5795,7 @@ mod tests {
             request_retry: crate::DEFAULT_REQUEST_RETRY,
             max_retry_credentials: crate::DEFAULT_MAX_RETRY_CREDENTIALS,
             max_retry_interval: crate::DEFAULT_MAX_RETRY_INTERVAL,
+            transient_error_cooldown_seconds: crate::DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS,
             streaming_bootstrap_retries: crate::DEFAULT_STREAMING_BOOTSTRAP_RETRIES,
         };
         let record = normalize_usage_record(

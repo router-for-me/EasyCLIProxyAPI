@@ -676,6 +676,7 @@ dependencies = [
  "getrandom 0.3.4",
  "http-body-util",
  "hyper",
+ "hyper-rustls",
  "hyper-util",
  "json5",
  "libc",

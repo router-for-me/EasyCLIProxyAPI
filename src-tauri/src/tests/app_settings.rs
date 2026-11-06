@@ -160,6 +160,11 @@ fn gui_config_defaults_are_stable() {
     assert!(content.contains("request-retry = 3"));
     assert!(content.contains("max-retry-credentials = 0"));
     assert!(content.contains("max-retry-interval = 30"));
+    assert!(content.contains("transient-error-cooldown-seconds = -1"));
+    assert_eq!(
+        config.transient_error_cooldown_seconds,
+        DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS
+    );
     assert!(content.contains("streaming-bootstrap-retries = 0"));
 }
 

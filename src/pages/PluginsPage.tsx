@@ -33,10 +33,11 @@ import { PluginInstallDialog } from "./PluginInstallDialog";
 import { PluginOAuthDialog } from "./PluginOAuthDialog";
 import { GitHubTokenHint, isGitHubRateLimit } from "./PluginRateLimitHint";
 import { PluginSettingsPanel } from "./PluginSettingsPanel";
+import { EcpaPluginsPage } from "./EcpaPluginsPage";
 import { Select } from "../components/Select";
 import "./PluginsPage.css";
 
-type Tab = "installed" | "store" | "settings";
+type Tab = "installed" | "store" | "ecpa" | "settings";
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 export function PluginsPage() {
@@ -110,7 +111,7 @@ export function PluginsPage() {
     } catch (reason) { if (mounted.current && revision === requests.current) setError(message(reason)); }
     finally { if (mounted.current && revision === requests.current) setLoading(false); }
   }, [locale, notice]);
-  useEffect(() => { void load(tab); }, [tab]);
+  useEffect(() => { if (tab !== "ecpa") void load(tab); }, [tab]);
 
   // Follow existing files for a bounded period after config writes. Missing
   // binaries cannot load by waiting, and the API does not report loading progress.
@@ -350,11 +351,11 @@ export function PluginsPage() {
 
   return <div className="plugins-page" role="region" aria-label={pt("title")}>
     <div className="plugin-navigation">
-      {supported === true && <Tabs variant="segmented" activation="manual" className="plugin-tabs" aria-label={pt("title")} value={tab} disabled={busy}
+      {supported !== null && <Tabs variant="segmented" activation="manual" className="plugin-tabs" aria-label={pt("title")} value={tab} disabled={busy}
         onChange={value => { setTab(value); setSearch(""); setFilter("all"); }}
-        items={(["installed", "store", "settings"] as const).map(value => ({ value, id: `plugin-tab-${value}`, panelId: "plugin-tab-panel", label: pt(value === "installed" ? "local" : value) }))} />}
+        items={(["installed", "store", "ecpa", "settings"] as const).map(value => ({ value, id: `plugin-tab-${value}`, panelId: "plugin-tab-panel", label: pt(value === "installed" ? "local" : value === "ecpa" ? "featured" : value) }))} />}
       <div className="plugin-toolbar">
-        {supported === true && tab !== "settings" && <>
+        {supported === true && tab !== "settings" && tab !== "ecpa" && <>
         <div className="plugin-search search-control" data-size="default">
           <Search size={17} aria-hidden="true" />
           <input ref={searchRef} type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder={pt("search")} aria-label={pt("search")} />
@@ -368,14 +369,16 @@ export function PluginsPage() {
         </>}
         {tab === "store" && <button type="button" className="secondary-button plugin-check-updates" disabled={locked} onClick={() => void load("store", true, true)}><RefreshCw size={16} aria-hidden="true" />{pt("checkUpdates")}</button>}
         </>}
+        {tab !== "ecpa" && <>
         {supported === true && <button type="button" className="secondary-button plugin-development-guide" disabled={locked} onClick={() => void installLocal()}><Download size={16} aria-hidden="true" />{pt("localInstall")}</button>}
         <button type="button" className="secondary-button plugin-development-guide" onClick={() => void openExternalUrl({ url: "https://help.router-for.me/cn/plugin/development.html" }).catch(reason => { if (mounted.current) setError(message(reason)); })}><ExternalLink size={16} aria-hidden="true" />{pt("developmentGuide")}</button>
         <button className="secondary-button plugin-refresh" disabled={locked} onClick={() => void load(tabRef.current, tabRef.current === "installed")}><RefreshCw size={16} aria-hidden="true" />{t("common.refresh")}</button>
+        </>}
       </div>
     </div>
-    <div className="plugin-tab-panel" id="plugin-tab-panel" role={supported === true ? "tabpanel" : undefined} aria-labelledby={supported === true ? `plugin-tab-${tab}` : undefined}>
-    {error && <Notice tone="error" icon={false} className="plugin-banner" action={<button className="secondary-button" disabled={busy || loading} onClick={() => void load(tabRef.current, tabRef.current === "installed")}>{pt("retry")}</button>}>{error}{isGitHubRateLimit(error) ? <GitHubTokenHint /> : null}</Notice>}
-    {supported === false ? <EmptyState className="plugin-empty" icon={<Puzzle size={36} />}>{pt("unsupported")}</EmptyState> : supported === null ? <EmptyState className="plugin-empty" role="status">{loading ? t("common.loading") : pt("retry")}</EmptyState> : <>
+    <div className="plugin-tab-panel" id="plugin-tab-panel" role={supported !== null ? "tabpanel" : undefined} aria-labelledby={supported !== null ? `plugin-tab-${tab}` : undefined}>
+    {tab !== "ecpa" && error && <Notice tone="error" icon={false} className="plugin-banner" action={<button className="secondary-button" disabled={busy || loading} onClick={() => void load(tabRef.current, tabRef.current === "installed")}>{pt("retry")}</button>}>{error}{isGitHubRateLimit(error) ? <GitHubTokenHint /> : null}</Notice>}
+    {tab === "ecpa" ? <EcpaPluginsPage /> : supported === false ? <EmptyState className="plugin-empty" icon={<Puzzle size={36} />}>{pt("unsupported")}</EmptyState> : supported === null ? <EmptyState className="plugin-empty" role="status">{loading ? t("common.loading") : pt("retry")}</EmptyState> : <>
       {data && !data.pluginsEnabled && <Notice tone="info" icon={false} className="plugin-banner">{pt("disabledHint")}</Notice>}
       {restartRequired && <Notice tone="info" icon={false} className="plugin-banner" action={<button className="secondary-button" disabled={locked} onClick={async () => { if (await askConfirmation({ title: pt("restartButton"), message: pt("restartConfirm") })) void mutate(async () => { await restartCoreProcess(); if (mounted.current) setRestartRequired(false); }, pt("saved")); }}>{pt("restartButton")}</button>}>{pt("restart")}</Notice>}
       <>
