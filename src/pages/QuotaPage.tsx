@@ -345,7 +345,7 @@ export function QuotaCard({
             />
             <button
               type="button"
-              className="primary-button tiny-button"
+              className="primary-button tiny-button quota-note-commit"
               disabled={savingNote}
               aria-label={t('common.save')}
               title={t('common.save')}
@@ -355,7 +355,7 @@ export function QuotaCard({
             </button>
             <button
               type="button"
-              className="secondary-button tiny-button"
+              className="secondary-button tiny-button quota-note-cancel"
               disabled={savingNote}
               aria-label={t('common.cancel')}
               title={t('common.cancel')}
