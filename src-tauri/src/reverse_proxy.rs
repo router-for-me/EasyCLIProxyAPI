@@ -1805,8 +1805,8 @@ mod tests {
             key_path: r"C:\TLS files\key.pem".to_string(),
         };
         for source in [
-            "# keep\nport: 8317\n",
-            "# keep\nconfig-version: 8\nserver:\n  port: 8317\n",
+            "# keep\nport: 12345\n",
+            "# keep\nconfig-version: 8\nserver:\n  port: 12345\n",
         ] {
             let saved = crate::core_config::patch_core_yaml_document(source, |document| {
                 patch_proxy_config_document(document, &config)
@@ -1815,6 +1815,7 @@ mod tests {
             .unwrap();
             assert!(saved.contains("# keep"));
             let document: serde_norway::Value = serde_norway::from_str(&saved).unwrap();
+            assert_eq!(configured_core_port(&document).unwrap(), Some(12345));
             assert_eq!(
                 read_proxy_config_document(&document).unwrap(),
                 Some(config.clone())
