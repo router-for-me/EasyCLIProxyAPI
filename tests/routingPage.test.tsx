@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { I18nProvider, supportedLocales, translate } from '../src/i18n';
 import { readRoutingBoard, validateRoutingPlan, type RoutingBoard, type RoutingMember } from '../src/services/routing';
 import { RoutingPage } from '../src/pages/routing/RoutingPage';
+import { Dialog } from '../src/components/Dialog';
 import { PolicyStrip } from '../src/pages/routing/PolicyStrip';
 import { TierLadder } from '../src/pages/routing/TierLadder';
 import { assignTierPriorities, diffPlan, draftFromBoard, moveMember, resolveRoute, splitMember, stepMember, tiersFromMembers } from '../src/pages/routing/routingPlan';
@@ -17,9 +18,9 @@ const boardWith = (...members: RoutingMember[]): RoutingBoard => ({
 });
 const render = (content: ReactNode) => renderToStaticMarkup(<I18nProvider>{content}</I18nProvider>);
 
-function ladder(board: RoutingBoard) {
+function ladder(board: RoutingBoard, hideDisabled = false) {
   const draft = draftFromBoard(board);
-  return render(<TierLadder board={board} draft={draft} tierPriorities={diffPlan(board, draft)!.tierPriorities} preview={resolveRoute(board, draft)} disabled={false} onChange={() => {}} />);
+  return render(<TierLadder board={board} draft={draft} tierPriorities={diffPlan(board, draft)!.tierPriorities} preview={resolveRoute(board, draft)} disabled={false} hideDisabled={hideDisabled} onChange={() => {}} />);
 }
 
 describe('routing tier arrangement', () => {
@@ -137,6 +138,7 @@ describe('routing components', () => {
     const html = render(<RoutingPage />);
     expect(html).toContain('Apply plan');
     expect(html).toContain('Discard changes');
+    expect(html).toContain('Hide disabled');
     const board = boardWith();
     const policy = render(<PolicyStrip settings={board.settings} disabled={false} onChange={() => {}} />);
     expect(policy).toContain('Gateway policy');
@@ -159,6 +161,33 @@ describe('routing components', () => {
     const validMarkup = render(<PolicyStrip settings={board.settings} disabled={false} onChange={() => {}} />);
     expect(validMarkup).not.toContain('routing-ttl-error');
     expect(validMarkup).not.toContain('role="alert"');
+  });
+
+  it('toggles visibility of disabled credentials and tiers in TierLadder', () => {
+    const board = boardWith(
+      member('active-1', 10),
+      member('disabled-1', 10, { disabled: true }),
+      member('disabled-alone', 0, { disabled: true }),
+    );
+    const normalHtml = ladder(board, false);
+    expect(normalHtml).toContain('active-1');
+    expect(normalHtml).toContain('disabled-1');
+    expect(normalHtml).toContain('disabled-alone');
+    expect(normalHtml).toContain('Disabled');
+    expect(normalHtml).toContain('Tier 1');
+    expect(normalHtml).toContain('Tier 2');
+
+    const hiddenHtml = ladder(board, true);
+    expect(hiddenHtml).toContain('active-1');
+    expect(hiddenHtml).not.toContain('disabled-1');
+    expect(hiddenHtml).not.toContain('disabled-alone');
+    expect(hiddenHtml).not.toContain('Disabled');
+    expect(hiddenHtml).toContain('Tier 1');
+    expect(hiddenHtml).not.toContain('Tier 2');
+
+    const allDisabledBoard = boardWith(member('d1', 10, { disabled: true }), member('d2', 0, { disabled: true }));
+    const allHiddenHtml = ladder(allDisabledBoard, true);
+    expect(allHiddenHtml).toContain('No routing credentials configured.');
   });
 
   it('shows serving shares, standby status, metadata and quick tier controls', () => {
@@ -200,6 +229,24 @@ describe('routing components', () => {
       expect(translate(locale, 'routing.changeCount', { count: 3 })).toContain('3');
       expect(translate(locale, 'routing.entrySummary', { count: 2, tiers: 1 })).not.toContain('{');
       expect(translate(locale, 'routing.serving')).not.toBe('routing.serving');
+    }
+  });
+
+  it('renders the routing apply confirmation dialog in every supported locale', () => {
+    for (const locale of supportedLocales) {
+      const html = render(<Dialog alert className="close-dialog routing-confirm-dialog" labelledBy="routing-confirm-title" describedBy="routing-confirm-description" onClose={() => {}}>
+        <div className="close-dialog-heading"><h2 id="routing-confirm-title">{translate(locale, 'routing.reviewTitle')}</h2></div>
+        <p id="routing-confirm-description">{translate(locale, 'routing.reviewHint', { count: 3 })}</p>
+        <div className="close-dialog-actions">
+          <button type="button" className="close-choice-button secondary-button"><span>{translate(locale, 'common.cancel')}</span></button>
+          <button type="button" className="close-choice-button primary-button"><span>{translate(locale, 'routing.apply')}</span></button>
+        </div>
+      </Dialog>);
+      expect(html).toContain('3');
+      expect(html).toContain('routing-confirm-dialog');
+      expect(html).toContain('close-dialog-actions');
+      expect(html.match(/close-choice-button/g)?.length).toBe(2);
+      expect(html).not.toContain('routing-change-list');
     }
   });
 

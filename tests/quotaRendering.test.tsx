@@ -100,4 +100,34 @@ describe('quota card rendering', () => {
     expect(html).toContain('quota-card-error');
     expect(html).not.toContain('app-notice-entry');
   });
+
+  it('renders credential note on quota cards and shows edit trigger when onSaveNote is provided', () => {
+    const withNote = renderToStaticMarkup(
+      <I18nProvider>
+        <QuotaCard
+          file={{ name: 'codex-team.json', provider: 'codex', note: 'Team Account A' }}
+          quota={{ status: 'success', rows: [] }}
+          onRefresh={() => {}}
+          onSaveNote={() => {}}
+        />
+      </I18nProvider>,
+    );
+    expect(withNote).toContain('quota-account-note');
+    expect(withNote).toContain('Team Account A');
+    expect(withNote).toContain('quota-note-edit');
+    expect(withNote).toContain('Edit note');
+
+    const withoutNote = renderToStaticMarkup(
+      <I18nProvider>
+        <QuotaCard
+          file={{ name: 'codex-empty.json', provider: 'codex' }}
+          quota={{ status: 'success', rows: [] }}
+          onRefresh={() => {}}
+          onSaveNote={() => {}}
+        />
+      </I18nProvider>,
+    );
+    expect(withoutNote).not.toContain('quota-account-note');
+    expect(withoutNote).toContain('Add note');
+  });
 });

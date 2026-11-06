@@ -217,6 +217,20 @@ export function labelStep(count: number, plotWidth: number, spacing: number): nu
   return Math.max(1, Math.ceil(count / fit));
 }
 
+export function axisLabelWidth(text: string): number {
+  let width = 0;
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    width += char === '.' || char === ',' || char === ' ' ? 3.5 : code > 0x7f ? 11.5 : 7;
+  }
+  return Math.ceil(width);
+}
+
+export function axisGutter(labels: string[], minimum: number, padding: number): number {
+  const widest = labels.reduce((max, label) => Math.max(max, axisLabelWidth(label)), 0);
+  return Math.max(minimum, widest + padding);
+}
+
 export function axisScale(max: number): { ceiling: number; step: number } {
   if (!Number.isFinite(max) || max <= 0) return { ceiling: 4, step: 1 };
   const magnitude = 10 ** Math.floor(Math.log10(max / 4));

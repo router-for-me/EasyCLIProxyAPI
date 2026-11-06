@@ -81,6 +81,45 @@ if (params.has('foreign-source')) storeEntries.unshift({ ...storeEntries[0], sou
   repository: 'foreign/sample', install_source_status: 'different',
 });
 
+const ECPA_SOURCE_URL = 'https://raw.githubusercontent.com/stark-shadow/ecpa-plugins-store/main/registry.json';
+if (params.has('ecpa')) {
+  localStorage.setItem('ecpa.registry.cache', JSON.stringify({
+    fetchedAt: Date.now(),
+    payload: {
+      schema_version: 1,
+      plugins: [
+        { id: 'aistudio2api', name: 'AIStudio2API', description: 'Expose Google AI Studio models through an OpenAI-compatible endpoint.',
+          author: 'ECPA', version: '1.2.0', repository: 'stark-shadow/aistudio2api', license: 'MIT',
+          tags: ['api', 'gemini'], install: { type: 'github-release' } },
+        { id: 'quota-snapshot', name: 'Quota Snapshot', description: 'Snapshot provider quota usage into a daily report.',
+          author: 'Community', version: '0.4.1', repository: 'ecpa/quota-snapshot', license: 'Apache-2.0',
+          tags: ['quota'], install: { type: 'github-release' } },
+        { id: 'theme-forge', name: 'Theme Forge', description: 'Preview and package custom interface themes.',
+          author: 'Community', version: '2.0.0', repository: 'ecpa/theme-forge', license: 'MIT',
+          tags: ['theme', 'ui'], install: { type: 'github-release' } },
+        { id: 'broken-pipe', name: 'Broken Pipe', description: 'A draft entry that is still missing its repository link.',
+          author: 'Community', version: '', repository: '', license: '', tags: ['experimental'] },
+      ],
+    },
+  }));
+}
+// The page registers the ECPA source itself; the store then serves these entries.
+const addEcpaStoreEntries = () => {
+  if (storeEntries.some(entry => entry.source_url === ECPA_SOURCE_URL)) return;
+  storeEntries.push(
+    { id: 'aistudio2api', name: 'AIStudio2API', source_id: 'ecpa', source_name: 'ECPA Featured',
+      source_url: ECPA_SOURCE_URL, repository: 'stark-shadow/aistudio2api', version: '1.2.0',
+      install_type: 'github-release', installed: false },
+    { id: 'quota-snapshot', name: 'Quota Snapshot', source_id: 'ecpa', source_name: 'ECPA Featured',
+      source_url: ECPA_SOURCE_URL, repository: 'ecpa/quota-snapshot', version: '0.4.1',
+      install_type: 'github-release', installed: true },
+  );
+};
+if (params.has('ecpa-registered')) {
+  state.settings['store-sources'].push(ECPA_SOURCE_URL);
+  addEcpaStoreEntries();
+}
+
 mockIPC(async (command, args) => {
   state.commands.push({ command, args });
   if (command === 'prepare_management_request') return `install-${state.commands.length}`;
@@ -116,7 +155,11 @@ mockIPC(async (command, args) => {
   };
   if (request.path === '/config/plugins') {
     if (request.method === 'GET') return structuredClone(state.settings);
-    if (request.method === 'PATCH') { Object.assign(state.settings, request.body); return { status: 'ok' }; }
+    if (request.method === 'PATCH') {
+      Object.assign(state.settings, request.body);
+      if (state.settings['store-sources'].includes(ECPA_SOURCE_URL)) addEcpaStoreEntries();
+      return { status: 'ok' };
+    }
   }
   const configMatch = /^\/config\/plugins\/configs\/([^/]+)(\/enabled)?$/.exec(request.path);
   if (configMatch) {

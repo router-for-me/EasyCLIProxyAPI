@@ -1,1 +1,14 @@
-{ "schema_version": 1, "plugins": [] }
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "aistudio2api",
+      "name": "AIStudio2API",
+      "description": "AIStudio2API plugin",
+      "author": "jianli9158",
+      "version": "1.1.5",
+      "repository": "https://github.com/jianli9158/cpa-plugin-aistudio2api",
+      "install": { "type": "github-release" }
+    }
+  ]
+}

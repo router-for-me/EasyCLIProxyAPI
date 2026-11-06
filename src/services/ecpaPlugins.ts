@@ -1,5 +1,6 @@
 import bundledRegistry from '../data/ecpaRegistry.json';
 import { isRecord } from './managementApi';
+import type { PluginStoreEntry } from './plugins';
 
 export const ECPA_REGISTRY_URL = 'https://raw.githubusercontent.com/stark-shadow/ecpa-plugins-store/main/registry.json';
 export const ECPA_GITHUB_TOKEN_KEY = 'ecpa.github_token';
@@ -18,6 +19,24 @@ export interface EcpaPluginEntry {
   homepage: string;
   license: string;
   tags: string[];
+  install?: { type?: string };
+}
+
+export const isInstallableEcpaEntry = (entry: EcpaPluginEntry): boolean =>
+  Boolean(entry.id.trim() && entry.repository.trim());
+
+export function buildEcpaStoreMap(entries: PluginStoreEntry[]): Map<string, PluginStoreEntry> {
+  const result = new Map<string, PluginStoreEntry>();
+  for (const entry of entries) {
+    result.set(`${entry.sourceUrl}#${entry.id}`, entry);
+    if (entry.sourceUrl === ECPA_REGISTRY_URL) result.set(entry.id, entry);
+  }
+  return result;
+}
+
+export function resolveEcpaStoreEntry(entries: Map<string, PluginStoreEntry>, id: string): PluginStoreEntry | undefined {
+  const entry = entries.get(`${ECPA_REGISTRY_URL}#${id}`) ?? entries.get(id);
+  return entry?.sourceUrl === ECPA_REGISTRY_URL && entry.sourceId.trim() ? entry : undefined;
 }
 
 export interface EcpaRegistry {
@@ -55,6 +74,7 @@ function parsePluginEntry(value: unknown): EcpaPluginEntry | null {
   const tags = Array.isArray(value.tags)
     ? Array.from(new Set(value.tags.map(text).filter(Boolean)))
     : [];
+  const installType = isRecord(value.install) ? text(value.install.type).toLowerCase() : '';
   return {
     id,
     name,
@@ -66,6 +86,7 @@ function parsePluginEntry(value: unknown): EcpaPluginEntry | null {
     homepage: text(value.homepage),
     license: text(value.license),
     tags,
+    install: installType === 'github-release' || installType === 'direct' ? { type: installType } : undefined,
   };
 }
 

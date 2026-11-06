@@ -71,7 +71,7 @@ describe('UI localization boundaries', () => {
     if (modelCase) inspectEffort(modelCase);
     expect(displayedExpressions).toContain('effort');
     expect(titleExpressions).toContain('{effort}');
-    expect(source.getText()).toContain("const effort = record.reasoning_effort || 'auto'");
+    expect(source.getText()).toContain("const effort = model.effort || t('usage.effort.unrecorded')");
     expect(source.getText()).not.toContain("case 'effort'");
   });
 
