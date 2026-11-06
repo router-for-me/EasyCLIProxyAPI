@@ -1,4 +1,6 @@
 import type { TemplateText } from './templateConfig';
+import { invoke } from './platform';
+import type { ReverseProxyConfig } from './reverseProxy';
 import { generalTemplateGroups, requestTemplateGroups, routingTemplateGroups } from './generalTemplateFields';
 import { oauthTemplateGroups } from './oauthTemplateFields';
 import { extensionTemplateGroups } from './extensionTemplateFields';
@@ -22,7 +24,7 @@ export const settingsTemplateGroups = {
   aliases: [],
   routing: [...routingTemplateGroups, ...extensionTemplateGroups.filter(group => group.id === 'extensions-concurrency')],
   requests: [...requestTemplateGroups, ...payloadTemplateGroups],
-  oauth: ['oauth-common', 'oauth-codex', 'oauth-others', 'oauth-claude', 'oauth-models', 'oauth-media']
+  oauth: ['oauth-common', 'oauth-codex', 'oauth-others', 'oauth-filters', 'oauth-claude', 'oauth-claude-headers', 'oauth-models', 'oauth-media']
     .map(id => oauthTemplateGroups.find(group => group.id === id)!),
   diagnostics: [...generalTemplateGroups.filter(group => group.id === 'diagnostics'), ...extensionTemplateGroups.filter(group => group.id === 'extensions-inflight')],
   software: [],
@@ -64,6 +66,7 @@ export const settingsMessages = {
   ),
   reverseProxyAdvancedTitle: text('高级设置', 'Advanced settings', '高度な設定'),
   reverseProxyAdvancedHint: text('通常保持默认即可。', 'Usually keeping default values is recommended.', '通常はデフォルトのままで問題ありません。'),
+  reverseProxyBindHint: text('监听所有网卡（不可修改）', 'Listens on all network interfaces (read-only)', 'すべてのネットワークインターフェースでリッスン（変更不可）'),
   reverseProxyHardeningOk: text(
     '内核保护已就绪：只监听 127.0.0.1，trusted-proxies 已设置。',
     'Core protection is ready: listening only on 127.0.0.1, trusted-proxies configured.',
@@ -106,7 +109,48 @@ export const settingsMessages = {
   reverseProxyStatusRequests: text('请求总数', 'Total requests', 'リクエスト総数'),
   reverseProxyBackendNotReady: text('反向代理后端服务未就绪。', 'Reverse proxy backend not ready.', 'リバースプロキシのバックエンドが準備できていません。'),
   reverseProxySaved: text('反向代理设置已保存', 'Reverse proxy settings saved', 'リバースプロキシ設定を保存しました'),
+  reverseProxyRoutePreview: text('监听绑定预览（草稿，保存后生效）', 'Listen bind preview (draft, applies after saving)', 'リッスンバインドのプレビュー（ドラフト、保存後に適用）'),
+  reverseProxyRouteClientHint: text(
+    '外部设备访问时请使用本机的局域网 IP 或域名，加上已保存的监听端口；0.0.0.0 仅表示监听所有网卡，不能作为客户端访问地址。',
+    'External clients should use this machine\'s LAN IP or domain name with the saved listen port; 0.0.0.0 only means listening on all interfaces and is not a client address.',
+    '外部クライアントは、このマシンの LAN IP またはドメイン名と保存済みのリッスンポートを使用してください。0.0.0.0 はすべてのインターフェースでの待ち受けを意味し、クライアントアドレスではありません。'
+  ),
+  reverseProxyRouteHostPlaceholder: text('本机IP或域名', 'server-ip-or-domain', 'サーバーIPまたはドメイン'),
+  reverseProxySaveApplyHint: text('切换开关后需点击保存才会生效。', 'Switch changes take effect only after saving.', '切り替えは保存後にのみ有効になります。'),
 } satisfies Record<string, TemplateText>;
+
+// The LAN address external clients can reach; get_lan_ipv4 is an existing backend
+// command. Browser mocks may return a list, so normalize to a single IPv4 string.
+export const getLanIpv4 = async (): Promise<string | null> => {
+  const detected = await invoke<unknown>('get_lan_ipv4');
+  const candidate = typeof detected === 'string'
+    ? detected
+    : Array.isArray(detected)
+      ? detected.find((item): item is string => typeof item === 'string')
+      : null;
+  const value = candidate?.trim();
+  return value ? value : null;
+};
+
+const isReverseProxyPort = (value: number): boolean =>
+  Number.isInteger(value) && value >= 1 && value <= 65535;
+
+// A disabled draft keeps its own edits whenever its ports are still usable, so
+// certificate paths and ports can be staged before the proxy is enabled. Only
+// while switching a previously enabled (or still running) proxy off does an
+// invalid draft fall back to the last saved values, keeping the stop request
+// unblocked; an already disabled proxy keeps the invalid draft so field
+// validation can report it instead of silently discarding it.
+export const resolveReverseProxySaveConfig = (
+  draft: ReverseProxyConfig,
+  saved?: ReverseProxyConfig | null,
+  running?: boolean,
+): ReverseProxyConfig => {
+  if (draft.enabled) return draft;
+  const wasActive = saved?.enabled === true || running === true;
+  const portsValid = isReverseProxyPort(draft.listenPort) && isReverseProxyPort(draft.targetPort);
+  return !portsValid && wasActive && saved ? { ...draft, ...saved, enabled: false } : draft;
+};
 
 // The settings page is mounted only while active, so another page hands over the
 // field to open once instead of dispatching an event nobody is listening to yet.

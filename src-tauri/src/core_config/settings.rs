@@ -332,6 +332,15 @@ pub(crate) fn merge_core_config_yaml(
         let document: serde_norway::Value = serde_norway::from_str(current)
             .map_err(|error| format!("Failed to parse kernel configuration: {error}"))?;
         startup_config.disable_cooling = core_config_settings_from_value(&document)?.disable_cooling;
+        let transient_error_cooldown_seconds = document.as_mapping().and_then(|root| {
+            nested_yaml_value(root, &["routing", "cooldown", "transient-error-cooldown-seconds"])
+                .or_else(|| nested_yaml_value(root, &["transient-error-cooldown-seconds"]))
+        });
+        if let Some(value) = transient_error_cooldown_seconds {
+            startup_config.transient_error_cooldown_seconds = value
+                .as_i64()
+                .ok_or_else(|| "transient-error-cooldown-seconds must be an integer".to_string())?;
+        }
     }
     startup_config.usage_statistics_enabled = config.usage_statistics_disabled != Some(true);
     let managed = apply_gui_managed_settings(&base, &startup_config)?;
@@ -467,6 +476,13 @@ pub(crate) fn patch_core_network_routing_yaml(
         )?;
         set_core_yaml_schema_value(
             document,
+            &["transient-error-cooldown-seconds"],
+            &["routing", "cooldown", "transient-error-cooldown-seconds"],
+            serde_norway::to_value(config.transient_error_cooldown_seconds)
+                .map_err(|err| format!("Failed to serialize transient error cooldown: {err}"))?,
+        )?;
+        set_core_yaml_schema_value(
+            document,
             &["request-retry"],
             &["routing", "retry", "request-retry"],
             serde_norway::to_value(config.request_retry)
@@ -525,6 +541,13 @@ pub(crate) fn patch_core_retry_yaml(
             &["disable-cooling"],
             &["routing", "cooldown", "disable-cooling"],
             serde_norway::Value::Bool(config.disable_cooling),
+        )?;
+        set_core_yaml_schema_value(
+            document,
+            &["transient-error-cooldown-seconds"],
+            &["routing", "cooldown", "transient-error-cooldown-seconds"],
+            serde_norway::to_value(config.transient_error_cooldown_seconds)
+                .map_err(|err| format!("Failed to serialize transient error cooldown: {err}"))?,
         )?;
         set_core_yaml_schema_value(
             document,
@@ -746,6 +769,13 @@ pub(crate) fn apply_gui_managed_settings(
             &["disable-cooling"],
             &["routing", "cooldown", "disable-cooling"],
             serde_norway::Value::Bool(config.disable_cooling),
+        )?;
+        changed |= set_core_yaml_schema_value(
+            document,
+            &["transient-error-cooldown-seconds"],
+            &["routing", "cooldown", "transient-error-cooldown-seconds"],
+            serde_norway::to_value(config.transient_error_cooldown_seconds)
+                .map_err(|err| format!("Failed to serialize transient error cooldown: {err}"))?,
         )?;
         changed |= set_core_yaml_schema_value(
             document,
@@ -1501,6 +1531,7 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
         || presence.request_retry.is_none()
         || presence.max_retry_credentials.is_none()
         || presence.max_retry_interval.is_none()
+        || presence.transient_error_cooldown_seconds.is_none()
         || presence.streaming_bootstrap_retries.is_none();
     if missing_core_settings && !gui_parse_failed {
         if let Ok(core_settings) = read_installed_core_config_settings() {
@@ -1582,6 +1613,9 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
             }
             if presence.max_retry_interval.is_none() {
                 config.max_retry_interval = core_settings.max_retry_interval;
+            }
+            if presence.transient_error_cooldown_seconds.is_none() {
+                config.transient_error_cooldown_seconds = core_settings.transient_error_cooldown_seconds;
             }
             if presence.streaming_bootstrap_retries.is_none() {
                 config.streaming_bootstrap_retries = core_settings.streaming_bootstrap_retries;
@@ -1710,6 +1744,7 @@ pub(crate) fn apply_core_settings_to_gui_config(
     config.request_retry = core_settings.request_retry;
     config.max_retry_credentials = core_settings.max_retry_credentials;
     config.max_retry_interval = core_settings.max_retry_interval;
+    config.transient_error_cooldown_seconds = core_settings.transient_error_cooldown_seconds;
     config.streaming_bootstrap_retries = core_settings.streaming_bootstrap_retries;
 }
 
@@ -2341,6 +2376,10 @@ pub(crate) fn write_gui_config_to_path(
         (
             "max-retry-interval",
             value(i64::from(config.max_retry_interval)),
+        ),
+        (
+            "transient-error-cooldown-seconds",
+            value(config.transient_error_cooldown_seconds),
         ),
         (
             "streaming-bootstrap-retries",

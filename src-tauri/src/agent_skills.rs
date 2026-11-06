@@ -75,9 +75,9 @@ fn candidate_roots() -> Vec<(PathBuf, &'static str)> {
         roots.push((cwd.join(".agents").join("skills"), "project"));
     }
 
-    // 6. $HOME/.easy-cli-proxy-api/skills -> source custom
-    if let Some(h) = &home {
-        roots.push((h.join(".easy-cli-proxy-api").join("skills"), "custom"));
+    // 6. <exe dir>/skills -> source custom
+    if let Ok(dir) = executable_dir() {
+        roots.push((dir.join("skills"), "custom"));
     }
 
     roots

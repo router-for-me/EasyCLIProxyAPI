@@ -120,8 +120,32 @@ pub(crate) fn spawn_core_child_on_lifetime_thread(command: Command) -> Result<Ch
         .map_err(|error| format!("Failed to start CPA kernel: {error}"))
 }
 
-async fn run_core_command(
-    app: tauri::AppHandle,
+pub(crate) async fn run_core_command<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    operation: fn(&CoreProcessState, &GuiConfigState) -> Result<CoreStatus, String>,
+) -> Result<CoreStatus, String> {
+    let status = run_core_command_without_proxy(app.clone(), operation).await?;
+    if status.running {
+        if let Some(manager) = app.try_state::<crate::reverse_proxy::ReverseProxyManagerState>() {
+            if let Err(error) = manager
+                .restore_after_core_start(app.state::<CoreProcessState>().inner())
+                .await
+            {
+                eprintln!("Failed to restore reverse proxy after kernel start: {error}");
+            }
+        }
+        return tauri::async_runtime::spawn_blocking(move || {
+            let port = app.state::<GuiConfigState>().snapshot()?.port;
+            current_core_status(Some(app.state::<CoreProcessState>().inner()), Some(port))
+        })
+        .await
+        .map_err(|error| format!("Kernel background task failed: {error}"))?;
+    }
+    Ok(status)
+}
+
+async fn run_core_command_without_proxy<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     operation: fn(&CoreProcessState, &GuiConfigState) -> Result<CoreStatus, String>,
 ) -> Result<CoreStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -130,7 +154,6 @@ async fn run_core_command(
             app.state::<CoreProcessState>().inner(),
             app.state::<GuiConfigState>().inner(),
         )?;
-        emit_core_status(&app, &status);
         Ok(status)
     })
     .await
@@ -674,7 +697,9 @@ fn emit_current_core_status(app: &tauri::AppHandle, process_state: &CoreProcessS
 
 #[tauri::command]
 pub(crate) async fn start_core_process(app: tauri::AppHandle) -> Result<CoreStatus, String> {
-    run_core_command(app, start_core_process_with_state).await
+    let status = run_core_command(app.clone(), start_core_process_with_state).await?;
+    emit_core_status(&app, &status);
+    Ok(status)
 }
 
 pub(crate) fn start_core_process_with_state(
@@ -694,7 +719,9 @@ pub(crate) fn start_core_process_with_state(
 
 #[tauri::command]
 pub(crate) async fn stop_core_process(app: tauri::AppHandle) -> Result<CoreStatus, String> {
-    run_core_command(app, stop_core_process_with_state).await
+    let status = run_core_command(app.clone(), stop_core_process_with_state).await?;
+    emit_core_status(&app, &status);
+    Ok(status)
 }
 
 pub(crate) fn stop_core_process_with_state(
@@ -708,7 +735,15 @@ pub(crate) fn stop_core_process_with_state(
 
 #[tauri::command]
 pub(crate) async fn restart_core_process(app: tauri::AppHandle) -> Result<CoreStatus, String> {
-    run_core_command(app, restart_core_process_with_state).await
+    let status = run_core_command(app.clone(), restart_core_process_with_state).await?;
+    emit_core_status(&app, &status);
+    Ok(status)
+}
+
+pub(crate) async fn restart_core_for_proxy(app: tauri::AppHandle) -> Result<CoreStatus, String> {
+    let status = run_core_command_without_proxy(app.clone(), restart_core_process_with_state).await?;
+    emit_core_status(&app, &status);
+    Ok(status)
 }
 
 pub(crate) fn restart_core_process_with_state(
@@ -1193,7 +1228,20 @@ pub(crate) fn is_app_update_available(current: &str, latest: &str) -> Result<boo
         semver::Version::parse(value.trim().trim_start_matches('v'))
             .map_err(|error| format!("Failed to parse version {value}: {error}"))
     };
-    Ok(parse(latest)? > parse(current)?)
+    let current_version = parse(current)?;
+    let latest_version = parse(latest)?;
+    if latest_version > current_version {
+        return Ok(true);
+    }
+    // Allow updating from a prerelease / PR / dev build to a stable release with equal or greater base version
+    if !current_version.pre.is_empty()
+        && latest_version.pre.is_empty()
+        && (latest_version.major, latest_version.minor, latest_version.patch)
+            >= (current_version.major, current_version.minor, current_version.patch)
+    {
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 #[cfg(test)]
@@ -1816,15 +1864,16 @@ pub(crate) fn start_core_process_inner(
         }
         return Err("CPA kernel is already running".to_string());
     }
-    let management_address = core_management_address(&gui_config.host, gui_config.port)?;
+    let config_path = merge_core_config_for_start(&install_dir, gui_config)?;
+    let effective_config = read_installed_core_config_settings()?;
+    let management_address = core_management_address(&effective_config.host, effective_config.port)?;
     if !wait_for_core_port_release(management_address) {
         return Err(format!(
             "Port {} is in use by another program. Change the port and try again",
-            gui_config.port
+            effective_config.port
         ));
     }
 
-    let config_path = merge_core_config_for_start(&install_dir, gui_config)?;
     let config_path = path_to_string(&config_path);
     let log_path = core_start_log_path(&install_dir, &gui_config.auth_dir)?;
     let start_once = || {

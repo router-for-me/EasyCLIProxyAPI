@@ -45,7 +45,7 @@
   min-width: 0;
   max-width: 100%;
   overflow-x: auto;
-  scroll-padding-inline: 4px;
+  scroll-padding-inline: 24px;
   overscroll-behavior-x: contain;
 }
 
@@ -144,6 +144,10 @@
   gap: 14px;
   min-width: 0;
   min-height: 0;
+}
+
+.usage-live-routing-layout > .usage-stat-grid {
+  flex: none;
 }
 
 .usage-live-routing-layout > .live-routing-panel {

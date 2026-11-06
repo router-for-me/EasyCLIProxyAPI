@@ -245,7 +245,7 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
     if let Some(mot) = config.max_output_tokens {
         let mot_obj = ensure_json_object_entry(&mut option_specs, "maxOutputTokens");
         mot_obj.insert("max".into(), serde_json::json!(mot));
-        mot_obj.insert("map".into(), serde_json::json!("{\"max_tokens\": maxOutputTokens}"));
+        mot_obj.remove("map");
     } else {
         option_specs.remove("maxOutputTokens");
     }

@@ -351,20 +351,38 @@ async fn resolve_app_update(
     }
     let latest_version = normalize_version(&manifest.version);
     let current_build_at = local_portable_app_built_at();
-    let update_available = is_app_update_available(&current_version, &latest_version)?;
+    let local_manifest = read_local_portable_app_manifest();
+    let is_test_env = is_test_or_prerelease_version(&current_version)
+        || local_manifest.as_ref().is_some_and(|m| {
+            is_test_or_prerelease_version(&m.version)
+                || normalize_version(&m.version) != current_version
+        });
+    let mut update_available = is_app_update_available(&current_version, &latest_version)?;
+    if !update_available && is_test_env {
+        update_available = true;
+    }
     let target = portable_update_target();
     let asset_catalog = manifest.full_assets.as_ref().unwrap_or(&manifest.assets);
     let asset = target.and_then(|(key, _)| asset_catalog.get(key)).cloned();
-    let portable_support = target
-        .map(|(_, arch)| {
-            validate_local_portable_app_manifest(arch)
-                .map(|supported| supported || is_preview)
-                .or_else(|error| if is_preview { Ok(true) } else { Err(error) })
-        })
-        .transpose()?;
+    let download_url = asset.as_ref().map(|value| value.url.clone());
+    let download_file_name = download_url
+        .as_deref()
+        .and_then(portable_update_asset_file_name);
+    let download_size_bytes = asset.as_ref().map(|value| value.size_bytes);
+    let mut manifest_error = None;
+    let portable_support = target.map(|(_, arch)| match validate_local_portable_app_manifest(arch) {
+        Ok(supported) => supported || is_preview || is_test_env,
+        Err(_) if is_preview || is_test_env => true,
+        Err(error) => {
+            manifest_error = Some(error);
+            false
+        }
+    });
     let auto_update_supported = portable_support == Some(true) && asset.is_some();
     let unsupported_reason = if auto_update_supported {
         None
+    } else if let Some(error) = manifest_error {
+        Some(error)
     } else if portable_support != Some(true) {
         Some("This application is not a portable version that supports automatic upgrades. Manually download the first supported version".to_string())
     } else {
@@ -375,7 +393,7 @@ async fn resolve_app_update(
         let (_, arch) = target.expect("portable target checked above");
         Some(PendingAppUpdate {
             version: latest_version.clone(),
-            asset: asset.clone().expect("portable asset checked above"),
+            asset: asset.expect("portable asset checked above"),
             arch: arch.to_string(),
         })
     } else {
@@ -390,7 +408,9 @@ async fn resolve_app_update(
         published_at: manifest.published_at,
         current_build_at,
         auto_update_supported,
-        download_size_bytes: asset.map(|value| value.size_bytes),
+        download_url,
+        download_file_name,
+        download_size_bytes,
         unsupported_reason,
         update_channel: update_channel.clone(),
     };
@@ -745,6 +765,21 @@ fn validate_portable_update_asset_catalog(
     Ok(())
 }
 
+pub(crate) fn portable_update_asset_file_name(url: &str) -> Option<String> {
+    if let Ok(parsed) = reqwest::Url::parse(url) {
+        if let Some(segments) = parsed.path_segments() {
+            if let Some(name) = segments.rev().find(|segment| !segment.is_empty()) {
+                return Some(name.to_string());
+            }
+        }
+    }
+    url.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+}
+
 pub(crate) fn validate_portable_update_asset(asset: &PortableUpdateAsset) -> Result<(), String> {
     let url = reqwest::Url::parse(&asset.url).map_err(|_| "Invalid application update download URL".to_string())?;
     if url.scheme() != "https"
@@ -956,14 +991,35 @@ pub(crate) fn local_portable_app_manifest_path() -> Result<PathBuf, String> {
     Ok(executable_dir.join(PORTABLE_APP_MANIFEST_FILE))
 }
 
-pub(crate) fn local_portable_app_built_at() -> Option<String> {
+pub(crate) fn read_local_portable_app_manifest() -> Option<PortableAppManifest> {
     let path = local_portable_app_manifest_path().ok()?;
     let contents = fs::read_to_string(path).ok()?;
-    let manifest = serde_json::from_str::<PortableAppManifest>(&contents).ok()?;
+    serde_json::from_str::<PortableAppManifest>(&contents).ok()
+}
+
+pub(crate) fn local_portable_app_built_at() -> Option<String> {
+    let manifest = read_local_portable_app_manifest()?;
     manifest
         .built_at
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty() && chrono::DateTime::parse_from_rfc3339(value).is_ok())
+}
+
+pub(crate) fn is_test_or_prerelease_version(version: &str) -> bool {
+    let trimmed = version.trim().trim_start_matches('v');
+    let lower = trimmed.to_ascii_lowercase();
+    lower.contains("preview")
+        || lower.contains("pr.")
+        || lower.contains("-pr")
+        || lower.contains("dev")
+        || lower.contains("test")
+        || lower.contains("alpha")
+        || lower.contains("beta")
+        || lower.contains("rc")
+        || lower.contains("dirty")
+        || semver::Version::parse(trimmed)
+            .map(|v| !v.pre.is_empty())
+            .unwrap_or(false)
 }
 
 pub(crate) fn validate_local_portable_app_manifest(expected_arch: &str) -> Result<bool, String> {
@@ -975,14 +1031,18 @@ pub(crate) fn validate_local_portable_app_manifest(expected_arch: &str) -> Resul
         fs::read_to_string(&path).map_err(|error| format!("Failed to read portable version marker: {error}"))?;
     let manifest = serde_json::from_str::<PortableAppManifest>(&contents)
         .map_err(|error| format!("Failed to parse portable version marker: {error}"))?;
+    let binary_version = env!("CARGO_PKG_VERSION");
+    let version_matches = normalize_version(&manifest.version) == normalize_version(binary_version);
+    let is_test_environment = is_test_or_prerelease_version(&manifest.version)
+        || is_test_or_prerelease_version(binary_version)
+        || !version_matches;
+
     Ok(manifest.schema_version == 1
         && manifest.application == "EasyCLIProxyAPI"
         && Some(manifest.platform.as_str()) == portable_update_platform_key()
         && manifest.arch == expected_arch
         && manifest.auto_update
-        && (normalize_version(&manifest.version) == normalize_version(env!("CARGO_PKG_VERSION"))
-            || env!("CARGO_PKG_VERSION").to_ascii_lowercase().contains("preview")
-            || manifest.version.to_ascii_lowercase().contains("preview")))
+        && (version_matches || is_test_environment))
 }
 
 #[tauri::command]
@@ -3109,3 +3169,4 @@ pub(crate) fn set_update_channel(
     gui_config_state.set_update_channel(&channel)?;
     Ok(channel)
 }
+

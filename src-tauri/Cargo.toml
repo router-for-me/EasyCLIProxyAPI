@@ -17,6 +17,7 @@ futures-util = "0.3"
 getrandom = "0.3"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["server", "http1"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "tls12", "ring"] }
 hyper-util = { version = "0.1", features = ["tokio", "server"] }
 json5 = "0.4"
 notify = "7"

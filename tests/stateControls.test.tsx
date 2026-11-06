@@ -45,7 +45,7 @@ const roleExceptions: Record<string, [number, number, string]> = {
   'pages/AgentsPage.tsx': [0, 4, 'Model hints.'],
   'pages/ApiAccessPage.tsx': [0, 1, 'Model summary count.'],
   'pages/CodexSubagentConfigDialog.tsx': [1, 1, 'Role passed to EmptyState for the load error and loading placeholder.'],
-  'pages/ConfigPanel.tsx': [2, 6, 'Reserved status slots, dirty badges, search count and disabled text.'],
+  'pages/ConfigPanel.tsx': [10, 6, 'Reserved status slots, dirty badges, search count, disabled text and field-level validation errors.'],
   'pages/CoreHealthPanel.tsx': [1, 1, 'Role passed to EmptyState for the load error and loading placeholder.'],
   'pages/Kernel.tsx': [0, 1, 'Runtime state badge.'],
   'pages/PluginInstallDialog.tsx': [1, 0, 'Field-level version error.'],

@@ -86,6 +86,12 @@
   background: transparent;
   box-shadow: none;
   overflow-x: auto;
+  scroll-padding-inline: 24px;
+}
+
+.tabs-control.secondary-page-tabs[data-overflowing='true']:not([data-at-end='true']) {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent 100%);
 }
 
 .tabs-control.secondary-page-tabs > button {

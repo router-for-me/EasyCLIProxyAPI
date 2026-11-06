@@ -15,6 +15,8 @@ const upstreamFlag = (provider: string, key: string, label: TemplateText, defaul
   ({ path: upstreamPath(provider, key), type: 'boolean', label, defaultValue, description });
 const upstreamNumber = (provider: string, key: string, label: TemplateText, defaultValue: number, max?: number, description?: TemplateText): TemplateConfigField =>
   ({ path: upstreamPath(provider, key), type: 'number', label, defaultValue, min: 0, max, description });
+const upstreamText = (provider: string, key: string, label: TemplateText, placeholder?: string): TemplateConfigField =>
+  ({ path: upstreamPath(provider, key), type: 'string', label, placeholder });
 
 export const oauthAliasShape: ConfigShape = { type: 'array', item: { type: 'object', fields: {
   name: { ...nonemptyText, label: T('上游模型', 'Upstream model', '上流モデル') },
@@ -57,6 +59,8 @@ export const oauthTemplateGroups: TemplateConfigGroup[] = [
   { id: 'oauth-codex', title: T('Codex OAuth 行为', 'Codex OAuth behavior', 'Codex OAuth の動作'), fields: [
     upstreamFlag('codex', 'upstream-request-compression', T('压缩 Codex 上游请求体', 'Compress upstream Codex requests', '上流 Codex リクエストを圧縮'), false,
       T('向上游 Codex 发送请求时压缩请求体。', 'Compress request bodies sent to upstream Codex.', '上流の Codex に送信するリクエスト本文を圧縮します。')),
+    upstreamNumber('codex', 'upstream-request-compression-min-bytes', T('压缩最小请求体 (字节)', 'Compression minimum bytes', '圧縮の最小サイズ (バイト)'), 0, undefined,
+      T('仅压缩超过该字节数的上游请求体，0 沿用默认。', 'Only compress upstream request bodies larger than this many bytes (0 uses default).', 'このバイト数を超える上流リクエスト本文のみ圧縮します（0 で既定値）。')),
     upstreamFlag('codex', 'websocket-compression', T('启用 Codex WebSocket 压缩', 'Enable Codex WebSocket compression', 'Codex WebSocket 圧縮を有効化'), false,
       T('在与上游 Codex 建立 WebSocket 连接时启用压缩扩展。', 'Enable compression extensions for WebSocket connections to upstream Codex.', '上流 Codex との WebSocket 接続で圧縮拡張を有効化します。')),
     flag('codex', 'response-steering', T('双向 WebSocket 引导（实验性）', 'Full-duplex response steering (experimental)', '双方向レスポンス制御（実験的）')),
@@ -103,6 +107,11 @@ export const oauthTemplateGroups: TemplateConfigGroup[] = [
     ...[['user-agent', 'User-Agent'], ['package-version', T('软件包版本', 'Package version', 'パッケージバージョン')], ['runtime-version', T('运行时版本', 'Runtime version', 'ランタイムバージョン')], ['os', T('操作系统', 'Operating system', 'OS')], ['arch', T('处理器架构', 'Architecture', 'アーキテクチャ')], ['timeout', T('请求超时头', 'Request timeout header', 'タイムアウトヘッダー')], ['timezone', T('默认时区', 'Default timezone', '既定のタイムゾーン')]].map(([key, label]) => text('claude', `header-defaults.${key}`, label as TemplateText)),
     flag('claude', 'header-defaults.stabilize-device-profile', T('固定凭据设备特征', 'Stabilize credential device profile', '端末プロファイルを固定')),
   ] },
+  { id: 'oauth-claude-headers', title: T('Claude 上游请求头默认值', 'Claude upstream header defaults', 'Claude 上流の既定ヘッダー'),
+    description: T('作用于 upstream.claude 的默认请求头，与凭据级 header-defaults 相互独立。', 'Default headers for upstream.claude, configured independently of credential-level header-defaults.', 'upstream.claude に適用する既定ヘッダーで、認証情報レベルの header-defaults とは独立しています。'), fields: [
+    ...[['user-agent', 'User-Agent'], ['package-version', T('软件包版本', 'Package version', 'パッケージバージョン')], ['runtime-version', T('运行时版本', 'Runtime version', 'ランタイムバージョン')], ['os', T('操作系统', 'Operating system', 'OS')], ['arch', T('处理器架构', 'Architecture', 'アーキテクチャ')], ['timeout', T('请求超时头', 'Request timeout header', 'タイムアウトヘッダー')], ['timezone', T('默认时区', 'Default timezone', '既定のタイムゾーン')]].map(([key, label]) => upstreamText('claude', `header-defaults.${key}`, label as TemplateText)),
+    upstreamFlag('claude', 'header-defaults.stabilize-device-profile', T('固定凭据设备特征', 'Stabilize credential device profile', '端末プロファイルを固定')),
+  ] },
   { id: 'oauth-others', title: T('其他 OAuth 上游', 'Other OAuth providers', 'その他の OAuth プロバイダー'), fields: [
     flag('aistudio', 'ws-auth', T('AI Studio WebSocket 身份验证', 'AI Studio WebSocket authentication', 'AI Studio WebSocket 認証'), true),
     flag('xai', 'inject-x-search', T('xAI 自动注入 X Search', 'Inject xAI X Search', 'xAI X Search を自動追加')),
@@ -112,5 +121,11 @@ export const oauthTemplateGroups: TemplateConfigGroup[] = [
     flag('antigravity', 'connection-pool.enabled', T('启用 Antigravity 连接池', 'Enable Antigravity connection pooling', 'Antigravity 接続プールを有効化')),
     { ...text('antigravity', 'connection-pool.idle-conn-timeout', T('空闲连接超时（上限 210s）', 'Idle connection timeout (maximum 210s)', 'アイドル接続のタイムアウト（最大 210s）'), '30s'), validate: value => typeof value === 'string' && /^(?:\d+(?:\.\d+)?(?:ms|s|m))+$/.test(value) ? null : T('请输入有效时长', 'Enter a valid duration', '有効な時間を入力してください') },
     number('antigravity', 'connection-pool.max-idle-conns-per-host', T('每个主机的最大空闲连接', 'Maximum idle connections per host', 'ホストごとの最大アイドル接続数'), 2),
+  ] },
+  { id: 'oauth-filters', title: T('上游敏感词过滤', 'Provider sensitive-word filters', 'プロバイダーの敏感語フィルター'), fields: [
+    { path: providerPath('antigravity', 'sensitive-words'), type: 'string-list', label: T('Antigravity 敏感词', 'Antigravity sensitive words', 'Antigravity の敏感語'),
+      description: T('每行一个短语；按上游通道过滤，与凭据级伪装的敏感词相互独立。', 'One phrase per line. This is a per-provider filter, separate from per-credential cloaking sensitive words.', '1 行に 1 フレーズ。プロバイダー単位のフィルターで、認証情報ごとの偽装用敏感語とは別です。') },
+    { path: providerPath('devin', 'sensitive-words'), type: 'string-list', label: T('Devin 敏感词', 'Devin sensitive words', 'Devin の敏感語'),
+      description: T('每行一个短语；按上游通道过滤，与凭据级伪装的敏感词相互独立。', 'One phrase per line. This is a per-provider filter, separate from per-credential cloaking sensitive words.', '1 行に 1 フレーズ。プロバイダー単位のフィルターで、認証情報ごとの偽装用敏感語とは別です。') },
   ] },
 ];
