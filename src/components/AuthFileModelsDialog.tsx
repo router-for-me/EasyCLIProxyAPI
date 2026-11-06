@@ -3,19 +3,17 @@ import { useEffect, useState } from 'react';
 import { Check, Copy, LoaderCircle, Search, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { managementApi } from '../services/managementApi';
-import { mergeOAuthModelDefinitions, modelMatchesRule, oauthModelsFromPayload, type OAuthModelDefinition } from '../services/oauthModels';
-import { authFileExcludedRulesFromPayload } from '../services/oauthModelSettings';
+import { oauthModelsFromPayload, type OAuthModelDefinition } from '../services/oauthModels';
 import { Dialog } from './Dialog';
 
 type AuthFileModelsDialogProps = {
   name: string;
   /** Privacy-masked name for display; `name` stays the request key. */
   displayName?: string;
-  provider?: string;
   onClose: () => void;
 };
 
-export function AuthFileModelsDialog({ name, displayName = name, provider, onClose }: AuthFileModelsDialogProps) {
+export function AuthFileModelsDialog({ name, displayName = name, onClose }: AuthFileModelsDialogProps) {
   const { t } = useI18n();
   const [models, setModels] = useState<OAuthModelDefinition[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,43 +25,13 @@ export function AuthFileModelsDialog({ name, displayName = name, provider, onClo
     let cancelled = false;
     setLoading(true);
     setModels([]);
-    setError("");
-
-    const credPromise = managementApi.get("/credentials/models", { name })
-      .then(oauthModelsFromPayload)
-      .catch((requestError: unknown) => {
-        if (!provider) throw requestError;
-        return [] as OAuthModelDefinition[];
-      });
-
-    const providerPromise = provider
-      ? Promise.all([
-          managementApi.get(`/routing/model-definitions/${encodeURIComponent(provider)}`)
-            .then(oauthModelsFromPayload)
-            .catch(() => [] as OAuthModelDefinition[]),
-          managementApi.get("/credentials/download", { name })
-            .then(authFileExcludedRulesFromPayload)
-            .catch(() => [] as string[]),
-        ]).then(([providerModels, rules]) => {
-          if (!rules.length) return providerModels;
-          return providerModels.filter((model) => !rules.some((rule) => modelMatchesRule(model.id, rule)));
-        })
-      : Promise.resolve([] as OAuthModelDefinition[]);
-
-    void Promise.all([credPromise, providerPromise])
-      .then(([credModels, providerModels]) => {
-        if (cancelled) return;
-        setModels(mergeOAuthModelDefinitions(credModels, providerModels));
-      })
-      .catch((requestError: unknown) => {
-        if (!cancelled) setError(String(requestError));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
+    setError('');
+    void managementApi.get('/credentials/models', { name })
+      .then((payload) => { if (!cancelled) setModels(oauthModelsFromPayload(payload)); })
+      .catch((requestError: unknown) => { if (!cancelled) setError(String(requestError)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [name, provider]);
+  }, [name]);
 
   const query = search.trim().toLowerCase();
   const visibleModels = models.filter((model) =>
