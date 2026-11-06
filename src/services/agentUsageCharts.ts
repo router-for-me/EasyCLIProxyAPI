@@ -219,7 +219,10 @@ export function labelStep(count: number, plotWidth: number, spacing: number): nu
 
 export function axisLabelWidth(text: string): number {
   let width = 0;
-  for (const char of text) width += char === '.' || char === ',' || char === ' ' ? 3.5 : 7;
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    width += char === '.' || char === ',' || char === ' ' ? 3.5 : code > 0x7f ? 11.5 : 7;
+  }
   return Math.ceil(width);
 }
 
