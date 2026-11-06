@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Copy, ExternalLink, Eye, EyeOff, KeyRound, Puzzle, Search, X } from 'lucide-react';
+import { Check, ChevronDown, Copy, ExternalLink, Eye, EyeOff, KeyRound, Puzzle, Search, TriangleAlert, X } from 'lucide-react';
 import { EmptyState } from '../components/EmptyState';
 import { Notice } from '../components/Notice';
 import { PluginLogo } from '../components/ProviderLogo';
@@ -98,6 +98,7 @@ export function EcpaPluginsPage() {
   const [plugins, setPlugins] = useState<EcpaPluginEntry[]>(() => getBundledEcpaRegistry().plugins);
   const [token, setToken] = useState<string>(() => readEcpaGitHubToken());
   const [showToken, setShowToken] = useState(false);
+  const [tokenPanelOpen, setTokenPanelOpen] = useState(false);
   const [tokenInvalid, setTokenInvalid] = useState(false);
   const [usedFallback, setUsedFallback] = useState(false);
   const [search, setSearch] = useState('');
@@ -215,9 +216,17 @@ export function EcpaPluginsPage() {
   };
 
   const hasActiveFilter = Boolean(search.trim()) || selectedTag !== ALL_TAG;
+  const tokenConfigured = Boolean(token.trim());
 
   return (
     <div className="ecpa-plugins-page" role="region" aria-label={t('ecpaPlugins.title')}>
+      <header className="ecpa-plugins-header">
+        <div className="ecpa-plugins-heading">
+          <h1>{t('ecpaPlugins.title')}</h1>
+          <span className="ecpa-plugins-total">{t('ecpaPlugins.resultCount', { count: plugins.length })}</span>
+        </div>
+        <p className="ecpa-plugins-subtitle">{t('ecpaPlugins.subtitle')}</p>
+      </header>
       {supported && !registered && <Notice tone="info" className="ecpa-plugin-banner" action={
         <button type="button" className="secondary-button compact-button" disabled={registering} onClick={() => void registerSource()}>
           {registering ? t('common.loading') : t('ecpaPlugins.registerSource')}
@@ -232,6 +241,20 @@ export function EcpaPluginsPage() {
           catch (reason) { if (mounted.current) setStoreError(String(reason)); }
         }}>{pluginText('restartButton', locale)}</button>
       }>{t('ecpaPlugins.restartRequired')}</Notice>}
+      {(tokenInvalid || usedFallback) ? (
+        <div className="ecpa-plugin-banners">
+          {tokenInvalid ? (
+            <Notice tone="warn" className="ecpa-plugin-banner">
+              {t('ecpaPlugins.token.invalid')}
+            </Notice>
+          ) : null}
+          {usedFallback ? (
+            <Notice tone="info" className="ecpa-plugin-banner">
+              {t('ecpaPlugins.fallbackHint')}
+            </Notice>
+          ) : null}
+        </div>
+      ) : null}
       <div className="ecpa-plugins-controls">
         <div className="ecpa-plugin-search search-control" data-size="default">
           <Search size={17} aria-hidden="true" />
@@ -242,6 +265,7 @@ export function EcpaPluginsPage() {
             onChange={(event) => setSearch(event.target.value)}
             placeholder={t('ecpaPlugins.search')}
             aria-label={t('ecpaPlugins.search')}
+            title={t('ecpaPlugins.searchHint')}
           />
           <button
             type="button"
@@ -258,7 +282,24 @@ export function EcpaPluginsPage() {
           </button>
         </div>
 
-        <div className="ecpa-token-field">
+        <button
+          type="button"
+          className="secondary-button ghost compact-button ecpa-token-toggle"
+          aria-expanded={tokenPanelOpen}
+          aria-controls="ecpa-token-panel"
+          onClick={() => setTokenPanelOpen((open) => !open)}
+        >
+          <KeyRound size={15} aria-hidden="true" />
+          <span>{t('ecpaPlugins.token.label')}</span>
+          <span className={`ecpa-token-state${tokenConfigured ? ' is-set' : ''}`}>
+            {t(tokenConfigured ? 'ecpaPlugins.token.configured' : 'ecpaPlugins.token.optional')}
+          </span>
+          <ChevronDown size={14} className="ecpa-token-chevron" aria-hidden="true" />
+        </button>
+      </div>
+
+      {tokenPanelOpen ? (
+        <div className="ecpa-token-panel" id="ecpa-token-panel" role="group" aria-label={t('ecpaPlugins.storeOptions')}>
           <label className="ecpa-token-label" htmlFor="ecpa-github-token-input">
             {t('ecpaPlugins.token.label')}
           </label>
@@ -296,48 +337,44 @@ export function EcpaPluginsPage() {
               <X size={15} aria-hidden="true" />
             </button>
           </div>
-        </div>
-      </div>
-
-      <div className="ecpa-tag-bar" role="group" aria-label={t('ecpaPlugins.tagFilter')}>
-        <button
-          type="button"
-          className={`filter-chip ecpa-tag-chip${selectedTag === ALL_TAG ? ' active' : ''}`}
-          aria-pressed={selectedTag === ALL_TAG}
-          onClick={() => setSelectedTag(ALL_TAG)}
-        >
-          {t('ecpaPlugins.tagAll')}
-        </button>
-        {allTags.map((tag) => {
-          const active = selectedTag === tag;
-          return (
-            <button
-              key={tag}
-              type="button"
-              className={`filter-chip ecpa-tag-chip${active ? ' active' : ''}`}
-              aria-pressed={active}
-              onClick={() => setSelectedTag(active ? ALL_TAG : tag)}
-            >
-              {tag}
-            </button>
-          );
-        })}
-      </div>
-
-      {(tokenInvalid || usedFallback) ? (
-        <div className="ecpa-plugin-banners">
-          {tokenInvalid ? (
-            <Notice tone="warn" className="ecpa-plugin-banner">
-              {t('ecpaPlugins.token.invalid')}
-            </Notice>
-          ) : null}
-          {usedFallback ? (
-            <Notice tone="info" className="ecpa-plugin-banner">
-              {t('ecpaPlugins.fallbackHint')}
-            </Notice>
-          ) : null}
+          <p className="ecpa-token-hint">{t('ecpaPlugins.token.hint')}</p>
         </div>
       ) : null}
+
+      <div className="ecpa-results-bar">
+        <div className="ecpa-tag-bar" role="group" aria-label={t('ecpaPlugins.tagFilter')}>
+          <button
+            type="button"
+            className={`filter-chip ecpa-tag-chip${selectedTag === ALL_TAG ? ' active' : ''}`}
+            aria-pressed={selectedTag === ALL_TAG}
+            onClick={() => setSelectedTag(ALL_TAG)}
+          >
+            {t('ecpaPlugins.tagAll')}
+          </button>
+          {allTags.map((tag) => {
+            const active = selectedTag === tag;
+            return (
+              <button
+                key={tag}
+                type="button"
+                className={`filter-chip ecpa-tag-chip${active ? ' active' : ''}`}
+                aria-pressed={active}
+                onClick={() => setSelectedTag(active ? ALL_TAG : tag)}
+              >
+                {tag}
+              </button>
+            );
+          })}
+        </div>
+        <div className="ecpa-results-meta">
+          {hasActiveFilter ? (
+            <button type="button" className="link-button muted ecpa-clear-filters" onClick={handleClearFilters}>
+              {t('ecpaPlugins.clearFilters')}
+            </button>
+          ) : null}
+          <span className="ecpa-results-count">{t('ecpaPlugins.resultCount', { count: filteredPlugins.length })}</span>
+        </div>
+      </div>
 
       {filteredPlugins.length > 0 ? (
         <div className="ecpa-plugin-grid">
@@ -353,7 +390,7 @@ export function EcpaPluginsPage() {
             return (
               <article
                 key={plugin.id}
-                className="surface-card ecpa-plugin-card"
+                className={`surface-card ecpa-plugin-card${unavailable ? ' is-unavailable' : ''}`}
                 tabIndex={0}
               >
                 <div className="ecpa-plugin-card-title">
@@ -390,6 +427,13 @@ export function EcpaPluginsPage() {
                   </div>
                 ) : null}
 
+                {unavailable ? (
+                  <p className="ecpa-plugin-unavailable">
+                    <TriangleAlert size={14} aria-hidden="true" />
+                    <span>{unavailable}</span>
+                  </p>
+                ) : null}
+
                 {installErrors[plugin.id] && <Notice tone="error" variant="text">{t('ecpaPlugins.installFailed', { error: installErrors[plugin.id] })}</Notice>}
                 <div className="ecpa-plugin-card-actions">
                   <button
@@ -402,7 +446,7 @@ export function EcpaPluginsPage() {
                   </button>
                   <button
                     type="button"
-                    className="icon-button quiet"
+                    className="icon-button quiet ecpa-repo-button"
                     disabled={!repoUrl}
                     aria-label={t('ecpaPlugins.openRepo')}
                     title={t('ecpaPlugins.openRepo')}
@@ -410,18 +454,31 @@ export function EcpaPluginsPage() {
                   >
                     <ExternalLink size={15} aria-hidden="true" />
                   </button>
-                  <span title={unavailable || undefined}>
+                  {unavailable ? (
+                    <button
+                      type="button"
+                      className="secondary-button compact-button ecpa-install-blocked"
+                      title={unavailable}
+                      disabled
+                    >
+                      {t('ecpaPlugins.install')}
+                    </button>
+                  ) : entry?.installed === true ? (
+                    <span className="ecpa-plugin-installed-badge">
+                      <Check size={13} aria-hidden="true" />
+                      {t('ecpaPlugins.installed')}
+                    </span>
+                  ) : (
                     <button type="button" className="primary-button compact-button"
-                      title={unavailable || undefined}
-                      disabled={Boolean(unavailable) || entry?.installed === true || installEntry !== null}
+                      disabled={installEntry !== null}
                       onClick={() => {
                         if (!entry) return;
                         setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
                         setInstallEntry(entry);
                       }}>
-                      {t(entry?.installed ? 'ecpaPlugins.installed' : installEntry?.id === plugin.id ? 'ecpaPlugins.installing' : 'ecpaPlugins.install')}
+                      {t(installEntry?.id === plugin.id ? 'ecpaPlugins.installing' : 'ecpaPlugins.install')}
                     </button>
-                  </span>
+                  )}
                 </div>
               </article>
             );
