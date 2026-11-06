@@ -185,7 +185,7 @@ function TableTopScrollbar({
   tableWrapRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const scrollbarRef = useRef<HTMLDivElement | null>(null);
-  const trackRef = useRef<HTMLDivElement | null>(null);
+  const trackRef = useRef<HTMLTableElement | null>(null);
 
   useEffect(() => {
     const scrollbar = scrollbarRef.current;
@@ -193,9 +193,6 @@ function TableTopScrollbar({
     const tableWrap = tableWrapRef.current;
     if (!scrollbar || !track || !tableWrap) return;
 
-    // Remember the positions we applied, rather than locking a whole frame.
-    // This ignores delayed programmatic/vertical scroll events without dropping
-    // newer drag or trackpad input on either surface.
     let lastScrollbarLeft = scrollbar.scrollLeft;
     let lastTableLeft = tableWrap.scrollLeft;
 
@@ -215,15 +212,13 @@ function TableTopScrollbar({
       lastScrollbarLeft = scrollbar.scrollLeft;
     };
 
+    // The track is a real table whose width is viewport + horizontal overflow,
+    // so the native scroller reports no scrollbar once the content fits.
     const updateLayout = () => {
-      const clientWidth = tableWrap.clientWidth;
-      const maxScroll = Math.max(0, tableWrap.scrollWidth - clientWidth);
+      const clientWidth = scrollbar.clientWidth;
+      const maxScroll = Math.max(0, tableWrap.scrollWidth - tableWrap.clientWidth);
       const left = Math.min(tableWrap.scrollLeft, maxScroll);
-
-      // Commit the range before the position. A deferred React width update can
-      // clamp the thumb to its old range and then rewind the table via scroll.
-      scrollbar.classList.toggle('is-hidden', maxScroll <= 1);
-      track.style.width = `${(scrollbar.clientWidth || clientWidth) + maxScroll}px`;
+      track.style.width = `${clientWidth + maxScroll}px`;
       tableWrap.scrollLeft = left;
       scrollbar.scrollLeft = left;
       lastTableLeft = tableWrap.scrollLeft;
@@ -237,7 +232,6 @@ function TableTopScrollbar({
     const resizeObserver = new ResizeObserver(updateLayout);
     resizeObserver.observe(tableWrap);
     resizeObserver.observe(scrollbar);
-    // Column resizing changes the table's width without resizing its viewport.
     if (tableWrap.firstElementChild) resizeObserver.observe(tableWrap.firstElementChild);
 
     return () => {
@@ -253,7 +247,9 @@ function TableTopScrollbar({
       className="usage-table-top-scrollbar"
       aria-hidden="true"
     >
-      <div ref={trackRef} style={{ height: '1px' }} />
+      <table ref={trackRef} style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse' }}>
+        <tbody><tr><td style={{ padding: 0, height: '1px' }} /></tr></tbody>
+      </table>
     </div>
   );
 }
