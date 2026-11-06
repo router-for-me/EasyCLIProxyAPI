@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Copy, ExternalLink, KeyRound, Puzzle, RefreshCw, Search, TriangleAlert, X } from 'lucide-react';
+import { Check, Copy, Download, ExternalLink, KeyRound, Puzzle, RefreshCw, Search, TriangleAlert, X } from 'lucide-react';
 import { EmptyState } from '../components/EmptyState';
 import { Notice } from '../components/Notice';
 import { PluginLogo } from '../components/ProviderLogo';
@@ -16,6 +16,7 @@ import {
   type EcpaPluginEntry,
 } from '../services/ecpaPlugins';
 import { safePluginWebURL } from '../services/pluginResources';
+import { refreshPluginReleaseVersions } from '../services/pluginReleaseVersions';
 import { getPluginSupport, pluginsApi, pluginStoreApi, type PluginStoreEntry, type PluginStoreInstallResult } from '../services/plugins';
 import { openSettingField } from '../services/settingsNavigation';
 import { GitHubTokenHint, isGitHubRateLimit } from './PluginRateLimitHint';
@@ -45,7 +46,13 @@ export function EcpaPluginsPage() {
   const mounted = useRef(false);
 
   const reloadStore = async () => {
-    const result = await pluginStoreApi.list();
+    const listed = await pluginStoreApi.list();
+    let result = listed;
+    try {
+      result = await refreshPluginReleaseVersions(listed);
+    } catch {
+      // Keep registry versions when the latest-release lookup is unavailable.
+    }
     if (!mounted.current) return;
     setStoreEntries(buildEcpaStoreMap(result.plugins));
     setStoreError(result.sourceErrors.filter(source => source.sourceUrl === ECPA_REGISTRY_URL).map(source => source.message).join('; '));
@@ -113,7 +120,9 @@ export function EcpaPluginsPage() {
     setInstallEntry(null);
     if (result.restartRequired) setRestartRequired(true);
     setStoreEntries(previous => buildEcpaStoreMap(Array.from(previous.values()).map(entry =>
-      entry.id === result.id ? { ...entry, installed: true } : entry)));
+      entry.id === result.id
+        ? { ...entry, installed: true, installedVersion: result.version || entry.version, updateAvailable: false }
+        : entry)));
     try { await reloadStore(); }
     catch (reason) { if (mounted.current) setStoreError(String(reason)); }
   };
@@ -350,7 +359,13 @@ export function EcpaPluginsPage() {
                     <code>{plugin.id}</code>
                   </div>
                   {plugin.version ? (
-                    <span className="ecpa-plugin-version">{plugin.version}</span>
+                    entry?.installed && entry.updateAvailable ? (
+                      <span className="ecpa-plugin-version" title={t('ecpaPlugins.updateTo', { version: entry.version })}>
+                        {entry.installedVersion} → {entry.version}
+                      </span>
+                    ) : (
+                      <span className="ecpa-plugin-version">{plugin.version}</span>
+                    )
                   ) : null}
                 </div>
 
@@ -412,10 +427,21 @@ export function EcpaPluginsPage() {
                       {t('ecpaPlugins.install')}
                     </button>
                   ) : entry?.installed === true ? (
-                    <span className="ecpa-plugin-installed-badge">
-                      <Check size={13} aria-hidden="true" />
-                      {t('ecpaPlugins.installed')}
-                    </span>
+                    <>
+                      <span className={`ecpa-plugin-installed-badge${entry.updateAvailable ? ' has-update' : ''}`}>
+                        {entry.updateAvailable ? <Download size={13} aria-hidden="true" /> : <Check size={13} aria-hidden="true" />}
+                        {t(entry.updateAvailable ? 'ecpaPlugins.updateAvailable' : 'ecpaPlugins.installed')}
+                      </span>
+                      {entry.updateAvailable ? (
+                        <button type="button" className="primary-button compact-button" disabled={installEntry !== null}
+                          onClick={() => {
+                            setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
+                            setInstallEntry(entry);
+                          }}>
+                          {t('ecpaPlugins.update')}
+                        </button>
+                      ) : null}
+                    </>
                   ) : (
                     <button type="button" className="primary-button compact-button"
                       disabled={installEntry !== null || !entry}

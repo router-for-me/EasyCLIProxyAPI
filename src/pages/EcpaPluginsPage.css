@@ -370,6 +370,7 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  row-gap: 6px;
   padding-top: 12px;
   margin-top: auto;
   border-top: 1px solid var(--border-color);
@@ -398,6 +399,11 @@
 
 .ecpa-install-blocked {
   cursor: not-allowed;
+}
+
+.ecpa-plugin-installed-badge.has-update {
+  background: var(--warning-badge-bg, #fff4e5);
+  color: var(--warning-badge-text, #9a5b00);
 }
 
 .ecpa-plugin-installed-badge {
