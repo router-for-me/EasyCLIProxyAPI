@@ -106,7 +106,6 @@ export function EcpaPluginsPage() {
   // Settings > Server > GitHub Token (see openSettingField below).
   const token = useMemo(() => readEcpaGitHubToken(), []);
   const [tokenInvalid, setTokenInvalid] = useState(false);
-  const [usedFallback, setUsedFallback] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedTag, setSelectedTag] = useState<string>(ALL_TAG);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -136,9 +135,6 @@ export function EcpaPluginsPage() {
       setTokenInvalid(result.tokenInvalid);
       if (result.registry) {
         setPlugins(result.registry.plugins);
-        setUsedFallback(false);
-      } else if (result.usedFallback) {
-        setUsedFallback(true);
       }
     });
 
@@ -234,19 +230,10 @@ export function EcpaPluginsPage() {
           catch (reason) { if (mounted.current) setStoreError(String(reason)); }
         }}>{pluginText('restartButton', locale)}</button>
       }>{t('ecpaPlugins.restartRequired')}</Notice>}
-      {(tokenInvalid || usedFallback) ? (
-        <div className="ecpa-plugin-banners">
-          {tokenInvalid ? (
-            <Notice tone="warn" className="ecpa-plugin-banner">
-              {t('ecpaPlugins.token.invalid')} {tokenSettingsLink()}
-            </Notice>
-          ) : null}
-          {usedFallback ? (
-            <Notice tone="info" className="ecpa-plugin-banner">
-              {t('ecpaPlugins.fallbackHint')} {tokenSettingsLink()}
-            </Notice>
-          ) : null}
-        </div>
+      {tokenInvalid ? (
+        <Notice tone="warn" className="ecpa-plugin-banner">
+          {t('ecpaPlugins.token.invalid')} {tokenSettingsLink()}
+        </Notice>
       ) : null}
       <div className="ecpa-plugins-controls">
         <div className="ecpa-plugin-search search-control" data-size="default">

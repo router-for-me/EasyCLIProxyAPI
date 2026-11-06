@@ -2453,7 +2453,6 @@ export const zhCN: Record<string, string> = {
   'ecpaPlugins.tagAll': '全部',
   'ecpaPlugins.token.invalid': 'Token 无效或已过期',
   'ecpaPlugins.tokenSettings': '前往设置配置 GitHub Token',
-  'ecpaPlugins.fallbackHint': '已使用内置目录',
   'ecpaPlugins.author': '作者：{author}',
   'ecpaPlugins.license': '协议：{license}',
   'ecpaPlugins.openRepo': '打开链接',

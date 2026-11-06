@@ -2454,7 +2454,6 @@ export const jaOverrides = {
   'ecpaPlugins.tagAll': 'すべて',
   'ecpaPlugins.token.invalid': 'Token が無効または期限切れです',
   'ecpaPlugins.tokenSettings': '設定で GitHub Token を設定',
-  'ecpaPlugins.fallbackHint': '内蔵カタログを使用しています',
   'ecpaPlugins.author': '作者: {author}',
   'ecpaPlugins.license': 'ライセンス: {license}',
   'ecpaPlugins.openRepo': 'リンクを開く',

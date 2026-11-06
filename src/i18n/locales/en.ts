@@ -2454,7 +2454,6 @@ export const en: Record<MessageKey, string> = {
   'ecpaPlugins.tagAll': 'All',
   'ecpaPlugins.token.invalid': 'Token is invalid or expired',
   'ecpaPlugins.tokenSettings': 'Set up GitHub Token in Settings',
-  'ecpaPlugins.fallbackHint': 'Using bundled catalog',
   'ecpaPlugins.author': 'Author: {author}',
   'ecpaPlugins.license': 'License: {license}',
   'ecpaPlugins.openRepo': 'Open Link',

@@ -172,7 +172,6 @@ export const zhTW: Record<MessageKey, string> = {
   'ecpaPlugins.token.invalid': 'Token 無效或已過期',
   'ecpaPlugins.tokenSettings': '前往設定配置 GitHub Token',
   'ecpaPlugins.sourceAutoHint': 'ECPA 精選目錄會自動註冊為插件來源：',
-  'ecpaPlugins.fallbackHint': '已使用內建目錄',
   'ecpaPlugins.author': '作者：{author}',
   'ecpaPlugins.license': '協議：{license}',
   'ecpaPlugins.openRepo': '開啟連結',
