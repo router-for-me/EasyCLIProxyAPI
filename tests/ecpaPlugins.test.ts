@@ -8,7 +8,7 @@ describe('ecpaPlugins parser', () => {
     const parsedBundled = parseEcpaRegistry(bundledRegistry);
     expect(parsedBundled).not.toBeNull();
     expect(parsedBundled?.schema_version).toBe(1);
-    expect(parsedBundled?.plugins).toHaveLength(1);
+    expect(parsedBundled?.plugins).toHaveLength(2);
     expect(getBundledEcpaRegistry().plugins[0].install?.type).toBe('github-release');
 
     expect(parseEcpaRegistry({ schema_version: 2, plugins: [] })).toBeNull();
