@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactNode } from 'react';
 import { I18nProvider, supportedLocales, translate } from '../src/i18n';
 import { readRoutingBoard, validateRoutingPlan, type RoutingBoard, type RoutingMember } from '../src/services/routing';
-import { RoutingPage } from '../src/pages/routing/RoutingPage';
+import { RoutingPage, RoutingReviewDialog } from '../src/pages/routing/RoutingPage';
 import { PolicyStrip } from '../src/pages/routing/PolicyStrip';
 import { TierLadder } from '../src/pages/routing/TierLadder';
 import { assignTierPriorities, diffPlan, draftFromBoard, moveMember, resolveRoute, splitMember, stepMember, tiersFromMembers } from '../src/pages/routing/routingPlan';
@@ -201,6 +201,16 @@ describe('routing components', () => {
       expect(translate(locale, 'routing.entrySummary', { count: 2, tiers: 1 })).not.toContain('{');
       expect(translate(locale, 'routing.serving')).not.toBe('routing.serving');
     }
+  });
+
+  it('renders one change-list row per pending change inside the review dialog', () => {
+    const board = boardWith(member('a'), member('b'));
+    const draft = draftFromBoard(board);
+    draft.weights.a = [3];
+    const changes = diffPlan(board, draft)!.changes;
+    const html = render(<RoutingReviewDialog changes={changes} describe={change => ({ name: change.key, field: 'Priority', detail: '0 → 10' })} busy={false} onClose={() => {}} onConfirm={() => {}} />);
+    const dialogHtml = html.slice(html.indexOf('routing-review-dialog'));
+    expect(dialogHtml.match(/<div><strong>/g)).toHaveLength(1);
   });
 
   it('translates routing review dialog copy in every supported locale', () => {

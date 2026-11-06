@@ -4,10 +4,26 @@ import { Dialog } from '../../components/Dialog';
 import { useI18n } from '../../i18n';
 import { APP_NAVIGATION_REQUEST_EVENT, type AppNavigationRequest } from '../../navigation';
 import { applyRoutingPlan, readRoutingBoard, validateRoutingPlan, type RoutingBoard } from '../../services/routing';
-import { diffPlan, draftFromBoard, resolveRoute, type RoutingDraft } from './routingPlan';
+import { diffPlan, draftFromBoard, resolveRoute, type RoutingChange, type RoutingDraft } from './routingPlan';
 import { PolicyStrip } from './PolicyStrip';
 import { TierLadder } from './TierLadder';
 import './RoutingPage.css';
+
+type DescribedChange = { name: string | undefined; field: string; detail: string };
+
+function ChangeRows({ changes, describe }: { changes: RoutingChange[]; describe: (change: RoutingChange) => DescribedChange }) {
+  const { t } = useI18n();
+  return <>{changes.map((change, index) => { const described = describe(change); return <div key={index}><strong>{described.name || t('routing.title')}</strong><span>{described.field}</span><span>{described.detail}</span></div>; })}</>;
+}
+
+export function RoutingReviewDialog({ changes, describe, busy, onClose, onConfirm }: { changes: RoutingChange[]; describe: (change: RoutingChange) => DescribedChange; busy: boolean; onClose: () => void; onConfirm: () => void }) {
+  const { t } = useI18n();
+  return <Dialog className="routing-review-dialog" title={t('routing.reviewTitle')} onClose={onClose} closeDisabled={busy}
+    actions={<><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{t('common.cancel')}</button><button type="button" className="primary-button" disabled={busy} onClick={onConfirm}><Save size={15} />{t(busy ? 'routing.saving' : 'routing.apply')}</button></>}>
+    <p className="routing-review-hint">{t('routing.reviewHint', { count: changes.length })}</p>
+    <div className="routing-change-list"><ChangeRows changes={changes} describe={describe} /></div>
+  </Dialog>;
+}
 
 export function RoutingPage() {
   const { t } = useI18n();
@@ -57,17 +73,13 @@ export function RoutingPage() {
   };
   return <section className="page routing-page" aria-busy={busy}>
     <header className="routing-heading"><div><h1><GitBranch size={24} />{t('routing.title')}</h1><p>{t('routing.description')}</p></div><div className="routing-actions">
-      {diff && dirty && <details className="routing-changes"><summary className="routing-summary-pill">{t('routing.changeCount', { count: diff.changes.length })}</summary><div className="routing-change-list">{diff.changes.map((change, index) => { const described = describeChange(change); return <div key={index}><strong>{described.name}</strong><span>{described.field}</span><span>{described.detail}</span></div>; })}</div></details>}
+      {diff && dirty && <details className="routing-changes"><summary className="routing-summary-pill">{t('routing.changeCount', { count: diff.changes.length })}</summary><div className="routing-change-list routing-change-list--popover"><ChangeRows changes={diff.changes} describe={describeChange} /></div></details>}
       <button type="button" className="secondary-button" disabled={busy} onClick={() => { if (!dirty || window.confirm(t('routing.leave'))) void refresh(); }}><RefreshCw size={15} />{t('routing.refresh')}</button>
       <button type="button" className="secondary-button" disabled={!dirty || busy} onClick={() => { if (board) { setPlan(draftFromBoard(board)); setSaved(false); } }}>{t('routing.reset')}</button>
       <button type="button" className="primary-button" disabled={disabled || !dirty || !!invalidReason} onClick={() => setReviewOpen(true)}><Save size={15} />{t(busy ? 'routing.saving' : 'routing.apply')}</button>
       {dirty && invalidReason && <p className="routing-action-hint" role="status">{invalidReason}</p>}
     </div></header>
-    {reviewOpen && diff && <Dialog className="routing-review-dialog" title={t('routing.reviewTitle')} onClose={() => setReviewOpen(false)} closeDisabled={busy}
-      actions={<><button type="button" className="secondary-button" disabled={busy} onClick={() => setReviewOpen(false)}>{t('common.cancel')}</button><button type="button" className="primary-button" disabled={busy} onClick={() => { setReviewOpen(false); void apply(); }}><Save size={15} />{t(busy ? 'routing.saving' : 'routing.apply')}</button></>}>
-      <p className="routing-review-hint">{t('routing.reviewHint', { count: diff.changes.length })}</p>
-      <div className="routing-change-list">{diff.changes.map((change, index) => { const described = describeChange(change); return <div key={index}><strong>{described.name}</strong><span>{described.field}</span><span>{described.detail}</span></div>; })}</div>
-    </Dialog>}
+    {reviewOpen && diff && <RoutingReviewDialog changes={diff.changes} describe={describeChange} busy={busy} onClose={() => setReviewOpen(false)} onConfirm={() => { setReviewOpen(false); void apply(); }} />}
     {error && <p role="alert" className="routing-error">{error}</p>}
     {board?.partial.length ? <p role="alert" className="routing-error">{t('routing.partial')} ({board.partial.join(', ')})</p> : null}
     <div role="status" className="routing-status">{saved ? t('routing.saved') : dirty ? t('routing.dirty') : busy ? t('routing.loading') : ''}</div>
