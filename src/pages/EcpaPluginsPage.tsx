@@ -7,20 +7,94 @@ import { useI18n } from '../i18n';
 import { openExternalUrl } from '../services/appSettings';
 import {
   clearEcpaGitHubToken,
+  buildEcpaStoreMap,
+  ECPA_REGISTRY_URL,
   fetchEcpaRegistry,
   getBundledEcpaRegistry,
+  isInstallableEcpaEntry,
+  resolveEcpaStoreEntry,
   readEcpaGitHubToken,
   writeEcpaGitHubToken,
   type EcpaPluginEntry,
 } from '../services/ecpaPlugins';
 import { safePluginWebURL } from '../services/pluginResources';
+import { getPluginSupport, pluginsApi, pluginStoreApi, type PluginStoreEntry, type PluginStoreInstallResult } from '../services/plugins';
+import { PluginInstallDialog } from './PluginInstallDialog';
+import { pluginText } from '../i18n/plugins';
+import { useConfirmation } from '../components/ConfirmationDialog';
+import { restartCoreProcess } from '../services/coreLifecycle';
 import './EcpaPluginsPage.css';
 
 const COPY_FEEDBACK_MS = 1500;
 const ALL_TAG = '';
 
 export function EcpaPluginsPage() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const { askConfirmation, confirmationDialog } = useConfirmation();
+  const [supported, setSupported] = useState(false);
+  const [registered, setRegistered] = useState(false);
+  const [sourceRegistered, setSourceRegistered] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [storeEntries, setStoreEntries] = useState(new Map<string, PluginStoreEntry>());
+  const [storeError, setStoreError] = useState('');
+  const [installEntry, setInstallEntry] = useState<PluginStoreEntry | null>(null);
+  const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
+  const [restartRequired, setRestartRequired] = useState(false);
+  const mounted = useRef(false);
+  const registrationPending = useRef(false);
+
+  const reloadStore = async () => {
+    const result = await pluginStoreApi.list();
+    if (!mounted.current) return;
+    setStoreEntries(buildEcpaStoreMap(result.plugins));
+    setStoreError(result.sourceErrors.filter(source => source.sourceUrl === ECPA_REGISTRY_URL).map(source => source.message).join('; '));
+  };
+
+  useEffect(() => {
+    let active = true;
+    mounted.current = true;
+    void getPluginSupport().then(async available => {
+      if (!active) return;
+      setSupported(available);
+      if (!available) return;
+      await Promise.all([
+        pluginsApi.getSettings().then(settings => {
+          if (active) setRegistered(settings.storeSources.includes(ECPA_REGISTRY_URL));
+        }),
+        pluginStoreApi.list().then(result => {
+          if (!active) return;
+          setStoreEntries(buildEcpaStoreMap(result.plugins));
+          setStoreError(result.sourceErrors.filter(source => source.sourceUrl === ECPA_REGISTRY_URL).map(source => source.message).join('; '));
+        }),
+      ]);
+    }).catch(reason => { if (active) setStoreError(String(reason)); });
+    return () => { active = false; mounted.current = false; };
+  }, []);
+
+  const registerSource = async () => {
+    if (registrationPending.current) return;
+    registrationPending.current = true;
+    setRegistering(true); setStoreError('');
+    try {
+      const settings = await pluginsApi.getSettings();
+      if (!settings.storeSources.includes(ECPA_REGISTRY_URL)) {
+        await pluginsApi.updateSettings({ storeSources: [...settings.storeSources, ECPA_REGISTRY_URL] });
+      }
+      if (!mounted.current) return;
+      setRegistered(true); setSourceRegistered(true);
+      await reloadStore();
+    } catch (reason) { if (mounted.current) setStoreError(String(reason)); }
+    finally { registrationPending.current = false; if (mounted.current) setRegistering(false); }
+  };
+
+  const installed = async (result: PluginStoreInstallResult) => {
+    setInstallEntry(null);
+    if (result.restartRequired) setRestartRequired(true);
+    setStoreEntries(previous => buildEcpaStoreMap(Array.from(previous.values()).map(entry =>
+      entry.id === result.id ? { ...entry, installed: true } : entry)));
+    try { await reloadStore(); }
+    catch (reason) { if (mounted.current) setStoreError(String(reason)); }
+  };
   const [plugins, setPlugins] = useState<EcpaPluginEntry[]>(() => getBundledEcpaRegistry().plugins);
   const [token, setToken] = useState<string>(() => readEcpaGitHubToken());
   const [showToken, setShowToken] = useState(false);
@@ -144,6 +218,20 @@ export function EcpaPluginsPage() {
 
   return (
     <div className="ecpa-plugins-page" role="region" aria-label={t('ecpaPlugins.title')}>
+      {supported && !registered && <Notice tone="info" className="ecpa-plugin-banner" action={
+        <button type="button" className="secondary-button compact-button" disabled={registering} onClick={() => void registerSource()}>
+          {registering ? t('common.loading') : t('ecpaPlugins.registerSource')}
+        </button>
+      }>{t('ecpaPlugins.registerSourceHint')}</Notice>}
+      {sourceRegistered && <Notice tone="info">{t('ecpaPlugins.sourceRegistered')}</Notice>}
+      {storeError && <Notice tone="error">{storeError}</Notice>}
+      {restartRequired && <Notice tone="info" icon={false} className="plugin-banner" action={
+        <button type="button" className="secondary-button" onClick={async () => {
+          if (!await askConfirmation({ title: pluginText('restartButton', locale), message: pluginText('restartConfirm', locale) })) return;
+          try { await restartCoreProcess(); if (mounted.current) setRestartRequired(false); }
+          catch (reason) { if (mounted.current) setStoreError(String(reason)); }
+        }}>{pluginText('restartButton', locale)}</button>
+      }>{t('ecpaPlugins.restartRequired')}</Notice>}
       <div className="ecpa-plugins-controls">
         <div className="ecpa-plugin-search search-control" data-size="default">
           <Search size={17} aria-hidden="true" />
@@ -257,6 +345,11 @@ export function EcpaPluginsPage() {
             const description = plugin.description;
             const isCopied = copiedId === plugin.id;
             const repoUrl = safePluginWebURL(plugin.repository);
+            const entry = resolveEcpaStoreEntry(storeEntries, plugin.id);
+            const unavailable = !supported ? t('ecpaPlugins.installUnavailable.unsupported')
+              : !isInstallableEcpaEntry(plugin) ? t('ecpaPlugins.installUnavailable.noRepository')
+              : !registered ? t('ecpaPlugins.installUnavailable.sourceNotRegistered')
+              : !entry ? t('ecpaPlugins.installUnavailable.notFound') : '';
             return (
               <article
                 key={plugin.id}
@@ -297,6 +390,7 @@ export function EcpaPluginsPage() {
                   </div>
                 ) : null}
 
+                {installErrors[plugin.id] && <Notice tone="error" variant="text">{t('ecpaPlugins.installFailed', { error: installErrors[plugin.id] })}</Notice>}
                 <div className="ecpa-plugin-card-actions">
                   <button
                     type="button"
@@ -308,13 +402,26 @@ export function EcpaPluginsPage() {
                   </button>
                   <button
                     type="button"
-                    className="primary-button compact-button"
+                    className="icon-button quiet"
                     disabled={!repoUrl}
+                    aria-label={t('ecpaPlugins.openRepo')}
+                    title={t('ecpaPlugins.openRepo')}
                     onClick={() => handleOpenRepository(plugin.repository)}
                   >
                     <ExternalLink size={15} aria-hidden="true" />
-                    {t('ecpaPlugins.openRepo')}
                   </button>
+                  <span title={unavailable || undefined}>
+                    <button type="button" className="primary-button compact-button"
+                      title={unavailable || undefined}
+                      disabled={Boolean(unavailable) || entry?.installed === true || installEntry !== null}
+                      onClick={() => {
+                        if (!entry) return;
+                        setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
+                        setInstallEntry(entry);
+                      }}>
+                      {t(entry?.installed ? 'ecpaPlugins.installed' : installEntry?.id === plugin.id ? 'ecpaPlugins.installing' : 'ecpaPlugins.install')}
+                    </button>
+                  </span>
                 </div>
               </article>
             );
@@ -338,6 +445,10 @@ export function EcpaPluginsPage() {
           }
         />
       )}
+      {installEntry && <PluginInstallDialog key={installEntry.storeId} entry={installEntry}
+        onClose={() => setInstallEntry(null)} onInstalled={installed}
+        onError={error => setInstallErrors(previous => ({ ...previous, [installEntry.id]: error }))} />}
+      {confirmationDialog}
     </div>
   );
 }
