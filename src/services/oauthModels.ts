@@ -74,3 +74,21 @@ export const setOAuthModelsExcluded = (
   const modelIds = new Set(models.map((model) => model.id.toLowerCase()));
   return normalized.filter((rule) => rule.includes('*') || !modelIds.has(rule));
 };
+
+export const mergeOAuthModelDefinitions = (
+  primary: OAuthModelDefinition[],
+  secondary: OAuthModelDefinition[],
+): OAuthModelDefinition[] => {
+  const map = new Map<string, OAuthModelDefinition>();
+  for (const model of primary) {
+    const key = model.id.trim().toLowerCase();
+    if (key) map.set(key, model);
+  }
+  for (const model of secondary) {
+    const key = model.id.trim().toLowerCase();
+    if (key && !map.has(key)) {
+      map.set(key, model);
+    }
+  }
+  return [...map.values()].sort((a, b) => a.id.localeCompare(b.id));
+};
