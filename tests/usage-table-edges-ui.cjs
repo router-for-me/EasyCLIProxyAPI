@@ -35,8 +35,16 @@ const inspect = page => page.evaluate(() => {
   for (const node of [document.documentElement, document.body, document.querySelector('.content'), document.querySelector('.content > .page')].filter(Boolean)) {
     if (node.scrollWidth > node.clientWidth + 1) issues.push(`page scrolls sideways (${node.className || node.tagName}: ${node.scrollWidth} > ${node.clientWidth})`);
   }
+  // Same arithmetic as scrollEdges.ts: a reserved scrollbar gutter with no vertical scrollbar in it paints table content, so it
+  // hides no columns and must not count as overflow.
+  const overflow = (element, style) => {
+    const gutter = element.offsetWidth - element.clientWidth
+      - parseFloat(style.borderLeftWidth || '0') - parseFloat(style.borderRightWidth || '0');
+    const slack = element.scrollHeight > element.clientHeight ? 0 : gutter;
+    return element.scrollWidth - element.clientWidth - slack > 1;
+  };
   const found = [...document.querySelectorAll('.usage-table-wrap, .agent-usage-table-wrap')].filter(element => element.getBoundingClientRect().width > 0).map(element => ({
-    name: element.className.split(' ').filter(name => !name.startsWith('scroll-edge'))[0], overflowing: element.scrollWidth > element.clientWidth + 1,
+    name: element.className.split(' ').filter(name => !name.startsWith('scroll-edge'))[0], overflowing: overflow(element, getComputedStyle(element)),
     start: element.hasAttribute('data-scroll-start'), end: element.hasAttribute('data-scroll-end'),
   }));
   return { issues, scrollers: found };
