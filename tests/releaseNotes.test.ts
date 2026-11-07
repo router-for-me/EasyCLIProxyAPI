@@ -72,10 +72,32 @@ describe('localized release notes publication', () => {
     expect(() => validateReleaseNotes({})).not.toThrow();
     expect(() => validateReleaseNotes({ en: 'English only' })).not.toThrow();
     expect(() => validateReleaseNotes({ ru: 'Только русский' })).not.toThrow();
-    for (const invalid of ['Legacy text', null, [], { en: 123 }, { ja: ' ' }, { fr: 'Other language' }]) {
+    expect(() => validateReleaseNotes({ ja: ' ' })).not.toThrow();
+    for (const invalid of ['Legacy text', null, [], { en: 123 }, { fr: 'Other language' }]) {
       expect(() => validateReleaseNotes(invalid)).toThrow();
     }
   });
+
+  test('keeps every authored locale in the manifest while the Release body stays English then Simplified Chinese', () => withNotesRoot(async (root, directory) => {
+    const translations = {
+      'zh-CN': '## 新增\n\n- 简体中文说明。\n',
+      'zh-TW': '## 新增\n\n- 繁體中文說明。\n',
+      ja: '## 追加\n\n- 日本語の説明。\n',
+      en: '## Added\n\n- English notes.\n',
+      ru: '## Добавлено\n\n- Русские примечания.\n',
+    };
+    for (const [locale, body] of Object.entries(translations)) {
+      await writeFile(join(directory, locale + '.md'), body);
+    }
+    expect(Object.keys(await resolveReleaseNotes({ root, tag: '1.2.3' })).sort())
+      .toEqual(['en', 'ja', 'ru', 'zh-CN', 'zh-TW']);
+    const body = releaseNotesBody(translations);
+    expect(body).toContain(translations.en.trim());
+    expect(body).toContain(translations['zh-CN'].trim());
+    expect(body).not.toContain(translations['zh-TW'].trim());
+    expect(body).not.toContain(translations.ja.trim());
+    expect(body).not.toContain(translations.ru.trim());
+  }));
 
   test('CLI preserves all translations in JSON and publishes only English then Chinese in the Release body', () => withNotesRoot(async (root, directory) => {
     const translations = {

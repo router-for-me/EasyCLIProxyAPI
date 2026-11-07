@@ -5,6 +5,8 @@ import { validateAppVersion } from './version.mjs';
 
 export const releaseNotesLanguages = [
   { locale: 'zh-CN', label: '简体中文', missing: '暂未提供该版本的简体中文更新说明。' },
+  { locale: 'zh-TW', label: '繁體中文', missing: '暫未提供此版本的繁體中文更新說明。' },
+  { locale: 'ja', label: '日本語', missing: 'このバージョンの日本語の更新内容はありません。' },
   { locale: 'en', label: 'English', missing: 'Release notes for this version are not available in English.' },
   { locale: 'ru', label: 'Русский', missing: 'Примечания к выпуску этой версии на русском языке недоступны.' },
 ];
@@ -41,7 +43,7 @@ export function validateReleaseNotes(notes) {
   }
   for (const [locale, text] of Object.entries(notes)) {
     if (!releaseNotesLanguages.some((language) => language.locale === locale)
-      || typeof text !== 'string' || !text.trim()) {
+      || typeof text !== 'string') {
       throw new Error(`Invalid release notes for locale: ${locale}`);
     }
   }
@@ -49,6 +51,8 @@ export function validateReleaseNotes(notes) {
 
 export function releaseNotesBody(notes) {
   validateReleaseNotes(notes);
+  // The GitHub Release page shows English then Simplified Chinese only; every other authored
+  // locale still reaches the app through the portable update manifest's releaseNotes map.
   const order = ['en', 'zh-CN'];
   const authored = order.filter((locale) => notes[locale]?.trim());
   const published = authored.length ? authored : ['en'];
