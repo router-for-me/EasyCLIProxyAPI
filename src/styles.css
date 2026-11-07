@@ -11123,13 +11123,22 @@ textarea:focus-visible {
 
   .provider-health-model-row {
     grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 10px;
+    padding: 9px 10px;
   }
 
   .provider-health-toggle {
+    grid-column: 1 / -1;
+    grid-row: 2;
     justify-content: flex-start;
+    padding-left: 0;
   }
 
   .provider-health-model-row .provider-health-pill {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    justify-self: start;
+    max-width: 100%;
     align-self: center;
   }
 
