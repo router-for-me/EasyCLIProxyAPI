@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ReactNode } from 'react';
 
-export type TemplateText = string | { zh: string; en: string; ja?: string };
+export type TemplateText = string | { zh: string; en: string; ja?: string; ru?: string };
 export type TemplateConfigField = {
   path: readonly string[];
   type: 'boolean' | 'string' | 'number' | 'select' | 'string-list' | 'json' | 'custom';

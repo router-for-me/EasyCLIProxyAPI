@@ -29,9 +29,37 @@ const messages = {
   retry: ['重试', 'Retry', '再試行'],
 } as const;
 
+const ruMessages: Record<keyof typeof messages, string> = {
+  title: 'Настройка плагина',
+  enabled: 'Включить этот плагин',
+  enabledHint: 'Чтобы плагин работал, должен быть включен и общий переключатель плагинов.',
+  priority: 'Приоритет',
+  priorityHint: 'Целое число; по умолчанию 0.',
+  fields: 'Параметры плагина',
+  fieldsHint: 'Сохраняются только измененные параметры. Очистка поля удаляет его настройку и возвращает значение плагина по умолчанию.',
+  inherit: 'Не задано / по умолчанию',
+  raw: 'Своя конфигурация (JSON)',
+  rawHint: 'Плагин не объявляет полей конфигурации. Здесь можно редактировать JSON-объект; состояние и приоритет задаются элементами выше. Удаление ключа удаляет настройку, null сохраняется как значение JSON.',
+  invalid_priority: 'Введите корректное безопасное целое число.',
+  invalid_integer: 'Введите корректное безопасное целое число.',
+  invalid_number: 'Введите конечное число.',
+  invalid_enum: 'Выберите один из вариантов, объявленных плагином.',
+  invalid_json: 'Некорректный JSON.',
+  expected_array: 'Введите массив JSON.',
+  expected_object: 'Введите объект JSON.',
+  reserved: 'Изменяйте enabled и priority элементами выше.',
+  invalid: 'Исправьте отмеченные поля конфигурации.',
+  unsaved: 'Есть несохраненные изменения.',
+  keepEditing: 'Продолжить редактирование',
+  discard: 'Отменить изменения',
+  loadFailed: 'Не удалось загрузить настройки плагина',
+  saveFailed: 'Не удалось сохранить настройки плагина',
+  retry: 'Повторить',
+};
+
 export type PluginConfigMessage = keyof typeof messages;
 
 export function pluginConfigText(key: PluginConfigMessage, locale: AppLocale = getCurrentLocale()): string {
-  const value = messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
+  const value = locale === 'ru' ? ruMessages[key] : messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
   return locale === 'zh-TW' ? createTraditionalMessages({ text: value }).text : value;
 }

@@ -282,6 +282,8 @@ fn normalize_app_locale(locale: &str) -> &'static str {
     let normalized = locale.trim().to_ascii_lowercase();
     if normalized.starts_with("ja") {
         "ja"
+    } else if normalized.starts_with("ru") {
+        "ru"
     } else if normalized == "zh-tw"
         || normalized == "zh-hk"
         || normalized == "zh-mo"
