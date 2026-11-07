@@ -123,6 +123,12 @@ pub(crate) fn infer_zcode_model_knowledge_with_calibration(model_id: &str) -> (O
 
 pub(crate) const ZCODE_CPA_REASONING_MAP: &str = "reasoningLevel == \"none\" || reasoningLevel == \"disabled\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}";
 
+/// ZCode requires `optionSpecs.maxOutputTokens` on manual model rules. When the
+/// value is unknown the writers fall back to this default instead of dropping the
+/// field: an omitted `maxOutputTokens` fails Zod validation of the whole
+/// provider config and makes ZCode discard every custom provider in memory.
+pub(crate) const ZCODE_MANUAL_MAX_OUTPUT_TOKENS_FALLBACK: u64 = 128_000;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ZCodeModelConfig {
@@ -246,6 +252,11 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
         let mot_obj = ensure_json_object_entry(&mut option_specs, "maxOutputTokens");
         mot_obj.insert("max".into(), serde_json::json!(mot));
         mot_obj.remove("map");
+    } else if config.is_manual {
+        option_specs.insert(
+            "maxOutputTokens".into(),
+            serde_json::json!({ "max": ZCODE_MANUAL_MAX_OUTPUT_TOKENS_FALLBACK }),
+        );
     } else {
         option_specs.remove("maxOutputTokens");
     }
