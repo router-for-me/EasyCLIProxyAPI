@@ -8,34 +8,39 @@ import {
 } from '../src/services/usageMetrics';
 
 describe('generation speed', () => {
-  test('uses the total request latency without requiring TTFT', () => {
+  test('uses the total request latency without requiring TTFT in default total mode', () => {
     const input = { outputTokens: 344, latencyMs: 10_600 };
     expect(calculateGenerationSpeed(input)).toBeCloseTo(32.4528, 4);
     expect(formatGenerationSpeed(input)).toBe('32.5 t/s');
   });
 
-  test('subtracts TTFT when streaming TTFT is positive and smaller than elapsed latency', () => {
-    expect(calculateGenerationSpeed({ outputTokens: 102, latencyMs: 10_500, ttftMs: 10_400 })).toBeCloseTo(1_020, 4);
-    expect(formatGenerationSpeed({ outputTokens: 102, latencyMs: 10_500, ttftMs: 10_400 })).toBe('1020.0 t/s');
-    expect(formatGenerationSpeed({ outputTokens: 414, latencyMs: 38_900, ttftMs: 35_100 })).toBe('108.9 t/s');
-    expect(formatGenerationSpeed({ outputTokens: 790, latencyMs: 13_700, ttftMs: 9_890 })).toBe('207.3 t/s');
+  test('calculates generation speed based on total latency in total mode', () => {
+    expect(calculateGenerationSpeed({ outputTokens: 102, latencyMs: 10_500, ttftMs: 10_400, mode: 'total' })).toBeCloseTo(9.7143, 4);
+    expect(formatGenerationSpeed({ outputTokens: 102, latencyMs: 10_500, ttftMs: 10_400, mode: 'total' })).toBe('9.7 t/s');
   });
 
-  test('returns an em dash below the output or generation-window floor', () => {
+  test('subtracts TTFT when streaming TTFT is positive and smaller than elapsed latency in ttft mode', () => {
+    expect(calculateGenerationSpeed({ outputTokens: 102, latencyMs: 10_500, ttftMs: 10_400, mode: 'ttft' })).toBeCloseTo(1_020, 4);
+    expect(formatGenerationSpeed({ outputTokens: 102, latencyMs: 10_500, ttftMs: 10_400, mode: 'ttft' })).toBe('1020.0 t/s');
+    expect(formatGenerationSpeed({ outputTokens: 414, latencyMs: 38_900, ttftMs: 35_100, mode: 'ttft' })).toBe('108.9 t/s');
+    expect(formatGenerationSpeed({ outputTokens: 790, latencyMs: 13_700, ttftMs: 9_890, mode: 'ttft' })).toBe('207.3 t/s');
+  });
+
+  test('returns an em dash below the output or generation-window floor in ttft mode', () => {
     // 99 output tokens over 200 ms would otherwise read 495 t/s.
-    expect(calculateGenerationSpeed({ outputTokens: 99, latencyMs: 1_000, ttftMs: 800 })).toBeNull();
-    expect(formatGenerationSpeed({ outputTokens: 99, latencyMs: 1_000, ttftMs: 800 })).toBe('—');
+    expect(calculateGenerationSpeed({ outputTokens: 99, latencyMs: 1_000, ttftMs: 800, mode: 'ttft' })).toBeNull();
+    expect(formatGenerationSpeed({ outputTokens: 99, latencyMs: 1_000, ttftMs: 800, mode: 'ttft' })).toBe('—');
     // Exact 100-token floor still counts.
-    expect(calculateGenerationSpeed({ outputTokens: 100, latencyMs: 1_000, ttftMs: 800 })).toBeCloseTo(500, 4);
+    expect(calculateGenerationSpeed({ outputTokens: 100, latencyMs: 1_000, ttftMs: 800, mode: 'ttft' })).toBeCloseTo(500, 4);
     // A burst window shorter than 100 ms tells no speed.
-    expect(calculateGenerationSpeed({ outputTokens: 500, latencyMs: 1_060, ttftMs: 1_000 })).toBeNull();
-    expect(calculateGenerationSpeed({ outputTokens: 500, latencyMs: 1_100, ttftMs: 1_000 })).toBeCloseTo(5_000, 4);
+    expect(calculateGenerationSpeed({ outputTokens: 500, latencyMs: 1_060, ttftMs: 1_000, mode: 'ttft' })).toBeNull();
+    expect(calculateGenerationSpeed({ outputTokens: 500, latencyMs: 1_100, ttftMs: 1_000, mode: 'ttft' })).toBeCloseTo(5_000, 4);
   });
 
-  test('falls back to total latency when TTFT is zero, null, or not less than elapsed latency', () => {
-    expect(formatGenerationSpeed({ outputTokens: 344, latencyMs: 10_600, ttftMs: 0 })).toBe('32.5 t/s');
-    expect(formatGenerationSpeed({ outputTokens: 344, latencyMs: 10_600, ttftMs: null })).toBe('32.5 t/s');
-    expect(formatGenerationSpeed({ outputTokens: 344, latencyMs: 10_600, ttftMs: 10_600 })).toBe('32.5 t/s');
+  test('falls back to total latency when TTFT is zero, null, or not less than elapsed latency in ttft mode', () => {
+    expect(formatGenerationSpeed({ outputTokens: 344, latencyMs: 10_600, ttftMs: 0, mode: 'ttft' })).toBe('32.5 t/s');
+    expect(formatGenerationSpeed({ outputTokens: 344, latencyMs: 10_600, ttftMs: null, mode: 'ttft' })).toBe('32.5 t/s');
+    expect(formatGenerationSpeed({ outputTokens: 344, latencyMs: 10_600, ttftMs: 10_600, mode: 'ttft' })).toBe('32.5 t/s');
   });
 
   test.each([

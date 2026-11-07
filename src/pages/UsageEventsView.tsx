@@ -11,12 +11,12 @@ import { FloatingNotice, useAppNotice } from '../appNotice';
 import { getCurrentLocale, useI18n } from '../i18n';
 import { usePrivacyMask } from '../privacy';
 import type { MessageKey } from '../i18n/resources';
-import { formatCacheReadRate, formatGenerationSpeed } from '../services/usageMetrics';
+import { formatCacheReadRate, formatGenerationSpeed, type GenerationSpeedMode } from '../services/usageMetrics';
+import { Select } from '../components/Select';
 import { formatDuration, formatUsageNumber } from '../services/usageNumber';
 import { Dialog } from '../components/Dialog';
 import { usageProviderDetails } from '../services/usageProvider';
 import { usageModelDetails } from '../services/usageModel';
-import { Select } from '../components/Select';
 
 const compactNumber = (value: number) => formatUsageNumber(value, getCurrentLocale());
 const compactDuration = (value: number) => formatDuration(value, getCurrentLocale());
@@ -130,6 +130,17 @@ export const getInitialCollapseErrors = (): boolean => {
   } catch {
   }
   return true;
+};
+
+const EVENT_SPEED_MODE_KEY = "cpa-gui.usage-events-speed-mode.v1";
+
+export const getInitialSpeedMode = (): GenerationSpeedMode => {
+  try {
+    const raw = usagePreferences.getItem(EVENT_SPEED_MODE_KEY);
+    if (raw === "ttft") return "ttft";
+  } catch {
+  }
+  return "total";
 };
 
 export const getInitialColumnWidths = (): Record<EventColumnKey, number> => {
@@ -300,6 +311,7 @@ function UsageEventCell({
   noRemarkLabel,
   showDate,
   compact,
+  speedMode = "total",
   onCopyError,
 }: {
   record: UsageRecord;
@@ -307,6 +319,7 @@ function UsageEventCell({
   noRemarkLabel: string;
   showDate?: boolean;
   compact?: boolean;
+  speedMode?: GenerationSpeedMode;
   onCopyError: (detail: string) => void;
 }) {
   const { t, formatDate } = useI18n();
@@ -447,14 +460,15 @@ function UsageEventCell({
       );
     }
     case 'speed': {
-      const value =
-        record.failed || record.canceled
-          ? '—'
-          : formatGenerationSpeed({
-              outputTokens: record.tokens.output_tokens,
-              latencyMs: record.latency_ms,
-              ttftMs: record.ttft_ms,
-            });
+        const value =
+          record.failed || record.canceled
+            ? '—'
+            : formatGenerationSpeed({
+                outputTokens: record.tokens.output_tokens,
+                latencyMs: record.latency_ms,
+                ttftMs: record.ttft_ms,
+                mode: speedMode,
+              });
       return <td className="usage-td-speed align-left" title={value === '—' ? undefined : value}>{value}</td>;
     }
   }
@@ -483,6 +497,8 @@ export function EventsView({
   const [columnSettingsOpen, setColumnSettingsOpen] = useState(false);
   const [collapseErrors, setCollapseErrors] = useState(getInitialCollapseErrors);
   const [draftCollapseErrors, setDraftCollapseErrors] = useState(collapseErrors);
+  const [speedMode, setSpeedMode] = useState<GenerationSpeedMode>(getInitialSpeedMode);
+  const [draftSpeedMode, setDraftSpeedMode] = useState<GenerationSpeedMode>(getInitialSpeedMode);
   const [draftVisibleColumnKeys, setDraftVisibleColumnKeys] = useState<EventColumnKey[]>(visibleColumnKeys);
   const [resizingCol, setResizingCol] = useState<EventColumnKey | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -526,6 +542,7 @@ export function EventsView({
   const openColumnSettings = () => {
     setDraftVisibleColumnKeys(visibleColumnKeys);
     setDraftCollapseErrors(collapseErrors);
+    setDraftSpeedMode(speedMode);
     setColumnSettingsOpen(true);
   };
 
@@ -547,8 +564,10 @@ export function EventsView({
     try {
       usagePreferences.setItem(EVENT_VISIBLE_COLS_STORAGE_KEY, JSON.stringify(next));
       usagePreferences.setItem(EVENT_COLLAPSE_ERRORS_KEY, draftCollapseErrors ? '1' : '0');
+      usagePreferences.setItem(EVENT_SPEED_MODE_KEY, draftSpeedMode);
     } catch {}
     setCollapseErrors(draftCollapseErrors);
+    setSpeedMode(draftSpeedMode);
     setColumnSettingsOpen(false);
   };
 
@@ -762,6 +781,7 @@ export function EventsView({
                           noRemarkLabel={noRemarkLabel}
                           showDate={showDate}
                           compact={isCompactDefault}
+                            speedMode={speedMode}
                           onCopyError={(detail) => void copyError(detail)}
                         />
                       ))}
@@ -856,6 +876,7 @@ export function EventsView({
           <p className="usage-column-dialog-description">
             {t('usage.events.columnSettingsDescription')}
           </p>
+          <div className="usage-column-dialog-controls">
           <label className="usage-error-collapse-setting">
             <span>
               <strong>{t('usage.events.collapseErrors')}</strong>
@@ -863,6 +884,21 @@ export function EventsView({
             </span>
             <Switch checked={draftCollapseErrors} aria-label={t('usage.events.collapseErrors')} onChange={(event) => setDraftCollapseErrors(event.currentTarget.checked)} />
           </label>
+            <div className="usage-error-collapse-setting">
+              <span>
+                <strong>{t('usage.events.speedMode')}</strong>
+                <small>{t('usage.events.speedModeHint')}</small>
+              </span>
+              <Select
+                value={draftSpeedMode}
+                onChange={(event) => setDraftSpeedMode(event.currentTarget.value as GenerationSpeedMode)}
+                aria-label={t('usage.events.speedMode')}
+              >
+                <option value="total">{t('usage.events.speedModeTotal')}</option>
+                <option value="ttft">{t('usage.events.speedModeTtft')}</option>
+              </Select>
+            </div>
+          </div>
           <div className="usage-column-options">
             {EVENT_COLUMNS.map((column) => {
               const checked = draftVisibleColumnKeys.includes(column.key);
