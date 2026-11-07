@@ -889,7 +889,7 @@ export const zhCN: Record<string, string> = {
   'usage.stat.tps': 'TPS',
   'usage.stat.performanceMeta': '{samples} 条样本 · RPM {rpm}',
   'usage.stat.rpm': 'RPM',
-  'usage.stat.performanceMetaTitle': 'TPS {tps}（output_tokens ÷ 总延迟，逐请求平均），{samples} 条有效样本，RPM {rpm}，平均延迟 {latency} ms',
+  'usage.stat.performanceMetaTitle': 'TPS {tps}（output_tokens ÷ 首字后的生成窗口，按 token 加权），有效样本 {samples} 条（要求输出 ≥100 token、生成窗口 ≥100 ms），RPM {rpm}，平均延迟 {latency} ms',
   'usage.stat.cacheHitRate': '缓存命中率',
   'usage.stat.cacheHitMeta': '读取 {hit} · 输入 {input}',
   'usage.stat.cacheHitMetaTitle': '缓存命中率 {rate}%，缓存读取 {hit} Token，输入 {input} Token',
