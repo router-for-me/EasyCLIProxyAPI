@@ -163,3 +163,17 @@
 }
 
 }
+
+.credential-settings-sync-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: var(--font-size-meta);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.credential-settings-models .rule-hint {
+  color: var(--text-tertiary);
+  margin-left: 6px;
+}

@@ -1,5 +1,5 @@
 import { getCurrentLocale, translate } from '../i18n';
-import { isRecord, managementApi } from './managementApi';
+import { isRecord, managementApi, readString } from './managementApi';
 import {
   normalizeOAuthExcludedRules,
   oauthExcludedRulesFromPayload,
@@ -61,6 +61,36 @@ export function saveOAuthProviderExclusions(
   return pending;
 }
 
+export async function syncOAuthProviderExclusionsToCredentials(
+  provider: string,
+  rules: Iterable<string>,
+  api: OAuthModelSettingsApi = managementApi,
+): Promise<number> {
+  const key = provider.trim().toLowerCase();
+  if (!key) return 0;
+  const normalizedRules = normalizeOAuthExcludedRules(rules);
+  try {
+    const creds = await api.get('/credentials');
+    if (!isRecord(creds) || !Array.isArray(creds.files)) return 0;
+    let count = 0;
+    for (const file of creds.files) {
+      if (!isRecord(file)) continue;
+      const fileProvider = (readString(file, 'provider', 'oauth_provider') || '').trim().toLowerCase();
+      const fileName = readString(file, 'name', 'id');
+      if (fileName && (fileProvider === key || fileName.toLowerCase().startsWith(key))) {
+        await api.patch('/credentials/fields', {
+          name: fileName,
+          excluded_models: normalizedRules,
+        });
+        count++;
+      }
+    }
+    return count;
+  } catch {
+    return 0;
+  }
+}
+
 export const authFileExcludedRulesFromPayload = (payload: unknown): string[] => {
   let metadata = payload;
   if (typeof metadata === 'string') {
@@ -112,18 +142,28 @@ export const saveOAuthModelSettings = async (
   settings: OAuthModelSettings,
   rules: Iterable<string>,
   api: OAuthModelSettingsApi = managementApi,
+  options?: { syncCredentials?: boolean },
 ): Promise<void> => {
   const excludedModels = normalizeOAuthExcludedRules(rules);
-  if (excludedModels.length === settings.excludedRules.length
-    && excludedModels.every((rule) => settings.excludedRules.includes(rule))) return;
+  const unchanged = excludedModels.length === settings.excludedRules.length
+    && excludedModels.every((rule) => settings.excludedRules.includes(rule));
   if (settings.target.scope === 'credential') {
-    await api.patch('/credentials/fields', {
-      name: settings.target.name,
-      excluded_models: excludedModels,
-    });
-  } else if (excludedModels.length > 0) {
-    await saveOAuthProviderExclusions(settings.target.provider, excludedModels, api);
-  } else if (settings.excludedRules.length > 0) {
-    await saveOAuthProviderExclusions(settings.target.provider, undefined, api);
+    if (!unchanged) {
+      await api.patch('/credentials/fields', {
+        name: settings.target.name,
+        excluded_models: excludedModels,
+      });
+    }
+  } else {
+    if (!unchanged) {
+      if (excludedModels.length > 0) {
+        await saveOAuthProviderExclusions(settings.target.provider, excludedModels, api);
+      } else if (settings.excludedRules.length > 0) {
+        await saveOAuthProviderExclusions(settings.target.provider, undefined, api);
+      }
+    }
+    if (options?.syncCredentials) {
+      await syncOAuthProviderExclusionsToCredentials(settings.target.provider, excludedModels, api);
+    }
   }
 };
