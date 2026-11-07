@@ -109,4 +109,34 @@ describe('plugin OAuth provider discovery', () => {
 
     expect(providers.map(getPluginTitle)).toEqual(['zcode', 'codebuddy']);
   });
+  it('expands multiple OAuth provider entries into separate cards with their respective names and logos', () => {
+    const plugins = normalize([
+      rawPlugin('omc-zcode-oauth', 'zcode-zai', {
+        metadata: { name: 'OMC ZCode OAuth' },
+        oauth_provider_entries: [
+          { identifier: 'zcode-zai', name: 'Z.AI', logo: 'https://example.com/zai.png' },
+          { identifier: 'zcode-bigmodel', name: 'BigModel', logo: 'https://example.com/bigmodel.png' },
+        ],
+      }),
+    ]);
+
+    const providers = collectPluginOAuthProviders(plugins);
+
+    expect(providers).toHaveLength(2);
+    expect(providers.map(p => p.oauthProvider)).toEqual(['zcode-zai', 'zcode-bigmodel']);
+    expect(providers.map(getPluginTitle)).toEqual(['Z.AI', 'BigModel']);
+    expect(providers.map(p => p.logo)).toEqual(['https://example.com/zai.png', 'https://example.com/bigmodel.png']);
+  });
+
+  it('expands oauth_providers list when entries are not declared', () => {
+    const plugins = normalize([
+      rawPlugin('multi-provider', 'primary-p', {
+        oauth_providers: ['provider-one', 'provider-two'],
+      }),
+    ]);
+
+    const providers = collectPluginOAuthProviders(plugins);
+
+    expect(providers.map(p => p.oauthProvider)).toEqual(['provider-one', 'provider-two']);
+  });
 });
