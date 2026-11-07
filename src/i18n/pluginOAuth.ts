@@ -12,6 +12,7 @@ const messages = {
   failed: ['授权失败，请重试。', 'Authorization failed. Please retry.', '認証に失敗しました。再試行してください。'],
   expired: ['登录已过期，请重新获取链接。', 'Sign-in expired. Request a new link.', 'ログインの有効期限が切れました。新しいリンクを取得してください。'],
   unavailable: ['此插件当前无法登录，请确认插件已启用。', 'Sign-in is unavailable. Check that the plugin is enabled.', '現在ログインできません。プラグインが有効か確認してください。'],
+  entry: ["登录入口", "Sign-in entry", "ログイン項目"],
   missingState: ['内核未返回登录会话，无法检查授权状态。', 'The kernel returned no sign-in session to check.', 'カーネルからログインセッションが返されなかったため、状態を確認できません。'],
   invalidUrl: ['登录链接无效。', 'Invalid sign-in URL.', 'ログイン URL が無効です。'],
   link: ['登录链接', 'Sign-in URL', 'ログイン URL'],

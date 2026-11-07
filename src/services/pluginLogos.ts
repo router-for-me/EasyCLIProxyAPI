@@ -21,6 +21,8 @@ export function findPluginLogo(plugins: readonly PluginListEntry[], provider: st
   const owner = normalizeId(pluginId);
   const plugin = (owner && plugins.find(entry => normalizeId(entry.id) === owner))
     || (target && plugins.find(entry => normalizeId(entry.oauthProvider) === target
+      || entry.oauthProviders?.some(p => normalizeId(p) === target)
+      || entry.oauthProviderEntries?.some(e => normalizeId(e.identifier) === target)
       || normalizeId(entry.quotaProvider) === target || normalizeId(entry.id) === target));
   return plugin ? safePluginLogoUrl(plugin.logo || plugin.metadata?.logo) : '';
 }

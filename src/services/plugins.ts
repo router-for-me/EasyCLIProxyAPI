@@ -35,6 +35,12 @@ export interface PluginMenu {
   originalIndex?: number;
 }
 
+export interface PluginOAuthProviderEntry {
+  identifier: string;
+  name: string;
+  logo: string;
+}
+
 export interface PluginListEntry {
   id: string;
   path: string;
@@ -44,6 +50,8 @@ export interface PluginListEntry {
   effectiveEnabled: boolean;
   supportsOAuth: boolean;
   oauthProvider?: string;
+  oauthProviders?: string[];
+  oauthProviderEntries?: PluginOAuthProviderEntry[];
   supportsQuota: boolean;
   quotaProvider?: string;
   logo: string;
@@ -216,7 +224,17 @@ export function normalizePluginList(value: unknown): PluginListResponse {
         id: text(entry.id), path: text(entry.path), configured: entry.configured === true,
         registered: entry.registered === true, enabled: entry.enabled === true,
         effectiveEnabled: entry.effective_enabled === true,
-        supportsOAuth: entry.supports_oauth === true, oauthProvider: providerKey(entry.oauth_provider),
+        supportsOAuth: entry.supports_oauth === true,
+        oauthProvider: providerKey(entry.oauth_provider),
+        oauthProviders: Array.isArray(entry.oauth_providers)
+          ? entry.oauth_providers.map(providerKey).filter((p): p is string => Boolean(p)) : undefined,
+        oauthProviderEntries: Array.isArray(entry.oauth_provider_entries)
+          ? entry.oauth_provider_entries.flatMap((item) => {
+              if (!isRecord(item)) return [];
+              const identifier = providerKey(item.identifier);
+              if (!identifier) return [];
+              return [{ identifier, name: text(item.name) || identifier, logo: text(item.logo) }];
+            }) : undefined,
         supportsQuota: entry.supports_quota === true, quotaProvider: providerKey(entry.quota_provider),
         logo: text(entry.logo) || info?.logo || '',
         configFields: fields.length ? fields : info?.configFields ?? [],
