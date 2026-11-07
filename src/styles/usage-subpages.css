@@ -142,6 +142,25 @@
   background: transparent;
 }
 
+.usage-records-page .usage-request-log .usage-table-wrap {
+  scrollbar-width: none;
+}
+
+.usage-records-page .usage-request-log .usage-table-wrap::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.usage-records-page .usage-request-log .usage-table-wrap::-webkit-scrollbar:horizontal {
+  display: none;
+  height: 0;
+}
+
+.usage-records-page .usage-request-log .usage-table-top-scrollbar.is-hidden {
+  display: none;
+}
+
 .usage-records-page .usage-request-log .usage-events-table {
   border-collapse: separate;
   border-spacing: 0 10px;

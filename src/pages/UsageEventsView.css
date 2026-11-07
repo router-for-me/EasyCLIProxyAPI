@@ -38,6 +38,18 @@
   flex: 1 1 auto;
   background: var(--bg-card);
   scrollbar-gutter: auto;
+  scrollbar-width: none;
+}
+
+.usage-request-log .usage-table-wrap::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.usage-request-log .usage-table-wrap::-webkit-scrollbar:horizontal {
+  display: none;
+  height: 0;
 }
 
 .usage-request-log .usage-events-table {
@@ -380,6 +392,10 @@
 .usage-request-log .usage-events-table th .usage-col-resizer:hover::after,
 .usage-request-log .usage-events-table th .usage-col-resizer.active::after {
   background: var(--ui-accent);
+}
+
+.usage-request-log .usage-table-top-scrollbar.is-hidden {
+  display: none;
 }
 
 .usage-request-log .usage-table-top-scrollbar {

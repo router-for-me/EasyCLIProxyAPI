@@ -219,6 +219,7 @@ function TableTopScrollbar({
       const maxScroll = Math.max(0, tableWrap.scrollWidth - tableWrap.clientWidth);
       const left = Math.min(tableWrap.scrollLeft, maxScroll);
       track.style.width = `${clientWidth + maxScroll}px`;
+      scrollbar.classList.toggle('is-hidden', maxScroll <= 0);
       tableWrap.scrollLeft = left;
       scrollbar.scrollLeft = left;
       lastTableLeft = tableWrap.scrollLeft;
