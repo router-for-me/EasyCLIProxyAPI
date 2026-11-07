@@ -8947,6 +8947,12 @@ textarea:focus-visible {
   line-height: 1.5;
 }
 
+.usage-column-dialog-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .usage-error-collapse-setting {
   display: flex;
   align-items: center;
