@@ -43,7 +43,7 @@ export function validateReleaseNotes(notes) {
   }
   for (const [locale, text] of Object.entries(notes)) {
     if (!releaseNotesLanguages.some((language) => language.locale === locale)
-      || typeof text !== 'string') {
+      || typeof text !== 'string' || !text.trim()) {
       throw new Error(`Invalid release notes for locale: ${locale}`);
     }
   }

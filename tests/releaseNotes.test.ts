@@ -72,8 +72,7 @@ describe('localized release notes publication', () => {
     expect(() => validateReleaseNotes({})).not.toThrow();
     expect(() => validateReleaseNotes({ en: 'English only' })).not.toThrow();
     expect(() => validateReleaseNotes({ ru: 'Только русский' })).not.toThrow();
-    expect(() => validateReleaseNotes({ ja: ' ' })).not.toThrow();
-    for (const invalid of ['Legacy text', null, [], { en: 123 }, { fr: 'Other language' }]) {
+    for (const invalid of ['Legacy text', null, [], { en: 123 }, { ja: ' ' }, { fr: 'Other language' }]) {
       expect(() => validateReleaseNotes(invalid)).toThrow();
     }
   });
