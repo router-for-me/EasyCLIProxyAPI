@@ -51,8 +51,12 @@ export function EcpaPluginsPage() {
   const confirmedInstalls = useRef(new Map<string, string>());
 
   // Store results merge on a sequence number so a slow release lookup started
-  // earlier cannot overwrite entries from a newer reload.
+  // earlier cannot overwrite entries from a newer reload. -1 marks an unloaded
+  // page so a load resolving after unmount writes nothing.
   const storeSeq = useRef(0);
+  // The store list is the only thing an install button waits for: a card whose
+  // plugin id is already in this map renders an enabled install button even
+  // while the support check, source registration and release lookup still run.
   const applyStoreResult = (result: PluginStoreResponse, seq: number) => {
     if (!mounted.current || seq !== storeSeq.current) return;
     const confirmed = confirmedInstalls.current;
@@ -95,12 +99,10 @@ export function EcpaPluginsPage() {
   const registerSource = async (): Promise<boolean> => {
     try {
       const settings = await pluginsApi.getSettings();
-      if (settings.storeSources.includes(ECPA_REGISTRY_URL)) {
-        if (mounted.current) setRegistered(true);
-        return false;
-      }
-      await pluginsApi.updateSettings({ storeSources: [...settings.storeSources, ECPA_REGISTRY_URL] });
+      const listed = settings.storeSources.includes(ECPA_REGISTRY_URL);
       if (mounted.current) setRegistered(true);
+      if (listed) return false;
+      await pluginsApi.updateSettings({ storeSources: [...settings.storeSources, ECPA_REGISTRY_URL] });
       return true;
     } catch (reason) {
       if (mounted.current) {
@@ -134,6 +136,10 @@ export function EcpaPluginsPage() {
       setStoreError(String(reason));
       setStoreLoaded(true);
     };
+    // The store list starts before the support probe and before any settings
+    // write, so an entry listed here enables its install button right away
+    // instead of queueing behind those calls.
+    const listed = reloadStore().catch(fail);
     void getPluginSupport().then(async available => {
       if (!active) return;
       setSupported(available);
@@ -149,9 +155,14 @@ export function EcpaPluginsPage() {
         // once the source is known to exist.
         if (changed && mounted.current) void reloadStore().catch(fail);
       });
-      await reloadStore().catch(fail);
+      await listed;
     }).catch(fail);
-    return () => { active = false; mounted.current = false; };
+    return () => {
+      active = false;
+      mounted.current = false;
+      // Leave no result able to land after unmount.
+      storeSeq.current = -1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -271,7 +282,6 @@ export function EcpaPluginsPage() {
   };
 
   const hasActiveFilter = Boolean(search.trim()) || selectedTag !== ALL_TAG;
-  const sourceReady = supported === true && registered === true && storeLoaded;
 
   const tokenSettingsLink = (muted = false) => (
     <button type="button" className={`link-button ecpa-token-settings-link${muted ? ' muted' : ''}`} onClick={() => openSettingField(['server', 'github-token'])}>
@@ -381,11 +391,6 @@ export function EcpaPluginsPage() {
             const isCopied = copiedId === plugin.id;
             const repoUrl = safePluginWebURL(plugin.repository);
             const entry = resolveEcpaStoreEntry(storeEntries, plugin.id);
-            // Until the store list arrives there is no entry to install, but the
-            // card itself still renders from the registry. An in-flight source
-            // registration also means the list may gain this entry later.
-            const storePending = !entry && supported !== false && registered !== false
-              && (!storeLoaded || registered === null);
             const isInstalling = installEntry?.id === plugin.id;
             // An install confirmed in this session renders as installed even when
             // the store list still reports it as missing.
@@ -393,11 +398,28 @@ export function EcpaPluginsPage() {
             const isInstalled = entry?.installed === true || confirmedVersion !== undefined;
             const installedVersion = entry?.installed ? entry.installedVersion : confirmedVersion;
             const hasUpdate = isInstalled && isStoreUpdateAvailable(installedVersion, entry?.version);
-            const unavailable = supported === false ? t('ecpaPlugins.installUnavailable.unsupported')
-              : !isInstallableEcpaEntry(plugin) ? t('ecpaPlugins.installUnavailable.noRepository')
-              : registered === false ? t('ecpaPlugins.installUnavailable.sourceNotRegistered')
-              : !sourceReady ? ''
-              : !entry ? t('ecpaPlugins.installUnavailable.notFound') : '';
+            // Only a listed entry gates install. The support check and the source
+            // registration still run in the background, so a listed entry enables
+            // its button as soon as the list arrives. The operation in progress is
+            // the one other reason a click is not offered right now.
+            const actionBusy = installEntry !== null;
+            // `null` keeps the card neutral while the store list is still in
+            // flight; every settled case names a reason so a button is never
+            // silently grey.
+            let unavailable = '';
+            let waiting = '';
+            if (!entry) {
+              if (!isInstallableEcpaEntry(plugin)) unavailable = t('ecpaPlugins.installUnavailable.noRepository');
+              else if (supported === false) unavailable = t('ecpaPlugins.installUnavailable.unsupported');
+              else if (registered === false) unavailable = t('ecpaPlugins.installUnavailable.sourceNotRegistered');
+              else if (!storeLoaded) waiting = t('ecpaPlugins.loadingStore');
+              else if (storeError) unavailable = storeError;
+              else unavailable = t('ecpaPlugins.installUnavailable.notFound');
+            }
+            const installBlocked = Boolean(!entry && unavailable);
+            // The store list may gain this entry while it is still in flight or
+            // while a first-visit source registration runs.
+            const storePending = Boolean(!entry && !unavailable && (waiting || !storeLoaded || registered === null));
             return (
               <article
                 key={plugin.id}
@@ -449,6 +471,11 @@ export function EcpaPluginsPage() {
                     <TriangleAlert size={14} aria-hidden="true" />
                     <span>{unavailable}</span>
                   </p>
+                ) : storePending ? (
+                  <p className="ecpa-plugin-unavailable" aria-live="polite">
+                    <RefreshCw size={14} aria-hidden="true" />
+                    <span>{t('ecpaPlugins.loadingStore')}</span>
+                  </p>
                 ) : null}
 
                 {installErrors[plugin.id] && <Notice tone="error" variant="text">{t('ecpaPlugins.installFailed', { error: installErrors[plugin.id] })}</Notice>}
@@ -471,7 +498,7 @@ export function EcpaPluginsPage() {
                     <ExternalLink size={15} aria-hidden="true" />
                     {t('ecpaPlugins.openRepo')}
                   </button>
-                  {unavailable ? (
+                  {installBlocked ? (
                     <button
                       type="button"
                       className="secondary-button compact-button ecpa-install-blocked"
@@ -487,7 +514,8 @@ export function EcpaPluginsPage() {
                         {t(hasUpdate ? 'ecpaPlugins.updateAvailable' : 'ecpaPlugins.installed')}
                       </span>
                       {hasUpdate ? (
-                        <button type="button" className="primary-button compact-button" disabled={installEntry !== null}
+                        <button type="button" className="primary-button compact-button" disabled={actionBusy || !entry}
+                          title={!entry ? unavailable : undefined}
                           onClick={() => {
                             if (!entry) return;
                             setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
@@ -499,7 +527,8 @@ export function EcpaPluginsPage() {
                     </>
                   ) : (
                     <button type="button" className="primary-button compact-button"
-                      disabled={installEntry !== null || !entry}
+                      disabled={actionBusy || !entry}
+                      title={entry ? undefined : waiting || unavailable}
                       onClick={() => {
                         if (!entry) return;
                         setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
