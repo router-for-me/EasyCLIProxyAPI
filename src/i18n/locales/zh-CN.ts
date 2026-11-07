@@ -2034,6 +2034,7 @@ export const zhCN: Record<string, string> = {
   'apiAccess.toggleAria': '{remark} 接入{action}开关',
   'apiAccess.dragHandle': '拖动“{remark}”调整排序；键盘可按空格后使用方向键',
   'apiAccess.health.action': '健康检测',
+  'apiAccess.health.toggleAria': '{model}{action}开关',
   'apiAccess.health.title': '模型健康检测',
   'apiAccess.health.description': '{provider}',
   'apiAccess.health.warning': '检测会对每个模型发送一次最小流式请求，收到模型首字或可验证的正常终止响应后立即停止，并可能产生少量费用。',
