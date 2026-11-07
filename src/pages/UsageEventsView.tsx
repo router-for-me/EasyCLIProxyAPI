@@ -1,10 +1,11 @@
 import { EmptyState } from '../components/EmptyState';
+import { scrollEdges } from '../components/scrollEdges';
 import { Checkbox } from '../components/Checkbox';
 import { Switch } from '../components/Switch';
 import { getUsageEvents, saveUsageEventsExport } from '../services/usage';
 import type { UsageEventPage, UsageRecord, UsageEventQuery } from '../services/usage';
 import { usagePreferences } from '../services/usagePreferences';
-import { Fragment, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { save } from '../services/platform';
 import { ArrowDown, ArrowUp, Brain, ChevronLeft, ChevronRight, Columns3, Copy, Database, DatabaseZap, Download, RotateCcw, TriangleAlert, X } from 'lucide-react';
 import { FloatingNotice, useAppNotice } from '../appNotice';
@@ -497,6 +498,12 @@ export function EventsView({
   };
 
   const tableWrapRef = useRef<HTMLDivElement | null>(null);
+  // Stable callback ref: attaches the edge shadow once per element, not on every render, and clears tableWrapRef on unmount.
+  const tableWrapCallback = useCallback((element: HTMLDivElement | null) => {
+    tableWrapRef.current = element;
+    const stop = scrollEdges(element);
+    return () => { stop?.(); tableWrapRef.current = null; };
+  }, []);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => () => resizeCleanupRef.current?.(), []);
 
@@ -702,7 +709,7 @@ export function EventsView({
     <section className={`panel usage-events-panel usage-request-log${isCompactDefault ? ' usage-events-compact' : ''}${collapseErrors ? '' : ' usage-events-errors-expanded'}`} aria-label={t('usage.events.title')} aria-busy={loading}>
       <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
       {loading && events.items.length === 0 ? <EmptyState className="usage-empty" role="status" icon={<Database size={20} />}>{t('usage.loading')}</EmptyState> : events.items.length ? (
-        <div ref={tableWrapRef} className="usage-table-wrap" tabIndex={0} role="region" aria-label={t('usage.events.title')}>
+        <div ref={tableWrapCallback} className="usage-table-wrap" tabIndex={0} role="region" aria-label={t('usage.events.title')}>
           <table
             className="usage-events-table"
             style={{ width: `${totalTableWidth}px` }}
