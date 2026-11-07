@@ -1,7 +1,10 @@
-type GenerationSpeedInput = {
+export type GenerationSpeedMode = 'total' | 'ttft';
+
+export type GenerationSpeedInput = {
   outputTokens: number;
   latencyMs: number;
   ttftMs?: number | null;
+  mode?: GenerationSpeedMode;
 };
 
 type CacheReadRateInput = {
@@ -49,6 +52,7 @@ export const calculateGenerationSpeed = ({
   outputTokens,
   latencyMs,
   ttftMs,
+  mode = 'total',
 }: GenerationSpeedInput): number | null => {
   if (
     !Number.isFinite(outputTokens) ||
@@ -59,14 +63,16 @@ export const calculateGenerationSpeed = ({
     return null;
   }
 
-  const generationMs =
-    ttftMs != null && Number.isFinite(ttftMs) && ttftMs > 0 && latencyMs > ttftMs
+  const durationMs =
+    mode === 'ttft' && ttftMs != null && Number.isFinite(ttftMs) && ttftMs > 0 && latencyMs > ttftMs
       ? latencyMs - ttftMs
       : latencyMs;
-  if (generationMs < SPEED_MIN_GENERATION_MS) {
+
+  if (mode === 'ttft' && durationMs < SPEED_MIN_GENERATION_MS) {
     return null;
   }
-  const speed = outputTokens / (generationMs / 1_000);
+
+  const speed = outputTokens / (durationMs / 1_000);
   return Number.isFinite(speed) && speed > 0 ? speed : null;
 };
 
@@ -89,5 +95,5 @@ export const calculateCacheReadRate = ({
 
 export const formatCacheReadRate = (input: CacheReadRateInput): string => {
   const rate = calculateCacheReadRate(input);
-  return rate === null ? '—' : `${rate.toFixed(2)}%`;
+  return rate === null ? '—' : rate.toFixed(2) + '%';
 };
