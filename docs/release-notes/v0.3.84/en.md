@@ -1,6 +1,4 @@
-This release makes credential model exclusions stop living in separate silos. Previously a rule edited on one credential only affected that file, and provider-wide rules frequently contradicted per-credential ones. Saving now also synchronizes to every credential of the provider when you ask for it, and models blocked by a provider rule are labelled with the rule that excludes them.
-
-If you hit problems, tell us on [Discord](https://discord.gg/your-discord-invite) or open an issue on [GitHub](https://github.com/router-for-me/EasyCLIProxyAPI/issues).
+- If you have any questions or suggestions about the software, please reach us through the [QQ group](https://qm.qq.com/q/3queDaIG) or [GitHub Issues](https://github.com/router-for-me/EasyCLIProxyAPI/issues) and we will get back to you as soon as possible.
 
 ## Improved
 

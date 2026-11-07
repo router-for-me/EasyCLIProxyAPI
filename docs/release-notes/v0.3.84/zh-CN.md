@@ -1,6 +1,4 @@
-这个版本让凭证的模型排除规则不再各管一段：以前在凭证上改的排除项只在那一份凭证生效，提供商级规则和单个凭证之间经常打架。现在保存时会按你的选择同步到该提供商的全部凭证，被提供商规则挡掉的模型也会在列表里直接标注生效的规则。
-
-如果你在使用中遇到问题，请通过 [QQ群](https://qm.qq.com/q/3queDaIG) 或 [GitHub Issues](https://github.com/router-for-me/EasyCLIProxyAPI/issues) 反馈，我们会尽快处理。
+- 关于软件，如果您有任何问题或建议，请通过 [QQ群](https://qm.qq.com/q/3queDaIG) 或 [GitHub Issues](https://github.com/router-for-me/EasyCLIProxyAPI/issues) 反馈，我们会尽快处理。
 
 ## 优化
 
