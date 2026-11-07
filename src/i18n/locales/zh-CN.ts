@@ -2462,6 +2462,7 @@ export const zhCN: Record<string, string> = {
   'ecpaPlugins.updateAvailable': '可更新',
   'ecpaPlugins.updateTo': '可更新至 {version}',
   'ecpaPlugins.installing': '安装中',
+  'ecpaPlugins.sourceSwitch': '正在替换由其他插件源安装的副本',
   'ecpaPlugins.loadingStore': '正在加载插件列表…',
   'ecpaPlugins.installUnavailable.unsupported': '当前内核不支持插件安装',
   'ecpaPlugins.installUnavailable.sourceNotRegistered': 'ECPA 插件源暂不可用，请查看上方错误信息',

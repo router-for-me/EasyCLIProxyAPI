@@ -87,6 +87,9 @@ export function EcpaPluginsPage() {
   // A fallback install retried after source registration has no open dialog, so
   // its own state keeps the other cards disabled until it settles.
   const [installRetryId, setInstallRetryId] = useState('');
+  // A source-conflict retry removes the previously installed copy first, so its
+  // card names that step while the install runs again.
+  const [sourceSwitchId, setSourceSwitchId] = useState('');
   const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
   const [restartRequired, setRestartRequired] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -94,6 +97,9 @@ export function EcpaPluginsPage() {
   // The dialog installs a synthesized entry when the store listing had none. A
   // source registration retry is only attempted for that fallback path.
   const installSynthesized = useRef(false);
+  // A source conflict retry must repeat the requested action, so an update keeps
+  // asking for the entry version instead of falling back to the latest build.
+  const installAsUpdate = useRef(false);
   // Installs confirmed in this session stay authoritative until the store list
   // catches up, so a stale store report cannot regress a card to install.
   const confirmedInstalls = useRef(new Map<string, string>());
@@ -216,6 +222,7 @@ export function EcpaPluginsPage() {
 
   const installed = async (result: PluginStoreInstallResult) => {
     installSynthesized.current = false;
+    installAsUpdate.current = false;
     setInstallEntry(null);
     if (result.restartRequired) setRestartRequired(true);
     const installedVersion = result.version || resolveEcpaStoreEntry(storeEntries, result.id)?.installedVersion
@@ -228,11 +235,60 @@ export function EcpaPluginsPage() {
     try { await reloadStore(); }
     catch (reason) { if (mounted.current) setStoreError(String(reason)); }
   };
+  // A conflict means the plugin is already installed from a different store
+  // source. The owner decided the existing copy is removed and the requested
+  // install or update continues, without a manual step in between.
+  const handleSourceConflict = async (entry: PluginStoreEntry, error: string): Promise<boolean> => {
+    const surface = (message: string) => setInstallErrors(previous => ({ ...previous, [entry.id]: message }));
+    if (!error.includes('plugin_store_source_conflict')) return false;
+    // The dialog belongs to the failed attempt: close it and let the card carry
+    // the progress through the existing retry state.
+    installSynthesized.current = false;
+    setInstallEntry(null);
+    setInstallRetryId(entry.id);
+    setSourceSwitchId(entry.id);
+    surface('');
+    let removedRestartRequired = false;
+    try {
+      const removal = await pluginsApi.deletePlugin(entry.id);
+      removedRestartRequired = removal.restartRequired;
+      // The listing still reports the removed copy, so re-read it before the
+      // retry to keep the source switch installable.
+      try {
+        applyStoreResult(await pluginStoreApi.list(), storeSeq.current);
+      } catch {
+        // A failed refresh keeps the previous listing; the retry still decides.
+      }
+      const result = await pluginStoreApi.install(entry.id, {
+        sourceId: entry.sourceId,
+        ...(installAsUpdate.current ? { version: entry.version } : {}),
+      });
+      if (removedRestartRequired || result.restartRequired) {
+        // One notice only, after the reinstall settled.
+        if (mounted.current) setRestartRequired(true);
+      }
+      if (mounted.current) await installed(result);
+    } catch (reason) {
+      if (mounted.current) surface(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      if (mounted.current) {
+        setInstallRetryId('');
+        setSourceSwitchId('');
+      }
+    }
+    return true;
+  };
   // A synthesized entry can name a source identity the core has not registered
   // yet. Register it once and retry the install; a second failure is reported
   // in the card notice instead of silently doing nothing.
   const handleInstallError = async (entry: PluginStoreEntry, error: string) => {
     const surface = (message: string) => setInstallErrors(previous => ({ ...previous, [entry.id]: message }));
+    // A source conflict also happens for a real store entry, so it is handled
+    // before the synthesized-entry gate.
+    if (error.includes('plugin_store_source_conflict')) {
+      await handleSourceConflict(entry, error);
+      return;
+    }
     if (!installSynthesized.current
       || (!error.includes('plugin_store_registry_failed') && !error.includes('plugin_store_source'))) {
       surface(error);
@@ -484,6 +540,9 @@ export function EcpaPluginsPage() {
               ? synthesizeEcpaStoreEntry(plugin)
               : undefined);
             const isInstalling = installEntry?.id === plugin.id || installRetryId === plugin.id;
+            // A source-conflict retry removes the copy installed from the other
+            // source first, so the card names that step instead of looking idle.
+            const isSwitchingSource = isInstalling && sourceSwitchId === plugin.id;
             // An install confirmed in this session renders as installed even when
             // the store list still reports it as missing.
             const confirmedVersion = confirmedInstalls.current.get(plugin.id);
@@ -611,10 +670,11 @@ export function EcpaPluginsPage() {
                           onClick={() => {
                             if (!entry) return;
                             installSynthesized.current = !listedEntry;
+                            installAsUpdate.current = true;
                             setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
                             setInstallEntry(entry);
                           }}>
-                          {t(isInstalling ? 'ecpaPlugins.installing' : 'ecpaPlugins.update')}
+                          {t(isSwitchingSource ? 'ecpaPlugins.sourceSwitch' : isInstalling ? 'ecpaPlugins.installing' : 'ecpaPlugins.update')}
                         </button>
                       ) : null}
                     </>
@@ -625,10 +685,11 @@ export function EcpaPluginsPage() {
                       onClick={() => {
                         if (!entry) return;
                         installSynthesized.current = !listedEntry;
+                        installAsUpdate.current = false;
                         setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
                         setInstallEntry(entry);
                       }}>
-                      {t(storePending ? 'ecpaPlugins.loadingStore' : isInstalling ? 'ecpaPlugins.installing' : 'ecpaPlugins.install')}
+                      {t(storePending ? 'ecpaPlugins.loadingStore' : isSwitchingSource ? 'ecpaPlugins.sourceSwitch' : isInstalling ? 'ecpaPlugins.installing' : 'ecpaPlugins.install')}
                     </button>
                   )}
                 </div>
@@ -655,7 +716,7 @@ export function EcpaPluginsPage() {
         />
       )}
       {installEntry && <PluginInstallDialog key={installEntry.storeId} entry={installEntry}
-        onClose={() => { installSynthesized.current = false; setInstallEntry(null); }} onInstalled={installed}
+        onClose={() => { installSynthesized.current = false; installAsUpdate.current = false; setInstallEntry(null); }} onInstalled={installed}
         onError={error => void handleInstallError(installEntry, error)} />}
       {confirmationDialog}
     </div>

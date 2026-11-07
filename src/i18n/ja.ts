@@ -2463,6 +2463,7 @@ export const jaOverrides = {
   'ecpaPlugins.updateAvailable': '更新あり',
   'ecpaPlugins.updateTo': '{version} に更新できます',
   'ecpaPlugins.installing': 'インストール中',
+  'ecpaPlugins.sourceSwitch': '別のソースからインストールされたコピーを置き換えています',
   'ecpaPlugins.loadingStore': 'プラグイン一覧を読み込み中…',
   'ecpaPlugins.installUnavailable.unsupported': 'このコアはプラグインのインストールに対応していません',
   'ecpaPlugins.installUnavailable.sourceNotRegistered': 'ECPA プラグインソースを利用できません。上のエラーを確認してください',
