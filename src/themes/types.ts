@@ -56,7 +56,7 @@ export type ThemeSelection = {
 export const isThemeId = (value: unknown): value is string =>
   typeof value === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(value);
 
-const themeLabelLocales: readonly AppLocale[] = ['zh-CN', 'zh-TW', 'ja', 'en'];
+const themeLabelLocales: readonly AppLocale[] = ['zh-CN', 'zh-TW', 'ja', 'en', 'ru'];
 const isLabelText = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0 && value.length <= 80;
 

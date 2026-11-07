@@ -56,6 +56,7 @@ fn app_locale_normalization_has_a_stable_english_fallback() {
     assert_eq!(normalize_app_locale("en"), "en");
     assert_eq!(normalize_app_locale("en-US"), "en");
     assert_eq!(normalize_app_locale("ja-JP"), "ja");
+    assert_eq!(normalize_app_locale("ru-RU"), "ru");
     assert_eq!(normalize_app_locale("zh-TW"), "zh-TW");
     assert_eq!(normalize_app_locale("zh-Hant-HK"), "zh-TW");
     assert_eq!(normalize_app_locale("unsupported"), "en");
