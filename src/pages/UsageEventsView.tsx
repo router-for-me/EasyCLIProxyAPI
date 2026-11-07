@@ -446,11 +446,14 @@ function UsageEventCell({
       );
     }
     case 'speed': {
-      const value = formatGenerationSpeed({
-        outputTokens: record.tokens.output_tokens,
-        latencyMs: record.latency_ms,
-        ttftMs: record.ttft_ms,
-      });
+      const value =
+        record.failed || record.canceled
+          ? '—'
+          : formatGenerationSpeed({
+              outputTokens: record.tokens.output_tokens,
+              latencyMs: record.latency_ms,
+              ttftMs: record.ttft_ms,
+            });
       return <td className="usage-td-speed align-left" title={value === '—' ? undefined : value}>{value}</td>;
     }
   }

@@ -21,6 +21,17 @@ describe('generation speed', () => {
     expect(formatGenerationSpeed({ outputTokens: 790, latencyMs: 13_700, ttftMs: 9_890 })).toBe('207.3 t/s');
   });
 
+  test('returns an em dash below the output or generation-window floor', () => {
+    // 99 output tokens over 200 ms would otherwise read 495 t/s.
+    expect(calculateGenerationSpeed({ outputTokens: 99, latencyMs: 1_000, ttftMs: 800 })).toBeNull();
+    expect(formatGenerationSpeed({ outputTokens: 99, latencyMs: 1_000, ttftMs: 800 })).toBe('—');
+    // Exact 100-token floor still counts.
+    expect(calculateGenerationSpeed({ outputTokens: 100, latencyMs: 1_000, ttftMs: 800 })).toBeCloseTo(500, 4);
+    // A burst window shorter than 100 ms tells no speed.
+    expect(calculateGenerationSpeed({ outputTokens: 500, latencyMs: 1_060, ttftMs: 1_000 })).toBeNull();
+    expect(calculateGenerationSpeed({ outputTokens: 500, latencyMs: 1_100, ttftMs: 1_000 })).toBeCloseTo(5_000, 4);
+  });
+
   test('falls back to total latency when TTFT is zero, null, or not less than elapsed latency', () => {
     expect(formatGenerationSpeed({ outputTokens: 344, latencyMs: 10_600, ttftMs: 0 })).toBe('32.5 t/s');
     expect(formatGenerationSpeed({ outputTokens: 344, latencyMs: 10_600, ttftMs: null })).toBe('32.5 t/s');

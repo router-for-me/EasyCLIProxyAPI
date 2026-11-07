@@ -37,6 +37,14 @@ export const calculateTokenComposition = (tokens: {
   return { total, segments, cacheShare: total > 0 ? cacheRead / total * 100 : 0 };
 };
 
+/** Least output tokens a request must have to tell a generation speed by. */
+export const SPEED_MIN_OUTPUT_TOKENS = 100;
+
+/** Least generation window (latency - TTFT) a request must have: below it the
+ *  elapsed time is a transport burst, not writing. Same rule as cc-switch and
+ *  cockpit-tools. */
+export const SPEED_MIN_GENERATION_MS = 100;
+
 export const calculateGenerationSpeed = ({
   outputTokens,
   latencyMs,
@@ -45,7 +53,7 @@ export const calculateGenerationSpeed = ({
   if (
     !Number.isFinite(outputTokens) ||
     !Number.isFinite(latencyMs) ||
-    outputTokens <= 0 ||
+    outputTokens < SPEED_MIN_OUTPUT_TOKENS ||
     latencyMs <= 0
   ) {
     return null;
@@ -55,6 +63,9 @@ export const calculateGenerationSpeed = ({
     ttftMs != null && Number.isFinite(ttftMs) && ttftMs > 0 && latencyMs > ttftMs
       ? latencyMs - ttftMs
       : latencyMs;
+  if (generationMs < SPEED_MIN_GENERATION_MS) {
+    return null;
+  }
   const speed = outputTokens / (generationMs / 1_000);
   return Number.isFinite(speed) && speed > 0 ? speed : null;
 };
