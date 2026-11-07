@@ -3905,6 +3905,9 @@ textarea:focus-visible {
 .provider-health-overview p {
   min-width: 0;
   color: var(--color-warning-text);
+  word-break: normal;
+  overflow-wrap: break-word;
+  line-break: normal;
 }
 
 .provider-health-overview span {
