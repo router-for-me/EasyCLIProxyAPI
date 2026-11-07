@@ -31,6 +31,48 @@ import './EcpaPluginsPage.css';
 const COPY_FEEDBACK_MS = 1500;
 const ALL_TAG = '';
 
+// The registry entry may carry an auth flag even though the bundled parser does
+// not surface it. Read it defensively so a synthesized store entry matches the
+// fields the core listing would expose.
+type InstallableEcpaPlugin = EcpaPluginEntry & { authRequired?: boolean };
+
+// When the management store listing is unavailable, the featured registry the
+// page already holds is enough to present and start an install. The entry uses
+// the real listing's field names so the install dialog and store API accept it.
+function synthesizeEcpaStoreEntry(plugin: InstallableEcpaPlugin): PluginStoreEntry {
+  return {
+    storeId: `${ECPA_REGISTRY_URL}#${plugin.id}`,
+    sourceId: ECPA_REGISTRY_URL,
+    sourceName: 'ECPA',
+    sourceUrl: ECPA_REGISTRY_URL,
+    id: plugin.id,
+    name: plugin.name,
+    description: plugin.description,
+    author: plugin.author,
+    version: plugin.version,
+    repository: plugin.repository,
+    installType: plugin.install?.type ?? '',
+    authRequired: plugin.authRequired ?? false,
+    authConfigured: true,
+    platforms: [],
+    logo: plugin.logo,
+    homepage: plugin.homepage,
+    license: plugin.license,
+    tags: plugin.tags,
+    locales: plugin.locales,
+    installed: false,
+    installedVersion: '',
+    installedSourceId: '',
+    installSourceStatus: '',
+    path: '',
+    configured: false,
+    registered: false,
+    enabled: false,
+    effectiveEnabled: false,
+    updateAvailable: false,
+  };
+}
+
 export function EcpaPluginsPage() {
   const { t, locale } = useI18n();
   const { askConfirmation, confirmationDialog } = useConfirmation();
@@ -42,10 +84,16 @@ export function EcpaPluginsPage() {
   const [storeEntries, setStoreEntries] = useState(new Map<string, PluginStoreEntry>());
   const [storeError, setStoreError] = useState('');
   const [installEntry, setInstallEntry] = useState<PluginStoreEntry | null>(null);
+  // A fallback install retried after source registration has no open dialog, so
+  // its own state keeps the other cards disabled until it settles.
+  const [installRetryId, setInstallRetryId] = useState('');
   const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
   const [restartRequired, setRestartRequired] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const mounted = useRef(false);
+  // The dialog installs a synthesized entry when the store listing had none. A
+  // source registration retry is only attempted for that fallback path.
+  const installSynthesized = useRef(false);
   // Installs confirmed in this session stay authoritative until the store list
   // catches up, so a stale store report cannot regress a card to install.
   const confirmedInstalls = useRef(new Map<string, string>());
@@ -167,6 +215,7 @@ export function EcpaPluginsPage() {
   }, []);
 
   const installed = async (result: PluginStoreInstallResult) => {
+    installSynthesized.current = false;
     setInstallEntry(null);
     if (result.restartRequired) setRestartRequired(true);
     const installedVersion = result.version || resolveEcpaStoreEntry(storeEntries, result.id)?.installedVersion
@@ -178,6 +227,38 @@ export function EcpaPluginsPage() {
         : entry)));
     try { await reloadStore(); }
     catch (reason) { if (mounted.current) setStoreError(String(reason)); }
+  };
+  // A synthesized entry can name a source identity the core has not registered
+  // yet. Register it once and retry the install; a second failure is reported
+  // in the card notice instead of silently doing nothing.
+  const handleInstallError = async (entry: PluginStoreEntry, error: string) => {
+    const surface = (message: string) => setInstallErrors(previous => ({ ...previous, [entry.id]: message }));
+    if (!installSynthesized.current
+      || (!error.includes('plugin_store_registry_failed') && !error.includes('plugin_store_source'))) {
+      surface(error);
+      return;
+    }
+    // The fallback entry was rejected because its source is not registered yet.
+    // Close the dialog, register the source, and retry once from the card notice.
+    installSynthesized.current = false;
+    setInstallEntry(null);
+    setInstallRetryId(entry.id);
+    surface('');
+    try {
+      const settings = await pluginsApi.getSettings();
+      await pluginsApi.updateSettings({
+        storeSources: settings.storeSources.includes(ECPA_REGISTRY_URL)
+          ? settings.storeSources
+          : [...settings.storeSources, ECPA_REGISTRY_URL],
+      });
+      if (mounted.current) setRegistered(true);
+      const result = await pluginStoreApi.install(entry.id, { sourceId: entry.sourceId });
+      if (mounted.current) await installed(result);
+    } catch (reason) {
+      if (mounted.current) surface(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      if (mounted.current) setInstallRetryId('');
+    }
   };
   const [plugins, setPlugins] = useState<EcpaPluginEntry[]>(() => getBundledEcpaRegistry().plugins);
   // A token previously entered here still applies; new tokens are configured in
@@ -390,19 +471,30 @@ export function EcpaPluginsPage() {
             const description = getEcpaPluginDescription(plugin, locale);
             const isCopied = copiedId === plugin.id;
             const repoUrl = safePluginWebURL(plugin.repository);
-            const entry = resolveEcpaStoreEntry(storeEntries, plugin.id);
-            const isInstalling = installEntry?.id === plugin.id;
+            const listedEntry = resolveEcpaStoreEntry(storeEntries, plugin.id);
+            // Once the store list has settled, an installable registry plugin may fall
+            // back to an entry synthesized from the registry itself as soon as source
+            // registration was at least attempted. A store listing error also enables
+            // the fallback and stays visible in the notice above: the button is the
+            // user's retry path that registers the source. A core without plugin
+            // support keeps the card in its existing state.
+            const canSynthesize = storeLoaded && supported !== false
+              && (registered !== null || Boolean(storeError));
+            const entry = listedEntry ?? (canSynthesize && isInstallableEcpaEntry(plugin)
+              ? synthesizeEcpaStoreEntry(plugin)
+              : undefined);
+            const isInstalling = installEntry?.id === plugin.id || installRetryId === plugin.id;
             // An install confirmed in this session renders as installed even when
             // the store list still reports it as missing.
             const confirmedVersion = confirmedInstalls.current.get(plugin.id);
             const isInstalled = entry?.installed === true || confirmedVersion !== undefined;
             const installedVersion = entry?.installed ? entry.installedVersion : confirmedVersion;
             const hasUpdate = isInstalled && isStoreUpdateAvailable(installedVersion, entry?.version);
-            // Only a listed entry gates install. The support check and the source
-            // registration still run in the background, so a listed entry enables
-            // its button as soon as the list arrives. The operation in progress is
+            // An installed entry from the listing or a synthesized fallback entry is
+            // what gates install. Without either, the settled state names a reason
+            // instead of offering a silent grey button. The operation in progress is
             // the one other reason a click is not offered right now.
-            const actionBusy = installEntry !== null;
+            const actionBusy = installEntry !== null || Boolean(installRetryId);
             // `null` keeps the card neutral while the store list is still in
             // flight; every settled case names a reason so a button is never
             // silently grey.
@@ -412,7 +504,7 @@ export function EcpaPluginsPage() {
               if (!isInstallableEcpaEntry(plugin)) unavailable = t('ecpaPlugins.installUnavailable.noRepository');
               else if (supported === false) unavailable = t('ecpaPlugins.installUnavailable.unsupported');
               else if (registered === false) unavailable = t('ecpaPlugins.installUnavailable.sourceNotRegistered');
-              else if (!storeLoaded) waiting = t('ecpaPlugins.loadingStore');
+              else if (!storeLoaded || registered === null) waiting = t('ecpaPlugins.loadingStore');
               else if (storeError) unavailable = storeError;
               else unavailable = t('ecpaPlugins.installUnavailable.notFound');
             }
@@ -518,6 +610,7 @@ export function EcpaPluginsPage() {
                           title={!entry ? unavailable : undefined}
                           onClick={() => {
                             if (!entry) return;
+                            installSynthesized.current = !listedEntry;
                             setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
                             setInstallEntry(entry);
                           }}>
@@ -531,6 +624,7 @@ export function EcpaPluginsPage() {
                       title={entry ? undefined : waiting || unavailable}
                       onClick={() => {
                         if (!entry) return;
+                        installSynthesized.current = !listedEntry;
                         setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
                         setInstallEntry(entry);
                       }}>
@@ -561,8 +655,8 @@ export function EcpaPluginsPage() {
         />
       )}
       {installEntry && <PluginInstallDialog key={installEntry.storeId} entry={installEntry}
-        onClose={() => setInstallEntry(null)} onInstalled={installed}
-        onError={error => setInstallErrors(previous => ({ ...previous, [installEntry.id]: error }))} />}
+        onClose={() => { installSynthesized.current = false; setInstallEntry(null); }} onInstalled={installed}
+        onError={error => void handleInstallError(installEntry, error)} />}
       {confirmationDialog}
     </div>
   );
