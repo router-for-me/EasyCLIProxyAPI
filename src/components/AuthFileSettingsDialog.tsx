@@ -7,7 +7,8 @@ import { managementApi } from '../services/managementApi';
 import { loadAuthFileSettings, saveAuthFileSettings, type AuthFileSettingsDraft, type BooleanOverride } from '../services/authFileSettings';
 import { normalizeAuthFileTags } from '../services/authFiles';
 import { parseCredentialTagInput } from '../services/credentialTags';
-import { modelMatchesRule, normalizeOAuthExcludedRules, oauthModelCandidates, oauthModelsFromPayload, setOAuthModelsExcluded, type OAuthModelDefinition } from '../services/oauthModels';
+import { modelMatchesRule, normalizeOAuthExcludedRules, oauthModelCandidates, oauthModelsFromPayload, setOAuthModelsExcluded, oauthExcludedRulesFromPayload, type OAuthModelDefinition } from '../services/oauthModels';
+import { saveOAuthProviderExclusions, syncOAuthProviderExclusionsToCredentials } from '../services/oauthModelSettings';
 import './AuthFileSettingsDialog.css';
 import { Dialog } from './Dialog';
 import { CredentialAdvancedFields, CredentialHeadersEditor, credentialProviderKey } from './CredentialAdvancedFields';
@@ -40,6 +41,8 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
   const [attempt, setAttempt] = useState(0);
   const [tagInput, setTagInput] = useState('');
   const [tagSearch, setTagSearch] = useState('');
+  const [globalExcludedRules, setGlobalExcludedRules] = useState<string[]>([]);
+  const [syncToAll, setSyncToAll] = useState(false);
   const dirty = draft !== null && (Boolean(tagInput.trim()) || Boolean(draft.normalizeCloakMetadata?.length) || JSON.stringify(draft) !== JSON.stringify(original));
 
   useEffect(() => {
@@ -90,8 +93,9 @@ export function AuthFileSettingsDialog({ name, displayName = name, provider = ''
     }
   };
   const rules = normalizeOAuthExcludedRules((draft?.excluded_models ?? '').split(/\r?\n/));
+  const effectiveRules = normalizeOAuthExcludedRules([...rules, ...globalExcludedRules]);
   const query = search.trim().toLowerCase();
-  const candidates = oauthModelCandidates(models, rules).filter((model) => modelSearchText({ name: model.id, displayName: model.displayName }).includes(query));
+  const candidates = oauthModelCandidates(models, effectiveRules).filter((model) => modelSearchText({ name: model.id, displayName: model.displayName }).includes(query));
   const currentTags = normalizeAuthFileTags((draft?.tags ?? '').split(','));
   const availablePoolTags = existingTags.filter(tag => !currentTags.includes(tag) && tag.toLocaleLowerCase().includes(tagSearch.trim().toLocaleLowerCase()));
 
