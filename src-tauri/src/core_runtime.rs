@@ -2,10 +2,6 @@ use super::*;
 
 pub(crate) static CORE_OPERATION_LOCK: Mutex<()> = Mutex::new(());
 const BUNDLED_CORE_HANDLED_VERSION_FILE: &str = "cpa-gui-bundled-core-handled.txt";
-/// Hard ceiling for a kernel start: reported as a timeout once exceeded.
-pub(crate) const CORE_STARTUP_MAX_WAIT: Duration = Duration::from_secs(120);
-/// Probes that fail without ANY forward progress before we declare a hang.
-const CORE_STARTUP_STALL_PROBES: u32 = 600;
 
 pub(crate) fn lock_core_operation(
     process_state: &CoreProcessState,
@@ -1694,18 +1690,12 @@ fn core_management_address(listen_host: &str, port: u16) -> Result<SocketAddr, S
     Ok(SocketAddr::new(ip, port))
 }
 
+#[derive(Debug)]
 pub(crate) enum CoreStartupFailure {
     ShuttingDown,
     Exited(std::process::ExitStatus),
     Spawn(String),
     StatusCheck(io::Error),
-    TimedOut(u16),
-    Stalled(u16),
-}
-
-pub(crate) struct CoreStartupProgressFailure {
-    failure: CoreStartupFailure,
-    last_activity: Instant,
 }
 
 impl CoreStartupFailure {
@@ -1732,15 +1722,6 @@ impl std::fmt::Display for CoreStartupFailure {
             Self::Exited(status) => write!(formatter, "CPA kernel exited immediately after startup: {status}"),
             Self::Spawn(error) => formatter.write_str(error),
             Self::StatusCheck(error) => write!(formatter, "Failed to check CPA kernel startup status: {error}"),
-            Self::TimedOut(port) => write!(
-                formatter,
-                "CPA kernel startup timed out: management port {port} was not listening within {} seconds",
-                CORE_STARTUP_MAX_WAIT.as_secs()
-            ),
-            Self::Stalled(port) => write!(
-                formatter,
-                "CPA kernel startup stalled: management port {port} never became ready and the kernel reported no new activity"
-            ),
         }
     }
 }
@@ -1780,7 +1761,6 @@ fn core_start_error_with_log(error: &str, log_path: &Path, log_error: Option<&st
 struct CoreStartAttemptFailure {
     failure: CoreStartupFailure,
     log_error: Option<String>,
-    last_activity: Instant,
 }
 
 impl CoreStartAttemptFailure {
@@ -1794,16 +1774,10 @@ impl CoreStartAttemptFailure {
     }
 
     fn message_with_detail(&self, log_path: &Path, detail: Option<&str>) -> String {
-        let mut error = match detail {
+        let error = match detail {
             Some(detail) => format!("{}；{detail}", self.failure),
             None => self.failure.to_string(),
         };
-        if matches!(self.failure, CoreStartupFailure::Stalled(_)) {
-            error.push_str(&format!(
-                "; last kernel activity {}s ago",
-                self.last_activity.elapsed().as_secs()
-            ));
-        }
         core_start_error_with_log(&error, log_path, self.log_error.as_deref())
     }
 }
@@ -1816,9 +1790,6 @@ fn start_core_process_once(
     log_path: &Path,
     management_address: SocketAddr,
 ) -> Result<CoreChild, CoreStartAttemptFailure> {
-    #[cfg(test)]
-    use startup_progress::wait_for_core_management_port;
-
     let mut command = Command::new(binary_path);
     command
         .args(["-config", config_path])
@@ -1852,21 +1823,16 @@ fn start_core_process_once(
             return Err(CoreStartAttemptFailure {
                 failure: CoreStartupFailure::Spawn(error),
                 log_error,
-                last_activity: Instant::now(),
             });
         }
     };
-    match wait_for_core_management_port(&mut child, management_address, process_state, log_path) {
+    match wait_for_core_management_port(&mut child, management_address, process_state) {
         Ok(()) => Ok(child),
-        Err(progress) => {
-            if !progress.failure.child_has_exited() {
+        Err(failure) => {
+            if !failure.child_has_exited() {
                 let _ = terminate_child(&mut child);
             }
-            Err(CoreStartAttemptFailure {
-                failure: progress.failure,
-                log_error,
-                last_activity: progress.last_activity,
-            })
+            Err(CoreStartAttemptFailure { failure, log_error })
         }
     }
 }
@@ -1973,113 +1939,32 @@ pub(crate) fn retry_core_operation<T, E>(
     operation()
 }
 
-#[cfg(not(test))]
-pub(crate) use startup_progress::wait_for_core_management_port;
-
-#[cfg(test)]
 pub(crate) fn wait_for_core_management_port(
     child: &mut Child,
     address: SocketAddr,
     process_state: &CoreProcessState,
 ) -> Result<(), CoreStartupFailure> {
-    startup_progress::wait_for_core_management_port(
-        child,
-        address,
-        process_state,
-        &std::env::temp_dir().join(format!("cpa-core-startup-{}.log", std::process::id())),
-    )
-    .map_err(|progress| progress.failure)
-}
-
-mod startup_progress {
-    use super::*;
-
-    pub(crate) fn wait_for_core_management_port(
-        child: &mut Child,
-        address: SocketAddr,
-        process_state: &CoreProcessState,
-        log_path: &Path,
-    ) -> Result<(), CoreStartupProgressFailure> {
-        let started = Instant::now();
-        let mut last_activity = started;
-        let mut last_log_activity = core_log_activity(log_path);
-        let mut stalled_probes: u32 = 0;
-        loop {
-            if process_state.is_shutting_down() {
-                return Err(CoreStartupProgressFailure {
-                    failure: CoreStartupFailure::ShuttingDown,
-                    last_activity,
-                });
-            }
-            if let Some(status) = child.try_wait().map_err(|error| CoreStartupProgressFailure {
-                failure: CoreStartupFailure::StatusCheck(error),
-                last_activity,
-            })? {
-                return Err(CoreStartupProgressFailure {
-                    failure: CoreStartupFailure::Exited(status),
-                    last_activity,
-                });
-            }
-            if TcpStream::connect_timeout(&address, Duration::from_millis(200)).is_ok() {
-                return Ok(());
-            }
-            let log_activity = core_log_activity(log_path);
-            if log_activity.is_some() && log_activity != last_log_activity {
-                last_log_activity = log_activity;
-                last_activity = Instant::now();
-                stalled_probes = 0;
-            } else {
-                stalled_probes += 1;
-            }
-            if started.elapsed() >= CORE_STARTUP_MAX_WAIT {
-                return Err(CoreStartupProgressFailure {
-                    failure: CoreStartupFailure::TimedOut(address.port()),
-                    last_activity,
-                });
-            }
-            if stalled_probes >= CORE_STARTUP_STALL_PROBES {
-                return Err(CoreStartupProgressFailure {
-                    failure: CoreStartupFailure::Stalled(address.port()),
-                    last_activity,
-                });
-            }
-            thread::sleep(Duration::from_millis(100));
+    // Readiness is reported by the kernel itself: keep waiting while the process is alive.
+    // Only an exit, a failed status check, or application shutdown aborts the wait.
+    loop {
+        if process_state.is_shutting_down() {
+            return Err(CoreStartupFailure::ShuttingDown);
         }
+        if let Some(status) = child.try_wait().map_err(CoreStartupFailure::StatusCheck)? {
+            return Err(CoreStartupFailure::Exited(status));
+        }
+        if TcpStream::connect_timeout(&address, Duration::from_millis(200)).is_ok() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(100));
     }
-}
-
-fn core_log_activity(log_path: &Path) -> Option<(u64, SystemTime)> {
-    let metadata = fs::metadata(log_path).ok()?;
-    let modified = metadata.modified().ok()?;
-    Some((metadata.len(), modified))
 }
 
 #[cfg(test)]
 mod core_startup_tests {
-    use super::startup_progress::wait_for_core_management_port;
     use super::*;
 
-    struct StartupLog {
-        path: PathBuf,
-    }
-
-    impl StartupLog {
-        fn new() -> Self {
-            Self {
-                path: std::env::temp_dir().join(format!(
-                    "cpa-core-startup-{}-{}.log",
-                    std::process::id(),
-                    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
-                )),
-            }
-        }
-    }
-
-    impl Drop for StartupLog {
-        fn drop(&mut self) {
-            let _ = fs::remove_file(&self.path);
-        }
-    }
+    const SLOW_STARTUP_DELAY: Duration = Duration::from_secs(14);
 
     #[test]
     #[ignore]
@@ -2087,67 +1972,26 @@ mod core_startup_tests {
         thread::sleep(Duration::from_secs(180));
     }
 
-    #[test]
-    fn core_startup_log_activity_tracks_growth_with_unchanged_modification_time() {
-        let log = StartupLog::new();
-        assert!(core_log_activity(&log.path).is_none());
-
-        fs::write(&log.path, "first activity\n").unwrap();
-        let previous = core_log_activity(&log.path).unwrap();
-        let mut file = File::options().append(true).open(&log.path).unwrap();
-        writeln!(file, "more activity").unwrap();
-        file.set_times(fs::FileTimes::new().set_modified(previous.1)).unwrap();
-        let current = core_log_activity(&log.path).unwrap();
-
-        assert!(current.0 > previous.0);
-        assert_eq!(current.1, previous.1);
-        assert_ne!(current, previous);
-    }
-
-    #[test]
-    fn core_startup_failure_messages_include_activity_only_for_stalls() {
-        let log = StartupLog::new();
-        let stalled = CoreStartAttemptFailure {
-            failure: CoreStartupFailure::Stalled(8317),
-            log_error: None,
-            last_activity: Instant::now() - Duration::from_secs(8),
-        };
-        let message = stalled.message_with_detail(&log.path, Some("extra detail"));
-        assert!(message.contains("CPA kernel startup stalled"));
-        assert!(message.contains("；extra detail; last kernel activity 8s ago"));
-        assert!(message.ends_with(&format!("; startup log: {}", path_to_string(&log.path))));
-        assert!(!stalled.failure.child_has_exited());
-
-        let timed_out = CoreStartAttemptFailure {
-            failure: CoreStartupFailure::TimedOut(8317),
-            log_error: Some("write denied".to_string()),
-            last_activity: Instant::now(),
-        };
-        assert_eq!(
-            timed_out.message_with_detail(&log.path, Some("extra detail")),
-            format!(
-                "CPA kernel startup timed out: management port 8317 was not listening within 120 seconds；extra detail; failed to write startup log {}: write denied",
-                path_to_string(&log.path)
-            )
-        );
-        assert!(!timed_out.failure.child_has_exited());
-    }
-
-    #[test]
-    fn exiting_during_core_startup_cancels_progress_wait_with_missing_log() {
-        let log = StartupLog::new();
-        let state = std::sync::Arc::new(CoreProcessState::new(true));
+    fn core_child_sleep_command() -> Command {
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
             .args([
                 "--ignored",
                 "--exact",
                 "core_runtime::core_startup_tests::core_startup_sleep_helper",
+                "--nocapture",
             ])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let mut child = spawn_core_child(command).unwrap();
+        command
+    }
+
+    #[test]
+    fn exiting_during_core_startup_cancels_the_port_wait() {
+        let state = std::sync::Arc::new(CoreProcessState::new(true));
+        let mut child = spawn_core_child(core_child_sleep_command()).unwrap();
+        let child_id = child.id();
         let exiting_state = state.clone();
         let exit = thread::spawn(move || {
             thread::sleep(Duration::from_millis(100));
@@ -2159,56 +2003,67 @@ mod core_startup_tests {
             &mut child,
             SocketAddr::from(([127, 0, 0, 1], 0)),
             &state,
-            &log.path,
         );
         drop(child);
         exit.join().unwrap();
-        assert!(matches!(
-            result,
-            Err(CoreStartupProgressFailure {
-                failure: CoreStartupFailure::ShuttingDown,
-                ..
-            })
-        ));
+
+        assert!(matches!(result, Err(CoreStartupFailure::ShuttingDown)));
         assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(!is_process_alive(child_id));
     }
 
-    #[cfg(unix)]
     #[test]
-    fn core_startup_keeps_waiting_while_the_kernel_log_grows() {
-        let log = StartupLog::new();
+    fn kernel_exit_during_startup_is_reported_without_waiting() {
         let state = CoreProcessState::new(false);
-        let mut command = Command::new("sh");
-        command
-            .args([
-                "-c",
-                "remaining=70; while [ \"$remaining\" -gt 0 ]; do printf 'startup progress\\n' >> \"$1\"; sleep 0.2; remaining=$((remaining - 1)); done; exec sleep 180",
-                "cpa-core-startup-test",
-            ])
-            .arg(&log.path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        let mut child = spawn_core_child(command).unwrap();
+        let mut child = spawn_core_child(core_child_sleep_command()).unwrap();
+        thread::sleep(Duration::from_millis(200));
+        terminate_child(&mut child).unwrap();
+
         let started = Instant::now();
         let result = wait_for_core_management_port(
             &mut child,
             SocketAddr::from(([127, 0, 0, 1], 0)),
             &state,
-            &log.path,
         );
-        drop(child);
 
-        let progress = result.unwrap_err();
-        assert!(matches!(
-            progress.failure,
-            CoreStartupFailure::Stalled(_) | CoreStartupFailure::TimedOut(_)
-        ));
-        assert!(started.elapsed() >= Duration::from_secs(11));
-        assert!(progress.last_activity.duration_since(started) >= Duration::from_secs(11));
-        if matches!(progress.failure, CoreStartupFailure::Stalled(_)) {
-            assert!(progress.last_activity.elapsed() >= Duration::from_secs(59));
-        }
+        assert!(matches!(result, Err(CoreStartupFailure::Exited(_))));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn slow_kernel_startup_keeps_waiting_until_the_kernel_is_ready() {
+        let state = std::sync::Arc::new(CoreProcessState::new(false));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+
+        // The kernel stays "booted but not listening" for longer than the previously
+        // hardcoded 10-second timeout, then reports readiness on its own.
+        let mut child = spawn_core_child(core_child_sleep_command()).unwrap();
+        let wait_state = state.clone();
+        let waiter = thread::spawn(move || {
+            wait_for_core_management_port(&mut child, address, &wait_state)
+        });
+
+        thread::sleep(SLOW_STARTUP_DELAY);
+        let bound = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let bound_slot = bound.clone();
+        let server = thread::spawn(move || {
+            let listener = std::net::TcpListener::bind(address).unwrap();
+            *bound_slot.lock().unwrap() = Some(listener.local_addr().unwrap());
+            let _ = listener.accept();
+            drop(listener);
+        });
+
+        let started = Instant::now();
+        let result = waiter.join().unwrap();
+        assert!(
+            result.is_ok(),
+            "startup wait aborted before the kernel reported readiness: {result:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+        drop(server);
+        assert!(bound.lock().unwrap().is_some());
     }
 }
 
