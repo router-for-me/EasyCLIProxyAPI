@@ -33,6 +33,7 @@ const messages = {
 } as const;
 
 const ruMessages: Record<keyof typeof messages, string> = {
+  entry: 'Вход',
   title: 'Вход через плагин',
   providerTitle: '{name} OAuth',
   providerHint: 'Войдите через этот плагин и сохраните учетные данные аккаунта.',
