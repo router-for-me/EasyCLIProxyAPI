@@ -311,13 +311,6 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
               );
             }) : <div className="codex-catalog-state">{t('agents.catalog.empty')}</div>}
           </div>
-          <button type="button" className="secondary-button codex-catalog-reload" onClick={() => void load()} disabled={loading || saving || dirty}>
-            <RefreshCw size={15} className={loading ? 'spin' : ''} />
-            {t('agents.catalog.reload')}
-          </button>
-          <button type="button" className="secondary-button codex-catalog-reset-order" onClick={resetOrder} disabled={loading || saving || !snapshot}>
-            {t('agents.catalog.resetOrder')}
-          </button>
         </aside>
 
         <main className="codex-catalog-editor">
@@ -374,12 +367,21 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
       </div>
 
       <footer className="codex-catalog-footer">
-        <div>
+        <div className="codex-catalog-footer-sidebar">
+          <button type="button" className="secondary-button codex-catalog-reload" onClick={() => void load()} disabled={loading || saving || dirty}>
+            <RefreshCw size={15} className={loading ? 'spin' : ''} />
+            {t('agents.catalog.reload')}
+          </button>
+          <button type="button" className="secondary-button codex-catalog-reset-order" onClick={resetOrder} disabled={loading || saving || !snapshot}>
+            {t('agents.catalog.resetOrder')}
+          </button>
+        </div>
+        <div className="codex-catalog-footer-hint">
           {error ? <MessageNotice message={error} onDismiss={() => setError('')} /> : null}
           <MessageNotice tone="success" message={!error ? notice : null} onDismiss={() => setNotice('')} />
           <span>{dirty ? t('agents.catalog.unsaved') : t('agents.catalog.saveHint')}</span>
         </div>
-        <div>
+        <div className="codex-catalog-footer-actions">
           <button type="button" className="secondary-button" onClick={() => void restoreAll()} disabled={loading || saving}>
             {t('agents.catalog.resetAll')}
           </button>
