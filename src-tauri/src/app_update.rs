@@ -361,10 +361,23 @@ async fn resolve_app_update(
     if !update_available && is_test_env {
         update_available = true;
     }
+    if !update_available
+        && is_preview
+        && is_timestamped_preview_version(&latest_version)
+        && normalize_version(&latest_version) != current_version
+    {
+        update_available = true;
+    }
     let target = portable_update_target();
     let asset_catalog = manifest.full_assets.as_ref().unwrap_or(&manifest.assets);
     let asset = target.and_then(|(key, _)| asset_catalog.get(key)).cloned();
-    let download_url = asset.as_ref().map(|value| value.url.clone());
+    let download_url = asset.as_ref().map(|value| {
+        if value.url.starts_with("https://github.com/") {
+            version_source_url(&resolved_source, &value.url)
+        } else {
+            value.url.clone()
+        }
+    });
     let download_file_name = download_url
         .as_deref()
         .and_then(portable_update_asset_file_name);
@@ -1020,6 +1033,14 @@ pub(crate) fn is_test_or_prerelease_version(version: &str) -> bool {
         || semver::Version::parse(trimmed)
             .map(|v| !v.pre.is_empty())
             .unwrap_or(false)
+}
+
+pub(crate) fn is_timestamped_preview_version(version: &str) -> bool {
+    let trimmed = version.trim().trim_start_matches('v');
+    match trimmed.to_ascii_lowercase().split_once("-preview.") {
+        Some((_, stamp)) => !stamp.is_empty(),
+        None => false,
+    }
 }
 
 pub(crate) fn validate_local_portable_app_manifest(expected_arch: &str) -> Result<bool, String> {

@@ -89,16 +89,17 @@ if (params.has('ecpa')) {
       schema_version: 1,
       plugins: [
         { id: 'aistudio2api', name: 'AIStudio2API', description: 'Expose Google AI Studio models through an OpenAI-compatible endpoint.',
-          author: 'ECPA', version: '1.2.0', repository: 'stark-shadow/aistudio2api', license: 'MIT',
-          tags: ['api', 'gemini'], install: { type: 'github-release' } },
+          author: 'jianli9158', version: '1.2.0', repository: 'jianli9158/cpa-plugin-aistudio2api', license: 'MIT',
+          tags: ['api', 'gemini'], install: { type: 'github-release' },
+          locales: { 'zh-CN': { description: '通过 OpenAI 兼容接口对外提供 Google AI Studio 模型。' } } },
         { id: 'quota-snapshot', name: 'Quota Snapshot', description: 'Snapshot provider quota usage into a daily report.',
-          author: 'Community', version: '0.4.1', repository: 'ecpa/quota-snapshot', license: 'Apache-2.0',
+          author: 'cxy2730', version: '0.4.1', repository: 'cxy2730/cpa-plugin-quota-snapshot', license: 'Apache-2.0',
           tags: ['quota'], install: { type: 'github-release' } },
         { id: 'theme-forge', name: 'Theme Forge', description: 'Preview and package custom interface themes.',
-          author: 'Community', version: '2.0.0', repository: 'ecpa/theme-forge', license: 'MIT',
+          author: 'jianli9158', version: '2.0.0', repository: 'jianli9158/cpa-plugin-theme-forge', license: 'MIT',
           tags: ['theme', 'ui'], install: { type: 'github-release' } },
         { id: 'broken-pipe', name: 'Broken Pipe', description: 'A draft entry that is still missing its repository link.',
-          author: 'Community', version: '', repository: '', license: '', tags: ['experimental'] },
+          author: 'lzt404', version: '', repository: '', license: '', tags: ['experimental'] },
       ],
     },
   }));
@@ -108,11 +109,12 @@ const addEcpaStoreEntries = () => {
   if (storeEntries.some(entry => entry.source_url === ECPA_SOURCE_URL)) return;
   storeEntries.push(
     { id: 'aistudio2api', name: 'AIStudio2API', source_id: 'ecpa', source_name: 'ECPA Featured',
-      source_url: ECPA_SOURCE_URL, repository: 'stark-shadow/aistudio2api', version: '1.2.0',
+      source_url: ECPA_SOURCE_URL, repository: 'jianli9158/cpa-plugin-aistudio2api', version: '1.2.0',
       install_type: 'github-release', installed: false },
     { id: 'quota-snapshot', name: 'Quota Snapshot', source_id: 'ecpa', source_name: 'ECPA Featured',
-      source_url: ECPA_SOURCE_URL, repository: 'ecpa/quota-snapshot', version: '0.4.1',
-      install_type: 'github-release', installed: true },
+      source_url: ECPA_SOURCE_URL, repository: 'cxy2730/cpa-plugin-quota-snapshot', version: '0.4.1',
+      install_type: 'github-release', installed: true, installed_version: '0.3.0',
+      install_source_status: 'matched' },
   );
 };
 if (params.has('ecpa-registered')) {
@@ -133,7 +135,13 @@ mockIPC(async (command, args) => {
     return '/plugins/windows/amd64/local-demo-v1.0.0.dll';
   }
   if (command === 'get_plugin_support') return state.supported;
-  if (command === 'get_plugin_latest_releases') return (args?.repositories as string[]).map(repository => ({ repository, version: state.latestReleaseVersion, error: null }));
+  if (command === 'get_plugin_latest_releases') {
+    return (args?.repositories as string[]).map(repository => ({
+      repository,
+      version: repository.includes('quota-snapshot') ? '0.4.1' : state.latestReleaseVersion,
+      error: null,
+    }));
+  }
   if (command === 'open_external_url' || command === 'restart_core_process') return null;
   if (command !== 'management_request') return null;
   const request = args?.request as Request;

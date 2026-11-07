@@ -27,7 +27,7 @@ import { buildPluginResourceRoute, collectPluginResourceEntries, getPluginTitle,
 import { getPluginStatus, isPluginInstalled } from "../services/pluginStatus";
 import { filterInstalledStorePlugins, refreshPluginReleaseVersions } from "../services/pluginReleaseVersions";
 import { waitForPluginInstall, waitForPluginToggle, type PluginActionStatus } from "../services/pluginPolling";
-import type { PluginStoreInstallResult } from "../services/plugins";
+import { getPluginStoreLocalizedDescription, type PluginStoreInstallResult } from "../services/plugins";
 import { PluginConfigDialog } from "./PluginConfigDialog";
 import { PluginInstallDialog } from "./PluginInstallDialog";
 import { PluginOAuthDialog } from "./PluginOAuthDialog";
@@ -345,7 +345,7 @@ export function PluginsPage() {
     && ["matched", "assumed"].includes(entry.installSourceStatus)
     && (!entry.authRequired || entry.authConfigured),
   );
-  const storePlugins = (store?.plugins ?? []).filter(plugin => matches([plugin.id, plugin.name, plugin.description, plugin.author, ...plugin.tags]) && (filter === "all" || (filter === "installed" && plugin.installed) || (filter === "updates" && plugin.updateAvailable)));
+  const storePlugins = (store?.plugins ?? []).filter(plugin => matches([plugin.id, plugin.name, plugin.description, getPluginStoreLocalizedDescription(plugin, locale), plugin.author, ...plugin.tags]) && (filter === "all" || (filter === "installed" && plugin.installed) || (filter === "updates" && plugin.updateAvailable)));
   const sourceErrors = (tab === "installed" ? localUpdates : store)?.sourceErrors ?? [];
   const locked = busy || loading || Boolean(configPlugin || installEntry || oauthPlugin);
 
@@ -415,7 +415,7 @@ export function PluginsPage() {
           </article>; })}</div> : <>
             <div className="plugin-grid">{storePlugins.map(entry => <article className="surface-card plugin-card" key={entry.storeId}>
               <div className="plugin-card-title"><span className="plugin-icon"><PluginLogo src={entry.logo} size={23} className="plugin-logo" /></span><div><h2>{entry.name || entry.id}</h2><code>{entry.id}</code></div><span className={`plugin-badge ${isDefaultPluginStoreSource(entry) ? "active" : ""}`}>{pt(isDefaultPluginStoreSource(entry) ? "officialStore" : "additionalStore")}</span></div>
-              <p className="plugin-card-description">{entry.description}</p><p className="plugin-meta">{[entry.installedVersion && entry.updateAvailable ? `${entry.installedVersion} → ${entry.version}` : entry.installedVersion || entry.version, entry.author, entry.license].filter(Boolean).join(" · ")}</p><p className="plugin-meta">{pt("storeSource")}: {isDefaultPluginStoreSource(entry) ? pt("officialStore") : entry.sourceName || entry.sourceId}</p>
+              <p className="plugin-card-description">{getPluginStoreLocalizedDescription(entry, locale)}</p><p className="plugin-meta">{[entry.installedVersion && entry.updateAvailable ? `${entry.installedVersion} → ${entry.version}` : entry.installedVersion || entry.version, entry.author, entry.license].filter(Boolean).join(" · ")}</p><p className="plugin-meta">{pt("storeSource")}: {isDefaultPluginStoreSource(entry) ? pt("officialStore") : entry.sourceName || entry.sourceId}</p>
               {entry.repository && <p className="plugin-meta plugin-repository" title={entry.repository}>{pt("repository")}: <span>{getPluginRepositorySlug(entry.repository) || entry.repository}</span></p>}
               {entry.platforms.length > 0 && <p className="plugin-meta">{entry.platforms.map(platform => `${platform.goos}/${platform.goarch}`).join(" · ")}</p>}
               <div className="plugin-card-actions">{entry.installed && <span className="plugin-badge">{pt(entry.updateAvailable ? "updates" : "installed")}</span>}<button className="primary-button compact-button" disabled={locked || (entry.authRequired && !entry.authConfigured)} onClick={() => setInstallEntry(entry)}><Download size={15} />{pt(entry.authRequired && !entry.authConfigured ? "authMissing" : !entry.installed ? "install" : entry.updateAvailable ? "update" : "reinstall")}</button></div>

@@ -9,6 +9,15 @@
       "version": "1.1.5",
       "repository": "https://github.com/jianli9158/cpa-plugin-aistudio2api",
       "install": { "type": "github-release" }
+    },
+    {
+      "id": "freetier",
+      "name": "FreeTier 2API",
+      "description": "FreeTier 2API plugin",
+      "author": "cxy2730",
+      "version": "0.1.52",
+      "repository": "https://github.com/cxy2730/CLIProxyAPI-freetier2api-plugin",
+      "install": { "type": "github-release" }
     }
   ]
 }

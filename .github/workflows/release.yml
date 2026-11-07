@@ -15,7 +15,7 @@ on:
         required: true
         type: string
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, edited]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
       release_tag:
@@ -45,6 +45,7 @@ permissions:
 jobs:
   version:
     name: Resolve app version
+    if: github.event_name != 'pull_request' || github.event.pull_request.user.login == 'Roomen'
     runs-on: ubuntu-24.04
     permissions:
       contents: read

@@ -104,4 +104,9 @@ describe('release version resolution workflow', () => {
     expect(outputs.tag).toBe('v0.3.6-pr.42.10.1');
     expect(outputs.version).toBe('0.3.6-pr.42.10.1');
   });
+
+  it('builds pull requests only from Roomen', () => {
+    expect(String(releaseWorkflow.jobs.version.if)).toContain("github.event.pull_request.user.login == 'Roomen'");
+    expect(releaseWorkflow.on.pull_request.types).not.toContain('edited');
+  });
 });
