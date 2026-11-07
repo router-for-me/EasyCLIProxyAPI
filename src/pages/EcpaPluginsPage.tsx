@@ -12,6 +12,7 @@ import {
   getBundledEcpaRegistry,
   getEcpaPluginDescription,
   isInstallableEcpaEntry,
+  isStoreUpdateAvailable,
   resolveEcpaStoreEntry,
   readEcpaGitHubToken,
   type EcpaPluginEntry,
@@ -45,6 +46,9 @@ export function EcpaPluginsPage() {
   const [restartRequired, setRestartRequired] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const mounted = useRef(false);
+  // Installs confirmed in this session stay authoritative until the store list
+  // catches up, so a stale store report cannot regress a card to install.
+  const confirmedInstalls = useRef(new Map<string, string>());
 
   const reloadStore = async () => {
     const listed = await pluginStoreApi.list();
@@ -55,7 +59,13 @@ export function EcpaPluginsPage() {
       // Keep registry versions when the latest-release lookup is unavailable.
     }
     if (!mounted.current) return;
-    setStoreEntries(buildEcpaStoreMap(result.plugins));
+    const confirmed = confirmedInstalls.current;
+    const plugins: PluginStoreEntry[] = result.plugins.map((entry: PluginStoreEntry) => {
+      const installedVersion = confirmed.get(entry.id);
+      if (installedVersion === undefined || entry.installed) return entry;
+      return { ...entry, installed: true, installedVersion };
+    });
+    setStoreEntries(buildEcpaStoreMap(plugins));
     setStoreError(result.sourceErrors.filter(source => source.sourceUrl === ECPA_REGISTRY_URL).map(source => source.message).join('; '));
   };
 
@@ -120,9 +130,12 @@ export function EcpaPluginsPage() {
   const installed = async (result: PluginStoreInstallResult) => {
     setInstallEntry(null);
     if (result.restartRequired) setRestartRequired(true);
+    const installedVersion = result.version || resolveEcpaStoreEntry(storeEntries, result.id)?.installedVersion
+      || resolveEcpaStoreEntry(storeEntries, result.id)?.version || '';
+    confirmedInstalls.current.set(result.id, installedVersion);
     setStoreEntries(previous => buildEcpaStoreMap(Array.from(previous.values()).map(entry =>
       entry.id === result.id
-        ? { ...entry, installed: true, installedVersion: result.version || entry.version, updateAvailable: false }
+        ? { ...entry, installed: true, installedVersion: installedVersion || entry.version, updateAvailable: false }
         : entry)));
     try { await reloadStore(); }
     catch (reason) { if (mounted.current) setStoreError(String(reason)); }
@@ -340,6 +353,13 @@ export function EcpaPluginsPage() {
             const isCopied = copiedId === plugin.id;
             const repoUrl = safePluginWebURL(plugin.repository);
             const entry = resolveEcpaStoreEntry(storeEntries, plugin.id);
+            const isInstalling = installEntry?.id === plugin.id;
+            // An install confirmed in this session renders as installed even when
+            // the store list still reports it as missing.
+            const confirmedVersion = confirmedInstalls.current.get(plugin.id);
+            const isInstalled = entry?.installed === true || confirmedVersion !== undefined;
+            const installedVersion = entry?.installed ? entry.installedVersion : confirmedVersion;
+            const hasUpdate = isInstalled && isStoreUpdateAvailable(installedVersion, entry?.version);
             const unavailable = supported === false ? t('ecpaPlugins.installUnavailable.unsupported')
               : !isInstallableEcpaEntry(plugin) ? t('ecpaPlugins.installUnavailable.noRepository')
               : registered === false ? t('ecpaPlugins.installUnavailable.sourceNotRegistered')
@@ -360,9 +380,9 @@ export function EcpaPluginsPage() {
                     <code>{plugin.id}</code>
                   </div>
                   {plugin.version ? (
-                    entry?.installed && entry.updateAvailable ? (
-                      <span className="ecpa-plugin-version" title={t('ecpaPlugins.updateTo', { version: entry.version })}>
-                        {entry.installedVersion} → {entry.version}
+                    hasUpdate ? (
+                      <span className="ecpa-plugin-version" title={t('ecpaPlugins.updateTo', { version: entry?.version ?? plugin.version })}>
+                        {installedVersion} → {entry?.version}
                       </span>
                     ) : (
                       <span className="ecpa-plugin-version">{plugin.version}</span>
@@ -427,19 +447,20 @@ export function EcpaPluginsPage() {
                     >
                       {t('ecpaPlugins.install')}
                     </button>
-                  ) : entry?.installed === true ? (
+                  ) : isInstalled ? (
                     <>
-                      <span className={`ecpa-plugin-installed-badge${entry.updateAvailable ? ' has-update' : ''}`}>
-                        {entry.updateAvailable ? <Download size={13} aria-hidden="true" /> : <Check size={13} aria-hidden="true" />}
-                        {t(entry.updateAvailable ? 'ecpaPlugins.updateAvailable' : 'ecpaPlugins.installed')}
+                      <span className={`ecpa-plugin-installed-badge${hasUpdate ? ' has-update' : ''}`}>
+                        {hasUpdate ? <Download size={13} aria-hidden="true" /> : <Check size={13} aria-hidden="true" />}
+                        {t(hasUpdate ? 'ecpaPlugins.updateAvailable' : 'ecpaPlugins.installed')}
                       </span>
-                      {entry.updateAvailable ? (
+                      {hasUpdate ? (
                         <button type="button" className="primary-button compact-button" disabled={installEntry !== null}
                           onClick={() => {
+                            if (!entry) return;
                             setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
                             setInstallEntry(entry);
                           }}>
-                          {t('ecpaPlugins.update')}
+                          {t(isInstalling ? 'ecpaPlugins.installing' : 'ecpaPlugins.update')}
                         </button>
                       ) : null}
                     </>
@@ -451,7 +472,7 @@ export function EcpaPluginsPage() {
                         setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
                         setInstallEntry(entry);
                       }}>
-                      {t(installEntry?.id === plugin.id ? 'ecpaPlugins.installing' : 'ecpaPlugins.install')}
+                      {t(isInstalling ? 'ecpaPlugins.installing' : 'ecpaPlugins.install')}
                     </button>
                   )}
                 </div>

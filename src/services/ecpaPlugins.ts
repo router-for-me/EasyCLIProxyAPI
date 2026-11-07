@@ -35,6 +35,8 @@ export interface EcpaPluginEntry {
 export const isInstallableEcpaEntry = (entry: EcpaPluginEntry): boolean =>
   Boolean(entry.id.trim() && entry.repository.trim());
 
+export { isStoreUpdateAvailable } from './ecpaStoreVersion';
+
 export function buildEcpaStoreMap(entries: PluginStoreEntry[]): Map<string, PluginStoreEntry> {
   const result = new Map<string, PluginStoreEntry>();
   for (const entry of entries) {
