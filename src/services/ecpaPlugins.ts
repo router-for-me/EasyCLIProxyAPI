@@ -8,6 +8,15 @@ export const ECPA_REGISTRY_CACHE_KEY = 'ecpa.registry.cache';
 export const ECPA_REGISTRY_CACHE_TTL_MS = 15 * 60 * 1000;
 export const ECPA_REGISTRY_FETCH_TIMEOUT_MS = 5000;
 
+export interface EcpaPluginLocaleEntry {
+  name?: string;
+  description?: string;
+  author?: string;
+  homepage?: string;
+  license?: string;
+  tags?: string[];
+}
+
 export interface EcpaPluginEntry {
   id: string;
   name: string;
@@ -19,6 +28,7 @@ export interface EcpaPluginEntry {
   homepage: string;
   license: string;
   tags: string[];
+  locales: Record<string, EcpaPluginLocaleEntry>;
   install?: { type?: string };
 }
 
@@ -66,6 +76,28 @@ export interface FetchEcpaRegistryOptions {
 
 const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 
+function parseLocaleEntry(value: unknown): EcpaPluginLocaleEntry | null {
+  if (!isRecord(value)) return null;
+  const entry: EcpaPluginLocaleEntry = {};
+  for (const field of ['name', 'description', 'author', 'homepage', 'license'] as const) {
+    const parsed = text(value[field]);
+    if (parsed) entry[field] = parsed;
+  }
+  const tags = Array.isArray(value.tags) ? Array.from(new Set(value.tags.map(text).filter(Boolean))) : [];
+  if (tags.length > 0) entry.tags = tags;
+  return Object.keys(entry).length > 0 ? entry : null;
+}
+
+function parseLocales(value: unknown): Record<string, EcpaPluginLocaleEntry> {
+  if (!isRecord(value)) return {};
+  const result: Record<string, EcpaPluginLocaleEntry> = {};
+  for (const [locale, entry] of Object.entries(value)) {
+    const parsed = parseLocaleEntry(entry);
+    if (parsed) result[locale] = parsed;
+  }
+  return result;
+}
+
 function parsePluginEntry(value: unknown): EcpaPluginEntry | null {
   if (!isRecord(value)) return null;
   const id = text(value.id);
@@ -86,6 +118,7 @@ function parsePluginEntry(value: unknown): EcpaPluginEntry | null {
     homepage: text(value.homepage),
     license: text(value.license),
     tags,
+    locales: parseLocales(value.locales),
     install: installType === 'github-release' || installType === 'direct' ? { type: installType } : undefined,
   };
 }
@@ -107,6 +140,16 @@ export function parseEcpaRegistry(value: unknown): EcpaRegistry | null {
 
 export function getBundledEcpaRegistry(): EcpaRegistry {
   return parseEcpaRegistry(bundledRegistry) ?? { schema_version: 1, plugins: [] };
+}
+
+export function getEcpaPluginDescription(entry: EcpaPluginEntry, locale: string): string {
+  // Chinese variants share the zh-CN text; other locales must not borrow it.
+  const keys = locale === 'zh-TW' ? ['zh-TW', 'zh-CN'] : locale.startsWith('zh') ? [locale, 'zh-CN'] : [locale];
+  for (const key of keys) {
+    const description = entry.locales?.[key]?.description?.trim();
+    if (description) return description;
+  }
+  return entry.description;
 }
 
 export function readEcpaGitHubToken(): string {

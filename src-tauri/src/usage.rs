@@ -3060,17 +3060,13 @@ fn load_usage_overview(
             COALESCE(SUM(total_tokens), 0),
             COALESCE(SUM(latency_ms), 0),
             COALESCE(AVG(CASE
-                WHEN generate != 0
-                 AND failed = 0
-                 AND canceled = 0
+                WHEN failed = 0
                  AND output_tokens > 0
                  AND latency_ms > 0
                 THEN output_tokens * 1000.0 / latency_ms
             END), 0.0),
             COALESCE(SUM(CASE
-                WHEN generate != 0
-                 AND failed = 0
-                 AND canceled = 0
+                WHEN failed = 0
                  AND output_tokens > 0
                  AND latency_ms > 0
                 THEN 1
@@ -7141,7 +7137,7 @@ mod tests {
     }
 
     #[test]
-    fn overview_tps_averages_request_speeds_without_requiring_ttft() {
+    fn overview_tps_averages_request_speeds_excluding_failed() {
         let root = test_root("tps-overview");
         let mut connection = open_test_database(&root);
 
@@ -7202,8 +7198,62 @@ mod tests {
 
         let overview = load_usage_overview(&connection, &UsageQuery::default()).unwrap();
 
-        assert_eq!(overview.tps, (80.0 + 10.0 + 200.0 + 200.0) / 4.0);
-        assert_eq!(overview.tps_sample_count, 4);
+        // Counted: tps-1 (80 / 1000), tps-2 (20 / 2000), tps-3 (100 / 500) and
+        // tps-4 (100 / 500) keep their real latencies; tps-6 (canceled) and
+        // tps-7 (non-generation) still use the sample_record latency of 100 ms
+        // with 100 output tokens, so they count 1000 each. All six have
+        // failed = false. tps-5 (failed), tps-8 (zero latency) and tps-9
+        // (zero output) are excluded.
+        let expected =
+            (80.0 + 10.0 + 200.0 + 200.0 + 1_000.0 + 1_000.0) / 6.0;
+        assert_eq!(overview.tps, expected);
+        assert_eq!(overview.tps_sample_count, 6);
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn overview_tps_excludes_failed_records_with_output() {
+        let root = test_root("tps-failed-excluded");
+        let mut connection = open_test_database(&root);
+
+        let mut failed = sample_record("tps-failed", "2026-07-17T20:30:00+08:00", "gpt-a");
+        failed.failed = true;
+        failed.latency_ms = 500;
+        failed.tokens.output_tokens = 100;
+
+        insert_usage_records(&mut connection, &[failed]).unwrap();
+
+        let overview = load_usage_overview(&connection, &UsageQuery::default()).unwrap();
+
+        assert_eq!(overview.tps, 0.0);
+        assert_eq!(overview.tps_sample_count, 0);
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn overview_tps_excludes_zero_output_or_zero_latency() {
+        let root = test_root("tps-excluded");
+        let mut connection = open_test_database(&root);
+
+        let mut no_output = sample_record("tps-no-output", "2026-07-17T20:30:00+08:00", "gpt-a");
+        no_output.latency_ms = 500;
+        no_output.failed = false;
+        no_output.tokens.output_tokens = 0;
+
+        let mut zero_latency =
+            sample_record("tps-zero-latency", "2026-07-17T20:31:00+08:00", "gpt-a");
+        zero_latency.latency_ms = 0;
+        zero_latency.failed = false;
+        zero_latency.tokens.output_tokens = 100;
+
+        insert_usage_records(&mut connection, &[no_output, zero_latency]).unwrap();
+
+        let overview = load_usage_overview(&connection, &UsageQuery::default()).unwrap();
+
+        assert_eq!(overview.tps, 0.0);
+        assert_eq!(overview.tps_sample_count, 0);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }

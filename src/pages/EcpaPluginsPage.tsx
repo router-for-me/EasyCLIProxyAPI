@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Copy, ExternalLink, KeyRound, Puzzle, Search, TriangleAlert, X } from 'lucide-react';
+import { Check, Copy, Download, ExternalLink, KeyRound, Puzzle, RefreshCw, Search, TriangleAlert, X } from 'lucide-react';
 import { EmptyState } from '../components/EmptyState';
 import { Notice } from '../components/Notice';
 import { PluginLogo } from '../components/ProviderLogo';
@@ -10,12 +10,14 @@ import {
   ECPA_REGISTRY_URL,
   fetchEcpaRegistry,
   getBundledEcpaRegistry,
+  getEcpaPluginDescription,
   isInstallableEcpaEntry,
   resolveEcpaStoreEntry,
   readEcpaGitHubToken,
   type EcpaPluginEntry,
 } from '../services/ecpaPlugins';
 import { safePluginWebURL } from '../services/pluginResources';
+import { refreshPluginReleaseVersions } from '../services/pluginReleaseVersions';
 import { getPluginSupport, pluginsApi, pluginStoreApi, type PluginStoreEntry, type PluginStoreInstallResult } from '../services/plugins';
 import { openSettingField } from '../services/settingsNavigation';
 import { GitHubTokenHint, isGitHubRateLimit } from './PluginRateLimitHint';
@@ -41,13 +43,35 @@ export function EcpaPluginsPage() {
   const [installEntry, setInstallEntry] = useState<PluginStoreEntry | null>(null);
   const [installErrors, setInstallErrors] = useState<Record<string, string>>({});
   const [restartRequired, setRestartRequired] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const mounted = useRef(false);
 
   const reloadStore = async () => {
-    const result = await pluginStoreApi.list();
+    const listed = await pluginStoreApi.list();
+    let result = listed;
+    try {
+      result = await refreshPluginReleaseVersions(listed);
+    } catch {
+      // Keep registry versions when the latest-release lookup is unavailable.
+    }
     if (!mounted.current) return;
     setStoreEntries(buildEcpaStoreMap(result.plugins));
     setStoreError(result.sourceErrors.filter(source => source.sourceUrl === ECPA_REGISTRY_URL).map(source => source.message).join('; '));
+  };
+
+  const refreshRegistry = async () => {
+    setRefreshing(true);
+    try {
+      const result = await fetchEcpaRegistry({ token, forceRefresh: true });
+      if (!mounted.current) return;
+      setTokenInvalid(result.tokenInvalid);
+      if (result.registry) setPlugins(result.registry.plugins);
+      await reloadStore();
+    } catch (reason) {
+      if (mounted.current) setStoreError(String(reason));
+    } finally {
+      if (mounted.current) setRefreshing(false);
+    }
   };
 
   useEffect(() => {
@@ -97,7 +121,9 @@ export function EcpaPluginsPage() {
     setInstallEntry(null);
     if (result.restartRequired) setRestartRequired(true);
     setStoreEntries(previous => buildEcpaStoreMap(Array.from(previous.values()).map(entry =>
-      entry.id === result.id ? { ...entry, installed: true } : entry)));
+      entry.id === result.id
+        ? { ...entry, installed: true, installedVersion: result.version || entry.version, updateAvailable: false }
+        : entry)));
     try { await reloadStore(); }
     catch (reason) { if (mounted.current) setStoreError(String(reason)); }
   };
@@ -166,12 +192,12 @@ export function EcpaPluginsPage() {
         return false;
       }
       if (!query) return true;
-      const haystack = [plugin.id, plugin.name, plugin.description]
+      const haystack = [plugin.id, plugin.name, plugin.description, getEcpaPluginDescription(plugin, locale)]
         .join(' ')
         .toLowerCase();
       return haystack.includes(query);
     });
-  }, [plugins, search, selectedTag]);
+  }, [plugins, search, selectedTag, locale]);
 
   const handleClearFilters = () => {
     setSearch('');
@@ -261,6 +287,15 @@ export function EcpaPluginsPage() {
             <X size={15} aria-hidden="true" />
           </button>
         </div>
+        <button
+          type="button"
+          className="secondary-button compact-button ecpa-plugin-refresh"
+          disabled={refreshing}
+          onClick={() => void refreshRegistry()}
+        >
+          <RefreshCw size={15} aria-hidden="true" />
+          {t('common.refresh')}
+        </button>
       </div>
 
       <div className="ecpa-results-bar">
@@ -301,7 +336,7 @@ export function EcpaPluginsPage() {
       {filteredPlugins.length > 0 ? (
         <div className="ecpa-plugin-grid">
           {filteredPlugins.map((plugin) => {
-            const description = plugin.description;
+            const description = getEcpaPluginDescription(plugin, locale);
             const isCopied = copiedId === plugin.id;
             const repoUrl = safePluginWebURL(plugin.repository);
             const entry = resolveEcpaStoreEntry(storeEntries, plugin.id);
@@ -325,7 +360,13 @@ export function EcpaPluginsPage() {
                     <code>{plugin.id}</code>
                   </div>
                   {plugin.version ? (
-                    <span className="ecpa-plugin-version">{plugin.version}</span>
+                    entry?.installed && entry.updateAvailable ? (
+                      <span className="ecpa-plugin-version" title={t('ecpaPlugins.updateTo', { version: entry.version })}>
+                        {entry.installedVersion} → {entry.version}
+                      </span>
+                    ) : (
+                      <span className="ecpa-plugin-version">{plugin.version}</span>
+                    )
                   ) : null}
                 </div>
 
@@ -387,10 +428,21 @@ export function EcpaPluginsPage() {
                       {t('ecpaPlugins.install')}
                     </button>
                   ) : entry?.installed === true ? (
-                    <span className="ecpa-plugin-installed-badge">
-                      <Check size={13} aria-hidden="true" />
-                      {t('ecpaPlugins.installed')}
-                    </span>
+                    <>
+                      <span className={`ecpa-plugin-installed-badge${entry.updateAvailable ? ' has-update' : ''}`}>
+                        {entry.updateAvailable ? <Download size={13} aria-hidden="true" /> : <Check size={13} aria-hidden="true" />}
+                        {t(entry.updateAvailable ? 'ecpaPlugins.updateAvailable' : 'ecpaPlugins.installed')}
+                      </span>
+                      {entry.updateAvailable ? (
+                        <button type="button" className="primary-button compact-button" disabled={installEntry !== null}
+                          onClick={() => {
+                            setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
+                            setInstallEntry(entry);
+                          }}>
+                          {t('ecpaPlugins.update')}
+                        </button>
+                      ) : null}
+                    </>
                   ) : (
                     <button type="button" className="primary-button compact-button"
                       disabled={installEntry !== null || !entry}

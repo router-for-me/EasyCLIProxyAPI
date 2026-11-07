@@ -7,6 +7,7 @@
 .routing-actions { margin-left: auto; flex-wrap: wrap; }
 .routing-action-hint { flex-basis: 100%; margin: 6px 0 0; text-align: right; font-size: 12px; line-height: 1.4; color: var(--danger-color, #d83636); }
 .routing-actions > button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.routing-actions .secondary-button.active { border-color: var(--primary-color); color: var(--primary-color); background: var(--color-accent-soft); }
 .routing-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 340px); gap: 18px; align-items: start; }
 .routing-board, .routing-tier-body { min-width: 0; }
 .routing-aside { position: sticky; top: 16px; min-width: 0; }
