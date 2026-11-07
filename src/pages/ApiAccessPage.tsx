@@ -1572,6 +1572,7 @@ export function ApiAccessPage() {
       await loadProviders(false);
     } catch (requestError) {
       setNotice(requestErrorMessage(requestError), 'error');
+      throw requestError;
     } finally {
       setBusy(false);
     }
@@ -1773,7 +1774,7 @@ export function ApiAccessPage() {
           key={providerHealthIdentity(healthDialogRow)}
           row={healthDialogRow}
           onClose={() => setHealthDialogRow(null)}
-          onModelToggle={(modelName, enabled) => void toggleProviderModel(healthDialogRow, modelName, enabled)}
+          onModelToggle={(modelName, enabled) => toggleProviderModel(healthDialogRow, modelName, enabled)}
         />
       ) : null}
       <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
@@ -1784,7 +1785,7 @@ export function ApiAccessPage() {
 type ProviderHealthDialogProps = {
   row: ProviderRow;
   onClose: () => void;
-  onModelToggle?: (modelName: string, enabled: boolean) => void;
+  onModelToggle?: (modelName: string, enabled: boolean) => Promise<void>;
   keySelector?: ReactNode;
 };
 
@@ -1993,13 +1994,15 @@ function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: Prov
                   onChange={() => {
                     const nextEnabled = !enabled;
                     setModelEnabled((current) => ({ ...current, [model.name.toLowerCase()]: nextEnabled }));
-                    onModelToggle?.(model.name, nextEnabled);
+                    void onModelToggle?.(model.name, nextEnabled).catch(() => {
+                      setModelEnabled((current) => ({ ...current, [model.name.toLowerCase()]: !nextEnabled }));
+                    });
                   }}
                   aria-label={t('apiAccess.health.toggleAria', { model: model.name, action: enabled ? t('common.disable') : t('common.enable') })}
                 />
               </label>
               <span
-                className={`state-pill provider-health-pill ${state?.status === 'checking' ? 'checking' : checked?.status === 'healthy' ? 'success' : checked?.status === 'failed' ? 'error' : ''}`}
+                className={`state-pill provider-health-pill provider-health-model-pill ${state?.status === 'checking' ? 'checking' : checked?.status === 'healthy' ? 'success' : checked?.status === 'failed' ? 'error' : ''}`}
                 title={latencyTitle}
               >
                 {statusLabel(state)}
