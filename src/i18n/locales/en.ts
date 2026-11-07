@@ -2463,6 +2463,7 @@ export const en: Record<MessageKey, string> = {
   'ecpaPlugins.updateAvailable': 'Update available',
   'ecpaPlugins.updateTo': 'Update to {version}',
   'ecpaPlugins.installing': 'Installing',
+  'ecpaPlugins.loadingStore': 'Loading plugin list…',
   'ecpaPlugins.installUnavailable.unsupported': 'This core does not support plugin installation',
   'ecpaPlugins.installUnavailable.sourceNotRegistered': 'The ECPA plugin source is unavailable; see the error above',
   'ecpaPlugins.installUnavailable.notFound': 'Plugin not found in the source; check source loading errors',

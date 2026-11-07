@@ -19,7 +19,7 @@ import {
 } from '../services/ecpaPlugins';
 import { safePluginWebURL } from '../services/pluginResources';
 import { refreshPluginReleaseVersions } from '../services/pluginReleaseVersions';
-import { getPluginSupport, pluginsApi, pluginStoreApi, type PluginStoreEntry, type PluginStoreInstallResult } from '../services/plugins';
+import { getPluginSupport, pluginsApi, pluginStoreApi, type PluginStoreEntry, type PluginStoreInstallResult, type PluginStoreResponse } from '../services/plugins';
 import { openSettingField } from '../services/settingsNavigation';
 import { GitHubTokenHint, isGitHubRateLimit } from './PluginRateLimitHint';
 import { PluginInstallDialog } from './PluginInstallDialog';
@@ -50,15 +50,11 @@ export function EcpaPluginsPage() {
   // catches up, so a stale store report cannot regress a card to install.
   const confirmedInstalls = useRef(new Map<string, string>());
 
-  const reloadStore = async () => {
-    const listed = await pluginStoreApi.list();
-    let result = listed;
-    try {
-      result = await refreshPluginReleaseVersions(listed);
-    } catch {
-      // Keep registry versions when the latest-release lookup is unavailable.
-    }
-    if (!mounted.current) return;
+  // Store results merge on a sequence number so a slow release lookup started
+  // earlier cannot overwrite entries from a newer reload.
+  const storeSeq = useRef(0);
+  const applyStoreResult = (result: PluginStoreResponse, seq: number) => {
+    if (!mounted.current || seq !== storeSeq.current) return;
     const confirmed = confirmedInstalls.current;
     const plugins: PluginStoreEntry[] = result.plugins.map((entry: PluginStoreEntry) => {
       const installedVersion = confirmed.get(entry.id);
@@ -67,6 +63,52 @@ export function EcpaPluginsPage() {
     });
     setStoreEntries(buildEcpaStoreMap(plugins));
     setStoreError(result.sourceErrors.filter(source => source.sourceUrl === ECPA_REGISTRY_URL).map(source => source.message).join('; '));
+  };
+
+  const reloadStore = async () => {
+    const seq = ++storeSeq.current;
+    // Fast phase: the store list alone is enough to enable install.
+    let listed: PluginStoreResponse;
+    try {
+      listed = await pluginStoreApi.list();
+    } catch (reason) {
+      if (mounted.current && seq === storeSeq.current) setStoreLoaded(true);
+      throw reason;
+    }
+    if (!mounted.current) return;
+    // The list attempt itself is done even if a newer reload supersedes it.
+    setStoreLoaded(true);
+    applyStoreResult(listed, seq);
+    // Slow phase: latest release lookups query GitHub and must not gate the list.
+    let result = listed;
+    try {
+      result = await refreshPluginReleaseVersions(listed);
+    } catch {
+      // Keep registry versions when the latest-release lookup is unavailable.
+    }
+    applyStoreResult(result, seq);
+  };
+
+  // The featured registry is a default plugin source: register it silently so
+  // installs work on the first visit, including for upgraded installs that
+  // predate the source. A write failure is terminal for this visit.
+  const registerSource = async (): Promise<boolean> => {
+    try {
+      const settings = await pluginsApi.getSettings();
+      if (settings.storeSources.includes(ECPA_REGISTRY_URL)) {
+        if (mounted.current) setRegistered(true);
+        return false;
+      }
+      await pluginsApi.updateSettings({ storeSources: [...settings.storeSources, ECPA_REGISTRY_URL] });
+      if (mounted.current) setRegistered(true);
+      return true;
+    } catch (reason) {
+      if (mounted.current) {
+        setRegistered(false);
+        setStoreError(String(reason));
+      }
+      return false;
+    }
   };
 
   const refreshRegistry = async () => {
@@ -87,6 +129,11 @@ export function EcpaPluginsPage() {
   useEffect(() => {
     let active = true;
     mounted.current = true;
+    const fail = (reason: unknown) => {
+      if (!active) return;
+      setStoreError(String(reason));
+      setStoreLoaded(true);
+    };
     void getPluginSupport().then(async available => {
       if (!active) return;
       setSupported(available);
@@ -95,34 +142,15 @@ export function EcpaPluginsPage() {
         setStoreLoaded(true);
         return;
       }
-      // The featured registry is a default plugin source: register it silently so
-      // installs work on the first visit, including for upgraded installs that
-      // predate the source. Failures surface through the store error notice.
-      let sourceReady = false;
-      try {
-        const settings = await pluginsApi.getSettings();
-        sourceReady = settings.storeSources.includes(ECPA_REGISTRY_URL);
-        if (!sourceReady) {
-          await pluginsApi.updateSettings({ storeSources: [...settings.storeSources, ECPA_REGISTRY_URL] });
-          sourceReady = true;
-        }
-      } catch (reason) {
-        if (active) setStoreError(String(reason));
-      }
-      if (!active) return;
-      setRegistered(sourceReady);
-      try {
-        await reloadStore();
-      } catch (reason) {
-        if (active) setStoreError(String(reason));
-      } finally {
-        if (active) setStoreLoaded(true);
-      }
-    }).catch(reason => {
-      if (!active) return;
-      setStoreError(String(reason));
-      setStoreLoaded(true);
-    });
+      // Registration runs alongside the store list so it never delays the
+      // install buttons; only a conclusive failure reports the source as down.
+      void registerSource().then(changed => {
+        // A first-visit registration can land after the list ran, so list again
+        // once the source is known to exist.
+        if (changed && mounted.current) void reloadStore().catch(fail);
+      });
+      await reloadStore().catch(fail);
+    }).catch(fail);
     return () => { active = false; mounted.current = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -353,6 +381,11 @@ export function EcpaPluginsPage() {
             const isCopied = copiedId === plugin.id;
             const repoUrl = safePluginWebURL(plugin.repository);
             const entry = resolveEcpaStoreEntry(storeEntries, plugin.id);
+            // Until the store list arrives there is no entry to install, but the
+            // card itself still renders from the registry. An in-flight source
+            // registration also means the list may gain this entry later.
+            const storePending = !entry && supported !== false && registered !== false
+              && (!storeLoaded || registered === null);
             const isInstalling = installEntry?.id === plugin.id;
             // An install confirmed in this session renders as installed even when
             // the store list still reports it as missing.
@@ -472,7 +505,7 @@ export function EcpaPluginsPage() {
                         setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
                         setInstallEntry(entry);
                       }}>
-                      {t(isInstalling ? 'ecpaPlugins.installing' : 'ecpaPlugins.install')}
+                      {t(storePending ? 'ecpaPlugins.loadingStore' : isInstalling ? 'ecpaPlugins.installing' : 'ecpaPlugins.install')}
                     </button>
                   )}
                 </div>
