@@ -3,6 +3,8 @@ import { getOAuthStatus, startOAuthLogin, openOAuthUrl, submitOAuthCallback } fr
 import { useEffect, useId, useRef, useState } from 'react';
 import { CheckCircle2, Copy, ExternalLink, LoaderCircle, LogIn, X } from 'lucide-react';
 import { Dialog } from '../components/Dialog';
+import { Select } from '../components/Select';
+import { pluginsApi } from '../services/plugins';
 import { useI18n } from '../i18n';
 import { pluginOAuthText, type PluginOAuthMessage } from '../i18n/pluginOAuth';
 import { managementApi } from '../services/managementApi';
@@ -17,8 +19,9 @@ const MAX_SESSION_MS = 30 * 60 * 1000;
 
 function message(error: unknown) { return error instanceof Error ? error.message : String(error); }
 
-export function PluginOAuthDialog({ plugin, browser = 'default', onClose, onCompleted }: {
+export function PluginOAuthDialog({ plugin, targetProvider, browser = 'default', onClose, onCompleted }: {
   plugin: PluginListEntry;
+  targetProvider?: string;
   browser?: string;
   onClose: () => void;
   onCompleted: () => void;
@@ -46,7 +49,27 @@ export function PluginOAuthDialog({ plugin, browser = 'default', onClose, onComp
   localeRef.current = locale;
   const setPhase = (value: Phase) => { phaseRef.current = value; setPhaseState(value); };
   const close = () => { dismiss.current(); onClose(); };
-  const provider = plugin.oauthProvider?.trim() ?? '';
+  const [selectedProvider, setSelectedProvider] = useState<string>(() => {
+    return targetProvider?.trim() || plugin.oauthProvider?.trim() || plugin.oauthProviderEntries?.[0]?.identifier || "";
+  });
+  const provider = selectedProvider.trim();
+
+  useEffect(() => {
+    if (targetProvider || !plugin.oauthProviderEntries || plugin.oauthProviderEntries.length <= 1) return;
+    let active = true;
+    void pluginsApi.getConfig(plugin.id).then(config => {
+      if (!active) return;
+      const site = typeof config.site === "string" ? config.site.trim().toLowerCase() : "";
+      if (!site) return;
+      const matched = plugin.oauthProviderEntries?.find(e =>
+        e.identifier.toLowerCase().includes(site) || e.name.toLowerCase().includes(site)
+      );
+      if (matched && matched.identifier !== selectedProvider) {
+        setSelectedProvider(matched.identifier);
+      }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [plugin.id, plugin.oauthProviderEntries, targetProvider]);
 
   useEffect(() => {
     const currentGeneration = ++generation.current;
@@ -152,6 +175,23 @@ export function PluginOAuthDialog({ plugin, browser = 'default', onClose, onComp
     <header className="config-dialog-heading"><div><h2 id={`${id}-title`}><LogIn size={20} />{text('title')}</h2><p>{plugin.metadata?.name || plugin.id}</p></div><button type="button" className="icon-button quiet" onClick={close} aria-label={t('common.close')}><X size={18} /></button></header>
     <div className="plugin-oauth-body">
       <Notice tone={phase === 'error' ? 'error' : phase === 'success' ? 'success' : 'info'} className="plugin-oauth-status" icon={phase === 'starting' || phase === 'waiting' ? <LoaderCircle size={18} className="spin" /> : phase === 'success' ? <CheckCircle2 size={18} /> : undefined}>{text(phase === 'error' ? 'failed' : phase)}</Notice>
+      {plugin.oauthProviderEntries && plugin.oauthProviderEntries.length > 1 ? (
+        <div className="plugin-oauth-field">
+          <label htmlFor={`${id}-entry`}>{text("entry")}</label>
+          <Select
+            id={`${id}-entry`}
+            value={provider}
+            disabled={submitting || opening}
+            onChange={event => setSelectedProvider(event.currentTarget.value)}
+          >
+            {plugin.oauthProviderEntries.map(entry => (
+              <option key={entry.identifier} value={entry.identifier}>
+                {entry.name || entry.identifier}
+              </option>
+            ))}
+          </Select>
+        </div>
+      ) : null}
       {session && phase === 'waiting' ? <>
         <div className="plugin-oauth-field"><label htmlFor={`${id}-link`}>{text('link')}</label><textarea id={`${id}-link`} rows={3} readOnly value={session.url} spellCheck={false} /></div>
         <div className="plugin-oauth-link-actions"><button type="button" className="primary-button compact-button" disabled={opening} onClick={() => void open()}>{opening ? <LoaderCircle className="spin" size={16} /> : <ExternalLink size={16} />}{text('open')}</button><button type="button" className="secondary-button compact-button" onClick={() => void copy(session.url)}><Copy size={16} />{text('copy')}</button></div>
