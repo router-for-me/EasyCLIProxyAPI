@@ -335,7 +335,7 @@ function UsageEventCell({
       );
     case 'model': {
       const model = usageModelDetails(record.model, record.alias, record.response_model, record.reasoning_effort);
-      const effort = model.effort || t('usage.effort.unrecorded');
+      const effort = model.effort || 'auto';
       const tier = record.service_tier?.trim().toLowerCase() ?? '';
       const fast = ['priority', 'fast', 'ultrafast'].includes(tier);
       const modelTitle = [
