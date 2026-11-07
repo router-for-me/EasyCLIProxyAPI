@@ -1690,12 +1690,12 @@ fn core_management_address(listen_host: &str, port: u16) -> Result<SocketAddr, S
     Ok(SocketAddr::new(ip, port))
 }
 
+#[derive(Debug)]
 pub(crate) enum CoreStartupFailure {
     ShuttingDown,
     Exited(std::process::ExitStatus),
     Spawn(String),
     StatusCheck(io::Error),
-    TimedOut(u16),
 }
 
 impl CoreStartupFailure {
@@ -1722,9 +1722,6 @@ impl std::fmt::Display for CoreStartupFailure {
             Self::Exited(status) => write!(formatter, "CPA kernel exited immediately after startup: {status}"),
             Self::Spawn(error) => formatter.write_str(error),
             Self::StatusCheck(error) => write!(formatter, "Failed to check CPA kernel startup status: {error}"),
-            Self::TimedOut(port) => {
-                write!(formatter, "CPA kernel startup timed out: management port {port} was not listening within 10 seconds")
-            }
         }
     }
 }
@@ -1947,7 +1944,8 @@ pub(crate) fn wait_for_core_management_port(
     address: SocketAddr,
     process_state: &CoreProcessState,
 ) -> Result<(), CoreStartupFailure> {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    // Readiness is reported by the kernel itself: keep waiting while the process is alive.
+    // Only an exit, a failed status check, or application shutdown aborts the wait.
     loop {
         if process_state.is_shutting_down() {
             return Err(CoreStartupFailure::ShuttingDown);
@@ -1958,10 +1956,114 @@ pub(crate) fn wait_for_core_management_port(
         if TcpStream::connect_timeout(&address, Duration::from_millis(200)).is_ok() {
             return Ok(());
         }
-        if Instant::now() >= deadline {
-            return Err(CoreStartupFailure::TimedOut(address.port()));
-        }
         thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(test)]
+mod core_startup_tests {
+    use super::*;
+
+    const SLOW_STARTUP_DELAY: Duration = Duration::from_secs(14);
+
+    #[test]
+    #[ignore]
+    fn core_startup_sleep_helper() {
+        thread::sleep(Duration::from_secs(180));
+    }
+
+    fn core_child_sleep_command() -> Command {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--ignored",
+                "--exact",
+                "core_runtime::core_startup_tests::core_startup_sleep_helper",
+                "--nocapture",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
+    }
+
+    #[test]
+    fn exiting_during_core_startup_cancels_the_port_wait() {
+        let state = std::sync::Arc::new(CoreProcessState::new(true));
+        let mut child = spawn_core_child(core_child_sleep_command()).unwrap();
+        let child_id = child.id();
+        let exiting_state = state.clone();
+        let exit = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(100));
+            exiting_state.shutting_down.store(true, Ordering::Release);
+        });
+
+        let started = Instant::now();
+        let result = wait_for_core_management_port(
+            &mut child,
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            &state,
+        );
+        drop(child);
+        exit.join().unwrap();
+
+        assert!(matches!(result, Err(CoreStartupFailure::ShuttingDown)));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(!is_process_alive(child_id));
+    }
+
+    #[test]
+    fn kernel_exit_during_startup_is_reported_without_waiting() {
+        let state = CoreProcessState::new(false);
+        let mut child = spawn_core_child(core_child_sleep_command()).unwrap();
+        thread::sleep(Duration::from_millis(200));
+        terminate_child(&mut child).unwrap();
+
+        let started = Instant::now();
+        let result = wait_for_core_management_port(
+            &mut child,
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            &state,
+        );
+
+        assert!(matches!(result, Err(CoreStartupFailure::Exited(_))));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn slow_kernel_startup_keeps_waiting_until_the_kernel_is_ready() {
+        let state = std::sync::Arc::new(CoreProcessState::new(false));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+
+        // The kernel stays "booted but not listening" for longer than the previously
+        // hardcoded 10-second timeout, then reports readiness on its own.
+        let mut child = spawn_core_child(core_child_sleep_command()).unwrap();
+        let wait_state = state.clone();
+        let waiter = thread::spawn(move || {
+            wait_for_core_management_port(&mut child, address, &wait_state)
+        });
+
+        thread::sleep(SLOW_STARTUP_DELAY);
+        let bound = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let bound_slot = bound.clone();
+        let server = thread::spawn(move || {
+            let listener = std::net::TcpListener::bind(address).unwrap();
+            *bound_slot.lock().unwrap() = Some(listener.local_addr().unwrap());
+            let _ = listener.accept();
+            drop(listener);
+        });
+
+        let started = Instant::now();
+        let result = waiter.join().unwrap();
+        assert!(
+            result.is_ok(),
+            "startup wait aborted before the kernel reported readiness: {result:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+        drop(server);
+        assert!(bound.lock().unwrap().is_some());
     }
 }
 

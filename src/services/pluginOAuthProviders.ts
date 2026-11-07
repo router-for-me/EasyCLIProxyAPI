@@ -6,11 +6,45 @@ export function collectPluginOAuthProviders(
   builtInProviderIds: readonly string[] = [],
 ): PluginListEntry[] {
   const seen = new Set(builtInProviderIds);
-  return plugins.filter(plugin => {
+  const result: PluginListEntry[] = [];
+  for (const plugin of plugins) {
+    if (!plugin.effectiveEnabled || !plugin.supportsOAuth) continue;
+    if (plugin.oauthProviderEntries && plugin.oauthProviderEntries.length > 0) {
+      for (const entry of plugin.oauthProviderEntries) {
+        const id = entry.identifier;
+        if (!id || !/^[a-z0-9-]+$/.test(id) || seen.has(id)) continue;
+        seen.add(id);
+        result.push({
+          ...plugin,
+          oauthProvider: id,
+          logo: entry.logo || plugin.logo,
+          metadata: {
+            name: entry.name || plugin.metadata?.name || plugin.id,
+            version: plugin.metadata?.version ?? '',
+            author: plugin.metadata?.author ?? '',
+            githubRepository: plugin.metadata?.githubRepository ?? '',
+            logo: entry.logo || plugin.metadata?.logo || plugin.logo,
+            configFields: plugin.metadata?.configFields ?? plugin.configFields,
+          },
+        });
+      }
+      continue;
+    }
+    if (plugin.oauthProviders && plugin.oauthProviders.length > 0) {
+      for (const id of plugin.oauthProviders) {
+        if (!id || !/^[a-z0-9-]+$/.test(id) || seen.has(id)) continue;
+        seen.add(id);
+        result.push({
+          ...plugin,
+          oauthProvider: id,
+        });
+      }
+      continue;
+    }
     const provider = plugin.oauthProvider;
-    if (!plugin.effectiveEnabled || !plugin.supportsOAuth || !provider
-      || !/^[a-z0-9-]+$/.test(provider) || seen.has(provider)) return false;
+    if (!provider || !/^[a-z0-9-]+$/.test(provider) || seen.has(provider)) continue;
     seen.add(provider);
-    return true;
-  });
+    result.push(plugin);
+  }
+  return result;
 }
