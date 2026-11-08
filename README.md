@@ -168,6 +168,8 @@ in the OS trust store, not disable TLS validation. See
 
 Every Windows release publishes both the complete ZIP and the legacy `update` ZIP. This keeps in-app updates available to older clients that have not migrated yet, while newer clients use the complete package so the bundled core can be updated too.
 
+**Version Management** asks whether to restart the core when updating ECPA. Restarting remains the default. On Windows and macOS, clear **Restart the core as well** to keep the current core and agents connected directly to it running while ECPA restarts. The newly bundled core is deferred until a manual core update; it is not installed automatically on the next launch. ECPA-hosted proxy connections and the managed DeepSeek Harness still stop when the GUI restarts. Linux currently requires a core restart and disables this choice.
+
 Current Windows, Linux, and macOS release packages support in-app automatic updates. Linux replaces the portable application files while preserving runtime data, and macOS replaces the signed application bundle. Each platform waits for the new version to confirm a successful launch and rolls back automatically if startup fails. The installation directory must be writable by the current user.
 
 Existing Linux and macOS installations need one manual upgrade to a release that includes the cross-platform auto-update marker. In-app updates are available after that release has been launched once.

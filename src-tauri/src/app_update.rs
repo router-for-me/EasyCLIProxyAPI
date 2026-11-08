@@ -421,6 +421,7 @@ async fn resolve_app_update(
         published_at: manifest.published_at,
         current_build_at,
         auto_update_supported,
+        preserve_core_supported: cfg!(any(windows, target_os = "macos")),
         download_url,
         download_file_name,
         download_size_bytes,
@@ -1085,12 +1086,18 @@ pub(crate) fn cancel_app_update(state: tauri::State<'_, AppUpdateState>) -> Resu
 pub(crate) async fn start_app_update(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppUpdateState>,
+    preserve_core: Option<bool>,
 ) -> Result<(), String> {
+    let preserve_core = preserve_core.unwrap_or(false);
+    if preserve_core && !cfg!(any(windows, target_os = "macos")) {
+        return Err("Updating without restarting the kernel is not supported on this platform".to_string());
+    }
     if portable_update_platform_key().is_none() {
         return Err("The current platform does not support in-app automatic upgrades".to_string());
     }
     let token = CancellationToken::new();
     state.start(token.clone())?;
+    state.update_task(|task| task.preserve_core = preserve_core);
     let task = state.snapshot();
     let _ = app.emit(APP_UPDATE_PROGRESS_EVENT, task);
     let update_app = app.clone();
@@ -1119,6 +1126,7 @@ pub(crate) async fn start_app_update(
                 &token,
                 &config.proxy_url,
                 config.selected_download_candidate(),
+                preserve_core,
             )
             .await
         }
@@ -1163,10 +1171,11 @@ pub(crate) async fn download_and_stage_portable_app_update(
     token: &CancellationToken,
     proxy_url: &str,
     download_source: VersionDownloadCandidate,
+    preserve_core: bool,
 ) -> Result<(), String> {
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
-        let _ = (app, pending, token, proxy_url, download_source);
+        let _ = (app, pending, token, proxy_url, download_source, preserve_core);
         Err("The current platform does not support in-app automatic upgrades".to_string())
     }
 
@@ -1253,8 +1262,9 @@ pub(crate) async fn download_and_stage_portable_app_update(
                 ack_path: work_dir.join("update-started.ack"),
                 work_dir: work_dir.clone(),
                 target_version: pending.version.clone(),
+                preserve_core,
             };
-            launch_portable_update_helper(app, &helper_path, &work_dir, &descriptor).await
+            launch_portable_update_helper(app, &helper_path, &work_dir, &descriptor, preserve_core).await
         }
         .await;
 
@@ -1326,8 +1336,9 @@ pub(crate) async fn download_and_stage_portable_app_update(
                 ack_path: work_dir.join("update-started.ack"),
                 work_dir: work_dir.clone(),
                 target_version: pending.version.clone(),
+                preserve_core,
             };
-            launch_portable_update_helper(app, &helper_path, &work_dir, &descriptor).await
+            launch_portable_update_helper(app, &helper_path, &work_dir, &descriptor, preserve_core).await
         }
         .await;
         if result.is_err() {
@@ -1384,9 +1395,10 @@ pub(crate) async fn download_and_stage_portable_app_update(
                 ack_path: work_dir.join("update-started.ack"),
                 work_dir: work_dir.clone(),
                 target_version: pending.version.clone(),
+                preserve_core,
             };
             let helper_path = macos_update_helper_path(&current_exe);
-            launch_portable_update_helper(app, &helper_path, &work_dir, &descriptor).await
+            launch_portable_update_helper(app, &helper_path, &work_dir, &descriptor, preserve_core).await
         }
         .await;
         // A busy DMG may still be mounted here. Never recursively clean its mount point.
@@ -1440,6 +1452,7 @@ async fn launch_portable_update_helper<T: Serialize>(
     helper_path: &Path,
     work_dir: &Path,
     descriptor: &T,
+    preserve_core: bool,
 ) -> Result<(), String> {
     let descriptor_path = work_dir.join("update-descriptor.json");
     fs::write(
@@ -1472,6 +1485,13 @@ async fn launch_portable_update_helper<T: Serialize>(
         task.phase = "restarting".to_string();
         task.message = Some("Update is ready. The application will restart shortly".to_string());
     });
+    if preserve_core {
+        if let Err(error) = prepare_core_for_app_update(app.state::<CoreProcessState>().inner()) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    }
     app.exit(0);
     Ok(())
 }
@@ -2474,6 +2494,7 @@ pub(crate) fn run_portable_update_helper(descriptor_path: &Path) -> Result<(), S
 
     if let Err(error) = replace_portable_update_files(&descriptor) {
         let mut rollback = Command::new(&descriptor.current_exe);
+        if descriptor.preserve_core { rollback.arg("--preserve-core"); }
         configure_background_command(&mut rollback);
         let _ = rollback.spawn();
         cleanup_portable_update_payload(descriptor_path, &descriptor);
@@ -2482,6 +2503,9 @@ pub(crate) fn run_portable_update_helper(descriptor_path: &Path) -> Result<(), S
 
     let _ = fs::remove_file(&descriptor.ack_path);
     let mut command = Command::new(&descriptor.current_exe);
+    if descriptor.preserve_core {
+        command.arg("--preserve-core");
+    }
     command
         .arg("--portable-update-ack")
         .arg(&descriptor.ack_path)
@@ -2494,6 +2518,7 @@ pub(crate) fn run_portable_update_helper(descriptor_path: &Path) -> Result<(), S
         Err(error) => {
             restore_portable_update_backup(&descriptor)?;
             let mut rollback = Command::new(&descriptor.current_exe);
+            if descriptor.preserve_core { rollback.arg("--preserve-core"); }
             configure_background_command(&mut rollback);
             let _ = rollback.spawn();
             cleanup_portable_update_payload(descriptor_path, &descriptor);
@@ -2518,6 +2543,7 @@ pub(crate) fn run_portable_update_helper(descriptor_path: &Path) -> Result<(), S
     let _ = child.wait();
     restore_portable_update_backup(&descriptor)?;
     let mut rollback = Command::new(&descriptor.current_exe);
+    if descriptor.preserve_core { rollback.arg("--preserve-core"); }
     configure_background_command(&mut rollback);
     let _ = rollback.spawn();
     cleanup_portable_update_payload(descriptor_path, &descriptor);
@@ -3036,7 +3062,9 @@ pub(crate) fn run_portable_update_helper(descriptor_path: &Path) -> Result<(), S
         let rollback_exe = descriptor
             .current_app
             .join(&descriptor.executable_relative_path);
-        let _ = Command::new(rollback_exe).spawn();
+        let mut rollback = Command::new(rollback_exe);
+        if descriptor.preserve_core { rollback.arg("--preserve-core"); }
+        let _ = rollback.spawn();
         cleanup_macos_update_payload(descriptor_path, &descriptor);
         return Err(error);
     }
@@ -3046,6 +3074,9 @@ pub(crate) fn run_portable_update_helper(descriptor_path: &Path) -> Result<(), S
         .join(&descriptor.executable_relative_path);
     let _ = fs::remove_file(&descriptor.ack_path);
     let mut command = Command::new(&current_exe);
+    if descriptor.preserve_core {
+        command.arg("--preserve-core");
+    }
     command
         .arg("--portable-update-ack")
         .arg(&descriptor.ack_path)
@@ -3059,7 +3090,9 @@ pub(crate) fn run_portable_update_helper(descriptor_path: &Path) -> Result<(), S
             let rollback_exe = descriptor
                 .current_app
                 .join(&descriptor.executable_relative_path);
-            let _ = Command::new(rollback_exe).spawn();
+            let mut rollback = Command::new(rollback_exe);
+            if descriptor.preserve_core { rollback.arg("--preserve-core"); }
+            let _ = rollback.spawn();
             cleanup_macos_update_payload(descriptor_path, &descriptor);
             return Err(format!("Failed to start new macOS application: {error}"));
         }
@@ -3086,7 +3119,9 @@ pub(crate) fn run_portable_update_helper(descriptor_path: &Path) -> Result<(), S
     let rollback_exe = descriptor
         .current_app
         .join(&descriptor.executable_relative_path);
-    let _ = Command::new(rollback_exe).spawn();
+    let mut rollback = Command::new(rollback_exe);
+    if descriptor.preserve_core { rollback.arg("--preserve-core"); }
+    let _ = rollback.spawn();
     cleanup_macos_update_payload(descriptor_path, &descriptor);
     Err(format!(
         "New application version {} did not confirm startup within 60 seconds; rolled back",

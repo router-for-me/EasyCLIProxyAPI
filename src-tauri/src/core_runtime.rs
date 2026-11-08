@@ -15,6 +15,7 @@ pub(crate) fn lock_core_operation(
 
 pub(crate) struct CoreChild {
     child: Child,
+    detached: bool,
     #[cfg(windows)]
     job: isize,
 }
@@ -35,6 +36,11 @@ impl std::ops::DerefMut for CoreChild {
 
 impl Drop for CoreChild {
     fn drop(&mut self) {
+        if self.detached {
+            #[cfg(windows)]
+            close_windows_handle(self.job);
+            return;
+        }
         #[cfg(windows)]
         {
             close_windows_handle(self.job);
@@ -102,6 +108,7 @@ pub(crate) fn spawn_core_child(command: Command) -> Result<CoreChild, String> {
     };
     Ok(CoreChild {
         child,
+        detached: false,
         #[cfg(windows)]
         job,
     })
@@ -447,13 +454,28 @@ pub(crate) fn remember_bundled_core_when_up_to_date(
     Ok(())
 }
 
-pub(crate) fn auto_install_bundled_core_if_needed(app: &tauri::AppHandle) -> Result<bool, String> {
+pub(crate) fn defer_bundled_core_install(
+    install_dir: &Path,
+    bundled_version: &str,
+    preserve_core: bool,
+) -> Result<bool, String> {
+    if !preserve_core || find_core_binary(install_dir).is_none() {
+        return Ok(false);
+    }
+    mark_bundled_core_version_handled(install_dir, bundled_version)?;
+    Ok(true)
+}
+
+pub(crate) fn auto_install_bundled_core_if_needed(app: &tauri::AppHandle, preserve_core: bool) -> Result<bool, String> {
     let install_dir = core_install_dir()?;
     let (info, archive_path) = match bundled_core_archive()? {
         Some(bundled) => bundled,
         None if find_core_binary(&install_dir).is_some() => return Ok(false),
         None => return Err("CPA kernel was not detected, and this distribution has no matching offline kernel".to_string()),
     };
+    if defer_bundled_core_install(&install_dir, &info.version, preserve_core)? {
+        return Ok(false);
+    }
     if !core_needs_bundled_install(&install_dir, &info.version) {
         remember_bundled_core_when_up_to_date(&install_dir, &info.version)?;
         return Ok(false);
@@ -2752,6 +2774,7 @@ pub(crate) fn core_processes_ready(process_ids: &[u32], address: SocketAddr) -> 
 pub(crate) fn adopt_existing_core_processes(
     process_state: &CoreProcessState,
     config: &GuiConfigFile,
+    preserve_core: bool,
 ) -> Result<Vec<u32>, String> {
     let install_dir = core_install_dir()?;
     let Some(binary_path) = find_core_binary(&install_dir) else {
@@ -2772,7 +2795,7 @@ pub(crate) fn adopt_existing_core_processes(
                 Err("CPA kernel is not ready for adoption".to_string())
             }
         });
-        if ready.is_err() {
+        if ready.is_err() && !preserve_core {
             process_state.adopt_process_ids(&binary_path, process_ids)?;
             stop_core_process_inner(process_state)?;
             return Ok(Vec::new());
@@ -2785,6 +2808,47 @@ pub(crate) fn adopt_existing_core_processes(
         .collect())
 }
 
+pub(crate) fn prepare_core_for_app_update(process_state: &CoreProcessState) -> Result<(), String> {
+    let _guard = lock_core_operation(process_state)?;
+    let mut child = process_state.child.lock().map_err(|error| error.to_string())?;
+    if let Some(child) = child.as_mut() {
+        child.detach_for_update()?;
+    }
+    process_state.preserve_on_exit.store(true, Ordering::Release);
+    Ok(())
+}
+
+impl CoreChild {
+    pub(crate) fn detach_for_update(&mut self) -> Result<(), String> {
+        #[cfg(target_os = "linux")]
+        return Err("Updating without restarting the kernel is not supported on Linux".to_string());
+
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::System::JobObjects::{
+                JobObjectExtendedLimitInformation, SetInformationJobObject,
+                JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            };
+            let information: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+            let configured = unsafe {
+                SetInformationJobObject(
+                    self.job as _, JobObjectExtendedLimitInformation,
+                    &information as *const _ as *const _,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                )
+            };
+            if configured == 0 {
+                return Err(format!("Failed to preserve the running kernel: {}", io::Error::last_os_error()));
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.detached = true;
+            Ok(())
+        }
+    }
+}
+
 pub(crate) fn shutdown_managed_core(
     process_state: &CoreProcessState,
     gui_config_state: &GuiConfigState,
@@ -2794,7 +2858,7 @@ pub(crate) fn shutdown_managed_core(
             .ok()
             .and_then(|install_dir| find_core_binary(&install_dir))
             .is_some_and(|binary_path| is_core_running(&binary_path));
-    if was_running {
+    if was_running && !process_state.preserve_on_exit.load(Ordering::Acquire) {
         if let Err(error) = stop_core_process_inner(process_state) {
             eprintln!("Failed to stop CPA kernel on exit: {error}");
         }

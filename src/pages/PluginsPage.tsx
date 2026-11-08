@@ -351,7 +351,7 @@ export function PluginsPage() {
 
   return <div className="plugins-page" role="region" aria-label={pt("title")}>
     <div className="plugin-navigation">
-      {supported !== null && <Tabs variant="segmented" activation="manual" className="plugin-tabs" aria-label={pt("title")} value={tab} disabled={busy}
+      {supported !== null && <Tabs activation="manual" className="plugin-tabs secondary-page-tabs" aria-label={pt("title")} value={tab} disabled={busy}
         onChange={value => { setTab(value); setSearch(""); setFilter("all"); }}
         items={(["installed", "store", "ecpa", "settings"] as const).map(value => ({ value, id: `plugin-tab-${value}`, panelId: "plugin-tab-panel", label: pt(value === "installed" ? "local" : value === "ecpa" ? "featured" : value) }))} />}
       <div className="plugin-toolbar">
