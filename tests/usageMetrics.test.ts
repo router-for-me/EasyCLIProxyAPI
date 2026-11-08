@@ -8,8 +8,8 @@ import {
 } from '../src/services/usageMetrics';
 
 describe('generation speed', () => {
-  test('uses the total request latency without requiring TTFT in default total mode', () => {
-    const input = { outputTokens: 344, latencyMs: 10_600 };
+  test('uses the total request latency without requiring TTFT in explicit total mode', () => {
+    const input = { outputTokens: 344, latencyMs: 10_600, mode: 'total' as const };
     expect(calculateGenerationSpeed(input)).toBeCloseTo(32.4528, 4);
     expect(formatGenerationSpeed(input)).toBe('32.5 t/s');
   });
@@ -26,21 +26,20 @@ describe('generation speed', () => {
     expect(formatGenerationSpeed({ outputTokens: 790, latencyMs: 13_700, ttftMs: 9_890, mode: 'ttft' })).toBe('207.3 t/s');
   });
 
-  test('returns an em dash below the output or generation-window floor in ttft mode', () => {
-    // 99 output tokens over 200 ms would otherwise read 495 t/s.
-    expect(calculateGenerationSpeed({ outputTokens: 99, latencyMs: 1_000, ttftMs: 800, mode: 'ttft' })).toBeNull();
-    expect(formatGenerationSpeed({ outputTokens: 99, latencyMs: 1_000, ttftMs: 800, mode: 'ttft' })).toBe('—');
-    // Exact 100-token floor still counts.
-    expect(calculateGenerationSpeed({ outputTokens: 100, latencyMs: 1_000, ttftMs: 800, mode: 'ttft' })).toBeCloseTo(500, 4);
-    // A burst window shorter than 100 ms tells no speed.
-    expect(calculateGenerationSpeed({ outputTokens: 500, latencyMs: 1_060, ttftMs: 1_000, mode: 'ttft' })).toBeNull();
-    expect(calculateGenerationSpeed({ outputTokens: 500, latencyMs: 1_100, ttftMs: 1_000, mode: 'ttft' })).toBeCloseTo(5_000, 4);
+  test('accepts small outputs and keeps the 100 ms floor only in ttft mode', () => {
+    expect(calculateGenerationSpeed({ outputTokens: 1, latencyMs: 10, mode: 'total' })).toBe(100);
+    expect(calculateGenerationSpeed({ outputTokens: 99, latencyMs: 1_000, ttftMs: 800, mode: 'ttft' })).toBe(495);
+    expect(calculateGenerationSpeed({ outputTokens: 1, latencyMs: 1_099, ttftMs: 1_000, mode: 'ttft' })).toBeNull();
+    expect(calculateGenerationSpeed({ outputTokens: 1, latencyMs: 1_100, ttftMs: 1_000, mode: 'ttft' })).toBe(10);
   });
 
-  test('falls back to total latency when TTFT is zero, null, or not less than elapsed latency in ttft mode', () => {
-    expect(formatGenerationSpeed({ outputTokens: 344, latencyMs: 10_600, ttftMs: 0, mode: 'ttft' })).toBe('32.5 t/s');
-    expect(formatGenerationSpeed({ outputTokens: 344, latencyMs: 10_600, ttftMs: null, mode: 'ttft' })).toBe('32.5 t/s');
-    expect(formatGenerationSpeed({ outputTokens: 344, latencyMs: 10_600, ttftMs: 10_600, mode: 'ttft' })).toBe('32.5 t/s');
+  test.each([undefined, null, 0, -1, 10_600, 10_700, Number.NaN, Number.POSITIVE_INFINITY])('rejects invalid TTFT %s without falling back to total latency', (ttftMs) => {
+    expect(formatGenerationSpeed({ outputTokens: 344, latencyMs: 10_600, ttftMs, mode: 'ttft' })).toBe('—');
+  });
+
+  test('defaults to the TTFT-subtracted window', () => {
+    expect(calculateGenerationSpeed({ outputTokens: 10, latencyMs: 2_000, ttftMs: 1_000 })).toBe(10);
+    expect(calculateGenerationSpeed({ outputTokens: 10, latencyMs: 2_000 })).toBeNull();
   });
 
   test.each([

@@ -8,6 +8,7 @@ const translations = {
   'zh-TW': '## 新增\n\n- 支援 **更新說明**。\n',
   en: '## Added\n\n- Supports **release notes**.\n',
   ja: '## 新機能\n\n- **更新内容**を表示します。\n',
+  ru: '## Добавлено\n\n- Поддержка **примечаний к выпуску**.\n',
 };
 const info = {
   latestVersion: '0.2.98',
@@ -48,7 +49,7 @@ describe('localized release notes display', () => {
     const html = renderNotes({}, locale);
     const body = html.split('app-release-notes-markdown')[1].split('</footer>')[0];
     expect(body).toContain('lang="' + locale + '"');
-    const expected = { 'zh-CN': '更新说明', 'zh-TW': '更新說明', en: 'release notes', ja: '更新内容' };
+    const expected = { 'zh-CN': '更新说明', 'zh-TW': '更新說明', en: 'release notes', ja: '更新内容', ru: 'примечаний к выпуску' };
     for (const [language, text] of Object.entries(expected)) {
       if (language === locale) expect(body).toContain('<strong>' + text + '</strong>');
       else expect(body).not.toContain('<strong>' + text + '</strong>');

@@ -5,7 +5,7 @@ import { useI18n } from '../i18n';
 
 export function SettingsHelp({ label, children }: { label: string; children: ReactNode }) {
   const { locale } = useI18n();
-  const helpLabel = locale === 'zh-CN' ? '说明' : locale === 'ja' ? '説明' : 'Help';
+  const helpLabel = locale === 'zh-CN' ? '说明' : locale === 'ja' ? '説明' : locale === 'ru' ? 'Справка' : 'Help';
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const popover = useRef<HTMLSpanElement>(null);
