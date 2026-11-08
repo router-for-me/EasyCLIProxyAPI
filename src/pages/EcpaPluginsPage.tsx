@@ -173,7 +173,15 @@ export function EcpaPluginsPage() {
       const result = await fetchEcpaRegistry({ token, forceRefresh: true });
       if (!mounted.current) return;
       setTokenInvalid(result.tokenInvalid);
-      if (result.registry) setPlugins(result.registry.plugins);
+      if (result.registry) {
+        setPlugins(result.registry.plugins);
+        setRegistryError("");
+      } else {
+        // A failed refresh must clear the stale list and say so, exactly like the
+        // initial load; otherwise recovery keeps a false failure banner around.
+        setPlugins([]);
+        setRegistryError(pluginText("registryLoadFailed", locale));
+      }
       await reloadStore();
     } catch (reason) {
       if (mounted.current) setStoreError(String(reason));
