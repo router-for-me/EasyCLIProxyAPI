@@ -16,7 +16,7 @@ async function withPortableFixture(run: (root: string, coreOutput: string) => Pr
     for (const directory of ['scripts', 'src-tauri', 'cpa-core', 'bin-work/cpa-core']) {
       await mkdir(join(root, directory), { recursive: true });
     }
-    for (const script of ['portable.mjs', 'version.mjs']) {
+    for (const script of ['portable.mjs', 'version.mjs', 'download-release.mjs']) {
       await copyFile(fileURLToPath(new URL(`../scripts/${script}`, import.meta.url)), join(root, 'scripts', script));
     }
     await writeFile(join(root, 'src-tauri', 'Cargo.toml'), '[package]\nname = "cpa-gui"\nversion = "0.3.0"\n');

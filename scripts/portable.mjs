@@ -4,6 +4,7 @@ import { chmod, copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:f
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readAppVersion } from './version.mjs';
+import { downloadReleaseBytes } from './download-release.mjs';
 
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 2) {
@@ -34,9 +35,8 @@ const tag = `v${version}`;
 const releaseBase = `https://github.com/router-for-me/CLIProxyAPI/releases/download/${tag}`;
 
 const downloadReleaseFile = async (name, destination) => {
-  const response = await fetch(`${releaseBase}/${name}`);
-  if (!response.ok) throw new Error(`Download ${name} failed: HTTP ${response.status}`);
-  await writeFile(destination, Buffer.from(await response.arrayBuffer()));
+  const bytes = await downloadReleaseBytes(`${releaseBase}/${name}`);
+  await writeFile(destination, bytes);
 };
 
 const downloadCoreRelease = () => Promise.all([
