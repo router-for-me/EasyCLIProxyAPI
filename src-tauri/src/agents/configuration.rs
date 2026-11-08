@@ -3925,6 +3925,10 @@ pub(crate) fn build_zcode_agent_config(
         rule.get("providerId").and_then(serde_json::Value::as_str)
             != Some(MANAGED_AGENT_PROVIDER_ID)
     });
+    let calibrations = crate::usage::query_models_usage_calibration(
+        ordered.iter().map(|option| option.name.as_str()),
+    );
+    let capabilities = crate::usage::load_cached_model_capabilities();
     let mut manual_updates = Vec::new();
     for option in ordered {
         let manual = existing_manual_rules.get(&option.name);
@@ -3933,7 +3937,12 @@ pub(crate) fn build_zcode_agent_config(
         let entry = rule.as_object_mut().ok_or("ZCode model rule must be an object")?;
         entry.insert("providerId".to_string(), serde_json::json!(MANAGED_AGENT_PROVIDER_ID));
         entry.insert("modelId".to_string(), serde_json::json!(option.name));
-        let (inferred_cw, inferred_mot, _, _, _) = zcode::infer_zcode_model_knowledge_with_calibration(&option.name);
+        let (inferred_cw, inferred_mot, _, _, _) =
+            zcode::infer_zcode_model_knowledge_with_calibrations(
+                &option.name,
+                &calibrations,
+                &capabilities,
+            );
         let config_obj = ensure_json_object_entry(entry, "config");
         {
             let properties = ensure_json_object_entry(config_obj, "properties");

@@ -1316,6 +1316,8 @@ fn initialize_usage_schema(connection: &Connection) -> Result<(), String> {
                 ON usage_events(failed, timestamp_ms DESC);
             CREATE INDEX IF NOT EXISTS idx_usage_events_api_group_timestamp
                 ON usage_events(api_group_key, timestamp_ms DESC);
+            CREATE INDEX IF NOT EXISTS idx_usage_events_model_calibration
+                ON usage_events(lower(trim(model)), id DESC);
 
             CREATE TABLE IF NOT EXISTS usage_inbox (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1376,6 +1378,12 @@ fn initialize_usage_schema(connection: &Connection) -> Result<(), String> {
             [],
         )
         .map_err(|error| format!("Failed to create SQLite canceled-record index: {error}"))?;
+    connection
+        .execute(
+            "CREATE INDEX IF NOT EXISTS idx_usage_events_model_calibration ON usage_events(lower(trim(model)), id DESC)",
+            [],
+        )
+        .map_err(|error| format!("Failed to create SQLite model-calibration index: {error}"))?;
     connection
         .pragma_update(None, "user_version", USAGE_DATABASE_SCHEMA_VERSION)
         .map_err(|error| format!("Failed to update SQLite usage records version: {error}"))
@@ -1499,15 +1507,10 @@ pub(crate) struct ModelUsageCalibration {
     pub max_observed_input_tokens: Option<u64>,
 }
 
-pub(crate) fn query_model_usage_calibration(model_id: &str) -> Option<ModelUsageCalibration> {
-    let connection = open_usage_database().ok()?;
-    let mut stmt = connection.prepare(
-        "SELECT response_model, reasoning_effort, failed, failure_status, failure_body, input_tokens 
-         FROM usage_events 
-         WHERE lower(trim(model)) = lower(trim(?1)) 
-         ORDER BY id DESC LIMIT 100"
-    ).ok()?;
-
+fn fetch_single_model_usage_calibration(
+    stmt: &mut rusqlite::Statement<'_>,
+    model_id: &str,
+) -> Option<ModelUsageCalibration> {
     let rows = stmt.query_map(params![model_id], |row| {
         let response_model: Option<String> = row.get(0).ok().filter(|s: &String| !s.trim().is_empty());
         let reasoning_effort: Option<String> = row.get(1).ok().filter(|s: &String| !s.trim().is_empty() && s != "none");
@@ -1568,6 +1571,48 @@ pub(crate) fn query_model_usage_calibration(model_id: &str) -> Option<ModelUsage
     } else {
         None
     }
+}
+
+/// Queries usage calibration for multiple models using a single database connection
+/// and prepared statement, backed by `idx_usage_events_model_calibration`.
+pub(crate) fn query_models_usage_calibration<'a>(
+    model_ids: impl IntoIterator<Item = &'a str>,
+) -> HashMap<String, ModelUsageCalibration> {
+    let Ok(connection) = open_usage_database() else {
+        return HashMap::new();
+    };
+    let mut stmt = match connection.prepare(
+        "SELECT response_model, reasoning_effort, failed, failure_status, failure_body, input_tokens 
+         FROM usage_events 
+         WHERE lower(trim(model)) = lower(trim(?1)) 
+         ORDER BY id DESC LIMIT 100",
+    ) {
+        Ok(stmt) => stmt,
+        Err(_) => return HashMap::new(),
+    };
+
+    let mut result = HashMap::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for model_id in model_ids {
+        let trimmed = model_id.trim();
+        if trimmed.is_empty() || !seen.insert(trimmed.to_ascii_lowercase()) {
+            continue;
+        }
+        if let Some(calib) = fetch_single_model_usage_calibration(&mut stmt, trimmed) {
+            result.insert(trimmed.to_string(), calib);
+        }
+    }
+
+    result
+}
+
+pub(crate) fn query_model_usage_calibration(model_id: &str) -> Option<ModelUsageCalibration> {
+    let trimmed = model_id.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    query_models_usage_calibration([trimmed]).remove(trimmed)
 }
 
 fn open_usage_database_at(root: &Path) -> Result<Connection, String> {
@@ -3814,10 +3859,16 @@ pub(crate) fn find_model_capabilities<'a>(
         .map(|(_, entry)| entry)
 }
 
+pub(crate) fn load_cached_model_capabilities() -> Vec<ModelCapabilities> {
+    let Ok(connection) = open_usage_database() else {
+        return Vec::new();
+    };
+    load_model_capabilities(&connection).unwrap_or_default()
+}
+
 /// Looks up authoritative model capabilities from the imported external catalog.
 pub(crate) fn query_model_capabilities(model: &str) -> Option<ModelCapabilities> {
-    let connection = open_usage_database().ok()?;
-    let capabilities = load_model_capabilities(&connection).ok()?;
+    let capabilities = load_cached_model_capabilities();
     find_model_capabilities(&capabilities, model).cloned()
 }
 
@@ -5488,6 +5539,65 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    #[test]
+    fn model_calibration_query_uses_expression_index_and_skips_table_scan() {
+        let root = test_root("model-calibration-index");
+        let connection = open_test_database(&root);
+
+        let mut plan_stmt = connection
+            .prepare(
+                "EXPLAIN QUERY PLAN
+                 SELECT response_model, reasoning_effort, failed, failure_status, failure_body, input_tokens 
+                 FROM usage_events 
+                 WHERE lower(trim(model)) = lower(trim(?1)) 
+                 ORDER BY id DESC LIMIT 100",
+            )
+            .unwrap();
+        let plan_rows = plan_stmt
+            .query_map(params!["test-model"], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let plan_text = plan_rows.join(" ");
+        assert!(
+            plan_text.contains("USING INDEX idx_usage_events_model_calibration"),
+            "Expected query plan to use index, but got: {plan_text}"
+        );
+        assert!(
+            !plan_text.contains("SCAN usage_events"),
+            "Query plan must not scan table: {plan_text}"
+        );
+
+        let mut calib_stmt = connection
+            .prepare(
+                "SELECT response_model, reasoning_effort, failed, failure_status, failure_body, input_tokens 
+                 FROM usage_events 
+                 WHERE lower(trim(model)) = lower(trim(?1)) 
+                 ORDER BY id DESC LIMIT 100",
+            )
+            .unwrap();
+        assert!(fetch_single_model_usage_calibration(&mut calib_stmt, "non-existent").is_none());
+
+        connection
+            .execute(
+                "INSERT INTO usage_events (
+                    event_key, timestamp, timestamp_ms, local_hour, model,
+                    response_model, reasoning_effort, failed, input_tokens, created_at
+                ) VALUES (?1, ?2, 100, '2026-01-01T00', ' My-Model ', 'response-real', 'high', 0, 8192, ?2)",
+                params!["key-1", "2026-01-01T00:00:00Z"],
+            )
+            .unwrap();
+
+        let calib = fetch_single_model_usage_calibration(&mut calib_stmt, "my-model").unwrap();
+        assert_eq!(calib.canonical_response_model.as_deref(), Some("response-real"));
+        assert_eq!(calib.max_observed_input_tokens, Some(8192));
+
+        drop(calib_stmt);
+        drop(plan_stmt);
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

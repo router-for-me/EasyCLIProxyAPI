@@ -93,8 +93,12 @@ use super::*;
 use crate::GuiConfigState;
 
 
-pub(crate) fn infer_zcode_model_knowledge_with_calibration(model_id: &str) -> (Option<u64>, Option<u64>, bool, bool, Vec<String>) {
-    let calibration = crate::usage::query_model_usage_calibration(model_id);
+pub(crate) fn infer_zcode_model_knowledge_with_calibrations(
+    model_id: &str,
+    calibrations: &std::collections::HashMap<String, crate::usage::ModelUsageCalibration>,
+    capabilities: &[crate::usage::ModelCapabilities],
+) -> (Option<u64>, Option<u64>, bool, bool, Vec<String>) {
+    let calibration = calibrations.get(model_id);
     let target_name = calibration.as_ref()
         .and_then(|c| c.canonical_response_model.as_deref())
         .unwrap_or(model_id);
@@ -105,12 +109,12 @@ pub(crate) fn infer_zcode_model_knowledge_with_calibration(model_id: &str) -> (O
     // 2. The external capability catalog (models.dev / LiteLLM) is authoritative
     // for models the static inference table does not describe, such as custom
     // openai-compatibility providers.
-    if let Some(capabilities) = crate::usage::query_model_capabilities(target_name) {
+    if let Some(entry) = crate::usage::find_model_capabilities(capabilities, target_name) {
         if cw.is_none() {
-            cw = capabilities.context_window;
+            cw = entry.context_window;
         }
         if mot.is_none() {
-            mot = capabilities.max_output_tokens;
+            mot = entry.max_output_tokens;
         }
     }
 
@@ -131,6 +135,18 @@ pub(crate) fn infer_zcode_model_knowledge_with_calibration(model_id: &str) -> (O
     }
 
     (cw, mot, img, pdf, rl)
+}
+
+pub(crate) fn infer_zcode_model_knowledge_with_calibration(
+    model_id: &str,
+) -> (Option<u64>, Option<u64>, bool, bool, Vec<String>) {
+    let calibration = crate::usage::query_model_usage_calibration(model_id);
+    let mut calibrations = std::collections::HashMap::new();
+    if let Some(calib) = calibration {
+        calibrations.insert(model_id.trim().to_string(), calib);
+    }
+    let capabilities = crate::usage::load_cached_model_capabilities();
+    infer_zcode_model_knowledge_with_calibrations(model_id, &calibrations, &capabilities)
 }
 
 pub(crate) const ZCODE_CPA_REASONING_MAP: &str = "reasoningLevel == \"none\" || reasoningLevel == \"disabled\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}";
@@ -367,9 +383,19 @@ pub(crate) fn zcode_editor_snapshot(
     let mut editor_models = Vec::new();
     let mut seen_ids = std::collections::HashSet::new();
 
+    let calibrations = crate::usage::query_models_usage_calibration(
+        available_models.iter().map(|model| model.name.as_str()),
+    );
+    let capabilities = crate::usage::load_cached_model_capabilities();
+
     for option in available_models {
         seen_ids.insert(option.name.clone());
-        let (inferred_cw, inferred_mot, inferred_img, inferred_pdf, inferred_rl) = infer_zcode_model_knowledge_with_calibration(&option.name);
+        let (inferred_cw, inferred_mot, inferred_img, inferred_pdf, inferred_rl) =
+            infer_zcode_model_knowledge_with_calibrations(
+                &option.name,
+                &calibrations,
+                &capabilities,
+            );
 
         let effective_default_cw = match option.context_window {
             Some(500_000) | None => inferred_cw.or(option.context_window),
