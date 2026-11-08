@@ -195,12 +195,9 @@
   text-align: center;
 }
 
-.usage-records-page .usage-request-log .usage-events-table thead th:first-child {
-  border-radius: var(--radius-lg) var(--radius-none) var(--radius-none) var(--radius-lg);
-}
-
+.usage-records-page .usage-request-log .usage-events-table thead th:first-child,
 .usage-records-page .usage-request-log .usage-events-table thead th:last-child {
-  border-radius: var(--radius-none) var(--radius-lg) var(--radius-lg) var(--radius-none);
+  border-radius: var(--radius-none);
 }
 
 .usage-records-page .usage-request-log.usage-events-errors-expanded .usage-events-table td {
