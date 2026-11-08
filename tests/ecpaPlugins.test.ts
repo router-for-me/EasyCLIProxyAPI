@@ -1,15 +1,26 @@
 import { describe, expect, it } from 'bun:test';
-import bundledRegistry from '../src/data/ecpaRegistry.json';
-import { buildEcpaStoreMap, ECPA_REGISTRY_URL, getBundledEcpaRegistry, getEcpaPluginDescription, isInstallableEcpaEntry, parseEcpaRegistry, resolveEcpaStoreEntry } from '../src/services/ecpaPlugins';
+import { buildEcpaStoreMap, ECPA_REGISTRY_URL, fetchEcpaRegistry, getEcpaPluginDescription, isInstallableEcpaEntry, parseEcpaRegistry, resolveEcpaStoreEntry } from '../src/services/ecpaPlugins';
 import { getPluginStoreLocalizedDescription, normalizePluginStore } from '../src/services/plugins';
 
+const registryPayload = {
+  schema_version: 1,
+  plugins: [
+    { id: 'demo', name: 'Demo', description: 'Demo plugin', repository: 'https://example.test/demo', install: { type: 'github-release' } },
+  ],
+};
+
+const okFetch = (async () => new Response(JSON.stringify(registryPayload), { status: 200 })) as unknown as typeof fetch;
+const failingFetch = (async () => {
+  throw new Error('network down');
+}) as unknown as typeof fetch;
+
 describe('ecpaPlugins parser', () => {
-  it('parses the bundled registry, rejects schema_version 2, and drops entries missing id', () => {
-    const parsedBundled = parseEcpaRegistry(bundledRegistry);
-    expect(parsedBundled).not.toBeNull();
-    expect(parsedBundled?.schema_version).toBe(1);
-    expect(parsedBundled?.plugins).toHaveLength(2);
-    expect(getBundledEcpaRegistry().plugins[0].install?.type).toBe('github-release');
+  it('parses a registry payload, rejects schema_version 2, and drops entries missing id', () => {
+    const parsed = parseEcpaRegistry(registryPayload);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.schema_version).toBe(1);
+    expect(parsed?.plugins).toHaveLength(1);
+    expect(parsed?.plugins[0].install?.type).toBe('github-release');
 
     expect(parseEcpaRegistry({ schema_version: 2, plugins: [] })).toBeNull();
 
@@ -39,7 +50,7 @@ describe('ecpaPlugins parser', () => {
   });
 
   it('requires an id and a non-empty repository for installation', () => {
-    const entry = getBundledEcpaRegistry().plugins[0];
+    const entry = parseEcpaRegistry(registryPayload)!.plugins[0];
     expect(isInstallableEcpaEntry(entry)).toBe(true);
     expect(isInstallableEcpaEntry({ ...entry, repository: '  ' })).toBe(false);
     expect(isInstallableEcpaEntry({ ...entry, id: '' })).toBe(false);
@@ -74,5 +85,22 @@ describe('ecpaPlugins parser', () => {
     expect(resolveEcpaStoreEntry(indexed, 'missing')).toBeUndefined();
     indexed.delete(`${ECPA_REGISTRY_URL}#aistudio2api`);
     expect(resolveEcpaStoreEntry(indexed, 'aistudio2api')?.sourceId).toBe('core-derived-identity');
+  });
+});
+
+describe('fetchEcpaRegistry', () => {
+  it('returns the remote registry when the fetch succeeds', async () => {
+    const result = await fetchEcpaRegistry({ fetchImpl: okFetch, forceRefresh: true });
+    expect(result.registry?.plugins.map((plugin) => plugin.id)).toEqual(['demo']);
+    expect(result.source).toBe('remote');
+    expect(result.usedFallback).toBe(false);
+  });
+
+  it('reports a failed fetch instead of serving a built-in plugin list', async () => {
+    const result = await fetchEcpaRegistry({ fetchImpl: failingFetch, forceRefresh: true });
+    expect(result.registry).toBeNull();
+    expect(result.usedFallback).toBe(true);
+    expect(result.source).toBe('bundled');
+    expect(result.tokenInvalid).toBe(false);
   });
 });

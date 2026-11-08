@@ -9,7 +9,6 @@ import {
   buildEcpaStoreMap,
   ECPA_REGISTRY_URL,
   fetchEcpaRegistry,
-  getBundledEcpaRegistry,
   getEcpaPluginDescription,
   isInstallableEcpaEntry,
   isStoreUpdateAvailable,
@@ -83,6 +82,7 @@ export function EcpaPluginsPage() {
   const [storeLoaded, setStoreLoaded] = useState(false);
   const [storeEntries, setStoreEntries] = useState(new Map<string, PluginStoreEntry>());
   const [storeError, setStoreError] = useState('');
+  const [registryError, setRegistryError] = useState('');
   const [installEntry, setInstallEntry] = useState<PluginStoreEntry | null>(null);
   // A fallback install retried after source registration has no open dialog, so
   // its own state keeps the other cards disabled until it settles.
@@ -316,7 +316,7 @@ export function EcpaPluginsPage() {
       if (mounted.current) setInstallRetryId('');
     }
   };
-  const [plugins, setPlugins] = useState<EcpaPluginEntry[]>(() => getBundledEcpaRegistry().plugins);
+  const [plugins, setPlugins] = useState<EcpaPluginEntry[]>([]);
   // A token previously entered here still applies; new tokens are configured in
   // Settings > Server > GitHub Token (see openSettingField below).
   const token = useMemo(() => readEcpaGitHubToken(), []);
@@ -350,13 +350,18 @@ export function EcpaPluginsPage() {
       setTokenInvalid(result.tokenInvalid);
       if (result.registry) {
         setPlugins(result.registry.plugins);
+        setRegistryError('');
+        return;
       }
+      // A failed read must not keep a previous list on screen.
+      setPlugins([]);
+      setRegistryError(pluginText('registryLoadFailed', locale));
     });
 
     return () => {
       controller.abort();
     };
-  }, [token]);
+  }, [token, locale]);
 
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
@@ -436,7 +441,7 @@ export function EcpaPluginsPage() {
         </div>
         <p className="ecpa-plugins-subtitle">{t('ecpaPlugins.subtitle')} {tokenSettingsLink(true)}</p>
       </header>
-      {storeError && <Notice tone="error">{storeError}{isGitHubRateLimit(storeError) ? <GitHubTokenHint /> : null}</Notice>}
+      {(storeError || registryError) && <Notice tone="error">{storeError || registryError}{isGitHubRateLimit(storeError) ? <GitHubTokenHint /> : null}</Notice>}
       {restartRequired && <Notice tone="info" icon={false} className="plugin-banner" action={
         <button type="button" className="secondary-button" onClick={async () => {
           if (!await askConfirmation({ title: pluginText('restartButton', locale), message: pluginText('restartConfirm', locale) })) return;

@@ -1,4 +1,3 @@
-import bundledRegistry from '../data/ecpaRegistry.json';
 import { isRecord } from './managementApi';
 import type { PluginStoreEntry } from './plugins';
 
@@ -138,10 +137,6 @@ export function parseEcpaRegistry(value: unknown): EcpaRegistry | null {
     schema_version: 1,
     plugins,
   };
-}
-
-export function getBundledEcpaRegistry(): EcpaRegistry {
-  return parseEcpaRegistry(bundledRegistry) ?? { schema_version: 1, plugins: [] };
 }
 
 export function getEcpaPluginDescription(entry: EcpaPluginEntry, locale: string): string {
