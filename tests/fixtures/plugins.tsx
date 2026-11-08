@@ -121,6 +121,12 @@ if (params.has('ecpa-registered')) {
   state.settings['store-sources'].push(ECPA_SOURCE_URL);
   addEcpaStoreEntries();
 }
+// `ecpa-fail` drops every cached registry copy and rejects the read, so the featured
+// tab has nothing to render unless it falls back to a built-in list.
+if (params.has('ecpa-fail')) {
+  localStorage.removeItem('ecpa.registry.cache');
+  globalThis.fetch = () => Promise.reject(new Error('Fixture registry unavailable'));
+}
 
 mockIPC(async (command, args) => {
   state.commands.push({ command, args });
