@@ -990,7 +990,7 @@ export function ConfigPanelPage() {
       networkFeedback.showNotice({ key: 'config.error.portRange' }, 'error');
       return;
     }
-    if (proxyOverrideDraft && proxyUrl && !/^https?:\/\//i.test(proxyUrl)) {
+    if (proxyOverrideDraft && proxyUrl && !/^(https?|socks|socks5h?):\/\//i.test(proxyUrl)) {
       setProxyUrlError(t('config.error.proxyUrlScheme'));
       networkFeedback.showNotice({ key: 'config.error.proxyUrlScheme' }, 'error');
       return;

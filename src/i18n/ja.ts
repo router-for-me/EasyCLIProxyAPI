@@ -1207,7 +1207,7 @@ export const jaOverrides = {
   'config.error.remarkTooLong': 'メモは 80 文字以内で入力してください',
   'config.error.portRange': 'ポートは 1〜65535 の整数で入力してください',
   'config.error.hostRequired': '有効なリッスン IP アドレスを入力してください',
-  'config.error.proxyUrlScheme': 'プロキシ URL は http:// または https:// で始めてください',
+  'config.error.proxyUrlScheme': 'プロキシ URL は http://、https://、socks://、socks5://、socks5h:// のいずれかで始めてください',
   'config.error.sessionTtlFormat': '30s、5m、1h、1h30m などの形式で入力してください',
   'config.error.reverseProxyPathsRequired': 'リバースプロキシを有効にするには証明書と秘密鍵のパスが必要です',
   'config.unit.seconds': '秒',

@@ -363,6 +363,31 @@ const scalarFields = '.template-config-field:is([data-field-type="string"], [dat
         const initialPort = await nativePort.inputValue();
         await exerciseHelp(page.locator('#config-native-network .settings-help-trigger').first(), 'network field');
         assert.equal(await nativePort.inputValue(), initialPort, `${label}: requesting help must not edit the field`);
+        if (viewport.width === 1920) {
+          const network = page.locator('#config-native-network');
+          const followSystem = network.locator('.config-proxy-system-toggle input');
+          const proxy = page.locator('#config-network-proxy-url');
+          const save = network.locator('.config-settings-save-row .primary-button');
+          await followSystem.uncheck();
+          for (const value of ['socks5://127.0.0.1:1080', 'SOCKS://127.0.0.1:1080', 'socks5h://127.0.0.1:1080', '']) {
+            await proxy.fill(value);
+            await save.click();
+            await page.waitForFunction(button => button.disabled && !/正在保存|保存中|saving/i.test(button.textContent), await save.elementHandle());
+            assert.equal(await proxy.getAttribute('aria-invalid'), 'false', `${label}: accepts proxy ${value}`);
+            await tab('routing');
+            await tab('general');
+            assert.equal(await proxy.inputValue(), value, `${label}: persists proxy ${value}`);
+            assert.equal(await followSystem.isChecked(), false, `${label}: preserves manual mode`);
+          }
+          await proxy.fill('ftp://127.0.0.1:21');
+          await save.click();
+          assert.equal(await proxy.getAttribute('aria-invalid'), 'true', `${label}: rejects unsupported proxy schemes`);
+          await proxy.fill('');
+          await followSystem.check();
+          await save.click();
+          await page.waitForFunction(button => button.disabled && !/正在保存|保存中|saving/i.test(button.textContent), await save.elementHandle());
+          assert.equal(await proxy.isDisabled(), true, `${label}: system mode disables manual input`);
+        }
 
         await tab('routing');
         assert.equal(await page.locator('#config-routing-section-title').isVisible(), true);

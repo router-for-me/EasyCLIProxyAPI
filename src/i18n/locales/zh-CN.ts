@@ -1189,7 +1189,7 @@ export const zhCN: Record<string, string> = {
   'config.error.remarkTooLong': '备注不能超过 80 个字符',
   'config.error.portRange': '端口必须是 1–65535 之间的整数',
   'config.error.hostRequired': '请输入有效的监听 IP 地址',
-  'config.error.proxyUrlScheme': '代理 URL 需以 http:// 或 https:// 开头',
+  'config.error.proxyUrlScheme': '代理 URL 需以 http://、https://、socks://、socks5:// 或 socks5h:// 开头',
   'config.error.sessionTtlFormat': '请输入有效的时长格式，例如 30s、5m、1h 或 1h30m',
   'config.error.reverseProxyPathsRequired': '启用反向代理需要填写证书与私钥路径',
   'config.unit.seconds': '秒',

@@ -2777,7 +2777,7 @@ export const ru: Record<MessageKey, string> = {
   'usage.events.speedModeTotal': 'По общему времени (сквозная пропускная способность)',
   'usage.events.speedModeTtft': 'Без учета TTFT (только фаза генерации)',
   'usage.effort.unrecorded': 'Не записано',
-  'config.error.proxyUrlScheme': 'URL прокси должен начинаться с http:// или https://',
+  'config.error.proxyUrlScheme': 'URL прокси должен начинаться с http://, https://, socks://, socks5:// или socks5h://',
   'config.error.sessionTtlFormat': 'Введите длительность, например 30s, 5m, 1h или 1h30m',
   'config.error.reverseProxyPathsRequired': 'При включении обратного прокси требуются пути к сертификату и ключу',
   'config.unit.seconds': 'с',

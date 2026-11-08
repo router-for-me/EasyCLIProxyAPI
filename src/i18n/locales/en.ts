@@ -1204,7 +1204,7 @@ export const en: Record<MessageKey, string> = {
   'config.error.remarkTooLong': 'The remark cannot exceed 80 characters',
   'config.error.portRange': 'The port must be an integer from 1 to 65535',
   'config.error.hostRequired': 'Enter a valid listen IP address',
-  'config.error.proxyUrlScheme': 'The proxy URL must start with http:// or https://',
+  'config.error.proxyUrlScheme': 'The proxy URL must start with http://, https://, socks://, socks5://, or socks5h://',
   'config.error.sessionTtlFormat': 'Enter a duration such as 30s, 5m, 1h, or 1h30m',
   'config.error.reverseProxyPathsRequired': 'Certificate and key paths are required when the reverse proxy is enabled',
   'config.unit.seconds': 's',
