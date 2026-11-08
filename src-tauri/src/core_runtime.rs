@@ -185,7 +185,7 @@ pub(crate) async fn check_latest_core(
         &config.custom_download_mirrors,
     )
     .await?;
-    persist_automatic_download_source_switch(
+    notify_temporary_download_source_fallback(
         &app,
         gui_config_state.inner(),
         &requested_source,
@@ -843,7 +843,7 @@ pub(crate) async fn stage_core_version_inner(
     )
     .await?;
     validate_downloaded_asset(asset, &downloaded)?;
-    persist_automatic_download_source_switch(
+    notify_temporary_download_source_fallback(
         app,
         gui_config_state,
         &requested_source,

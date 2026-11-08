@@ -2305,7 +2305,7 @@ export const jaOverrides = {
   'kernel.versions.coreCardTitle': 'プロキシコア',
   'kernel.versions.catalogCardTitle': 'Codex モデルカタログ',
   'kernel.versions.sourceSwitched': '{source} に切り替えました。バージョンを再確認しています',
-  'kernel.versions.sourceAutoSwitched': '現在のダウンロード元で確認できなかったため、{source} に自動切り替えしました',
+  'kernel.versions.sourceAutoSwitched': '選択したダウンロード元を使用できないため、今回は {source} を使用します。設定は変更されません。',
   'kernel.versions.bundledPackage': '内蔵オフラインパッケージ',
   'kernel.versions.offlineRecommend': 'ネットワーク制限がありますか？インターネット接続なしで内蔵オフラインコアを直接インストールできます。',
   'kernel.versions.autoUpdateSupported': 'アプリ内自動更新対応',
