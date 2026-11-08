@@ -1289,6 +1289,19 @@ pub(crate) async fn fetch_prepared_agent_models(
             if client == AgentClient::ZCode {
                 codex_catalog::merge_zcode_reasoning_levels(&mut models, &runtime_models);
             }
+            // Models the Codex client catalog does not know inherit its default
+            // template, so custom providers report a placeholder context window.
+            // Import authoritative capabilities only when that actually happens.
+            if models.iter().any(|model| {
+                model
+                    .context_window
+                    .is_none_or(|context_window| {
+                        context_window == codex_catalog::CPA_RUNTIME_CONTEXT_PLACEHOLDER
+                    })
+            }) {
+                let _ = crate::usage::ensure_model_capabilities_catalog().await;
+                codex_catalog::merge_external_model_capabilities(&mut models);
+            }
         }
         if matches!(client, AgentClient::ClaudeCode | AgentClient::ClaudeDesktop) {
             let content = fetch_management_config_yaml(config).await?;

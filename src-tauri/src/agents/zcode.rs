@@ -100,10 +100,22 @@ pub(crate) fn infer_zcode_model_knowledge_with_calibration(model_id: &str) -> (O
         .unwrap_or(model_id);
 
     // 1. Directly infer full recommended capabilities for the model (first priority)
-    let (mut cw, mot, img, pdf, mut rl) = infer_zcode_model_knowledge(target_name);
+    let (mut cw, mut mot, img, pdf, mut rl) = infer_zcode_model_knowledge(target_name);
+
+    // 2. The external capability catalog (models.dev / LiteLLM) is authoritative
+    // for models the static inference table does not describe, such as custom
+    // openai-compatibility providers.
+    if let Some(capabilities) = crate::usage::query_model_capabilities(target_name) {
+        if cw.is_none() {
+            cw = capabilities.context_window;
+        }
+        if mot.is_none() {
+            mot = capabilities.max_output_tokens;
+        }
+    }
 
     if let Some(calib) = calibration {
-        // 2. Adjust context window if higher real tokens were observed
+        // 3. Adjust context window if higher real tokens were observed
         if let Some(observed_tokens) = calib.max_observed_input_tokens {
             if let Some(ref mut c) = cw {
                 if observed_tokens > *c {
@@ -112,7 +124,7 @@ pub(crate) fn infer_zcode_model_knowledge_with_calibration(model_id: &str) -> (O
             }
         }
 
-        // 3. Automatically remove levels that failed in real requests
+        // 4. Automatically remove levels that failed in real requests
         if !calib.failed_reasoning_levels.is_empty() {
             rl.retain(|level| !calib.failed_reasoning_levels.iter().any(|f| f.eq_ignore_ascii_case(level)));
         }
@@ -122,6 +134,12 @@ pub(crate) fn infer_zcode_model_knowledge_with_calibration(model_id: &str) -> (O
 }
 
 pub(crate) const ZCODE_CPA_REASONING_MAP: &str = "reasoningLevel == \"none\" || reasoningLevel == \"disabled\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}";
+
+/// ZCode requires `optionSpecs.maxOutputTokens` on manual model rules. When the
+/// value is unknown the writers fall back to this default instead of dropping the
+/// field: an omitted `maxOutputTokens` fails Zod validation of the whole
+/// provider config and makes ZCode discard every custom provider in memory.
+pub(crate) const ZCODE_MANUAL_MAX_OUTPUT_TOKENS_FALLBACK: u64 = 128_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -246,6 +264,11 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
         let mot_obj = ensure_json_object_entry(&mut option_specs, "maxOutputTokens");
         mot_obj.insert("max".into(), serde_json::json!(mot));
         mot_obj.remove("map");
+    } else if config.is_manual {
+        option_specs.insert(
+            "maxOutputTokens".into(),
+            serde_json::json!({ "max": ZCODE_MANUAL_MAX_OUTPUT_TOKENS_FALLBACK }),
+        );
     } else {
         option_specs.remove("maxOutputTokens");
     }

@@ -1513,6 +1513,32 @@ fn zcode_agent_config_preserves_other_providers_and_uses_anthropic_messages() {
 }
 
 #[test]
+fn zcode_agent_config_backfills_manual_rule_max_output_tokens() {
+    // ZCode rejects the whole provider config when a manual model rule omits
+    // optionSpecs.maxOutputTokens, so the writer must backfill the fallback
+    // while preserving values the user already configured.
+    let models = test_agent_models(&["custom-unknown-model", "custom-unknown-other"]);
+    let existing = r#"{"schemaVersion":1,"config":{"providerConfigRules":{"providerRules":[{"providerId":"cpa-gui","providerName":"EasyCLIProxyAPI","enabled":true,"config":{"group":"standard-personal","access":{"type":"api-key","apiKey":"old"},"api":{"type":"anthropic-messages","baseUrl":"http://127.0.0.1:8317/v1"},"personalModelIds":["custom-unknown-model","custom-unknown-other"],"modelOrder":["custom-unknown-model","custom-unknown-other"]}}]},"modelConfigRules":{"providerModelRules":[],"manualProviderModelRules":[{"providerId":"cpa-gui","modelId":"custom-unknown-model","config":{"enabled":true,"optionSpecs":{"reasoningLevel":{"values":["low","high"],"map":"reasoningLevel == \"none\" ? {} : {}"}},"properties":{"contextWindow":128000}}},{"providerId":"cpa-gui","modelId":"custom-unknown-other","config":{"enabled":true,"optionSpecs":{"maxOutputTokens":{"max":96000},"reasoningLevel":{"values":["low"],"map":"reasoningLevel == \"none\" ? {} : {}"}},"properties":{"contextWindow":128000}}}]}}}"#;
+    let rendered = build_zcode_agent_config(
+        Some(existing),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "custom-unknown-model",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let manual_rules = value["config"]["modelConfigRules"]["manualProviderModelRules"].as_array().unwrap();
+    let backfilled = manual_rules.iter().find(|rule| rule["modelId"] == "custom-unknown-model").unwrap();
+    assert_eq!(backfilled["config"]["optionSpecs"]["maxOutputTokens"], serde_json::json!({ "max": 128_000 }));
+    let preserved = manual_rules.iter().find(|rule| rule["modelId"] == "custom-unknown-other").unwrap();
+    assert_eq!(preserved["config"]["optionSpecs"]["maxOutputTokens"], serde_json::json!({ "max": 96000 }));
+    // Provider (smart) rules keep maxOutputTokens optional in ZCode's schema.
+    let provider_rules = value["config"]["modelConfigRules"]["providerModelRules"].as_array().unwrap();
+    assert!(provider_rules.is_empty());
+}
+
+#[test]
 fn zcode_desktop_and_cli_share_the_provider_configuration() {
     let home = agent_test_home("zcode-shared-provider-config");
     let paths = agent_config_paths(AgentClient::ZCode, &home);
@@ -1699,7 +1725,13 @@ fn zcode_catalog_editor_preserves_native_rule_fields_and_empty_visibility() {
         assert_eq!(rules.len(), 2);
         assert_eq!(rules.iter().find(|rule| rule["modelId"] == "temporarily-unavailable"), Some(&absent_rule));
         let saved_rule = rules.iter().find(|rule| rule["modelId"] == "custom-model").unwrap();
-        assert!(saved_rule["config"]["optionSpecs"].get("maxOutputTokens").is_none());
+        if section == "manualProviderModelRules" {
+            // ZCode requires maxOutputTokens on manual rules; the writer must
+            // backfill the fallback instead of dropping the field.
+            assert_eq!(saved_rule["config"]["optionSpecs"]["maxOutputTokens"], serde_json::json!({ "max": 128_000 }));
+        } else {
+            assert!(saved_rule["config"]["optionSpecs"].get("maxOutputTokens").is_none());
+        }
         assert_eq!(value["config"]["providerConfigRules"]["providerRules"][0]["config"]["personalModelIds"],
             serde_json::json!(["temporarily-unavailable"]));
     }

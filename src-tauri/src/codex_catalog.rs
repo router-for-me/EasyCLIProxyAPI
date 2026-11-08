@@ -312,6 +312,47 @@ pub(crate) fn merge_zcode_reasoning_levels(
     }
 }
 
+/// The Codex client catalog clones its default template onto every model it does
+/// not know, so custom openai-compatibility providers inherit this context window
+/// instead of their real limit.
+pub(crate) const CPA_RUNTIME_CONTEXT_PLACEHOLDER: u64 = 500_000;
+
+/// Replaces unknown context windows with authoritative values imported from the
+/// external model capability catalog (models.dev / LiteLLM).
+pub(crate) fn merge_external_model_capabilities(models: &mut [AgentModelOption]) {
+    let Ok(connection) = crate::usage::open_usage_database() else {
+        return;
+    };
+    let Ok(capabilities) = crate::usage::load_model_capabilities(&connection) else {
+        return;
+    };
+    apply_model_capabilities(models, &capabilities);
+}
+
+pub(crate) fn apply_model_capabilities(
+    models: &mut [AgentModelOption],
+    capabilities: &[crate::usage::ModelCapabilities],
+) {
+    for model in models.iter_mut() {
+        let unknown = model
+            .context_window
+            .is_none_or(|context_window| context_window == CPA_RUNTIME_CONTEXT_PLACEHOLDER);
+        if !unknown {
+            continue;
+        }
+        let Some(capabilities) = crate::usage::find_model_capabilities(capabilities, &model.name)
+        else {
+            continue;
+        };
+        if let Some(context_window) = capabilities.context_window {
+            model.context_window = Some(context_window);
+        }
+        if model.input_modalities.is_none() && !capabilities.input_modalities.is_empty() {
+            model.input_modalities = Some(capabilities.input_modalities);
+        }
+    }
+}
+
 /// Fills metadata gaps in the public model list from the Codex client catalog
 /// served by the core (`/v1/models?client_version=`).
 ///
@@ -1035,6 +1076,46 @@ fn is_allowed_reasoning_level(level: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_capabilities_replace_the_codex_default_template_placeholder() {
+        let capabilities = vec![crate::usage::ModelCapabilities {
+            model: "GLM-5.3-Flash".to_string(),
+            context_window: Some(1_000_000),
+            input_modalities: vec!["text".to_string(), "image".to_string()],
+            ..crate::usage::ModelCapabilities::default()
+        }];
+        let option = |name: &str, context_window: Option<u64>| AgentModelOption {
+            name: name.to_string(),
+            alias: None,
+            is_alias: false,
+            context_window,
+            input_modalities: None,
+            harness_metadata: None,
+            reasoning_levels: Vec::new(),
+        };
+        let mut models = vec![
+            // Placeholder cloned from the Codex client catalog default template.
+            option("GLM-5.3-Flash", Some(CPA_RUNTIME_CONTEXT_PLACEHOLDER)),
+            // A real runtime value must survive untouched.
+            option("gemini-3.8-flash", Some(1_048_576)),
+            // Models missing from the external catalog keep the placeholder.
+            option("SCNet-Max", Some(CPA_RUNTIME_CONTEXT_PLACEHOLDER)),
+            // A missing context window is also filled when the catalog knows it.
+            option("glm-5.3-flash", None),
+        ];
+
+        apply_model_capabilities(&mut models, &capabilities);
+
+        assert_eq!(models[0].context_window, Some(1_000_000));
+        assert_eq!(
+            models[0].input_modalities,
+            Some(vec!["text".to_string(), "image".to_string()])
+        );
+        assert_eq!(models[1].context_window, Some(1_048_576));
+        assert_eq!(models[2].context_window, Some(CPA_RUNTIME_CONTEXT_PLACEHOLDER));
+        assert_eq!(models[3].context_window, Some(1_000_000));
+    }
 
     fn reasoning_efforts(model: &Map<String, Value>) -> Vec<String> {
         model
