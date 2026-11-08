@@ -87,9 +87,7 @@ const messages = {
   restartConfirm: ['重启会中断正在处理的请求，是否继续？', 'Restarting interrupts requests in progress. Continue?', '再起動すると処理中のリクエストが中断されます。続行しますか？'],
   directory: ['插件目录', 'Plugin directory', 'プラグインディレクトリ'],
   sources: ['附加商店来源（每行一个 URL）', 'Additional store sources (one URL per line)', '追加ストア（1 行に 1 URL）'],
-  sourcesHint: ['官方来源始终保留。附加来源必须提供兼容的插件注册表。', 'The official source is always included. Additional sources must provide a compatible plugin registry.', '公式ソースは常に含まれます。追加ソースには互換性のあるレジストリが必要です。'],
   auth: ['商店认证规则（JSON 数组）', 'Store authentication rules (JSON array)', 'ストア認証規則（JSON 配列）'],
-  authHint: ['使用 token-env 等字段引用环境变量，不在此填写令牌。', 'Reference environment variables with fields such as token-env; do not enter tokens here.', 'token-env などで環境変数を参照してください。トークン自体は入力しないでください。'],
   invalidSettings: ['请填写有效目录、HTTP(S) 来源地址及认证规则 JSON 对象数组。', 'Enter a directory, valid HTTP(S) source URLs and a JSON array of authentication rule objects.', 'ディレクトリ、有効な HTTP(S) URL、認証規則の JSON オブジェクト配列を入力してください。'],
   resource: ['插件页面', 'Plugin page', 'プラグインページ'],
   pageBack: ['后退', 'Back', '戻る'],
@@ -99,6 +97,7 @@ const messages = {
   sourceErrors: ['部分来源读取失败', 'Some sources could not be loaded', '一部のソースを読み込めませんでした'],
   refreshFailed: ['操作已完成，但刷新失败，请重试刷新。', 'The operation completed, but refreshing failed. Retry the refresh.', '操作は完了しましたが、再読み込みに失敗しました。再試行してください。'],
   rateLimitHint: ['GitHub API 请求次数已达上限，配置 GitHub 访问令牌可提高额度。', 'GitHub API rate limit reached. A GitHub access token raises the limit.', 'GitHub API のリクエスト上限に達しました。GitHub アクセストークンを設定すると上限が緩和されます。'],
+  registryLoadFailed: ['ECPA 插件源读取失败', 'Failed to read the ECPA plugin source', 'ECPA プラグインソースを読み込めませんでした'],
   configureToken: ['配置访问令牌', 'Configure token', 'トークンを設定'],
 } as const;
 
@@ -188,9 +187,7 @@ const ruMessages: Record<keyof typeof messages, string> = {
   restartConfirm: 'Перезапуск прервет текущие запросы. Продолжить?',
   directory: 'Каталог плагинов',
   sources: 'Дополнительные источники (по одному URL в строке)',
-  sourcesHint: 'Официальный источник всегда включен. Дополнительные источники должны предоставлять совместимый реестр плагинов.',
   auth: 'Правила аутентификации магазина (массив JSON)',
-  authHint: 'Ссылайтесь на переменные окружения через поля вроде token-env; не вводите токены здесь.',
   invalidSettings: 'Укажите каталог, корректные HTTP(S)-адреса источников и массив JSON с правилами аутентификации.',
   resource: 'Страница плагина',
   pageBack: 'Назад',
@@ -200,6 +197,7 @@ const ruMessages: Record<keyof typeof messages, string> = {
   sourceErrors: 'Часть источников не удалось прочитать',
   refreshFailed: 'Операция завершена, но обновление не удалось. Повторите обновление.',
   rateLimitHint: 'Достигнут лимит GitHub API. Токен доступа GitHub увеличивает лимит.',
+  registryLoadFailed: 'Не удалось прочитать источник плагинов ECPA',
   configureToken: 'Настроить токен',
 };
 
