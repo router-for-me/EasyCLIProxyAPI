@@ -401,6 +401,7 @@ pub(crate) fn merge_codex_client_metadata(
         if model.default_reasoning_level.is_none() {
             model.default_reasoning_level = client.default_reasoning_level.clone();
         }
+        model.hidden |= client.hidden;
     }
 }
 

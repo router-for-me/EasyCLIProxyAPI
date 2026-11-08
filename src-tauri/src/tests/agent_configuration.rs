@@ -2423,10 +2423,10 @@ async fn codex_configuration_uses_public_v1_model_ids_for_selection_and_files() 
             let path = request.split_whitespace().nth(1).unwrap().to_string();
             let body = if path == "/v1/models" {
                 assert!(request.to_lowercase().contains("authorization: bearer public-test-key\r\n"));
-                r#"{"data":[{"id":"public-model","alias":"not-an-id","slug":"not-public"},{"id":"another-model"}]}"#
+                r#"{"data":[{"id":"public-model","alias":"not-an-id","slug":"not-public"},{"id":"another-model"},{"id":"gpt-image-2"}]}"#
             } else if path.starts_with("/v1/models?client_version=") {
                 assert!(request.to_lowercase().contains("authorization: bearer public-test-key\r\n"));
-                r#"{"models":[{"id":"public-model","context_window":1048576,"supported_reasoning_levels":["low","medium","high"],"default_reasoning_level":"medium"},{"id":"client-only-model","context_window":1048576}]}"#
+                r#"{"models":[{"id":"public-model","context_window":1048576,"supported_reasoning_levels":["low","medium","high"],"default_reasoning_level":"medium"},{"id":"client-only-model","context_window":1048576},{"id":"gpt-image-2","visibility":"hide"}]}"#
             } else {
                 assert_eq!(path, "/v8/management/config.yaml");
                 "config-version: 8\n"
@@ -2448,7 +2448,7 @@ async fn codex_configuration_uses_public_v1_model_ids_for_selection_and_files() 
     server.join().unwrap();
     let mut ids: Vec<_> = prepared.models.iter().map(|model| model.name.as_str()).collect();
     ids.sort();
-    assert_eq!(ids, ["another-model", "public-model"]);
+    assert_eq!(ids, ["another-model", "gpt-image-2", "public-model"]);
     let catalog: serde_json::Value = serde_json::from_str(prepared.codex_catalog.as_deref().unwrap()).unwrap();
     let mut written: Vec<_> = catalog["models"].as_array().unwrap().iter().map(|model| model["slug"].as_str().unwrap()).collect();
     written.sort();
@@ -2458,6 +2458,12 @@ async fn codex_configuration_uses_public_v1_model_ids_for_selection_and_files() 
     assert_eq!(public_model["max_context_window"], 1_048_576);
     assert_eq!(public_model["default_reasoning_level"], "medium");
     assert_eq!(public_model["supported_reasoning_levels"].as_array().unwrap().len(), 3);
+    let visibility = |slug: &str| {
+        catalog["models"].as_array().unwrap().iter().find(|model| model["slug"] == slug).unwrap()["visibility"].clone()
+    };
+    assert_eq!(visibility("gpt-image-2"), "hide");
+    assert_eq!(visibility("public-model"), "list");
+    assert_eq!(visibility("another-model"), "list");
 }
 
 #[test]
