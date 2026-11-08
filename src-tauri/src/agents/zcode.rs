@@ -100,10 +100,22 @@ pub(crate) fn infer_zcode_model_knowledge_with_calibration(model_id: &str) -> (O
         .unwrap_or(model_id);
 
     // 1. Directly infer full recommended capabilities for the model (first priority)
-    let (mut cw, mot, img, pdf, mut rl) = infer_zcode_model_knowledge(target_name);
+    let (mut cw, mut mot, img, pdf, mut rl) = infer_zcode_model_knowledge(target_name);
+
+    // 2. The external capability catalog (models.dev / LiteLLM) is authoritative
+    // for models the static inference table does not describe, such as custom
+    // openai-compatibility providers.
+    if let Some(capabilities) = crate::usage::query_model_capabilities(target_name) {
+        if cw.is_none() {
+            cw = capabilities.context_window;
+        }
+        if mot.is_none() {
+            mot = capabilities.max_output_tokens;
+        }
+    }
 
     if let Some(calib) = calibration {
-        // 2. Adjust context window if higher real tokens were observed
+        // 3. Adjust context window if higher real tokens were observed
         if let Some(observed_tokens) = calib.max_observed_input_tokens {
             if let Some(ref mut c) = cw {
                 if observed_tokens > *c {
@@ -112,7 +124,7 @@ pub(crate) fn infer_zcode_model_knowledge_with_calibration(model_id: &str) -> (O
             }
         }
 
-        // 3. Automatically remove levels that failed in real requests
+        // 4. Automatically remove levels that failed in real requests
         if !calib.failed_reasoning_levels.is_empty() {
             rl.retain(|level| !calib.failed_reasoning_levels.iter().any(|f| f.eq_ignore_ascii_case(level)));
         }
