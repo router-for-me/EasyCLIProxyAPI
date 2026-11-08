@@ -131,6 +131,8 @@ export function readNumber(value: unknown, ...keys: string[]): number | null {
   }
   for (const key of keys) {
     const candidate = value[key];
+    if (typeof candidate !== 'number' && typeof candidate !== 'string') continue;
+    if (typeof candidate === 'string' && !candidate.trim()) continue;
     const parsed = typeof candidate === 'number' ? candidate : Number(candidate);
     if (Number.isFinite(parsed)) {
       return parsed;
