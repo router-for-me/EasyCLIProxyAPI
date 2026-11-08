@@ -1,8 +1,8 @@
 import { setAppLocale } from '../services/appSettings';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { en, ja, zhCN, zhTW, type MessageKey, type MessageVariables } from './resources';
+import { en, ja, ru, zhCN, zhTW, type MessageKey, type MessageVariables } from './resources';
 
-export type AppLocale = 'zh-CN' | 'zh-TW' | 'ja' | 'en';
+export type AppLocale = 'zh-CN' | 'zh-TW' | 'ja' | 'en' | 'ru';
 
 export const languageOptions: ReadonlyArray<{
   value: AppLocale;
@@ -12,13 +12,14 @@ export const languageOptions: ReadonlyArray<{
   { value: 'zh-TW', nativeLabel: '繁體中文' },
   { value: 'ja', nativeLabel: '日本語' },
   { value: 'en', nativeLabel: 'English' },
+  { value: 'ru', nativeLabel: 'Русский' },
 ];
 
 const STORAGE_KEY = 'easy-cli-proxy-api.locale';
-const resources = { 'zh-CN': zhCN, 'zh-TW': zhTW, ja, en } as const;
+const resources = { 'zh-CN': zhCN, 'zh-TW': zhTW, ja, en, ru } as const;
 let currentLocale: AppLocale = 'en';
 
-export const supportedLocales: readonly AppLocale[] = ['zh-CN', 'zh-TW', 'ja', 'en'];
+export const supportedLocales: readonly AppLocale[] = ['zh-CN', 'zh-TW', 'ja', 'en', 'ru'];
 
 export function getCurrentLocale(): AppLocale {
   return currentLocale;
@@ -31,6 +32,7 @@ export function setCurrentLocale(locale: AppLocale): void {
 export function normalizeLocale(value: string | null | undefined): AppLocale {
   const normalized = value?.trim().toLowerCase() ?? '';
   if (normalized.startsWith('ja')) return 'ja';
+  if (normalized.startsWith('ru')) return 'ru';
   if (
     normalized === 'zh-tw'
     || normalized === 'zh-hk'

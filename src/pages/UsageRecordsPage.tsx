@@ -48,7 +48,7 @@ import {
 import { getCurrentLocale, useI18n } from '../i18n';
 import { usePrivacyMask } from '../privacy';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
-import { calculateTokenComposition } from '../services/usageMetrics';
+import { calculateTokenComposition, getSpeedMode } from '../services/usageMetrics';
 import { formatDuration, formatUsageNumber } from '../services/usageNumber';
 import { Tabs } from '../components/Tabs';
 import {
@@ -335,7 +335,7 @@ export function UsageRecordsPage() {
           const [nextStatus, nextOptions, nextOverview] = await Promise.all([
             statusRequest,
             optionsRequest,
-            getUsageOverview({ query }),
+            getUsageOverview({ query, speedMode: getSpeedMode() }),
           ]);
           if (requestId !== requestIdRef.current) return;
           setStatus(nextStatus);
@@ -346,7 +346,7 @@ export function UsageRecordsPage() {
           const [nextStatus, nextOptions, nextOverview, nextAnalysis] = await Promise.all([
             statusRequest,
             optionsRequest,
-            getUsageOverview({ query }),
+            getUsageOverview({ query, speedMode: getSpeedMode() }),
             model || source || apiKeyHash || result !== 'all' || !refreshOptions
               ? getUsageAnalysis({ query })
               : optionsRequest.then((analysis) => analysis ?? emptyAnalysis),
@@ -960,7 +960,7 @@ function UsageStatGrid({ overview }: { overview: UsageOverview }) {
       tone: 'speed',
       label: t('usage.stat.tps'),
       value: overview.tpsSampleCount > 0 ? overview.tps.toFixed(1) : '—',
-      metaTitle: t('usage.stat.performanceMetaTitle', {
+      metaTitle: t(getSpeedMode() === 'total' ? 'usage.stat.performanceMetaTitleEndToEnd' : 'usage.stat.performanceMetaTitle', {
         tps: overview.tpsSampleCount > 0 ? overview.tps.toFixed(1) : '—',
         samples: compactNumber(overview.tpsSampleCount),
         rpm: overview.rpm.toFixed(2),

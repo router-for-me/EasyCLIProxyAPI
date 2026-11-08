@@ -348,7 +348,7 @@ pub(crate) fn apply_model_capabilities(
             model.context_window = Some(context_window);
         }
         if model.input_modalities.is_none() && !capabilities.input_modalities.is_empty() {
-            model.input_modalities = Some(capabilities.input_modalities);
+            model.input_modalities = Some(capabilities.input_modalities.clone());
         }
     }
 }

@@ -94,15 +94,17 @@ export function AgentModelPicker({
     const frame = dialog?.getBoundingClientRect();
     const footerTop = footer?.getBoundingClientRect().top;
     const headingBottom = heading?.getBoundingClientRect().bottom;
+    const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
+    const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
     const edgeGap = 12;
     const triggerGap = 6;
-    const preferredHeight = 282;
+    const preferredHeight = Math.min(520, Math.max(282, Math.round(viewportHeight * 0.62)));
     const minimumHeight = 150;
     const bounds = {
       top: (headingBottom ?? frame?.top ?? 0) + edgeGap,
-      bottom: (footerTop ?? frame?.bottom ?? window.innerHeight) - edgeGap,
+      bottom: (footerTop ?? frame?.bottom ?? viewportHeight) - edgeGap,
       left: (frame?.left ?? 0) + edgeGap,
-      right: (frame?.right ?? window.innerWidth) - edgeGap,
+      right: (frame?.right ?? viewportWidth) - edgeGap,
     };
     const scroller = dialog?.querySelector('.credential-settings-body');
     if (scroller) {
@@ -120,6 +122,8 @@ export function AgentModelPicker({
     const height = Math.min(preferredHeight, limit, Math.max(Math.min(minimumHeight, limit), availableHeight));
     const width = Math.min(rect.width, Math.max(0, bounds.right - bounds.left));
     const left = Math.min(Math.max(bounds.left, rect.left), Math.max(bounds.left, bounds.right - width));
+    const maxWidth = Math.max(0, viewportWidth - edgeGap * 2);
+    const clampedWidth = Math.min(width, maxWidth);
     const desiredTop = placeAbove ? rect.top - triggerGap - height : rect.bottom + triggerGap;
     const top = Math.min(Math.max(bounds.top, desiredTop), Math.max(bounds.top, bounds.bottom - height));
     const offsetParent = ! root.closest('[role="dialog"], [role="alertdialog"]') && menuRef.current?.offsetParent instanceof HTMLElement
@@ -130,7 +134,7 @@ export function AgentModelPicker({
     const offsetX = parentRect ? parentRect.left + (Number.parseFloat(parentStyle?.borderLeftWidth ?? '0') || 0) : 0;
     const offsetY = parentRect ? parentRect.top + (Number.parseFloat(parentStyle?.borderTopWidth ?? '0') || 0) : 0;
 
-    setDropdownLayout({ top: top - offsetY, left: left - offsetX, width, height });
+    setDropdownLayout({ top: top - offsetY, left: left - offsetX, width: clampedWidth, height });
   }, []);
 
   useLayoutEffect(() => {
@@ -147,7 +151,7 @@ export function AgentModelPicker({
 
     updateDropdownLayout();
     const menu = menuRef.current;
-    if (dialogOverlay && menu && !menu.matches(':popover-open')) menu.showPopover();
+    if (menu && typeof menu.showPopover === 'function' && menu.hasAttribute('popover') && !menu.matches(':popover-open')) menu.showPopover();
     const onScroll = (event: Event) => {
       if (menuRef.current?.contains(event.target as Node)) return;
       updateDropdownLayout();
@@ -278,7 +282,7 @@ export function AgentModelPicker({
       {open ? (
         <div
           ref={menuRef}
-          popover={dialogOverlay ? 'manual' : undefined}
+          popover="manual"
           className={`agent-model-dropdown${editable ? ' agent-model-dropdown-editable' : ''}${menuClassName ? ` ${menuClassName}` : ''}`}
           data-theme-surface="overlay"
           style={dropdownLayout

@@ -1,3 +1,4 @@
+import type { GenerationSpeedMode } from './usageMetrics';
 import { invoke } from '@tauri-apps/api/core';
 import type { UsageTimelinePoint } from './usageTrend';
 
@@ -194,8 +195,8 @@ export const getUsageCollectorStatus = (): Promise<CollectorStatus> =>
 export const getUsageAnalysis = (args: { query: UsageQuery }): Promise<UsageAnalysis> =>
   invoke<UsageAnalysis>('get_usage_analysis', args);
 
-export const getUsageOverview = (args: { query: UsageQuery }): Promise<UsageOverview> =>
-  invoke<UsageOverview>('get_usage_overview', args);
+export const getUsageOverview = (args: { query: UsageQuery; speedMode?: GenerationSpeedMode }): Promise<UsageOverview> =>
+  invoke<UsageOverview>('get_usage_overview', { query: { ...args.query, speed_mode: args.speedMode } });
 
 export const getUsagePricing = (args: { query: UsageQuery }): Promise<UsagePricing> =>
   invoke<UsagePricing>('get_usage_pricing', args);

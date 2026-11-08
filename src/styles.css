@@ -3928,6 +3928,9 @@ textarea:focus-visible {
 .provider-health-overview p {
   min-width: 0;
   color: var(--color-warning-text);
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  line-break: strict;
 }
 
 .provider-health-overview span {
@@ -3959,7 +3962,7 @@ textarea:focus-visible {
 
 .provider-health-model-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 88px;
+  grid-template-columns: minmax(0, 1fr) auto auto 88px;
   align-items: center;
   gap: 10px;
   min-height: 54px;
@@ -3973,6 +3976,36 @@ textarea:focus-visible {
 
 .provider-health-model-row.failed {
   background: var(--color-danger-subtle);
+}
+
+.provider-health-model-row.disabled {
+  background: var(--color-surface-sunken);
+}
+
+.provider-health-model-row.disabled .provider-health-model-name strong,
+.provider-health-model-row.disabled .provider-health-model-pill {
+  opacity: 0.55;
+}
+
+.provider-health-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 0;
+  font-size: var(--font-size-meta);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.provider-health-toggle .switch-control {
+  flex: none;
+}
+
+.provider-health-toggle:has(input:disabled) {
+  cursor: default;
+  color: var(--color-text-muted);
 }
 
 .provider-health-model-name {
@@ -11349,6 +11382,23 @@ textarea:focus-visible {
 
   .provider-health-model-row {
     grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 10px;
+    padding: 9px 10px;
+  }
+
+  .provider-health-toggle {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: flex-start;
+    padding-left: 0;
+  }
+
+  .provider-health-model-row .provider-health-pill {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    justify-self: start;
+    max-width: 100%;
+    align-self: center;
   }
 
   .provider-health-single-button {
