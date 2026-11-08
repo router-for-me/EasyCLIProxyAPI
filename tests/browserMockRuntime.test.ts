@@ -269,3 +269,13 @@ describe('browser mock native provider groups', () => {
     expect(await request(runtime, 'GET', '/config/api-keys/openai-compatibility')).toEqual([{ ...group, keys: [group.keys[1]] }]);
   });
 });
+
+test('application update mock retains the selected core mode only for that attempt', async () => {
+  const runtime = createBrowserMockRuntime('running');
+  expect(await runtime.invoke('check_app_update')).toMatchObject({ preserveCoreSupported: true });
+  await runtime.invoke('start_app_update', { preserveCore: true });
+  expect(await runtime.invoke('get_app_update_task')).toMatchObject({ running: true, preserveCore: true });
+  await runtime.invoke('cancel_app_update');
+  await runtime.invoke('start_app_update');
+  expect(await runtime.invoke('get_app_update_task')).toMatchObject({ running: true, preserveCore: false });
+});
