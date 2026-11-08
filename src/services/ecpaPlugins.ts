@@ -51,7 +51,8 @@ export function resolveEcpaStoreEntry(entries: Map<string, PluginStoreEntry>, id
 }
 
 export interface EcpaRegistry {
-  schema_version: 1;
+  /** Both schema generations are accepted; v2 adds the per-entry `install` block. */
+  schema_version: 1 | 2;
   plugins: EcpaPluginEntry[];
 }
 
@@ -126,7 +127,11 @@ function parsePluginEntry(value: unknown): EcpaPluginEntry | null {
 
 export function parseEcpaRegistry(value: unknown): EcpaRegistry | null {
   if (!isRecord(value)) return null;
-  if (value.schema_version !== 1) return null;
+  // The upstream curated sources moved to schema_version 2 (an entry may carry an
+  // `install` block). Rejecting v2 silently emptied the featured page even though
+  // the fetch itself succeeded, so accept both generations.
+  const schemaVersion = value.schema_version;
+  if (schemaVersion !== 1 && schemaVersion !== 2) return null;
   if (!Array.isArray(value.plugins)) return null;
   const plugins: EcpaPluginEntry[] = [];
   for (const item of value.plugins) {
@@ -134,7 +139,7 @@ export function parseEcpaRegistry(value: unknown): EcpaRegistry | null {
     if (parsed) plugins.push(parsed);
   }
   return {
-    schema_version: 1,
+    schema_version: schemaVersion,
     plugins,
   };
 }

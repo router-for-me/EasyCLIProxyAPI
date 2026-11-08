@@ -15,14 +15,16 @@ const failingFetch = (async () => {
 }) as unknown as typeof fetch;
 
 describe('ecpaPlugins parser', () => {
-  it('parses a registry payload, rejects schema_version 2, and drops entries missing id', () => {
+  it('parses a registry payload, accepts schema_version 2, and drops entries missing id', () => {
     const parsed = parseEcpaRegistry(registryPayload);
     expect(parsed).not.toBeNull();
     expect(parsed?.schema_version).toBe(1);
     expect(parsed?.plugins).toHaveLength(1);
     expect(parsed?.plugins[0].install?.type).toBe('github-release');
 
-    expect(parseEcpaRegistry({ schema_version: 2, plugins: [] })).toBeNull();
+    // v2 is the current upstream generation: it must parse, not be rejected.
+    expect(parseEcpaRegistry({ schema_version: 2, plugins: [] })).toEqual({ schema_version: 2, plugins: [] });
+    expect(parseEcpaRegistry({ schema_version: 3, plugins: [] })).toBeNull();
 
     const withMissingId = parseEcpaRegistry({
       schema_version: 1,
