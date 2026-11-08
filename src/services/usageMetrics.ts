@@ -1,4 +1,15 @@
+import { usagePreferences } from './usagePreferences';
+
 export type GenerationSpeedMode = 'total' | 'ttft';
+
+export const EVENT_SPEED_MODE_KEY = 'cpa-gui.usage-events-speed-mode.v1';
+
+export const getSpeedMode = (): GenerationSpeedMode =>
+  usagePreferences.getItem(EVENT_SPEED_MODE_KEY) === 'total' ? 'total' : 'ttft';
+
+export const setSpeedMode = (mode: GenerationSpeedMode): void => {
+  usagePreferences.setItem(EVENT_SPEED_MODE_KEY, mode);
+};
 
 export type GenerationSpeedInput = {
   outputTokens: number;
@@ -40,36 +51,34 @@ export const calculateTokenComposition = (tokens: {
   return { total, segments, cacheShare: total > 0 ? cacheRead / total * 100 : 0 };
 };
 
-/** Least output tokens a request must have to tell a generation speed by. */
-export const SPEED_MIN_OUTPUT_TOKENS = 100;
-
-/** Least generation window (latency - TTFT) a request must have: below it the
- *  elapsed time is a transport burst, not writing. Same rule as cc-switch and
- *  cockpit-tools. */
+/** Require a 100 ms TTFT-subtracted window to guard against transport bursts. */
 export const SPEED_MIN_GENERATION_MS = 100;
 
+/** Speed eligibility matches keeper: positive output and latency, plus a positive
+ * TTFT below latency in decode mode. The additional 100 ms decode floor guards
+ * against transport bursts; neither mode has a minimum output-token count. */
 export const calculateGenerationSpeed = ({
   outputTokens,
   latencyMs,
   ttftMs,
-  mode = 'total',
+  mode = 'ttft',
 }: GenerationSpeedInput): number | null => {
   if (
     !Number.isFinite(outputTokens) ||
     !Number.isFinite(latencyMs) ||
-    outputTokens < SPEED_MIN_OUTPUT_TOKENS ||
+    outputTokens <= 0 ||
     latencyMs <= 0
   ) {
     return null;
   }
 
-  const durationMs =
-    mode === 'ttft' && ttftMs != null && Number.isFinite(ttftMs) && ttftMs > 0 && latencyMs > ttftMs
-      ? latencyMs - ttftMs
-      : latencyMs;
-
-  if (mode === 'ttft' && durationMs < SPEED_MIN_GENERATION_MS) {
-    return null;
+  let durationMs = latencyMs;
+  if (mode === 'ttft') {
+    if (ttftMs == null || !Number.isFinite(ttftMs) || ttftMs <= 0 || ttftMs >= latencyMs) {
+      return null;
+    }
+    durationMs = latencyMs - ttftMs;
+    if (durationMs < SPEED_MIN_GENERATION_MS) return null;
   }
 
   const speed = outputTokens / (durationMs / 1_000);

@@ -299,6 +299,8 @@ struct LegacyUsageInboxFile {
 #[derive(Clone, Default, Deserialize)]
 pub(crate) struct UsageQuery {
     #[serde(default)]
+    speed_mode: Option<String>,
+    #[serde(default)]
     start: Option<String>,
     #[serde(default)]
     end: Option<String>,
@@ -3040,11 +3042,18 @@ pub(crate) async fn get_usage_overview(query: UsageQuery) -> Result<UsageOvervie
     run_usage_task(move || load_usage_overview(&open_usage_database()?, &query)).await
 }
 
+const TPS_MIN_GENERATION_MS: i64 = 100;
+
 fn load_usage_overview(
     connection: &Connection,
     query: &UsageQuery,
 ) -> Result<UsageOverview, String> {
     let filter = build_usage_filter(query);
+    let (speed_predicate, speed_duration) = if query.speed_mode.as_deref() == Some("total") {
+        ("failed = 0 AND canceled = 0 AND generate != 0 AND output_tokens > 0 AND latency_ms > 0".to_string(), "latency_ms")
+    } else {
+        (format!("failed = 0 AND canceled = 0 AND generate != 0 AND output_tokens > 0 AND ttft_ms IS NOT NULL AND ttft_ms > 0 AND latency_ms > ttft_ms AND latency_ms - ttft_ms >= {TPS_MIN_GENERATION_MS}"), "latency_ms - ttft_ms")
+    };
     let summary_sql = format!(
         r#"
         SELECT
@@ -3060,39 +3069,11 @@ fn load_usage_overview(
             COALESCE(SUM(total_tokens), 0),
             COALESCE(SUM(latency_ms), 0),
             COALESCE(
-                SUM(CASE
-                    WHEN failed = 0
-                     AND canceled = 0
-                     AND generate != 0
-                     AND output_tokens >= 100
-                     AND ttft_ms IS NOT NULL
-                     AND ttft_ms > 0
-                     AND latency_ms - ttft_ms >= 100
-                    THEN output_tokens
-                END) * 1000.0
-                / NULLIF(SUM(CASE
-                    WHEN failed = 0
-                     AND canceled = 0
-                     AND generate != 0
-                     AND output_tokens >= 100
-                     AND ttft_ms IS NOT NULL
-                     AND ttft_ms > 0
-                     AND latency_ms - ttft_ms >= 100
-                    THEN latency_ms - ttft_ms
-                END), 0),
+                SUM(CASE WHEN {speed_predicate} THEN output_tokens END) * 1000.0
+                / NULLIF(SUM(CASE WHEN {speed_predicate} THEN {speed_duration} END), 0),
                 0.0
             ),
-            COALESCE(SUM(CASE
-                WHEN failed = 0
-                 AND canceled = 0
-                 AND generate != 0
-                 AND output_tokens >= 100
-                 AND ttft_ms IS NOT NULL
-                 AND ttft_ms > 0
-                 AND latency_ms - ttft_ms >= 100
-                THEN 1
-                ELSE 0
-            END), 0),
+            COALESCE(SUM(CASE WHEN {speed_predicate} THEN 1 ELSE 0 END), 0),
             MIN(timestamp_ms),
             MAX(timestamp_ms)
         FROM usage_events{}
@@ -7170,7 +7151,7 @@ mod tests {
         let mut second = sample_record("tps-2", "2026-07-17T20:31:00+08:00", "gpt-a");
         second.latency_ms = 5_000;
         second.ttft_ms = Some(4_000);
-        second.tokens.output_tokens = 100;
+        second.tokens.output_tokens = 50;
 
         let mut exact_window = sample_record("tps-3", "2026-07-17T20:32:00+08:00", "gpt-a");
         exact_window.latency_ms = 2_000;
@@ -7210,6 +7191,11 @@ mod tests {
         non_generation.ttft_ms = Some(1_000);
         non_generation.tokens.output_tokens = 500;
 
+        let mut zero_ttft = sample_record("tps-10", "2026-07-17T20:39:00+08:00", "gpt-a");
+        zero_ttft.latency_ms = 1_000;
+        zero_ttft.ttft_ms = Some(0);
+        zero_ttft.tokens.output_tokens = 10;
+
         insert_usage_records(
             &mut connection,
             &[
@@ -7222,19 +7208,46 @@ mod tests {
                 failed,
                 canceled,
                 non_generation,
+                zero_ttft,
             ],
         )
         .unwrap();
 
         let overview = load_usage_overview(&connection, &UsageQuery::default()).unwrap();
 
-        // Weighted by tokens over the generation window (latency - ttft).
-        // Counted: tps-1 (500 / 2000 ms), tps-2 (100 / 1000 ms), tps-3 (500 / 100 ms).
-        // Excluded: tps-4 (<100 output), tps-5 (no ttft), tps-6 (window <100 ms),
-        // tps-7 (failed), tps-8 (canceled), tps-9 (not a generation request).
-        let expected = (500.0 + 100.0 + 500.0) * 1000.0 / (2_000.0 + 1_000.0 + 100.0);
+        // Sum output tokens over the sum of eligible TTFT-subtracted windows.
+        // Small outputs count; missing/zero TTFT and windows below 100 ms do not.
+        let expected = (500.0 + 50.0 + 500.0 + 99.0) * 1000.0 / (2_000.0 + 1_000.0 + 100.0 + 1_000.0);
         assert!((overview.tps - expected).abs() < 1e-9);
-        assert_eq!(overview.tps_sample_count, 3);
+        assert_eq!(overview.tps_sample_count, 4);
+
+        let total = load_usage_overview(&connection, &UsageQuery {
+            speed_mode: Some("total".to_string()),
+            ..UsageQuery::default()
+        }).unwrap();
+        let expected_total = (500.0 + 50.0 + 500.0 + 99.0 + 500.0 + 200.0 + 10.0) * 1000.0
+            / (3_000.0 + 5_000.0 + 2_000.0 + 2_000.0 + 3_000.0 + 1_050.0 + 1_000.0);
+        assert!((total.tps - expected_total).abs() < 1e-9);
+        assert_eq!(total.tps_sample_count, 7);
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn overview_tps_total_uses_whole_latency() {
+        let root = test_root("tps-total-latency");
+        let mut connection = open_test_database(&root);
+        let mut record = sample_record("total", "2026-07-17T20:30:00+08:00", "gpt-a");
+        record.latency_ms = 2_000;
+        record.ttft_ms = Some(1_500);
+        record.tokens.output_tokens = 10;
+        insert_usage_records(&mut connection, &[record]).unwrap();
+        let overview = load_usage_overview(&connection, &UsageQuery {
+            speed_mode: Some("total".to_string()),
+            ..UsageQuery::default()
+        }).unwrap();
+        assert_eq!(overview.tps, 5.0);
+        assert_eq!(overview.tps_sample_count, 1);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }

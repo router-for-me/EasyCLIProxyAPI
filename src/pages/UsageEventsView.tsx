@@ -11,7 +11,7 @@ import { FloatingNotice, useAppNotice } from '../appNotice';
 import { getCurrentLocale, useI18n } from '../i18n';
 import { usePrivacyMask } from '../privacy';
 import type { MessageKey } from '../i18n/resources';
-import { formatCacheReadRate, formatGenerationSpeed, type GenerationSpeedMode } from '../services/usageMetrics';
+import { formatCacheReadRate, formatGenerationSpeed, getSpeedMode, setSpeedMode, type GenerationSpeedMode } from '../services/usageMetrics';
 import { Select } from '../components/Select';
 import { formatDuration, formatUsageNumber } from '../services/usageNumber';
 import { Dialog } from '../components/Dialog';
@@ -130,17 +130,6 @@ export const getInitialCollapseErrors = (): boolean => {
   } catch {
   }
   return true;
-};
-
-const EVENT_SPEED_MODE_KEY = "cpa-gui.usage-events-speed-mode.v1";
-
-export const getInitialSpeedMode = (): GenerationSpeedMode => {
-  try {
-    const raw = usagePreferences.getItem(EVENT_SPEED_MODE_KEY);
-    if (raw === "ttft") return "ttft";
-  } catch {
-  }
-  return "total";
 };
 
 export const getInitialColumnWidths = (): Record<EventColumnKey, number> => {
@@ -311,7 +300,7 @@ function UsageEventCell({
   noRemarkLabel,
   showDate,
   compact,
-  speedMode = "total",
+  speedMode = "ttft",
   onCopyError,
 }: {
   record: UsageRecord;
@@ -497,8 +486,8 @@ export function EventsView({
   const [columnSettingsOpen, setColumnSettingsOpen] = useState(false);
   const [collapseErrors, setCollapseErrors] = useState(getInitialCollapseErrors);
   const [draftCollapseErrors, setDraftCollapseErrors] = useState(collapseErrors);
-  const [speedMode, setSpeedMode] = useState<GenerationSpeedMode>(getInitialSpeedMode);
-  const [draftSpeedMode, setDraftSpeedMode] = useState<GenerationSpeedMode>(getInitialSpeedMode);
+  const [speedMode, setCurrentSpeedMode] = useState<GenerationSpeedMode>(getSpeedMode);
+  const [draftSpeedMode, setDraftSpeedMode] = useState<GenerationSpeedMode>(getSpeedMode);
   const [draftVisibleColumnKeys, setDraftVisibleColumnKeys] = useState<EventColumnKey[]>(visibleColumnKeys);
   const [resizingCol, setResizingCol] = useState<EventColumnKey | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -564,10 +553,10 @@ export function EventsView({
     try {
       usagePreferences.setItem(EVENT_VISIBLE_COLS_STORAGE_KEY, JSON.stringify(next));
       usagePreferences.setItem(EVENT_COLLAPSE_ERRORS_KEY, draftCollapseErrors ? '1' : '0');
-      usagePreferences.setItem(EVENT_SPEED_MODE_KEY, draftSpeedMode);
     } catch {}
     setCollapseErrors(draftCollapseErrors);
     setSpeedMode(draftSpeedMode);
+    setCurrentSpeedMode(draftSpeedMode);
     setColumnSettingsOpen(false);
   };
 

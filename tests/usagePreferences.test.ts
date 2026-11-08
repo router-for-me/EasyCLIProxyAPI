@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import { UsagePreferences } from '../src/services/usagePreferences';
-import { getInitialVisibleColumns, getInitialColumnWidths, getInitialCollapseErrors, getInitialSpeedMode } from '../src/pages/UsageEventsView';
+import { getInitialVisibleColumns, getInitialColumnWidths, getInitialCollapseErrors } from '../src/pages/UsageEventsView';
+
+import { getSpeedMode, EVENT_SPEED_MODE_KEY } from '../src/services/usageMetrics';
 
 const pageSize = 'cpa-gui.usage-events-page-size.v1';
 const columns = 'cpa-gui.usage-events-visible-cols.v6';
@@ -37,11 +39,13 @@ describe('usage preferences across updates', () => {
       expect(getInitialCollapseErrors()).toBe(true);
       browser.setItem('cpa-gui.usage-events-collapse-errors.v1', '0');
       expect(getInitialCollapseErrors()).toBe(false);
-      expect(getInitialSpeedMode()).toBe('total');
+      expect(getSpeedMode()).toBe('ttft');
       browser.setItem('cpa-gui.usage-events-speed-mode.v1', 'ttft');
-      expect(getInitialSpeedMode()).toBe('ttft');
+      expect(getSpeedMode()).toBe('ttft');
       browser.setItem('cpa-gui.usage-events-speed-mode.v1', 'invalid');
-      expect(getInitialSpeedMode()).toBe('total');
+      expect(getSpeedMode()).toBe('ttft');
+      browser.setItem(EVENT_SPEED_MODE_KEY, 'total');
+      expect(getSpeedMode()).toBe('total');
       browser.clear();
       expect(getInitialVisibleColumns()).toContain('key');
       browser.setItem(columns, JSON.stringify(['time', 'model', 'source', 'result', 'total', 'cache', 'latency', 'speed', 'cost']));
