@@ -82,6 +82,7 @@ const LITELLM_PRICE_SYNC_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const MODEL_PRICE_SYNC_MAX_BYTES: usize = 16 * 1024 * 1024;
 const MODEL_PRICE_SYNC_ATTEMPTS: usize = 2;
+const MODEL_CAPABILITY_SYNC_MAX_AGE_MS: i64 = 24 * 60 * 60 * 1000;
 const USAGE_DISPLAY_MODEL_SQL: &str =
     "COALESCE(NULLIF(TRIM(alias), ''), NULLIF(TRIM(model), ''), 'unknown')";
 
@@ -377,6 +378,22 @@ pub(crate) struct ModelPrice {
     completion_configured: bool,
     cache_read_configured: bool,
     cache_creation_configured: bool,
+    source: String,
+    source_model_id: String,
+    updated_at_ms: i64,
+}
+
+/// Authoritative model capabilities imported from external catalogs (models.dev,
+/// LiteLLM). The Codex client catalog clones its default template onto every model
+/// it does not know, which advertises `context_window = 500000` for custom
+/// openai-compatibility providers; these entries replace that placeholder.
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModelCapabilities {
+    pub(crate) model: String,
+    pub(crate) context_window: Option<u64>,
+    pub(crate) max_output_tokens: Option<u64>,
+    pub(crate) input_modalities: Vec<String>,
     source: String,
     source_model_id: String,
     updated_at_ms: i64,
@@ -1332,6 +1349,16 @@ fn initialize_usage_schema(connection: &Connection) -> Result<(), String> {
                 completion_configured INTEGER NOT NULL DEFAULT 0,
                 cache_read_configured INTEGER NOT NULL DEFAULT 0,
                 cache_creation_configured INTEGER NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT '',
+                source_model_id TEXT NOT NULL DEFAULT '',
+                updated_at_ms INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS model_capabilities (
+                model TEXT PRIMARY KEY NOT NULL,
+                context_window INTEGER,
+                max_output_tokens INTEGER,
+                input_modalities TEXT NOT NULL DEFAULT '',
                 source TEXT NOT NULL DEFAULT '',
                 source_model_id TEXT NOT NULL DEFAULT '',
                 updated_at_ms INTEGER NOT NULL DEFAULT 0
@@ -3596,6 +3623,299 @@ fn parse_litellm_prices(content: &str, updated_at_ms: i64) -> Result<Vec<ModelPr
     Ok(prices)
 }
 
+fn parse_models_dev_capabilities(
+    content: &str,
+    updated_at_ms: i64,
+) -> Result<Vec<ModelCapabilities>, String> {
+    let catalog: Value = serde_json::from_str(content)
+        .map_err(|error| format!("Failed to parse models.dev capabilities: {error}"))?;
+    let providers = catalog
+        .as_object()
+        .ok_or("Invalid models.dev capabilities catalog format")?;
+    let mut capabilities = Vec::new();
+    for (provider, entry) in providers {
+        let Some(models) = entry.get("models").and_then(Value::as_object) else {
+            continue;
+        };
+        for (model_id, model) in models {
+            let limit = model.get("limit");
+            let context_window = limit
+                .and_then(|limit| limit.get("context"))
+                .and_then(Value::as_u64);
+            let max_output_tokens = limit
+                .and_then(|limit| limit.get("output"))
+                .and_then(Value::as_u64);
+            let input_modalities = model
+                .get("modalities")
+                .and_then(|modalities| modalities.get("input"))
+                .and_then(Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if context_window.is_none()
+                && max_output_tokens.is_none()
+                && input_modalities.is_empty()
+            {
+                continue;
+            }
+            capabilities.push(ModelCapabilities {
+                model: model_id.trim().to_string(),
+                context_window,
+                max_output_tokens,
+                input_modalities,
+                source: "models.dev".to_string(),
+                source_model_id: format!("{provider}/{model_id}"),
+                updated_at_ms,
+            });
+        }
+    }
+    if capabilities.is_empty() {
+        return Err("models.dev has no available model capabilities".to_string());
+    }
+    Ok(capabilities)
+}
+
+fn parse_litellm_capabilities(
+    content: &str,
+    updated_at_ms: i64,
+) -> Result<Vec<ModelCapabilities>, String> {
+    let catalog: Value = serde_json::from_str(content)
+        .map_err(|error| format!("Failed to parse LiteLLM capabilities: {error}"))?;
+    let models = catalog.as_object().ok_or("Invalid LiteLLM capabilities catalog format")?;
+    let mut capabilities = Vec::new();
+    for (model_id, entry) in models {
+        let context_window = entry.get("max_input_tokens").and_then(Value::as_u64);
+        let max_output_tokens = entry.get("max_output_tokens").and_then(Value::as_u64);
+        let mut input_modalities = vec!["text".to_string()];
+        if entry.get("supports_vision").and_then(Value::as_bool) == Some(true) {
+            input_modalities.push("image".to_string());
+        }
+        if entry.get("supports_audio_input").and_then(Value::as_bool) == Some(true) {
+            input_modalities.push("audio".to_string());
+        }
+        if context_window.is_none() && max_output_tokens.is_none() {
+            continue;
+        }
+        capabilities.push(ModelCapabilities {
+            model: model_id.trim().to_string(),
+            context_window,
+            max_output_tokens,
+            input_modalities,
+            source: "litellm-sync".to_string(),
+            source_model_id: model_id.trim().to_string(),
+            updated_at_ms,
+        });
+    }
+    if capabilities.is_empty() {
+        return Err("LiteLLM has no available model capabilities".to_string());
+    }
+    Ok(capabilities)
+}
+
+fn upsert_model_capabilities(
+    connection: &Connection,
+    capabilities: &[ModelCapabilities],
+) -> Result<(), String> {
+    for capability in capabilities {
+        let model = capability.model.trim();
+        if model.is_empty() {
+            continue;
+        }
+        connection
+            .execute(
+                r#"
+                INSERT INTO model_capabilities (
+                    model, context_window, max_output_tokens, input_modalities,
+                    source, source_model_id, updated_at_ms
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ON CONFLICT(model) DO UPDATE SET
+                    context_window = excluded.context_window,
+                    max_output_tokens = excluded.max_output_tokens,
+                    input_modalities = excluded.input_modalities,
+                    source = excluded.source,
+                    source_model_id = excluded.source_model_id,
+                    updated_at_ms = excluded.updated_at_ms
+                "#,
+                params![
+                    model,
+                    capability.context_window,
+                    capability.max_output_tokens,
+                    capability.input_modalities.join(","),
+                    capability.source,
+                    capability.source_model_id,
+                    capability.updated_at_ms,
+                ],
+            )
+            .map_err(|error| format!("Failed to save model capabilities: {error}"))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn load_model_capabilities(
+    connection: &Connection,
+) -> Result<Vec<ModelCapabilities>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT model, context_window, max_output_tokens, input_modalities,
+                   source, source_model_id, updated_at_ms
+            FROM model_capabilities
+            "#,
+        )
+        .map_err(|error| format!("Failed to read model capabilities: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            let modalities: String = row.get(3).unwrap_or_default();
+            Ok(ModelCapabilities {
+                model: row.get(0)?,
+                context_window: row.get(1).ok(),
+                max_output_tokens: row.get(2).ok(),
+                input_modalities: modalities
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .collect(),
+                source: row.get(4).unwrap_or_default(),
+                source_model_id: row.get(5).unwrap_or_default(),
+                updated_at_ms: row.get(6).unwrap_or_default(),
+            })
+        })
+        .map_err(|error| format!("Failed to read model capabilities: {error}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to read model capabilities: {error}"))
+}
+
+pub(crate) fn find_model_capabilities<'a>(
+    capabilities: &'a [ModelCapabilities],
+    model: &str,
+) -> Option<&'a ModelCapabilities> {
+    let model = model.trim();
+    if model.is_empty() {
+        return None;
+    }
+    if let Some(entry) = capabilities
+        .iter()
+        .find(|entry| entry.model.eq_ignore_ascii_case(model))
+    {
+        return Some(entry);
+    }
+    let tail = canonical_model_tail(model);
+    let exact_tail = capabilities
+        .iter()
+        .filter(|entry| canonical_model_tail(&entry.model) == tail)
+        .collect::<Vec<_>>();
+    if exact_tail.len() == 1 {
+        return Some(exact_tail[0]);
+    }
+    // Dated and provider-prefixed variants (deepseek-v4.1-flash-1017,
+    // xopdeepseekv4flash0731) inherit the base catalog entry.
+    let normalized_tail = normalized_model_tail(model);
+    capabilities
+        .iter()
+        .filter_map(|entry| {
+            let key_tail = normalized_model_tail(&entry.model);
+            if key_tail.is_empty() {
+                return None;
+            }
+            (normalized_tail.starts_with(&format!("{key_tail}-"))
+                || normalized_tail.starts_with(&format!("{key_tail}.")))
+            .then_some((key_tail.len(), entry))
+        })
+        .max_by_key(|(length, _)| *length)
+        .map(|(_, entry)| entry)
+}
+
+/// Looks up authoritative model capabilities from the imported external catalog.
+pub(crate) fn query_model_capabilities(model: &str) -> Option<ModelCapabilities> {
+    let connection = open_usage_database().ok()?;
+    let capabilities = load_model_capabilities(&connection).ok()?;
+    find_model_capabilities(&capabilities, model).cloned()
+}
+
+pub(crate) async fn refresh_model_capabilities_catalog() -> Result<usize, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("EasyCLIProxyAPI/0.2.97")
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|error| format!("Failed to create capability synchronization client: {error}"))?;
+    let now = Local::now().timestamp_millis();
+    let mut imported = Vec::new();
+    let mut failures = Vec::new();
+    for (source_name, source_url, models_dev) in [
+        ("Models.dev", MODEL_PRICE_SYNC_URL, true),
+        ("LiteLLM", LITELLM_PRICE_SYNC_URL, false),
+    ] {
+        match fetch_model_price_catalog(&client, source_name, source_url).await {
+            Ok(content) => {
+                let parsed = if models_dev {
+                    parse_models_dev_capabilities(&content, now)
+                } else {
+                    parse_litellm_capabilities(&content, now)
+                };
+                match parsed {
+                    Ok(capabilities) => imported.extend(capabilities),
+                    Err(error) => failures.push(error),
+                }
+            }
+            Err(error) => failures.push(error),
+        }
+    }
+    if imported.is_empty() {
+        return Err(if failures.is_empty() {
+            "No external model capability catalog is available".to_string()
+        } else {
+            failures.join("; ")
+        });
+    }
+    let imported_count = imported.len();
+    run_usage_task(move || {
+        let mut connection = open_usage_database()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("Failed to begin saving model capabilities: {error}"))?;
+        upsert_model_capabilities(&transaction, &imported)?;
+        transaction
+            .commit()
+            .map_err(|error| format!("Failed to commit model capabilities: {error}"))?;
+        Ok(imported_count)
+    })
+    .await
+}
+
+/// Refreshes the external capability catalog at most once per day. Failures are
+/// non-fatal: the local catalog simply keeps whatever it imported last time.
+pub(crate) async fn ensure_model_capabilities_catalog() -> Result<(), String> {
+    let stale = run_usage_task(|| {
+        let connection = open_usage_database()?;
+        let latest: Option<i64> = connection
+            .query_row(
+                "SELECT MAX(updated_at_ms) FROM model_capabilities",
+                [],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .optional()
+            .map_err(|error| format!("Failed to read model capability catalog age: {error}"))?
+            .flatten();
+        Ok(latest.is_none_or(|latest| {
+            latest < Local::now().timestamp_millis() - MODEL_CAPABILITY_SYNC_MAX_AGE_MS
+        }))
+    })
+    .await?;
+    if stale {
+        refresh_model_capabilities_catalog().await?;
+    }
+    Ok(())
+}
+
 fn find_model_price<'a>(
     prices: &'a HashMap<String, ModelPrice>,
     model: &str,
@@ -5187,6 +5507,133 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    #[test]
+    fn models_dev_capabilities_capture_context_output_and_modalities() {
+        let catalog = serde_json::json!({
+            "scnet-token-plan": {
+                "api": "https://api.scnet.cn/api/llm/v1",
+                "models": {
+                    "GLM-5.3-Flash": {
+                        "limit": {"context": 1000000, "output": 131072},
+                        "modalities": {"input": ["text", "image", "video", "pdf"], "output": ["text"]},
+                        "reasoning": true
+                    },
+                    "no-limits": {"cost": {"input": 0}}
+                }
+            },
+            "empty-provider": {"models": {}}
+        });
+        let capabilities = parse_models_dev_capabilities(&catalog.to_string(), 42).unwrap();
+        assert_eq!(capabilities.len(), 1);
+        let entry = &capabilities[0];
+        assert_eq!(entry.model, "GLM-5.3-Flash");
+        assert_eq!(entry.context_window, Some(1_000_000));
+        assert_eq!(entry.max_output_tokens, Some(131_072));
+        assert_eq!(entry.input_modalities, vec!["text", "image", "video", "pdf"]);
+        assert_eq!(entry.source, "models.dev");
+        assert_eq!(entry.source_model_id, "scnet-token-plan/GLM-5.3-Flash");
+        assert_eq!(entry.updated_at_ms, 42);
+    }
+
+    #[test]
+    fn litellm_capabilities_capture_context_and_vision() {
+        let catalog = serde_json::json!({
+            "gpt-6-sol": {"max_input_tokens": 272000, "max_output_tokens": 64000, "supports_vision": true},
+            "text-only": {"max_input_tokens": 128000},
+            "unusable": {"mode": "embedding"}
+        });
+        let capabilities = parse_litellm_capabilities(&catalog.to_string(), 7).unwrap();
+        assert_eq!(capabilities.len(), 2);
+        let vision = capabilities.iter().find(|entry| entry.model == "gpt-6-sol").unwrap();
+        assert_eq!(vision.context_window, Some(272_000));
+        assert_eq!(vision.max_output_tokens, Some(64_000));
+        assert_eq!(vision.input_modalities, vec!["text", "image"]);
+        assert_eq!(vision.source, "litellm-sync");
+        let text_only = capabilities.iter().find(|entry| entry.model == "text-only").unwrap();
+        assert_eq!(text_only.context_window, Some(128_000));
+        assert_eq!(text_only.max_output_tokens, None);
+        assert_eq!(text_only.input_modalities, vec!["text"]);
+    }
+
+    #[test]
+    fn model_capabilities_match_case_insensitively_and_dated_variants() {
+        let capabilities = vec![
+            ModelCapabilities {
+                model: "GLM-5.3-Flash".to_string(),
+                context_window: Some(1_000_000),
+                ..ModelCapabilities::default()
+            },
+            ModelCapabilities {
+                model: "DeepSeek-V4.1-Flash".to_string(),
+                context_window: Some(1_000_000),
+                ..ModelCapabilities::default()
+            },
+        ];
+        // Exact match.
+        assert_eq!(
+            find_model_capabilities(&capabilities, "GLM-5.3-Flash").unwrap().context_window,
+            Some(1_000_000)
+        );
+        // Case-insensitive match, as used by the 超算 provider alias.
+        assert!(find_model_capabilities(&capabilities, "glm-5.3-flash").is_some());
+        // Dated variants inherit the base catalog entry.
+        assert!(find_model_capabilities(&capabilities, "deepseek-v4.1-flash-1017").is_some());
+        // Unknown models stay unknown so the caller keeps its own fallback.
+        assert!(find_model_capabilities(&capabilities, "SCNet-Max").is_none());
+        assert!(find_model_capabilities(&capabilities, "  ").is_none());
+    }
+
+    #[test]
+    fn model_capabilities_round_trip_through_sqlite() {
+        let root = test_root("model-capabilities");
+        let connection = open_test_database(&root);
+        upsert_model_capabilities(
+            &connection,
+            &[
+                ModelCapabilities {
+                    model: "GLM-5.3-Flash".to_string(),
+                    context_window: Some(1_000_000),
+                    max_output_tokens: Some(131_072),
+                    input_modalities: vec!["text".to_string(), "image".to_string()],
+                    source: "models.dev".to_string(),
+                    source_model_id: "scnet-token-plan/GLM-5.3-Flash".to_string(),
+                    updated_at_ms: 11,
+                },
+                ModelCapabilities {
+                    model: " ".to_string(),
+                    context_window: Some(1),
+                    ..ModelCapabilities::default()
+                },
+            ],
+        )
+        .unwrap();
+        let loaded = load_model_capabilities(&connection).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].model, "GLM-5.3-Flash");
+        assert_eq!(loaded[0].context_window, Some(1_000_000));
+        assert_eq!(loaded[0].max_output_tokens, Some(131_072));
+        assert_eq!(loaded[0].input_modalities, vec!["text", "image"]);
+
+        // A refresh overwrites the previous entry instead of duplicating it.
+        upsert_model_capabilities(
+            &connection,
+            &[ModelCapabilities {
+                model: "GLM-5.3-Flash".to_string(),
+                context_window: Some(2_000_000),
+                source: "litellm-sync".to_string(),
+                updated_at_ms: 22,
+                ..ModelCapabilities::default()
+            }],
+        )
+        .unwrap();
+        let reloaded = load_model_capabilities(&connection).unwrap();
+        assert_eq!(reloaded.len(), 1);
+        assert_eq!(reloaded[0].context_window, Some(2_000_000));
+        assert_eq!(reloaded[0].source, "litellm-sync");
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
