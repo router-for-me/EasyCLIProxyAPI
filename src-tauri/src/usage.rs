@@ -23,7 +23,10 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
     path::{Component, Path, PathBuf},
-    sync::{LazyLock, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        LazyLock, Mutex,
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{Emitter, Manager};
@@ -47,6 +50,8 @@ const USAGE_FAILURE_MIGRATION_KEY: &str = "failure_details_v4";
 const USAGE_EVENT_KEY_MIGRATION_KEY: &str = "event_key_v5";
 const USAGE_DATABASE_MAX_MB_KEY: &str = "max_database_size_mb";
 const USAGE_UPDATED_EVENT: &str = "usage-records-updated";
+const USAGE_PRUNE_COOLDOWN_NANOS: u64 = 60_000_000_000;
+static USAGE_PRUNE_COOLDOWN: AtomicU64 = AtomicU64::new(0);
 
 fn emit_usage_updated(app: &tauri::AppHandle, collected_at: String) {
     // #493: collection persists in Rust while hidden; do not keep feeding JS
@@ -1718,7 +1723,29 @@ fn enforce_usage_database_limit(connection: &Connection) -> Result<u64, String> 
     let max_bytes = max_database_size_mb
         .checked_mul(BYTES_PER_MB)
         .ok_or_else(|| "Usage records database size limit is too large".to_string())?;
-    prune_usage_database_to_bytes(connection, max_bytes)
+    prune_usage_database_to_bytes_throttled(connection, max_bytes)
+}
+
+fn prune_usage_database_to_bytes_throttled(
+    connection: &Connection,
+    max_bytes: u64,
+) -> Result<u64, String> {
+    if usage_database_connection_disk_bytes(connection)? <= max_bytes {
+        return Ok(0);
+    }
+    let now_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(0);
+    let last_prune_nanos = USAGE_PRUNE_COOLDOWN.load(Ordering::Relaxed);
+    if last_prune_nanos != 0
+        && now_nanos.saturating_sub(last_prune_nanos) < USAGE_PRUNE_COOLDOWN_NANOS
+    {
+        return Ok(0);
+    }
+    let deleted = prune_usage_database_to_bytes(connection, max_bytes)?;
+    USAGE_PRUNE_COOLDOWN.store(now_nanos, Ordering::Relaxed);
+    Ok(deleted)
 }
 
 fn shrink_usage_database_to_mb(
