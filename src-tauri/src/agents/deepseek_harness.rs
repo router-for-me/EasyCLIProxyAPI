@@ -237,9 +237,17 @@ pub(crate) async fn fetch_deepseek_harness_models(
         fetch_management_config_yaml(config),
     );
     let mut models = models?;
+    let runtime = match runtime {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("DeepSeek Harness reasoning metadata unavailable, using model defaults: {error}");
+            Vec::new()
+        }
+    };
+    codex_catalog::merge_runtime_reasoning_levels(&mut models, &runtime);
     enrich_harness_context_windows(
         &mut models,
-        &runtime.unwrap_or_default(),
+        &runtime,
         configuration.as_deref().ok(),
     )?;
     Ok(models)

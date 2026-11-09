@@ -25,9 +25,14 @@ pub(crate) fn update_workbuddy_reasoning_fields(entry: &mut serde_json::Value, l
     if levels.is_empty() {
         return;
     }
-    entry["supportsReasoning"] = serde_json::json!(true);
-    entry["onlyReasoning"] = serde_json::json!(true);
-    let reasoning = entry["reasoning"].take();
+    let entry = entry.as_object_mut().expect("model entry must be an object");
+    entry
+        .entry("supportsReasoning")
+        .or_insert_with(|| serde_json::json!(true));
+    entry
+        .entry("onlyReasoning")
+        .or_insert_with(|| serde_json::json!(true));
+    let reasoning = entry.remove("reasoning").unwrap_or(serde_json::Value::Null);
     let mut object = reasoning
         .as_object()
         .cloned()
@@ -41,7 +46,7 @@ pub(crate) fn update_workbuddy_reasoning_fields(entry: &mut serde_json::Value, l
     object
         .entry("supportedEfforts")
         .or_insert_with(|| serde_json::json!(levels));
-    entry["reasoning"] = serde_json::Value::Object(object);
+    entry.insert("reasoning".to_string(), serde_json::Value::Object(object));
 }
 
 /// OpenCode: reasoning capability on a managed model entry.
