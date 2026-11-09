@@ -3634,3 +3634,143 @@ fn default_tauri_capability_grants_app_version() {
         "src-tauri/capabilities/default.json must include core:app:allow-version"
     );
 }
+
+#[test]
+fn parse_agent_model_options_reads_configured_thinking_levels() {
+    let payload = serde_json::json!({
+        "data": [
+            {
+                "id": "tc-glm-5.3-flash",
+                "object": "model",
+                "thinking": { "levels": ["max", "xhigh", "high"] }
+            },
+            {
+                "id": "tc-mimo-v2.6-pro",
+                "object": "model",
+                "thinking": { "levels": ["high"] }
+            },
+            {
+                "id": "levels-dedupe",
+                "object": "model",
+                "thinking": { "levels": ["high", "HIGH", "xhigh"] }
+            },
+            { "id": "no-levels-model", "object": "model" }
+        ]
+    });
+    let models = parse_agent_model_options(&payload).unwrap();
+    let glm = models
+        .iter()
+        .find(|model| model.name == "tc-glm-5.3-flash")
+        .unwrap();
+    assert_eq!(glm.reasoning_levels, vec!["max", "xhigh", "high"]);
+    let mimo = models
+        .iter()
+        .find(|model| model.name == "tc-mimo-v2.6-pro")
+        .unwrap();
+    assert_eq!(mimo.reasoning_levels, vec!["high"]);
+    let deduped = models
+        .iter()
+        .find(|model| model.name == "levels-dedupe")
+        .unwrap();
+    assert_eq!(deduped.reasoning_levels, vec!["high", "xhigh"]);
+    let none = models
+        .iter()
+        .find(|model| model.name == "no-levels-model")
+        .unwrap();
+    assert!(none.reasoning_levels.is_empty());
+}
+
+#[test]
+fn opencode_managed_models_declare_top_level_reasoning_and_variants() {
+    let models = vec![AgentModelOption {
+        name: "tc-glm-5.3-flash".into(),
+        alias: None,
+        is_alias: false,
+        context_window: Some(128_000),
+        input_modalities: None,
+        reasoning_levels: vec!["max".into(), "xhigh".into(), "high".into()],
+        harness_metadata: None,
+    }];
+    let config = build_opencode_agent_config(
+        None,
+        "http://127.0.0.1:8317/v1",
+        "key",
+        "tc-glm-5.3-flash",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&config).unwrap();
+    let entry = &value["provider"]["cpa-gui"]["models"]["tc-glm-5.3-flash"];
+    // Top-level boolean only: capabilities.reasoning is dropped by OpenCode at runtime.
+    assert_eq!(entry["reasoning"], true);
+    assert!(entry.get("capabilities").is_none());
+    assert_eq!(entry["variants"]["max"]["reasoning_effort"], "max");
+    assert_eq!(entry["variants"]["xhigh"]["reasoning_effort"], "xhigh");
+    assert_eq!(entry["variants"]["high"]["reasoning_effort"], "high");
+    assert_eq!(entry["request"]["variant"], "xhigh");
+    // Models without configured levels keep the previous minimal shape.
+    let plain = vec![AgentModelOption {
+        name: "plain-model".into(),
+        alias: None,
+        is_alias: false,
+        context_window: Some(128_000),
+        input_modalities: None,
+        reasoning_levels: Vec::new(),
+        harness_metadata: None,
+    }];
+    let config = build_opencode_agent_config(
+        None,
+        "http://127.0.0.1:8317/v1",
+        "key",
+        "plain-model",
+        &plain,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&config).unwrap();
+    let entry = &value["provider"]["cpa-gui"]["models"]["plain-model"];
+    assert!(entry.get("reasoning").is_none());
+    assert!(entry.get("variants").is_none());
+    assert!(entry.get("request").is_none());
+}
+
+#[test]
+fn harness_managed_models_declare_reasoning_efforts() {
+    let models = vec![AgentModelOption {
+        name: "tc-glm-5.3-flash".into(),
+        alias: None,
+        is_alias: false,
+        context_window: Some(128_000),
+        input_modalities: None,
+        reasoning_levels: vec!["max".into(), "xhigh".into(), "high".into()],
+        harness_metadata: None,
+    }];
+    let rendered = build_deepseek_harness_models(&models, "tc-glm-5.3-flash").unwrap();
+    let entry = &rendered[0];
+    let id = entry.get("id").and_then(serde_norway::Value::as_str).unwrap();
+    assert_eq!(id, "tc-glm-5.3-flash");
+    let efforts = entry.get("reasoningEfforts").unwrap();
+    assert_eq!(
+        efforts.get("max").and_then(serde_norway::Value::as_str),
+        Some("max")
+    );
+    assert_eq!(
+        efforts.get("xhigh").and_then(serde_norway::Value::as_str),
+        Some("xhigh")
+    );
+    assert_eq!(
+        efforts.get("high").and_then(serde_norway::Value::as_str),
+        Some("high")
+    );
+    // Without configured levels the field is absent.
+    let plain = vec![AgentModelOption {
+        name: "plain-model".into(),
+        alias: None,
+        is_alias: false,
+        context_window: Some(128_000),
+        input_modalities: None,
+        reasoning_levels: Vec::new(),
+        harness_metadata: None,
+    }];
+    let rendered = build_deepseek_harness_models(&plain, "plain-model").unwrap();
+    assert!(rendered[0].get("reasoningEfforts").is_none());
+}
