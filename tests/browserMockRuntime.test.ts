@@ -19,6 +19,21 @@ describe('browser mock options', () => {
 });
 
 describe('browser mock runtime', () => {
+  test('only changes the selected download source on an explicit selection', async () => {
+    const events: string[] = [];
+    const runtime = createBrowserMockRuntime('stopped', (event) => events.push(event));
+    for (const source of ['github', 'gitcode', 'gh-proxy', 'gh-fast', 'custom:https://mirror.example.com/']) {
+      await runtime.invoke('set_download_source', { source });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await runtime.invoke('check_app_update');
+        await runtime.invoke('check_latest_core');
+        await runtime.invoke('list_core_versions');
+        expect((await runtime.invoke('get_version_source_settings') as { source: string }).source).toBe(source);
+      }
+    }
+    expect(events).not.toContain('version-download-source-changed');
+  });
+
   test('persists tags in downloads while omitting them from the core list response', async () => {
     const runtime = createBrowserMockRuntime('running');
     const request = (method: string, path: string, extra = {}) => runtime.invoke('management_request', { request: { method, path, ...extra } });
