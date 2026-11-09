@@ -928,6 +928,23 @@ fn portable_update_download_order_respects_gitcode_preference() {
 fn version_detection_candidates_try_every_available_source_once() {
     assert_eq!(
         version_download_source_candidates(
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Github), true, &[],
+        ),
+        [
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
+        ]
+    );
+    assert_eq!(
+        version_download_source_candidates(
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode), true, &[],
+        )[0],
+        VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode)
+    );
+    assert_eq!(
+        version_download_source_candidates(
             VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
             true,
             &[],
@@ -935,8 +952,8 @@ fn version_detection_candidates_try_every_available_source_once() {
         [
             VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
             VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
-            VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
             VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
+            VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
         ]
     );
     assert_eq!(
@@ -951,6 +968,52 @@ fn version_detection_candidates_try_every_available_source_once() {
             VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
         ]
     );
+}
+
+#[test]
+fn fallback_is_temporary_and_manual_source_selection_is_preserved() {
+    let config = GuiConfigFile::default();
+    let requested = config.selected_download_candidate();
+    let fallback = VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy);
+    let settings = temporary_fallback_settings(&config, &requested, &fallback).unwrap();
+    assert_eq!(settings.source, fallback.key());
+    assert_eq!(config.selected_download_candidate(), requested);
+    assert!(temporary_fallback_settings(&config, &requested, &requested).is_none());
+
+    let stale_request = VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode);
+    assert!(temporary_fallback_settings(&config, &stale_request, &fallback).is_none());
+}
+
+#[test]
+fn notifying_fallback_keeps_config_and_emits_only_for_the_current_selection() {
+    use tauri::Listener;
+
+    let app = tauri::test::mock_app();
+    let state = GuiConfigState::new(GuiConfigFile::default());
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.listen(VERSION_DOWNLOAD_SOURCE_CHANGED_EVENT, move |event| {
+        sender.send(event.payload().to_owned()).unwrap();
+    });
+    let requested = VersionDownloadCandidate::builtin(VersionDownloadSource::Github);
+    let fallback = VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy);
+    let config_path = gui_config_path().unwrap();
+    let config_before = fs::read(&config_path).ok();
+
+    notify_temporary_download_source_fallback(app.handle(), &state, &requested, &fallback).unwrap();
+    let event: serde_json::Value = serde_json::from_str(&receiver.try_recv().unwrap()).unwrap();
+    assert_eq!(event["source"], fallback.key());
+    assert_eq!(state.snapshot().unwrap().selected_download_candidate(), requested);
+    assert_eq!(fs::read(&config_path).ok(), config_before);
+    assert_eq!(version_download_source_candidates(
+        state.snapshot().unwrap().selected_download_candidate(), true, &[],
+    )[0], requested);
+
+    // A manual selection made while the check was in flight takes precedence.
+    state.inner.lock().unwrap().download_source = VersionDownloadSource::GhFast;
+    notify_temporary_download_source_fallback(app.handle(), &state, &requested, &fallback).unwrap();
+    assert!(receiver.try_recv().is_err());
+    assert_eq!(state.snapshot().unwrap().download_source, VersionDownloadSource::GhFast);
+    assert_eq!(fs::read(&config_path).ok(), config_before);
 }
 
 #[test]

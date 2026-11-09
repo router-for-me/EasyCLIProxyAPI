@@ -244,22 +244,35 @@ pub(crate) fn gitcode_version_source_available() -> bool {
     configured_gitcode_gui_repository().is_some() && configured_gitcode_core_repository().is_some()
 }
 
-pub(crate) fn persist_automatic_download_source_switch(
-    app: &tauri::AppHandle,
+pub(crate) fn temporary_fallback_settings(
+    config: &GuiConfigFile,
+    requested_source: &VersionDownloadCandidate,
+    resolved_source: &VersionDownloadCandidate,
+) -> Option<VersionSourceSettings> {
+    if config.selected_download_candidate() != *requested_source || requested_source == resolved_source {
+        return None;
+    }
+    let mut settings = version_source_settings(config);
+    settings.source = resolved_source.key();
+    Some(settings)
+}
+
+pub(crate) fn notify_temporary_download_source_fallback<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     gui_config_state: &GuiConfigState,
     requested_source: &VersionDownloadCandidate,
     resolved_source: &VersionDownloadCandidate,
 ) -> Result<(), String> {
-    let Some(config) =
-        gui_config_state.switch_download_source_after_failure(requested_source, resolved_source)?
+    let config = gui_config_state.snapshot()?;
+    let Some(settings) = temporary_fallback_settings(&config, requested_source, resolved_source)
     else {
         return Ok(());
     };
     app.emit(
         VERSION_DOWNLOAD_SOURCE_CHANGED_EVENT,
-        version_source_settings(&config),
+        settings,
     )
-    .map_err(|error| format!("Failed to notify automatic download source switch: {error}"))
+    .map_err(|error| format!("Failed to notify temporary download source fallback: {error}"))
 }
 
 #[tauri::command]
@@ -342,7 +355,7 @@ async fn resolve_app_update(
     )
     .await?;
     if !(is_preview && resolved_source.source == VersionDownloadSource::Gitcode) {
-        persist_automatic_download_source_switch(
+        notify_temporary_download_source_fallback(
             app,
             gui_config_state,
             &requested_source,

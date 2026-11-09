@@ -2315,7 +2315,7 @@ export const en: Record<MessageKey, string> = {
   'kernel.versions.coreCardTitle': 'Proxy Core Kernel',
   'kernel.versions.catalogCardTitle': 'Codex Model Catalog',
   'kernel.versions.sourceSwitched': 'Switched to {source}; rechecking versions',
-  'kernel.versions.sourceAutoSwitched': 'The current source failed; automatically switched to {source}',
+  'kernel.versions.sourceAutoSwitched': 'The selected source failed; using {source} for this operation. Your source setting was not changed.',
   'kernel.versions.bundledPackage': 'Bundled Offline Package',
   'kernel.versions.offlineRecommend': 'Network restricted? You can install the bundled offline core directly without an internet connection.',
   'kernel.versions.autoUpdateSupported': 'In-app auto-update supported',

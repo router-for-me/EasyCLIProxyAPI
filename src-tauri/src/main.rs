@@ -821,9 +821,9 @@ fn version_download_source_candidates(
     let mut candidates = vec![
         preferred,
         VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
-        VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
         VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
         VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
+        VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
     ];
     candidates.retain(|candidate| {
         gitcode_available || candidate.source != VersionDownloadSource::Gitcode
@@ -2334,33 +2334,6 @@ impl GuiConfigState {
             config.prefer_gitcode_downloads = candidate.source == VersionDownloadSource::Gitcode;
             Ok(())
         })
-    }
-
-    fn switch_download_source_after_failure(
-        &self,
-        expected_source: &VersionDownloadCandidate,
-        fallback_source: &VersionDownloadCandidate,
-    ) -> Result<Option<GuiConfigFile>, String> {
-        let mut current = self
-            .inner
-            .lock()
-            .map_err(|_| "GUI configuration status lock is poisoned".to_string())?;
-        if current.selected_download_candidate() != *expected_source
-            || expected_source == fallback_source
-        {
-            return Ok(None);
-        }
-
-        let mut config = current.clone();
-        config.download_source = fallback_source.source;
-        if let Some(url) = &fallback_source.custom_url {
-            config.active_custom_download_mirror = url.clone();
-        }
-        config.prefer_gitcode_downloads = fallback_source.source == VersionDownloadSource::Gitcode;
-        sanitize_gui_config(&mut config)?;
-        write_gui_config(&config)?;
-        *current = config.clone();
-        Ok(Some(config))
     }
 
     fn set_window_geometry(

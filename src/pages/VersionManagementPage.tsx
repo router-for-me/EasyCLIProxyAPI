@@ -421,7 +421,6 @@ export function VersionManagementPage() {
 
     void onVersionDownloadSourceChanged((event) => {
       if (disposed) return;
-      setVersionSource(event.payload);
       setVersionSourceError('');
       showNotice({ key: 'kernel.versions.sourceAutoSwitched', variables: {
         source: downloadSourceLabel(event.payload.source, t),

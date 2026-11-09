@@ -2314,7 +2314,7 @@ export const zhCN: Record<string, string> = {
   'kernel.versions.coreCardTitle': '代理内核',
   'kernel.versions.catalogCardTitle': 'Codex 模型目录',
   'kernel.versions.sourceSwitched': '已切换至 {source}，正在重新检测版本',
-  'kernel.versions.sourceAutoSwitched': '当前下载源检测失败，已自动切换至 {source}',
+  'kernel.versions.sourceAutoSwitched': '所选下载源暂时不可用，本次使用 {source}；下载源设置未更改',
   'kernel.versions.bundledPackage': '内置离线安装包',
   'kernel.versions.offlineRecommend': '网络连接受限？可直接一键安装内置离线内核，无需联网。',
   'kernel.versions.autoUpdateSupported': '支持应用内自动升级',

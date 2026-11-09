@@ -2462,7 +2462,7 @@ export const ru: Record<MessageKey, string> = {
   'kernel.versions.coreCardTitle': 'Прокси-ядро',
   'kernel.versions.catalogCardTitle': 'Codex Модель Catalog',
   'kernel.versions.sourceSwitched': 'Переключено на {source}; повторная проверка версий',
-  'kernel.versions.sourceAutoSwitched': 'Текущий источник недоступен; автоматически переключено на {source}',
+  'kernel.versions.sourceAutoSwitched': 'Выбранный источник недоступен; для этой операции используется {source}. Настройка источника не изменена.',
   'kernel.versions.bundledPackage': 'Встроенный автономный пакет',
   'kernel.versions.offlineRecommend': 'Сеть ограничена? Встроенное ядро можно установить без интернета.',
   'kernel.versions.autoUpdateSupported': 'In-app auto-Обновить supported',
