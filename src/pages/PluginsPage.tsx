@@ -403,7 +403,7 @@ export function PluginsPage() {
                 </>}
         {tab !== "ecpa" && <>
         <button type="button" className="secondary-button plugin-development-guide" onClick={() => void openExternalUrl({ url: "https://help.router-for.me/cn/plugin/development.html" }).catch(reason => { if (mounted.current) setError(message(reason)); })}><ExternalLink size={16} aria-hidden="true" />{pt("developmentGuide")}</button>
-        {data && !data.pluginsEnabled ? <span className="plugin-disabled-hint" role="status" title={pt("disabledHint")}>{pt("disabledHint")}</span> : null}
+        {data && !data.pluginsEnabled ? <span className="plugin-disabled-hint" role="status" aria-label={pt("disabledHint")} title={pt("disabledHint")}>{pt("pluginsOff")}</span> : null}
         <button className="secondary-button plugin-refresh" disabled={locked} onClick={() => void load(tabRef.current, tabRef.current === "installed")}><RefreshCw size={16} aria-hidden="true" />{t("common.refresh")}</button>
         </>}
       </div>

@@ -131,13 +131,15 @@
   padding: 0 0 12px;
 }
 
-/* The "plugins globally disabled" state is a short inline note in the toolbar so it
-   never breaks the head → toolbar → filters → grid order. */
+/* The "plugins globally disabled" state is a short pill in the toolbar so it keeps
+   the head → toolbar → filters → grid order and never needs truncation. */
 .plugin-disabled-hint {
-  max-width: 240px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  color: var(--text-tertiary);
+  flex: none;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
   font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
 }
