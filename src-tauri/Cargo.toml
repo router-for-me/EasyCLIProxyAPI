@@ -44,7 +44,7 @@ tokio-util = "0.7"
 toml = "0.8"
 toml_edit = "0.20"
 yaml-serde-edit = { version = "0.1", default-features = false }
-yaml-edit = "0.2"
+yaml-edit = "0.3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
