@@ -403,6 +403,7 @@ export function PluginsPage() {
                 </>}
         {tab !== "ecpa" && <>
         <button type="button" className="secondary-button plugin-development-guide" onClick={() => void openExternalUrl({ url: "https://help.router-for.me/cn/plugin/development.html" }).catch(reason => { if (mounted.current) setError(message(reason)); })}><ExternalLink size={16} aria-hidden="true" />{pt("developmentGuide")}</button>
+        {data && !data.pluginsEnabled ? <span className="plugin-disabled-hint" role="status" title={pt("disabledHint")}>{pt("disabledHint")}</span> : null}
         <button className="secondary-button plugin-refresh" disabled={locked} onClick={() => void load(tabRef.current, tabRef.current === "installed")}><RefreshCw size={16} aria-hidden="true" />{t("common.refresh")}</button>
         </>}
       </div>
@@ -412,7 +413,6 @@ export function PluginsPage() {
     {tab === "ecpa" ? <EcpaPluginsPage /> : supported === false ? <EmptyState className="plugin-empty" icon={<Puzzle size={36} />}>{pt("unsupported")}</EmptyState> : supported === null ? <EmptyState className="plugin-empty" role="status">{loading ? t("common.loading") : pt("retry")}</EmptyState> : <>
       {restartRequired && <Notice tone="info" icon={false} className="plugin-banner" action={<button className="secondary-button" disabled={locked} onClick={async () => { if (await askConfirmation({ title: pt("restartButton"), message: pt("restartConfirm") })) void mutate(async () => { await restartCoreProcess(); if (mounted.current) setRestartRequired(false); }, pt("saved")); }}>{pt("restartButton")}</button>}>{pt("restart")}</Notice>}
       <>
-        {data && !data.pluginsEnabled ? <Notice tone="info" icon={false} className="plugin-banner">{pt("disabledHint")}</Notice> : null}
         {tab !== "settings" && !loading && storeAllTags.length > 0 ? <div className="ecpa-results-bar plugin-store-results-bar">
           <TagFilterRow
             allTags={storeAllTags}

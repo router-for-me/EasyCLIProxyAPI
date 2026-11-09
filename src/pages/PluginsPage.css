@@ -130,3 +130,14 @@
 .plugin-store-results-bar {
   padding: 0 0 12px;
 }
+
+/* The "plugins globally disabled" state is a short inline note in the toolbar so it
+   never breaks the head → toolbar → filters → grid order. */
+.plugin-disabled-hint {
+  max-width: 240px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
