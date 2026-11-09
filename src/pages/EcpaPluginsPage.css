@@ -208,28 +208,6 @@
   font-size: 13px;
 }
 
-/* First-load placeholder. The grid is not mounted until the registry and the
-   store list have both settled, so this block only occupies the page while the
-   very first read runs. It reserves roughly a card row so the header does not
-   jump when the grid replaces it. */
-.ecpa-plugin-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  min-height: 240px;
-  padding: 32px 16px;
-  border: var(--card-border-width) dashed var(--border-color);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
-  color: var(--text-tertiary);
-  font-size: 13px;
-}
-
-.ecpa-plugin-loading svg {
-  color: var(--primary-color);
-}
-
 .ecpa-plugin-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr));
@@ -413,35 +391,29 @@
   flex-shrink: 0;
 }
 
+/* The install/update control lives in one fixed slot on its own line at the end
+   of the row. Reserving that line in every state keeps the action row height and
+   the card height identical while the store list loads, once it settles, and
+   during an install or update, so the row never reflows. */
 .ecpa-plugin-action-slot {
   display: inline-flex;
+  flex: 0 0 100%;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
   min-height: 34px;
-  margin-left: auto;
 }
 
-/* The install/update control keeps one width across loading, install and
-   update states so the action row never reflows. */
 .ecpa-plugin-action-slot > .primary-button,
 .ecpa-plugin-action-slot > .ecpa-install-blocked {
-  min-width: 96px;
+  width: 104px;
+  min-width: 104px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* One fixed slot for the install/update button. The label may go from a short
-   "Install" to "Installing…", and the badge may appear beside it, but the slot
-   width never changes, so the action row cannot reflow and the card keeps the
-   same height before and after the store list arrives. */
-.ecpa-plugin-card-actions .primary-button {
-  min-width: 104px;
-  white-space: nowrap;
-}
-
-.ecpa-plugin-card-actions .primary-button svg {
+.ecpa-plugin-action-slot .primary-button .spin {
   flex: none;
 }
 

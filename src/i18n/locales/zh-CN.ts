@@ -2498,8 +2498,6 @@ export const zhCN: Record<string, string> = {
   'ecpaPlugins.copyId': '复制插件 ID',
   'ecpaPlugins.copied': '已复制',
   'ecpaPlugins.emptyFiltered': '没有匹配的插件',
-  'ecpaPlugins.emptyFilteredHint': '换个关键词，或清除筛选条件。',
-  'ecpaPlugins.loadingPage': '正在加载精选插件…',
   'ecpaPlugins.clearFilters': '清除筛选',
 } as const;
 

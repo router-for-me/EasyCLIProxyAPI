@@ -2840,7 +2840,5 @@ export const ru: Record<MessageKey, string> = {
   'ecpaPlugins.copyId': 'Копировать ID плагина',
   'ecpaPlugins.copied': 'Скопировано',
   'ecpaPlugins.emptyFiltered': 'Нет подходящих плагинов',
-  'ecpaPlugins.emptyFilteredHint': 'Попробуйте другое слово или сбросьте фильтры.',
-  'ecpaPlugins.loadingPage': 'Загрузка избранных плагинов…',
   'ecpaPlugins.clearFilters': 'Сбросить фильтры',
 };

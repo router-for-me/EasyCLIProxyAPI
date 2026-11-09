@@ -83,9 +83,6 @@ export function EcpaPluginsPage() {
   const [storeEntries, setStoreEntries] = useState(new Map<string, PluginStoreEntry>());
   const [storeError, setStoreError] = useState('');
   const [registryError, setRegistryError] = useState('');
-  // The first registry read settles this flag. It stays true afterwards so a
-  // later manual refresh keeps the current grid on screen while it runs.
-  const [registrySettled, setRegistrySettled] = useState(false);
   const [installEntry, setInstallEntry] = useState<PluginStoreEntry | null>(null);
   // A fallback install retried after source registration has no open dialog, so
   // its own state keeps the other cards disabled until it settles.
@@ -114,9 +111,7 @@ export function EcpaPluginsPage() {
   // The store list is the only thing an install button waits for: a card whose
   // plugin id is already in this map renders an enabled install button even
   // while the support check, source registration and release lookup still run.
-  // `settled` marks the pass that ends the first load: only then are the cards
-  // rendered, so the store list and the release versions land in one paint.
-  const applyStoreResult = (result: PluginStoreResponse, seq: number, settled = false) => {
+  const applyStoreResult = (result: PluginStoreResponse, seq: number) => {
     if (!mounted.current || seq !== storeSeq.current) return;
     const confirmed = confirmedInstalls.current;
     const plugins: PluginStoreEntry[] = result.plugins.map((entry: PluginStoreEntry) => {
@@ -125,7 +120,6 @@ export function EcpaPluginsPage() {
       return { ...entry, installed: true, installedVersion };
     });
     setStoreEntries(buildEcpaStoreMap(plugins));
-    if (settled) setStoreLoaded(true);
     setStoreError(result.sourceErrors.filter(source => source.sourceUrl === ECPA_REGISTRY_URL).map(source => source.message).join('; '));
   };
 
@@ -140,22 +134,16 @@ export function EcpaPluginsPage() {
       throw reason;
     }
     if (!mounted.current) return;
-    // Latest release lookups hit GitHub, but they run before the first paint: the
-    // store list and the displayed versions arrive in one render instead of the
-    // grid filling in and then re-settling under the reader. A failed lookup
-    // keeps registry versions and still settles.
+    // The list attempt itself is done even if a newer reload supersedes it.
+    setStoreLoaded(true);
+    applyStoreResult(listed, seq);
+    // Slow phase: latest release lookups query GitHub and must not gate the list.
     let result = listed;
     try {
       result = await refreshPluginReleaseVersions(listed);
     } catch {
       // Keep registry versions when the latest-release lookup is unavailable.
     }
-    if (!mounted.current) return;
-    if (seq === storeSeq.current) {
-      applyStoreResult(result, seq, true);
-      return;
-    }
-    // A newer reload owns the display; its data supersedes this one.
     applyStoreResult(result, seq);
   };
 
@@ -185,7 +173,6 @@ export function EcpaPluginsPage() {
       const result = await fetchEcpaRegistry({ token, forceRefresh: true });
       if (!mounted.current) return;
       setTokenInvalid(result.tokenInvalid);
-      setRegistrySettled(true);
       if (result.registry) {
         setPlugins(result.registry.plugins);
         setRegistryError("");
@@ -214,6 +201,7 @@ export function EcpaPluginsPage() {
     // The store list starts before the support probe and before any settings
     // write, so an entry listed here enables its install button right away
     // instead of queueing behind those calls.
+    const listed = reloadStore().catch(fail);
     void getPluginSupport().then(async available => {
       if (!active) return;
       setSupported(available);
@@ -222,14 +210,14 @@ export function EcpaPluginsPage() {
         setStoreLoaded(true);
         return;
       }
-      // Source registration runs before the first store list, not beside it. A
-      // first visit has to register the featured source, and listing in parallel
-      // read an incomplete store: the grid then had to load a second time and
-      // re-settle under the reader. Registering first makes the very first list
-      // complete, so the cards paint once, fully populated.
-      await registerSource();
-      if (!active) return;
-      await reloadStore().catch(fail);
+      // Registration runs alongside the store list so it never delays the
+      // install buttons; only a conclusive failure reports the source as down.
+      void registerSource().then(changed => {
+        // A first-visit registration can land after the list ran, so list again
+        // once the source is known to exist.
+        if (changed && mounted.current) void reloadStore().catch(fail);
+      });
+      await listed;
     }).catch(fail);
     return () => {
       active = false;
@@ -368,7 +356,6 @@ export function EcpaPluginsPage() {
     }).then((result) => {
       if (controller.signal.aborted) return;
       setTokenInvalid(result.tokenInvalid);
-      setRegistrySettled(true);
       if (result.registry) {
         setPlugins(result.registry.plugins);
         setRegistryError('');
@@ -446,13 +433,6 @@ export function EcpaPluginsPage() {
 
   const hasActiveFilter = Boolean(search.trim()) || selectedTag !== ALL_TAG;
 
-  // First paint gate: the cards only mount once the registry and the plugin store
-  // have both settled, so the grid never grows a loading strip or re-flows its
-  // action rows while the reader is looking at it. A manual refresh leaves
-  // `registrySettled` / `storeLoaded` true and keeps the current grid in place.
-  const initialLoading = !registrySettled || !storeLoaded;
-  const initialFailed = Boolean(registryError) && plugins.length === 0;
-
   const tokenSettingsLink = (muted = false) => (
     <button type="button" className={`link-button ecpa-token-settings-link${muted ? ' muted' : ''}`} onClick={() => openSettingField(['server', 'github-token'])}>
       <KeyRound size={13} aria-hidden="true" />
@@ -465,9 +445,7 @@ export function EcpaPluginsPage() {
       <header className="ecpa-plugins-header">
         <div className="ecpa-plugins-heading">
           <h1>{t('ecpaPlugins.title')}</h1>
-          <span className="ecpa-plugins-total">
-            {initialLoading ? t('ecpaPlugins.loadingPage') : t('ecpaPlugins.resultCount', { count: plugins.length })}
-          </span>
+          <span className="ecpa-plugins-total">{t('ecpaPlugins.resultCount', { count: plugins.length })}</span>
         </div>
         <p className="ecpa-plugins-subtitle">{t('ecpaPlugins.subtitle')} {tokenSettingsLink(true)}</p>
       </header>
@@ -521,7 +499,6 @@ export function EcpaPluginsPage() {
         </button>
       </div>
 
-      {!initialLoading && (
       <div className="ecpa-results-bar">
         <div className="ecpa-tag-bar" role="group" aria-label={t('ecpaPlugins.tagFilter')}>
           <button
@@ -556,14 +533,8 @@ export function EcpaPluginsPage() {
           <span className="ecpa-results-count">{t('ecpaPlugins.resultCount', { count: filteredPlugins.length })}</span>
         </div>
       </div>
-      )}
 
-      {initialLoading ? (
-        <div className="ecpa-plugin-loading" role="status" aria-live="polite">
-          <RefreshCw size={18} className="spin" aria-hidden="true" />
-          <span>{t('ecpaPlugins.loadingPage')}</span>
-        </div>
-      ) : filteredPlugins.length > 0 ? (
+      {filteredPlugins.length > 0 ? (
         <div className="ecpa-plugin-grid">
           {filteredPlugins.map((plugin) => {
             const description = getEcpaPluginDescription(plugin, locale);
@@ -704,7 +675,7 @@ export function EcpaPluginsPage() {
                         </span>
                         {hasUpdate ? (
                           <button type="button" className="primary-button compact-button" disabled={actionBusy || !entry}
-                            title={!entry ? unavailable : undefined}
+                            title={isSwitchingSource ? t('ecpaPlugins.sourceSwitch') : !entry ? unavailable : undefined}
                             onClick={() => {
                               if (!entry) return;
                               installSynthesized.current = !listedEntry;
@@ -719,7 +690,7 @@ export function EcpaPluginsPage() {
                     ) : (
                       <button type="button" className="primary-button compact-button"
                         disabled={actionBusy || !entry}
-                        title={entry ? undefined : waiting || unavailable}
+                        title={isSwitchingSource ? t('ecpaPlugins.sourceSwitch') : entry ? undefined : waiting || unavailable}
                         aria-busy={storePending || undefined}
                         onClick={() => {
                           if (!entry) return;
@@ -742,7 +713,7 @@ export function EcpaPluginsPage() {
         <EmptyState
           className="ecpa-plugin-empty"
           icon={<Puzzle size={36} />}
-          title={initialFailed ? pluginText('registryLoadFailed', locale) : t('ecpaPlugins.emptyFiltered')}
+          title={t('ecpaPlugins.emptyFiltered')}
           action={
             hasActiveFilter ? (
               <button
