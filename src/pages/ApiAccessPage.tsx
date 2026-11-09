@@ -1220,11 +1220,15 @@ export const isModelExcluded = (record: Record<string, unknown>, modelName: stri
   });
 };
 
+export const providerSupportsModelExclusions = (section: ProviderSection) => !definitionFor(section).openAi;
+
 export const providerRecordWithModelEnabledState = (
+  section: ProviderSection,
   record: Record<string, unknown>,
   modelName: string,
   enabled: boolean,
 ) => {
+  if (!providerSupportsModelExclusions(section)) return null;
   const normalized = modelName.trim().toLowerCase();
   if (!normalized) return stripResponseFields(record);
   const nextRecord = stripResponseFields(record);
@@ -1588,7 +1592,8 @@ export function ApiAccessPage() {
     try {
       const latestRows = await providerGroupsApi.get(row.section);
       if (!row.source) throw new Error(t('apiAccess.error.stale'));
-      const nextRecord = providerRecordWithModelEnabledState(row.record, modelName, enabled);
+      const nextRecord = providerRecordWithModelEnabledState(row.section, row.record, modelName, enabled);
+      if (!nextRecord) return;
       const nextRows = updateProviderEntry(latestRows, row.source, row.record, nextRecord);
       await providerGroupsApi.put(row.section, nextRows);
       await persistEntryRemarks(row.section, latestRows, nextRows);
@@ -1797,7 +1802,9 @@ export function ApiAccessPage() {
           key={providerHealthIdentity(healthDialogRow)}
           row={healthDialogRow}
           onClose={() => setHealthDialogRow(null)}
-          onModelToggle={(modelName, enabled) => toggleProviderModel(healthDialogRow, modelName, enabled)}
+          onModelToggle={providerSupportsModelExclusions(healthDialogRow.section)
+            ? (modelName, enabled) => toggleProviderModel(healthDialogRow, modelName, enabled)
+            : undefined}
         />
       ) : null}
       <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
@@ -2009,21 +2016,23 @@ function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: Prov
                     ? <small title={model.alias || model.displayName}>{model.alias || model.displayName}</small>
                     : null}
               </div>
-              <label className="provider-health-toggle">
-                <span>{enabled ? t('apiAccess.status.enabled') : t('apiAccess.status.disabled')}</span>
-                <Switch
-                  checked={enabled}
-                  disabled={!onModelToggle || checkingAll || modelLoading}
-                  onChange={() => {
-                    const nextEnabled = !enabled;
-                    setModelEnabled((current) => ({ ...current, [model.name.toLowerCase()]: nextEnabled }));
-                    void onModelToggle?.(model.name, nextEnabled).catch(() => {
-                      setModelEnabled((current) => ({ ...current, [model.name.toLowerCase()]: !nextEnabled }));
-                    });
-                  }}
-                  aria-label={t('apiAccess.health.toggleAria', { model: model.name, action: enabled ? t('common.disable') : t('common.enable') })}
-                />
-              </label>
+              {onModelToggle ? (
+                <label className="provider-health-toggle">
+                  <span>{enabled ? t('apiAccess.status.enabled') : t('apiAccess.status.disabled')}</span>
+                  <Switch
+                    checked={enabled}
+                    disabled={checkingAll || modelLoading}
+                    onChange={() => {
+                      const nextEnabled = !enabled;
+                      setModelEnabled((current) => ({ ...current, [model.name.toLowerCase()]: nextEnabled }));
+                      void onModelToggle(model.name, nextEnabled).catch(() => {
+                        setModelEnabled((current) => ({ ...current, [model.name.toLowerCase()]: !nextEnabled }));
+                      });
+                    }}
+                    aria-label={t('apiAccess.health.toggleAria', { model: model.name, action: enabled ? t('common.disable') : t('common.enable') })}
+                  />
+                </label>
+              ) : null}
               <span
                 className={`state-pill provider-health-pill provider-health-model-pill ${state?.status === 'checking' ? 'checking' : checked?.status === 'healthy' ? 'success' : checked?.status === 'failed' ? 'error' : ''}`}
                 title={latencyTitle}
