@@ -1,5 +1,119 @@
 use super::*;
 
+/// Picks the default reasoning effort from configured levels.
+///
+/// Follows the established convention: `xhigh` > `max` > `high`, otherwise
+/// the first configured level. Returns `None` when no levels are configured.
+pub(crate) fn default_reasoning_effort(levels: &[String]) -> Option<String> {
+    ["xhigh", "max", "high"]
+        .iter()
+        .find_map(|preferred| {
+            levels
+                .iter()
+                .find(|level| level.eq_ignore_ascii_case(preferred))
+                .cloned()
+        })
+        .or_else(|| levels.first().cloned())
+}
+
+/// WorkBuddy: reasoning capability block on a managed model entry.
+///
+/// Only fills missing keys, so a user-tuned default effort survives
+/// re-applying the configuration. Models without configured levels are
+/// left untouched.
+pub(crate) fn update_workbuddy_reasoning_fields(entry: &mut serde_json::Value, levels: &[String]) {
+    if levels.is_empty() {
+        return;
+    }
+    let entry = entry.as_object_mut().expect("model entry must be an object");
+    entry
+        .entry("supportsReasoning")
+        .or_insert_with(|| serde_json::json!(true));
+    entry
+        .entry("onlyReasoning")
+        .or_insert_with(|| serde_json::json!(true));
+    let reasoning = entry.remove("reasoning").unwrap_or(serde_json::Value::Null);
+    let mut object = reasoning
+        .as_object()
+        .cloned()
+        .unwrap_or_else(|| serde_json::Map::new());
+    object
+        .entry("canDisableThinking")
+        .or_insert_with(|| serde_json::json!(false));
+    object
+        .entry("defaultEffort")
+        .or_insert_with(|| serde_json::json!(default_reasoning_effort(levels)));
+    object
+        .entry("supportedEfforts")
+        .or_insert_with(|| serde_json::json!(levels));
+    entry.insert("reasoning".to_string(), serde_json::Value::Object(object));
+}
+
+/// OpenCode: reasoning capability on a managed model entry.
+///
+/// The top-level `reasoning` boolean is what OpenCode renders as
+/// "supports reasoning"; `capabilities.reasoning` is a runtime structure
+/// and must not be used. `variants` exposes one entry per configured
+/// level and `request.variant` pins the default effort. Only fills
+/// missing keys, preserving hand-tuned variants.
+pub(crate) fn update_opencode_reasoning_fields(entry: &mut serde_json::Value, levels: &[String]) {
+    if levels.is_empty() {
+        return;
+    }
+    let object = entry.as_object_mut().expect("model entry must be an object");
+    object
+        .entry("reasoning".to_string())
+        .or_insert_with(|| serde_json::json!(true));
+    let variants = object
+        .entry("variants".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    let variants = variants
+        .as_object_mut()
+        .expect("variants must be an object");
+    for level in levels {
+        let variant = variants
+            .entry(level.clone())
+            .or_insert_with(|| serde_json::json!({}));
+        variant
+            .as_object_mut()
+            .expect("variant must be an object")
+            .entry("reasoning_effort".to_string())
+            .or_insert_with(|| serde_json::json!(level));
+    }
+    let request = object
+        .entry("request".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    request
+        .as_object_mut()
+        .expect("request must be an object")
+        .entry("variant".to_string())
+        .or_insert_with(|| serde_json::json!(default_reasoning_effort(levels)));
+}
+
+/// DeepSeek Harness: reasoningEfforts map on a managed model entry.
+///
+/// Keys are the selectable levels; values are what gets sent upstream.
+/// Only fills missing keys, preserving hand-tuned mappings.
+pub(crate) fn update_harness_reasoning_fields(entry: &mut serde_norway::Value, levels: &[String]) {
+    if levels.is_empty() {
+        return;
+    }
+    let mapping = entry
+        .as_mapping_mut()
+        .expect("harness model entry must be a mapping");
+    let efforts = mapping
+        .entry(yaml_key("reasoningEfforts"))
+        .or_insert_with(|| serde_norway::Value::Mapping(serde_norway::Mapping::new()));
+    let efforts = efforts
+        .as_mapping_mut()
+        .expect("reasoningEfforts must be a mapping");
+    for level in levels {
+        efforts
+            .entry(yaml_key(level))
+            .or_insert_with(|| serde_norway::Value::String(level.clone()));
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn build_agent_updates(
     client: AgentClient,
@@ -579,7 +693,9 @@ pub(crate) fn build_deepseek_harness_models(
                         .map_err(|_| "Failed to serialize Harness model input types")?,
                 );
             }
-            Ok(serde_norway::Value::Mapping(entry))
+            let mut entry = serde_norway::Value::Mapping(entry);
+            update_harness_reasoning_fields(&mut entry, &model.reasoning_levels);
+            Ok(entry)
         })
         .collect::<Result<Vec<_>, String>>()?;
     Ok(serde_norway::Value::Sequence(entries))
@@ -3789,7 +3905,9 @@ pub(crate) fn opencode_model_entry(
         );
     }
 
-    serde_json::Value::Object(entry)
+    let mut entry = serde_json::Value::Object(entry);
+    update_opencode_reasoning_fields(&mut entry, &model.reasoning_levels);
+    entry
 }
 
 pub(crate) fn build_opencode_agent_config(

@@ -299,7 +299,7 @@ pub(crate) fn merge_runtime_context_windows(
     }
 }
 
-pub(crate) fn merge_zcode_reasoning_levels(
+pub(crate) fn merge_runtime_reasoning_levels(
     models: &mut [AgentModelOption],
     runtime_models: &[CodexRuntimeModel],
 ) {
@@ -310,6 +310,14 @@ pub(crate) fn merge_zcode_reasoning_levels(
             model.reasoning_levels = runtime.reasoning_levels.clone().unwrap_or_default();
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) fn merge_zcode_reasoning_levels(
+    models: &mut [AgentModelOption],
+    runtime_models: &[CodexRuntimeModel],
+) {
+    merge_runtime_reasoning_levels(models, runtime_models);
 }
 
 /// The Codex client catalog clones its default template onto every model it does
