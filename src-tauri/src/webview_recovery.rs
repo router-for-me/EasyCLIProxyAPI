@@ -156,7 +156,6 @@ mod native {
         _: usize,
         data: usize,
     ) -> LRESULT {
-        let mut suppress = false;
         let _ = catch_unwind(AssertUnwindSafe(|| {
             let app = &*(data as *const tauri::AppHandle);
             if message == WM_NCDESTROY {
@@ -165,12 +164,17 @@ mod native {
                 RemoveWindowSubclass(hwnd, Some(events), ID);
                 drop(Box::from_raw(data as *mut tauri::AppHandle));
             } else if is_minimized_resize_message(message, wparam) {
-                // Tao's undecorated WM_NCCALCSIZE leaves a non-zero iconic client rect,
-                // and tauri-runtime-wry resizes child WebViews on every Resized event
-                // without filtering SIZE_MINIMIZED. Synchronize activity directly and
-                // keep the main WebView at its normal bounds across minimize/restore.
+                // Tao's undecorated WM_NCCALCSIZE leaves a non-zero iconic client rect at
+                // (-32000, -32000), and tauri-runtime-wry resizes child WebViews on every
+                // Resized event without filtering SIZE_MINIMIZED. Withhold the iconic
+                // dimensions from the WebView, but let the message through: WebView2 keeps
+                // its controller position through the WM_WINDOWPOSCHANGED that
+                // DefWindowProc raises while handling WM_SIZE, and swallowing the message
+                // makes the restore path depend on framework internals.
                 crate::window_activity::sync(app);
-                suppress = true;
+                let result = DefSubclassProc(hwnd, message, wparam, lparam);
+                restore_webview_bounds(app);
+                return result;
             } else if matches!(
                 message,
                 WM_WTSSESSION_CHANGE | WM_DISPLAYCHANGE | WM_DPICHANGED | WM_SETTINGCHANGE
@@ -178,9 +182,6 @@ mod native {
                 request(app);
             }
         }));
-        if suppress {
-            return 0;
-        }
         DefSubclassProc(hwnd, message, wparam, lparam)
     }
 
@@ -191,6 +192,39 @@ mod native {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .stopped = true;
+        }
+    }
+
+    /// `WM_SIZE(SIZE_MINIMIZED)` reaches the window procedure and the runtime may
+    /// shrink the child WebView to the iconic client rect, so put the controller
+    /// back on the real client area once the message is handled.
+    fn restore_webview_bounds(app: &tauri::AppHandle) {
+        let Some(window) = app.get_window("main") else {
+            return;
+        };
+        let mut rect = windows_sys::Win32::Foundation::RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        if unsafe {
+            GetClientRect(
+                window.hwnd().map(|h| h.0 as HWND).unwrap_or_default(),
+                &mut rect,
+            )
+        } == 0
+        {
+            return;
+        }
+        let Some(size) = client_size(rect.right - rect.left, rect.bottom - rect.top, false) else {
+            return;
+        };
+        if let Some(view) = app.get_webview("main") {
+            let _ = view.set_bounds(tauri::Rect {
+                position: tauri::PhysicalPosition::new(0, 0).into(),
+                size: size.into(),
+            });
         }
     }
 
