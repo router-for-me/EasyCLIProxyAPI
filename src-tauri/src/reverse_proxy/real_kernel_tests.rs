@@ -74,31 +74,23 @@ fn enabled_proxy_startup_preserves_tls_and_management_while_hardening_both_schem
     ] {
         let mut document: serde_norway::Value = serde_norway::from_str(yaml).unwrap();
         let config = ReverseProxyConfig { enabled: true, target_port: 54321, ..Default::default() };
-        patch_proxy_config_document(&mut document, &config).unwrap();
-        assert!(prepare_core_start(&mut document).unwrap());
+        assert!(prepare_core_start(&mut document, Some(&config)).unwrap());
         let hardening = read_core_hardening(&document);
         assert!(hardening.loopback_bind && hardening.trusted_proxies);
-        // An explicit target survives kernel start preparation untouched.
-        assert_eq!(read_proxy_config_document(&document).unwrap().unwrap().target_port, 54321);
+        // Hardening never stores the reverse proxy settings in the kernel file.
+        assert!(read_proxy_config_document(&document).unwrap().is_none());
         assert!(crate::core_config::core_tls_settings_from_value(&document).unwrap().enabled);
         let server = if core_config_uses_v8(&document) { &document["server"] } else { &document };
         assert_eq!(server["trusted-proxies"][0], "192.0.2.1");
         let management = if core_config_uses_v8(&document) { &document["management"] } else { &document["remote-management"] };
         assert_eq!(management["allow-remote"], false);
-        assert!(!prepare_core_start(&mut document).unwrap());
-        // A 0 target means "follow the kernel port"; it stays 0 in the saved
-        // document so the effective endpoint keeps tracking core port changes.
-        let mut auto = config.clone();
-        auto.target_port = 0;
-        patch_proxy_config_document(&mut document, &auto).unwrap();
-        assert!(!prepare_core_start(&mut document).unwrap());
-        assert_eq!(read_proxy_config_document(&document).unwrap().unwrap().target_port, 0);
-        patch_proxy_config_document(&mut document, &config).unwrap();
+        assert!(!prepare_core_start(&mut document, Some(&config)).unwrap());
+        // A disabled proxy leaves the kernel document untouched.
         let mut disabled = config.clone();
         disabled.enabled = false;
-        patch_proxy_config_document(&mut document, &disabled).unwrap();
         let before = document.clone();
-        assert!(!prepare_core_start(&mut document).unwrap());
+        assert!(!prepare_core_start(&mut document, Some(&disabled)).unwrap());
+        assert!(!prepare_core_start(&mut document, None).unwrap());
         assert_eq!(document, before);
     }
     let original = "https://untrusted.example/v1/messages?q=1".parse().unwrap();
@@ -119,16 +111,15 @@ fn enabled_proxy_effective_endpoint_uses_loopback_for_lan_and_ipv6() {
                 format!("config-version: 8\nserver: {{host: '{host}', port: 12345, tls: {{enable: {tls_enabled}}}}}\n"),
             ] {
                 let mut document = serde_norway::from_str(&yaml).unwrap();
-                patch_proxy_config_document(
+                prepare_core_start(
                     &mut document,
-                    &ReverseProxyConfig {
+                    Some(&ReverseProxyConfig {
                         enabled: true,
                         target_port: 12345,
                         ..Default::default()
-                    },
+                    }),
                 )
                 .unwrap();
-                prepare_core_start(&mut document).unwrap();
                 let settings =
                     crate::core_config::core_config_settings_from_value(&document).unwrap();
                 let tls = crate::core_config::core_tls_settings_from_value(&document).unwrap();
@@ -316,7 +307,7 @@ async fn real_kernel_messages_chain() {
             cert_path: cert.to_str().unwrap().into(),
             key_path: key.to_str().unwrap().into(),
         };
-        persist_proxy_config(&config).unwrap();
+        persist_proxy_config(&config, None).unwrap();
     }
     fixture.app.manage(crate::GuiConfigState::new(gui.clone()));
     if case == "manual" {
@@ -328,7 +319,7 @@ async fn real_kernel_messages_chain() {
             cert_path: cert.to_str().unwrap().into(),
             key_path: key.to_str().unwrap().into(),
         };
-        persist_proxy_config(&config).unwrap();
+        persist_proxy_config(&config, None).unwrap();
     }
     let started = crate::core_runtime::run_core_command(
         fixture.app.handle().clone(),
@@ -506,7 +497,7 @@ async fn real_kernel_messages_chain() {
         assert_eq!(restored.target, Some(format!("127.0.0.1:{}", gui.port)));
         assert_eq!(restored.config.as_ref().unwrap().target_port, 0);
         assert_eq!(
-            read_installed_proxy_config().unwrap().unwrap().target_port,
+            read_saved_proxy_config_for_test().unwrap().unwrap().target_port,
             0,
             "auto target must stay 0 in the saved config"
         );
@@ -519,7 +510,7 @@ async fn real_kernel_messages_chain() {
         let applied = manager.save_and_apply(explicit.clone(), None).await.unwrap();
         assert!(applied.running, "{applied:?}");
         assert_eq!(applied.target, Some(format!("127.0.0.1:{port}")));
-        assert_eq!(read_installed_proxy_config().unwrap(), Some(explicit.clone()));
+        assert_eq!(read_saved_proxy_config_for_test().unwrap(), Some(explicit.clone()));
         crate::core_runtime::run_core_command(
             fixture.app.handle().clone(),
             crate::core_runtime::restart_core_process_with_state,
@@ -532,7 +523,7 @@ async fn real_kernel_messages_chain() {
             Some(format!("127.0.0.1:{port}")),
             "explicit target must not follow the kernel port"
         );
-        assert_eq!(read_installed_proxy_config().unwrap(), Some(explicit.clone()));
+        assert_eq!(read_saved_proxy_config_for_test().unwrap(), Some(explicit.clone()));
         println!("production restart preserved explicit proxy target: {restored:?}");
         let applied = manager.save_and_apply(config.clone(), None).await.unwrap();
         assert_eq!(applied.target, Some(format!("127.0.0.1:{}", gui.port)));
@@ -658,7 +649,7 @@ async fn real_kernel_messages_chain() {
             println!("rejected {failure}: {error}");
             assert_proxy_serves(&manager, &config, &url, Some(&error)).await;
             assert_eq!(std::fs::read_to_string(&config_path).unwrap(), good_document);
-            assert_eq!(read_installed_proxy_config().unwrap(), Some(config.clone()));
+            assert_eq!(read_saved_proxy_config_for_test().unwrap(), Some(config.clone()));
         }
 
         let overlap = tokio::net::TcpListener::bind(("127.0.0.2", config.listen_port)).await.unwrap();
@@ -692,7 +683,7 @@ async fn real_kernel_messages_chain() {
             assert!(error.contains("write configuration"), "{error}");
             assert_proxy_serves(&manager, &config, &url, Some(&error)).await;
             assert_eq!(std::fs::read_to_string(&config_path).unwrap(), good_document);
-            assert_eq!(read_installed_proxy_config().unwrap(), Some(config.clone()));
+            assert_eq!(read_saved_proxy_config_for_test().unwrap(), Some(config.clone()));
             if !same_port {
                 assert_eq!(
                     tokio::net::TcpStream::connect(("127.0.0.1", candidate.listen_port))
@@ -702,34 +693,39 @@ async fn real_kernel_messages_chain() {
             }
         }
 
-        std::fs::write(&config_path, "reverse-proxy: [invalid YAML").unwrap();
+        // An unwritable GUI configuration rejects the save and keeps the
+        // running listener on the previous settings.
+        let gui_config_path = crate::core_config::gui_config_path().unwrap();
+        let gui_document = std::fs::read_to_string(&gui_config_path).unwrap();
+        std::fs::remove_file(&gui_config_path).unwrap();
+        std::fs::create_dir_all(&gui_config_path).unwrap();
         let error = manager.save_and_apply(replacement.clone(), None).await.unwrap_err();
-        assert!(error.contains("parse kernel configuration"), "{error}");
+        assert!(error.contains("write configuration"), "{error}");
         assert_proxy_serves(&manager, &config, &url, Some(&error)).await;
-        assert_eq!(std::fs::read_to_string(&config_path).unwrap(), "reverse-proxy: [invalid YAML");
-        std::fs::write(&config_path, &good_document).unwrap();
+        std::fs::remove_dir(&gui_config_path).unwrap();
+        std::fs::write(&gui_config_path, &gui_document).unwrap();
 
         let applied = manager.save_and_apply(replacement.clone(), None).await.unwrap();
         assert!(applied.running && applied.error.is_none(), "{applied:?}");
         assert_eq!(applied.listening, Some(address.to_string()));
-        assert_eq!(read_installed_proxy_config().unwrap(), Some(replacement.clone()));
+        assert_eq!(read_saved_proxy_config_for_test().unwrap(), Some(replacement.clone()));
         assert_proxy_serves(&manager, &replacement, &url, None).await;
         replacement.listen_host = "0.0.0.0".into();
         manager.save_and_apply(replacement.clone(), None).await.unwrap();
         assert_proxy_serves(&manager, &replacement, &url, None).await;
-        assert_eq!(read_installed_proxy_config().unwrap(), Some(replacement.clone()));
+        assert_eq!(read_saved_proxy_config_for_test().unwrap(), Some(replacement.clone()));
         replacement.listen_host = "127.0.0.1".into();
         replacement.listen_port = free_port();
         let applied = manager.save_and_apply(replacement.clone(), None).await.unwrap();
         assert!(applied.running && applied.error.is_none(), "{applied:?}");
-        assert_eq!(read_installed_proxy_config().unwrap(), Some(replacement.clone()));
+        assert_eq!(read_saved_proxy_config_for_test().unwrap(), Some(replacement.clone()));
         assert!(tokio::net::TcpStream::connect(address).await.is_err());
         let new_address = applied.listening.unwrap();
         let new_url = format!("https://localhost:{}/v1/messages", replacement.listen_port);
         assert_proxy_serves(&manager, &replacement, &new_url, None).await;
-        let stopped = manager.stop_and_save().await.unwrap();
+        let stopped = manager.stop_and_save(None).await.unwrap();
         assert!(!stopped.running && stopped.error.is_none(), "{stopped:?}");
-        assert!(!read_installed_proxy_config().unwrap().unwrap().enabled);
+        assert!(!read_saved_proxy_config_for_test().unwrap().unwrap().enabled);
         assert!(tokio::net::TcpStream::connect(new_address).await.is_err());
     }
     manager.stop().await.unwrap();
