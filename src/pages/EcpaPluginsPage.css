@@ -209,9 +209,9 @@
 }
 
 .ecpa-tag-picker-trigger.filter-chip.has-selection {
-  border-color: var(--primary-color);
-  color: var(--primary-color);
-  background: var(--ui-accent-soft);
+  border-color: var(--color-warning, #c77b30);
+  color: var(--color-warning-text, #8b5b21);
+  background: var(--color-warning-subtle, #fff7e9);
 }
 
 .ecpa-tag-picker-trigger.filter-chip.open,
@@ -242,8 +242,8 @@
   height: 18px;
   padding: 0 5px;
   border-radius: var(--radius-full);
-  background: var(--color-accent, var(--primary-color));
-  color: var(--color-accent-contrast, #fff);
+  background: var(--color-warning, #c77b30);
+  color: #fff;
   font-size: 10.5px;
   font-weight: 600;
   line-height: 1;
