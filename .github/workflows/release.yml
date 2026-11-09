@@ -193,7 +193,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITCODE_CORE_REPOSITORY: ${{ vars.GITCODE_CORE_REPOSITORY }}
-        run: node scripts/update-bundled-core.mjs
+          # Set the CORE_VERSION_PIN repository variable to freeze the bundled kernel
+          # for a release, for example while an upstream tag is missing a platform.
+          CORE_VERSION_PIN: ${{ vars.CORE_VERSION_PIN }}
+        # A release tag builds the kernel pinned in core-version.txt; branch builds
+        # keep following the upstream latest release.
+        run: node scripts/update-bundled-core.mjs ${{ github.ref_type == 'tag' && '--freeze' || '' }}
       - name: Restore bundled core archive
         id: core-cache
         uses: actions/cache/restore@v5
