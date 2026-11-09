@@ -135,7 +135,7 @@ pub(crate) async fn run_core_command<R: tauri::Runtime>(
     if status.running {
         if let Some(manager) = app.try_state::<crate::reverse_proxy::ReverseProxyManagerState>() {
             if let Err(error) = manager
-                .restore_after_core_start(app.state::<CoreProcessState>().inner())
+                .restore_after_core_start(&app, app.state::<CoreProcessState>().inner())
                 .await
             {
                 eprintln!("Failed to restore reverse proxy after kernel start: {error}");

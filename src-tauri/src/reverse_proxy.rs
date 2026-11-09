@@ -162,31 +162,59 @@ fn read_gui_proxy_config_at(base_dir: &Path) -> Result<Option<ReverseProxyConfig
     Ok(config.reverse_proxy)
 }
 
-fn read_saved_proxy_config() -> Result<Option<ReverseProxyConfig>, String> {
+fn read_saved_proxy_config(
+    gui_state: Option<&crate::GuiConfigState>,
+) -> Result<Option<ReverseProxyConfig>, String> {
     let base_dir = crate::core_runtime::core_base_dir()?;
-    migrate_proxy_config_from_kernel(&base_dir)?;
+    migrate_proxy_config_from_kernel(&base_dir, gui_state)?;
     read_gui_proxy_config_at(&base_dir)
 }
 
 /// Moves settings written by older versions out of the kernel configuration.
-/// The kernel copy is removed only after the GUI configuration holds the same
-/// values, so a failed delete keeps the settings readable and the next attempt
-/// migrates them again.
-fn migrate_proxy_config_from_kernel(base_dir: &Path) -> Result<(), String> {
-    migrate_proxy_config_from_kernel_at(base_dir, &crate::core_runtime::core_install_dir()?)
+/// The kernel copy is removed only after the GUI configuration file holds the
+/// same values and, when the in-memory GUI settings are available, after they
+/// hold them too, so a failure at either step keeps the settings readable and
+/// the next attempt migrates them again.
+fn migrate_proxy_config_from_kernel(
+    base_dir: &Path,
+    gui_state: Option<&crate::GuiConfigState>,
+) -> Result<(), String> {
+    migrate_proxy_config_from_kernel_at(
+        base_dir,
+        &crate::core_runtime::core_install_dir()?,
+        gui_state,
+    )
 }
 
-fn migrate_proxy_config_from_kernel_at(base_dir: &Path, kernel_dir: &Path) -> Result<(), String> {
+fn migrate_proxy_config_from_kernel_at(
+    base_dir: &Path,
+    kernel_dir: &Path,
+    gui_state: Option<&crate::GuiConfigState>,
+) -> Result<(), String> {
     if read_gui_proxy_config_at(base_dir)?.is_some() {
         return Ok(());
     }
-    let Some(kernel_config) = read_kernel_proxy_config_at(&kernel_dir.join(crate::CORE_CONFIG_FILE))?
-    else {
+    if gui_state
+        .and_then(|state| state.snapshot().ok())
+        .and_then(|config| config.reverse_proxy)
+        .is_some()
+    {
+        return Ok(());
+    }
+    let config_path = kernel_dir.join(crate::CORE_CONFIG_FILE);
+    let Some(kernel_config) = read_kernel_proxy_config_at(&config_path)? else {
         return Ok(());
     };
-    attach_saved_proxy_config(kernel_config, base_dir)?;
-    if let Err(error) = remove_kernel_proxy_config_at(&kernel_dir.join(crate::CORE_CONFIG_FILE)) {
-        eprintln!("Failed to remove reverse proxy settings from the kernel configuration: {error}");
+    // The file and the in-memory settings are written together; the kernel copy
+    // stays in place unless both succeeded, because the in-memory settings are
+    // serialized as a whole on the next unrelated GUI save.
+    let stored = persist_proxy_config_in_gui_state(kernel_config, base_dir, gui_state)?;
+    if stored.is_some() {
+        if let Err(error) = remove_kernel_proxy_config_at(&config_path) {
+            eprintln!(
+                "Failed to remove reverse proxy settings from the kernel configuration: {error}"
+            );
+        }
     }
     Ok(())
 }
@@ -249,9 +277,20 @@ fn persist_proxy_config_in_gui(
     app: Option<&tauri::AppHandle>,
 ) -> Result<(), String> {
     let base_dir = crate::core_runtime::core_base_dir()?;
-    attach_saved_proxy_config(config.clone(), &base_dir)?;
-    if let Some(app) = app {
-        remember_proxy_config_in_gui_state(app, config)?;
+    match app {
+        Some(app) => {
+            persist_proxy_config_in_gui_state(
+                config.clone(),
+                &base_dir,
+                Some(gui_state_of(app)),
+            )?
+            .ok_or_else(|| {
+                "Failed to store reverse proxy settings in the GUI configuration".to_string()
+            })?;
+        }
+        None => {
+            attach_saved_proxy_config(config.clone(), &base_dir)?;
+        }
     }
     if let Err(error) = remove_kernel_proxy_config() {
         eprintln!("Failed to remove reverse proxy settings from the kernel configuration: {error}");
@@ -259,22 +298,50 @@ fn persist_proxy_config_in_gui(
     Ok(())
 }
 
-/// Keeps the in-memory GUI settings in step with the file just written. The
-/// file watcher treats that write as a software write and ignores it, so without
-/// this the next unrelated GUI save would serialize settings without the block
-/// and drop it again.
-fn remember_proxy_config_in_gui_state(
-    app: &tauri::AppHandle,
-    config: &ReverseProxyConfig,
-) -> Result<(), String> {
+/// The in-memory GUI settings of the running application.
+fn gui_state_of<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> &crate::GuiConfigState {
     use tauri::Manager;
 
-    app.state::<crate::GuiConfigState>()
-        .update(|gui_config| {
-            gui_config.reverse_proxy = Some(config.clone());
-            Ok(())
-        })
-        .map(|_| ())
+    app.state::<crate::GuiConfigState>().inner()
+}
+
+/// Writes the block into the GUI configuration file and, when the in-memory GUI
+/// settings are available, mirrors it there in the same step. The next unrelated
+/// GUI save serializes the whole file from those in-memory settings, so a file
+/// write that is not mirrored there would be undone by that save. A state that
+/// could not be updated is reported through the `Option`, which keeps the kernel
+/// copy so the migration can be retried.
+fn persist_proxy_config_in_gui_state(
+    config: ReverseProxyConfig,
+    base_dir: &Path,
+    gui_state: Option<&crate::GuiConfigState>,
+) -> Result<Option<crate::GuiConfigFile>, String> {
+    let saved = attach_saved_proxy_config(config.clone(), base_dir)?;
+    let Some(gui_state) = gui_state else {
+        return Ok(Some(saved));
+    };
+    remember_proxy_config_in_gui_state(gui_state, &config)?;
+    match gui_state.snapshot() {
+        Ok(snapshot) if snapshot.reverse_proxy.as_ref() == Some(&config) => Ok(Some(snapshot)),
+        _ => Ok(None),
+    }
+}
+
+fn remember_proxy_config_in_gui_state(
+    gui_state: &crate::GuiConfigState,
+    config: &ReverseProxyConfig,
+) -> Result<(), String> {
+    let updated = gui_state.update(|gui_config| {
+        gui_config.reverse_proxy = Some(config.clone());
+        Ok(())
+    });
+    match updated {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            eprintln!("Failed to keep reverse proxy settings in the in-memory GUI settings: {error}");
+            Err(error)
+        }
+    }
 }
 
 fn persist_proxy_config(
@@ -1120,7 +1187,7 @@ impl ReverseProxyManagerState {
         let saved = (|| {
             let config = match self.get_state()?.config {
                 Some(config) => Some(config),
-                None => read_saved_proxy_config()?,
+                None => read_saved_proxy_config(app.as_ref().map(gui_state_of))?,
             };
             if let Some(mut config) = config {
                 config.enabled = false;
@@ -1146,7 +1213,7 @@ impl ReverseProxyManagerState {
 
     pub async fn restore(&self, app: tauri::AppHandle) -> Result<ReverseProxyState, String> {
         let _operation = self.operation.lock().await;
-        match read_saved_proxy_config() {
+        match read_saved_proxy_config(Some(gui_state_of(&app))) {
             Ok(Some(config)) => self.apply_inner(config, Some(app)).await,
             Ok(None) => self.get_state(),
             Err(error) => {
@@ -1156,8 +1223,9 @@ impl ReverseProxyManagerState {
         }
     }
 
-    pub(crate) async fn restore_after_core_start(
+    pub(crate) async fn restore_after_core_start<R: tauri::Runtime>(
         &self,
+        app: &tauri::AppHandle<R>,
         process_state: &crate::CoreProcessState,
     ) -> Result<ReverseProxyState, String> {
         let _operation = self.operation.lock().await;
@@ -1166,7 +1234,7 @@ impl ReverseProxyManagerState {
         }
         // Restoring only starts the listener; it never rewrites the saved
         // settings, so the next start can retry with the same configuration.
-        let result = match read_saved_proxy_config() {
+        let result = match read_saved_proxy_config(Some(gui_state_of(app))) {
             Ok(Some(config)) => self.apply_inner(config, None).await,
             Ok(None) => self.get_state(),
             Err(error) => {
@@ -1184,10 +1252,11 @@ impl ReverseProxyManagerState {
 #[tauri::command]
 pub async fn reverse_proxy_get_state(
     state: tauri::State<'_, ReverseProxyManagerState>,
+    gui_config_state: tauri::State<'_, crate::GuiConfigState>,
 ) -> Result<ReverseProxyState, String> {
     let mut current = state.get_state()?;
     if current.config.is_none() {
-        current.config = read_saved_proxy_config()?;
+        current.config = read_saved_proxy_config(Some(gui_config_state.inner()))?;
     }
     let previous_restart_required = current.hardening.restart_required;
     let mut hardening = read_installed_core_hardening();
@@ -2183,7 +2252,7 @@ mod tests {
             crate::reverse_proxy::read_kernel_proxy_config_at(&kernel_path).unwrap(),
             Some(config.clone())
         );
-        crate::reverse_proxy::migrate_proxy_config_from_kernel_at(&home, &kernel_dir).unwrap();
+        crate::reverse_proxy::migrate_proxy_config_from_kernel_at(&home, &kernel_dir, None).unwrap();
         let stored = std::fs::read_to_string(&gui_config_path).unwrap();
         let migrated: crate::GuiConfigFile = toml::from_str(&stored).unwrap();
         assert_eq!(migrated.reverse_proxy.as_ref(), Some(&config), "{stored}");
@@ -2197,7 +2266,7 @@ mod tests {
         assert!(kernel.contains("port: 8317"), "{kernel}");
 
         // Running it again changes nothing.
-        crate::reverse_proxy::migrate_proxy_config_from_kernel_at(&home, &kernel_dir).unwrap();
+        crate::reverse_proxy::migrate_proxy_config_from_kernel_at(&home, &kernel_dir, None).unwrap();
         assert_eq!(std::fs::read_to_string(&kernel_path).unwrap(), kernel);
         assert_eq!(std::fs::read_to_string(&gui_config_path).unwrap(), stored);
 
@@ -2219,7 +2288,8 @@ mod tests {
         // A GUI configuration that cannot be written leaves the kernel copy as
         // the only place holding the values, so it must survive.
         std::fs::write(&gui_config_path, "port = 0\n").unwrap();
-        crate::reverse_proxy::migrate_proxy_config_from_kernel_at(&home, &kernel_dir).unwrap_err();
+        crate::reverse_proxy::migrate_proxy_config_from_kernel_at(&home, &kernel_dir, None)
+            .unwrap_err();
         assert_eq!(std::fs::read_to_string(&kernel_path).unwrap(), kernel);
         assert_eq!(
             crate::reverse_proxy::read_kernel_proxy_config_at(&kernel_path).unwrap(),
@@ -2229,7 +2299,7 @@ mod tests {
         // Once the GUI configuration can be written the values move over and
         // the kernel copy is gone.
         std::fs::write(&gui_config_path, "").unwrap();
-        crate::reverse_proxy::migrate_proxy_config_from_kernel_at(&home, &kernel_dir).unwrap();
+        crate::reverse_proxy::migrate_proxy_config_from_kernel_at(&home, &kernel_dir, None).unwrap();
         assert_eq!(
             crate::reverse_proxy::read_gui_proxy_config_at(&home).unwrap(),
             Some(config)
@@ -2237,6 +2307,67 @@ mod tests {
         let kernel = std::fs::read_to_string(&kernel_path).unwrap();
         assert!(!kernel.contains("reverse-proxy"), "{kernel}");
         assert!(kernel.contains("port: 8317"), "{kernel}");
+
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn test_legacy_kernel_proxy_config_survives_the_startup_settings_save() {
+        let mut config = test_saved_proxy_config();
+        config.listen_port = 18443;
+        let home = crate::unique_test_temp_path("cpa-gui-reverse-proxy-migrate-startup");
+        std::fs::create_dir_all(&home).unwrap();
+        let gui_config_path = home.join("config.toml");
+        let kernel_dir = home.join("cpa-core");
+        std::fs::create_dir_all(&kernel_dir).unwrap();
+        let kernel_path = kernel_dir.join(crate::CORE_CONFIG_FILE);
+        let kernel = "config-version: 8\nserver:\n  port: 8317\nreverse-proxy:\n  enabled: true\n  listen-host: 0.0.0.0\n  listen-port: 18443\n  target-port: 8258\n  cert-path: /tls/cert.pem\n  key-path: /tls/key.pem\n";
+        std::fs::write(&kernel_path, kernel).unwrap();
+        std::fs::write(&gui_config_path, "run-on-startup = false\nport = 9123\n").unwrap();
+
+        // The settings as the application loaded them before the migration: the
+        // file itself holds no block, so the in-memory copy has none either.
+        let loaded: crate::GuiConfigFile =
+            toml::from_str(&std::fs::read_to_string(&gui_config_path).unwrap()).unwrap();
+        let in_memory = crate::GuiConfigState::new(loaded);
+        assert!(in_memory.snapshot().unwrap().reverse_proxy.is_none());
+
+        crate::reverse_proxy::migrate_proxy_config_from_kernel_at(
+            &home,
+            &kernel_dir,
+            Some(&in_memory),
+        )
+        .unwrap();
+
+        // The startup path then saves an unrelated setting, which serializes the
+        // whole file from the in-memory settings.
+        let snapshot = in_memory.set_run_on_startup(true).unwrap();
+        crate::core_config::write_gui_config_to_path(&snapshot, &gui_config_path).unwrap();
+
+        let stored = std::fs::read_to_string(&gui_config_path).unwrap();
+        assert!(stored.contains("[reverse-proxy]"), "{stored}");
+        for field in [
+            "enabled = true",
+            "listen-host = \"0.0.0.0\"",
+            "listen-port = 18443",
+            "target-port = 8258",
+            "cert-path = \"/tls/cert.pem\"",
+            "key-path = \"/tls/key.pem\"",
+        ] {
+            assert!(stored.contains(field), "missing {field} in {stored}");
+        }
+        let reloaded: crate::GuiConfigFile = toml::from_str(&stored).unwrap();
+        assert_eq!(reloaded.reverse_proxy.as_ref(), Some(&config), "{stored}");
+        assert_eq!(
+            in_memory.snapshot().unwrap().reverse_proxy.as_ref(),
+            Some(&config)
+        );
+        assert_eq!(reloaded.port, 9123, "{stored}");
+        assert!(reloaded.run_on_startup, "{stored}");
+
+        // The kernel copy is gone because both writes succeeded.
+        let kernel = std::fs::read_to_string(&kernel_path).unwrap();
+        assert!(!kernel.contains("reverse-proxy"), "{kernel}");
 
         std::fs::remove_dir_all(home).unwrap();
     }
@@ -2915,16 +3046,22 @@ server:
             guard.hardening.restart_required = true;
         }
         app.manage(manager);
+        app.manage(crate::GuiConfigState::new(crate::GuiConfigFile::default()));
         let state = app.state::<ReverseProxyManagerState>();
-        let res = reverse_proxy_get_state(state).await.unwrap();
+        let res = reverse_proxy_get_state(state, app.state::<crate::GuiConfigState>())
+            .await
+            .unwrap();
         assert!(res.hardening.restart_required);
 
         // When not required, it remains false
         let app2 = tauri::test::mock_app();
         let manager2 = ReverseProxyManagerState::new();
         app2.manage(manager2);
+        app2.manage(crate::GuiConfigState::new(crate::GuiConfigFile::default()));
         let state2 = app2.state::<ReverseProxyManagerState>();
-        let res2 = reverse_proxy_get_state(state2).await.unwrap();
+        let res2 = reverse_proxy_get_state(state2, app2.state::<crate::GuiConfigState>())
+            .await
+            .unwrap();
         assert!(!res2.hardening.restart_required);
     }
 }
