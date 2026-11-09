@@ -134,11 +134,21 @@
 
 .ecpa-tag-bar {
   display: flex;
+  /* One line only: extra tags live in the picker, never in a second row. */
   flex: 1 1 auto;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
   min-width: 0;
+  overflow: hidden;
+}
+
+.ecpa-tag-bar > .ecpa-tag-chip {
+  flex: 0 0 auto;
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ecpa-results-meta {
@@ -182,6 +192,172 @@
   border-color: var(--primary-color);
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+/* Trigger for the tag picker: a compact icon chip pinned after the visible tags. */
+.ecpa-tag-picker {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.ecpa-tag-picker-trigger.filter-chip {
+  gap: 4px;
+  padding: 4px 8px;
+  color: var(--text-secondary);
+}
+
+.ecpa-tag-picker-trigger.filter-chip.has-selection {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  background: var(--ui-accent-soft);
+}
+
+.ecpa-tag-picker-trigger.filter-chip.open,
+.ecpa-tag-picker-trigger.filter-chip[aria-expanded='true'] {
+  border-color: var(--primary-color);
+  background: var(--bg-card);
+}
+
+.ecpa-tag-picker-trigger > svg {
+  transition: transform var(--motion-fast) ease;
+}
+
+.ecpa-tag-picker-trigger[aria-expanded='true'] > svg {
+  transform: rotate(180deg);
+}
+
+.ecpa-tag-picker-count {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ecpa-tag-picker-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-full);
+  background: var(--primary-color);
+  color: var(--bg-card);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* Floating multi-select panel: portalled to the body so the grid never reflows. */
+.ecpa-tag-picker-panel {
+  position: fixed;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  box-shadow: var(--ui-popover-shadow, 0 12px 32px rgba(15, 23, 42, 0.16));
+  animation: ecpa-tag-picker-in var(--motion-fast) ease;
+}
+
+@keyframes ecpa-tag-picker-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.ecpa-tag-picker-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  /* The panel sets an absolute max-height; the list takes the remaining space so
+     the footer stays visible and the last row scrolls instead of being cut. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px;
+  scrollbar-width: thin;
+}
+
+.ecpa-tag-picker-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 10px 4px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: border-color var(--motion-fast) ease, background-color var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.ecpa-tag-picker-option:hover {
+  border-color: var(--primary-color);
+  color: var(--text-primary);
+}
+
+.ecpa-tag-picker-option:focus-visible {
+  outline: 2px solid var(--ui-focus-ring);
+  outline-offset: 1px;
+}
+
+.ecpa-tag-picker-option.selected {
+  border-color: var(--primary-color);
+  background: var(--ui-accent-soft);
+  color: var(--primary-color);
+  font-weight: 500;
+}
+
+.ecpa-tag-picker-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: transparent;
+}
+
+.ecpa-tag-picker-option.selected .ecpa-tag-picker-check {
+  border-color: var(--primary-color);
+  background: var(--primary-color);
+  color: var(--bg-card);
+}
+
+.ecpa-tag-picker-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: none;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-color);
+}
+
+.ecpa-tag-picker-clear {
+  font-size: 12px;
+}
+
+.ecpa-tag-picker-empty {
+  margin: 0;
+  padding: 12px 8px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  text-align: center;
 }
 
 .ecpa-tag-chip.filter-chip.active {
