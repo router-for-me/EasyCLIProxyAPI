@@ -1891,6 +1891,7 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
     let mut next_inbox_recovery_at = tokio::time::Instant::now();
     let mut next_core_check_at = tokio::time::Instant::now();
     let mut core_ready = false;
+    let mut idle_polls = 0u32;
     loop {
         if token.is_cancelled() {
             return;
@@ -1955,7 +1956,11 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
             core_ready = current_core_status(Some(process_state.inner()), Some(config.port))
                 .map(|status| status.ready)
                 .unwrap_or(false);
-            next_core_check_at = tokio::time::Instant::now() + Duration::from_secs(2);
+            // A ready kernel rarely changes state and this probe opens a TCP
+            // connection every time. Keep it quick while starting or stopped so
+            // recovery stays prompt, then settle on the UI's own 10s cadence.
+            let delay = if core_ready { 10 } else { 2 };
+            next_core_check_at = tokio::time::Instant::now() + Duration::from_secs(delay);
         }
         if !core_ready {
             subscription = None;
@@ -2073,9 +2078,11 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
                     None,
                 );
                 retry_seconds = 1;
-                wait_or_cancel(&token, 1).await;
+                idle_polls = idle_polls.saturating_add(1);
+                wait_or_cancel(&token, idle_poll_seconds(idle_polls)).await;
             }
             Ok(batch) => {
+                idle_polls = 0;
                 let source_label = collector_source_label(&batch.source);
                 match persist_raw_usage_messages_from_source(
                     &root,
@@ -2201,6 +2208,17 @@ pub(crate) fn persist_local_usage_event(
     let outcome = persist_queue_items_from_source(&root, collector_source, vec![value], &config)?;
     publish_collected_records(app, outcome, "Saved desktop health check usage record");
     Ok(outcome.inserted)
+}
+
+/// Idle polling in HTTP compatibility mode: pick a burst up immediately, then
+/// settle at 3s while the queue stays empty. A live subscription is event-driven
+/// and never reaches this path.
+fn idle_poll_seconds(consecutive_empty: u32) -> u64 {
+    match consecutive_empty {
+        0 | 1 => 1,
+        2 => 2,
+        _ => 3,
+    }
 }
 
 async fn wait_or_cancel(token: &CancellationToken, seconds: u64) {
@@ -8124,5 +8142,18 @@ mod tests {
         assert_eq!(cost_for_price("gpt-6-sol", "", &tokens, &price), 0.0);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod idle_poll_tests {
+    use super::idle_poll_seconds;
+
+    #[test]
+    fn idle_poll_backs_off_and_caps_at_three_seconds() {
+        assert_eq!(idle_poll_seconds(1), 1);
+        assert_eq!(idle_poll_seconds(2), 2);
+        assert_eq!(idle_poll_seconds(3), 3);
+        assert_eq!(idle_poll_seconds(u32::MAX), 3);
     }
 }

@@ -1286,9 +1286,7 @@ pub(crate) async fn fetch_prepared_agent_models(
         if agent_uses_cpa_runtime_context_windows(client) {
             let runtime_models = fetch_codex_runtime_models(config.port, api_key).await?;
             codex_catalog::merge_runtime_context_windows(&mut models, &runtime_models);
-            if client == AgentClient::ZCode {
-                codex_catalog::merge_zcode_reasoning_levels(&mut models, &runtime_models);
-            }
+            codex_catalog::merge_runtime_reasoning_levels(&mut models, &runtime_models);
             // Models the Codex client catalog does not know inherit its default
             // template, so custom providers report a placeholder context window.
             // Import authoritative capabilities only when that actually happens.
@@ -1301,6 +1299,16 @@ pub(crate) async fn fetch_prepared_agent_models(
             }) {
                 let _ = crate::usage::ensure_model_capabilities_catalog().await;
                 codex_catalog::merge_external_model_capabilities(&mut models);
+            }
+        }
+        if client == AgentClient::OpenCode {
+            match fetch_codex_runtime_models(config.port, api_key).await {
+                Ok(runtime_models) => {
+                    codex_catalog::merge_runtime_reasoning_levels(&mut models, &runtime_models);
+                }
+                Err(error) => {
+                    eprintln!("OpenCode reasoning metadata unavailable, using model defaults: {error}");
+                }
             }
         }
         if matches!(client, AgentClient::ClaudeCode | AgentClient::ClaudeDesktop) {
