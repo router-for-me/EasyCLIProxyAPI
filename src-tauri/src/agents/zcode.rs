@@ -93,43 +93,17 @@ use super::*;
 use crate::GuiConfigState;
 
 
-pub(crate) fn infer_zcode_model_knowledge_with_calibration(model_id: &str) -> (Option<u64>, Option<u64>, bool, bool, Vec<String>) {
-    let calibration = crate::usage::query_model_usage_calibration(model_id);
-    let target_name = calibration.as_ref()
-        .and_then(|c| c.canonical_response_model.as_deref())
-        .unwrap_or(model_id);
-
-    // 1. Directly infer full recommended capabilities for the model (first priority)
-    let (mut cw, mut mot, img, pdf, mut rl) = infer_zcode_model_knowledge(target_name);
-
-    // 2. The external capability catalog (models.dev / LiteLLM) is authoritative
-    // for models the static inference table does not describe, such as custom
-    // openai-compatibility providers.
-    if let Some(capabilities) = crate::usage::query_model_capabilities(target_name) {
-        if cw.is_none() {
-            cw = capabilities.context_window;
-        }
-        if mot.is_none() {
-            mot = capabilities.max_output_tokens;
-        }
+// Model defaults must not depend on request history: a routed response or a
+// rejected request does not establish a model's context limit or capabilities.
+pub(crate) fn infer_zcode_model_knowledge_with_catalog(
+    model_id: &str,
+    catalog: &[crate::usage::ModelCapabilities],
+) -> (Option<u64>, Option<u64>, bool, bool, Vec<String>) {
+    let (mut cw, mut mot, img, pdf, rl) = infer_zcode_model_knowledge(model_id);
+    if let Some(capabilities) = crate::usage::find_model_capabilities(catalog, model_id) {
+        cw = cw.or(capabilities.context_window);
+        mot = mot.or(capabilities.max_output_tokens);
     }
-
-    if let Some(calib) = calibration {
-        // 3. Adjust context window if higher real tokens were observed
-        if let Some(observed_tokens) = calib.max_observed_input_tokens {
-            if let Some(ref mut c) = cw {
-                if observed_tokens > *c {
-                    *c = observed_tokens.next_power_of_two();
-                }
-            }
-        }
-
-        // 4. Automatically remove levels that failed in real requests
-        if !calib.failed_reasoning_levels.is_empty() {
-            rl.retain(|level| !calib.failed_reasoning_levels.iter().any(|f| f.eq_ignore_ascii_case(level)));
-        }
-    }
-
     (cw, mot, img, pdf, rl)
 }
 
@@ -231,9 +205,14 @@ fn parse_zcode_rule_properties(rule: &Value) -> (Option<u64>, Option<u64>, bool,
 fn parse_zcode_rule_reasoning(rule: &Value) -> (Option<Vec<String>>, Option<String>) {
     let option_specs = rule.get("config").and_then(|c| c.get("optionSpecs"));
     let reasoning = option_specs.and_then(|o| o.get("reasoningLevel"));
-    let values = reasoning.and_then(|r| r.get("values")).and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect::<Vec<_>>());
-    let map = reasoning.and_then(|r| r.get("map")).and_then(Value::as_str).map(String::from);
+    let values = reasoning.map(|r| {
+        r.get("values").and_then(Value::as_array)
+            .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect::<Vec<_>>())
+            .unwrap_or_default()
+    });
+    let map = reasoning.and_then(|r| r.get("map")).and_then(Value::as_str)
+        .filter(|_| values.as_ref().is_some_and(|levels| !levels.is_empty()))
+        .map(String::from);
     (values, map)
 }
 
@@ -367,9 +346,10 @@ pub(crate) fn zcode_editor_snapshot(
     let mut editor_models = Vec::new();
     let mut seen_ids = std::collections::HashSet::new();
 
+    let catalog = crate::usage::load_model_capabilities_snapshot();
     for option in available_models {
         seen_ids.insert(option.name.clone());
-        let (inferred_cw, inferred_mot, inferred_img, inferred_pdf, inferred_rl) = infer_zcode_model_knowledge_with_calibration(&option.name);
+        let (inferred_cw, inferred_mot, inferred_img, inferred_pdf, inferred_rl) = infer_zcode_model_knowledge_with_catalog(&option.name, &catalog);
 
         let effective_default_cw = match option.context_window {
             Some(500_000) | None => inferred_cw.or(option.context_window),
@@ -410,7 +390,7 @@ pub(crate) fn zcode_editor_snapshot(
         } else if let Some(prov_rule) = provider_rules.get(&option.name) {
             let (cw, mot, img, pdf, vid, json_out, search, sys) = parse_zcode_rule_properties(prov_rule);
             let (rl, map) = parse_zcode_rule_reasoning(prov_rule);
-            let effective_cw = if cw == Some(500000) || cw.is_none() { default_config.context_window } else { cw };
+            let effective_cw = cw.or(default_config.context_window);
             ZCodeModelConfig {
                 context_window: effective_cw,
                 max_output_tokens: mot.or(default_config.max_output_tokens),

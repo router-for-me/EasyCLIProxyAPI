@@ -37,9 +37,9 @@ describe('generation speed', () => {
     expect(formatGenerationSpeed({ outputTokens: 344, latencyMs: 10_600, ttftMs, mode: 'ttft' })).toBe('—');
   });
 
-  test('defaults to the TTFT-subtracted window', () => {
-    expect(calculateGenerationSpeed({ outputTokens: 10, latencyMs: 2_000, ttftMs: 1_000 })).toBe(10);
-    expect(calculateGenerationSpeed({ outputTokens: 10, latencyMs: 2_000 })).toBeNull();
+  test('defaults to the total request latency', () => {
+    expect(calculateGenerationSpeed({ outputTokens: 10, latencyMs: 2_000, ttftMs: 1_000 })).toBe(5);
+    expect(calculateGenerationSpeed({ outputTokens: 10, latencyMs: 2_000 })).toBe(5);
   });
 
   test.each([

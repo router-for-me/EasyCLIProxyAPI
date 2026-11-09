@@ -2,13 +2,8 @@
 .plugin-tab-panel { display: flex; flex-direction: column; gap: 20px; }
 .plugins-page { display: flex; flex-direction: column; gap: 20px; min-width: 0; max-width: 1500px; margin: 0 auto; padding: 0 0 24px; }
 .plugin-global-toggle { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; }
-.plugin-navigation { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding-bottom: 4px; border-bottom: 1px solid var(--border-color); }
+.plugin-navigation { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
 .plugin-navigation > .plugin-toolbar { margin-left: auto; justify-content: flex-end; min-width: 0; }
-.plugin-tabs { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; padding: 0; margin: 0; border: 0; background: none; }
-.plugin-tabs button { display: flex; flex: 0 0 auto; align-items: center; justify-content: center; width: auto; height: 34px; min-height: 34px; margin: 0; padding: 5px 8px; border: 1px solid transparent; border-bottom: 2px solid transparent; border-radius: var(--radius-md) var(--radius-md) var(--radius-none) var(--radius-none); background: transparent; color: var(--text-secondary); white-space: nowrap; font-size: 12px; line-height: 1.5; font-weight: 500; box-shadow: none; }
-.plugin-tabs button:hover { background: var(--bg-hover); color: var(--text-primary); }
-.plugin-tabs button.active { border-bottom-color: var(--primary-color); background: transparent; color: var(--primary-color); font-weight: 650; }
-.plugin-tabs button:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -3px; }
 .plugin-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .plugins-page .plugin-refresh, .plugins-page .plugin-development-guide, .plugins-page .plugin-check-updates, .plugins-page .plugin-update-all { width: auto; flex: none; }
 .plugin-search { display: flex; align-items: center; gap: 8px; width: 260px; min-width: 0; min-height: 40px; box-sizing: border-box; padding: 0 8px 0 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-card); color: var(--text-tertiary); }
@@ -79,7 +74,7 @@
 .plugin-resource-status { margin: 24px; }
 .plugin-resource-host > .plugin-banner { margin: 16px; }
 @media (max-width: 700px) { .plugin-card { padding: 16px; } .plugin-navigation > .plugin-toolbar { flex: 1 1 100%; } .plugin-search { flex: 1 1 160px; width: auto; } }
-@media (max-width: 420px) { .plugin-card-title { grid-template-columns: 40px minmax(0, 1fr); } .plugin-card-title > .plugin-badge { grid-column: 2; justify-self: start; } .plugin-tabs button { padding-inline: 10px; } }
+@media (max-width: 420px) { .plugin-card-title { grid-template-columns: 40px minmax(0, 1fr); } .plugin-card-title > .plugin-badge { grid-column: 2; justify-self: start; } }
 
 /* Keep technical metadata subordinate to the plugin name and available actions. */
 .plugin-repository span { font-family: ui-monospace, monospace; font-size: 11px; }
@@ -105,7 +100,7 @@
 }
 
 @media (max-width: 700px) {
-  .plugin-toolbar:has(select) .plugin-search { flex-basis: 100%; }
+  .plugin-toolbar .plugin-search { flex-basis: 100%; }
   .plugin-toolbar select { margin-right: auto; }
 }
 

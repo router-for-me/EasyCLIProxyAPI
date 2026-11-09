@@ -299,7 +299,7 @@ pub(crate) fn merge_runtime_context_windows(
     }
 }
 
-pub(crate) fn merge_zcode_reasoning_levels(
+pub(crate) fn merge_runtime_reasoning_levels(
     models: &mut [AgentModelOption],
     runtime_models: &[CodexRuntimeModel],
 ) {
@@ -310,6 +310,14 @@ pub(crate) fn merge_zcode_reasoning_levels(
             model.reasoning_levels = runtime.reasoning_levels.clone().unwrap_or_default();
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) fn merge_zcode_reasoning_levels(
+    models: &mut [AgentModelOption],
+    runtime_models: &[CodexRuntimeModel],
+) {
+    merge_runtime_reasoning_levels(models, runtime_models);
 }
 
 /// The Codex client catalog clones its default template onto every model it does
@@ -1079,12 +1087,11 @@ mod tests {
 
     #[test]
     fn external_capabilities_replace_the_codex_default_template_placeholder() {
-        let capabilities = vec![crate::usage::ModelCapabilities {
-            model: "GLM-5.3-Flash".to_string(),
-            context_window: Some(1_000_000),
-            input_modalities: vec!["text".to_string(), "image".to_string()],
-            ..crate::usage::ModelCapabilities::default()
-        }];
+        let mut entry = crate::usage::ModelCapabilities::default();
+        entry.model = "GLM-5.3-Flash".to_string();
+        entry.context_window = Some(1_000_000);
+        entry.input_modalities = vec!["text".to_string(), "image".to_string()];
+        let capabilities = vec![entry];
         let option = |name: &str, context_window: Option<u64>| AgentModelOption {
             name: name.to_string(),
             alias: None,

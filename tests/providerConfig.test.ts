@@ -17,6 +17,7 @@ import {
   providerProxyDraftFromRecord,
   providerRecordWithDisabledState,
   providerRecordWithModelEnabledState,
+  providerSupportsModelExclusions,
   isModelExcluded,
   providerRemarkIdentity,
   providerRowsFromGroups,
@@ -33,21 +34,37 @@ describe('model health availability toggles', () => {
   it('preserves unrelated exclusions while disabling and re-enabling one model', () => {
     const record = { 'api-key': 'key', 'excluded-models': ['manual-*', 'old-model'] };
     expect(isModelExcluded(record, 'old-model')).toBe(true);
-    const disabled = providerRecordWithModelEnabledState(record, 'healthy-model', false);
-    expect(disabled['excluded-models']).toEqual(['manual-*', 'old-model', 'healthy-model']);
-    const enabled = providerRecordWithModelEnabledState(disabled, 'healthy-model', true);
-    expect(enabled['excluded-models']).toEqual(['manual-*', 'old-model']);
+    const disabled = providerRecordWithModelEnabledState('codex-api-key', record, 'healthy-model', false);
+    expect(disabled?.['excluded-models']).toEqual(['manual-*', 'old-model', 'healthy-model']);
+    const enabled = providerRecordWithModelEnabledState('codex-api-key', disabled!, 'healthy-model', true);
+    expect(enabled?.['excluded-models']).toEqual(['manual-*', 'old-model']);
   });
 
   it('removes only exact model exclusion and ignores a provider-wide wildcard', () => {
     const record = { 'excluded-models': ['*', 'healthy-model'] };
-    expect(providerRecordWithModelEnabledState(record, 'healthy-model', true)['excluded-models']).toEqual(['*']);
+    expect(providerRecordWithModelEnabledState('codex-api-key', record, 'healthy-model', true)?.['excluded-models']).toEqual(['*']);
   });
 
   it('does not mutate the input record', () => {
     const record = { 'excluded-models': ['old-model'] };
-    providerRecordWithModelEnabledState(record, 'new-model', false);
+    providerRecordWithModelEnabledState('codex-api-key', record, 'new-model', false);
     expect(record['excluded-models']).toEqual(['old-model']);
+  });
+
+  it('does not write exclusions for OpenAI-compatible providers', () => {
+    expect(providerSupportsModelExclusions('openai-compatibility')).toBe(false);
+    expect(providerRecordWithModelEnabledState(
+      'openai-compatibility',
+      { models: [{ name: 'compat-model' }] },
+      'compat-model',
+      false,
+    )).toBeNull();
+  });
+
+  it('keeps model toggles for API providers that support excluded-models', () => {
+    for (const section of ['codex-api-key', 'claude-api-key', 'gemini-api-key', 'vertex-api-key', 'xai-api-key', 'meta-api-key'] as const) {
+      expect(providerSupportsModelExclusions(section)).toBe(true);
+    }
   });
 });
 

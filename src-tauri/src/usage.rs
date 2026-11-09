@@ -1492,84 +1492,6 @@ pub(crate) fn open_usage_database() -> Result<Connection, String> {
     open_usage_database_at(&usage_root_dir()?)
 }
 
-#[derive(Clone, Debug, Default)]
-pub(crate) struct ModelUsageCalibration {
-    pub canonical_response_model: Option<String>,
-    pub failed_reasoning_levels: Vec<String>,
-    pub max_observed_input_tokens: Option<u64>,
-}
-
-pub(crate) fn query_model_usage_calibration(model_id: &str) -> Option<ModelUsageCalibration> {
-    let connection = open_usage_database().ok()?;
-    let mut stmt = connection.prepare(
-        "SELECT response_model, reasoning_effort, failed, failure_status, failure_body, input_tokens 
-         FROM usage_events 
-         WHERE lower(trim(model)) = lower(trim(?1)) 
-         ORDER BY id DESC LIMIT 100"
-    ).ok()?;
-
-    let rows = stmt.query_map(params![model_id], |row| {
-        let response_model: Option<String> = row.get(0).ok().filter(|s: &String| !s.trim().is_empty());
-        let reasoning_effort: Option<String> = row.get(1).ok().filter(|s: &String| !s.trim().is_empty() && s != "none");
-        let failed: bool = row.get::<_, i64>(2).map(|v| v != 0).unwrap_or(false);
-        let failure_status: Option<i64> = row.get(3).ok();
-        let failure_body: Option<String> = row.get(4).ok().filter(|s: &String| !s.trim().is_empty());
-        let input_tokens: u64 = row.get::<_, i64>(5).map(|v| v.max(0) as u64).unwrap_or(0);
-        Ok((response_model, reasoning_effort, failed, failure_status, failure_body, input_tokens))
-    }).ok()?;
-
-    let mut calibration = ModelUsageCalibration::default();
-    let mut failed_efforts = std::collections::HashSet::new();
-    let mut max_input = 0u64;
-
-    for row in rows.flatten() {
-        let (response_model, reasoning_effort, failed, failure_status, failure_body, input_tokens) = row;
-        if calibration.canonical_response_model.is_none() && response_model.is_some() {
-            calibration.canonical_response_model = response_model;
-        }
-
-        if failed {
-            if let Some(effort) = reasoning_effort {
-                let is_effort_failure = (failure_status == Some(400) || failure_status == Some(422))
-                    && failure_body.as_deref().map(|body| {
-                        let lower = body.to_ascii_lowercase();
-                        let mentions_reasoning = lower.contains("effort")
-                            || lower.contains("reasoning")
-                            || lower.contains("thinking")
-                            || lower.contains("thought");
-                        let rejects_parameter = lower.contains("unsupported")
-                            || lower.contains("not supported")
-                            || lower.contains("invalid");
-                        mentions_reasoning && rejects_parameter
-                    }).unwrap_or(false);
-                if is_effort_failure {
-                    failed_efforts.insert(effort);
-                }
-            }
-        }
-
-        if input_tokens > max_input {
-            max_input = input_tokens;
-        }
-    }
-
-    if max_input > 0 {
-        calibration.max_observed_input_tokens = Some(max_input);
-    }
-    if !failed_efforts.is_empty() {
-        calibration.failed_reasoning_levels = failed_efforts.into_iter().collect();
-    }
-
-    if calibration.canonical_response_model.is_some() 
-        || !calibration.failed_reasoning_levels.is_empty() 
-        || calibration.max_observed_input_tokens.is_some() 
-    {
-        Some(calibration)
-    } else {
-        None
-    }
-}
-
 fn open_usage_database_at(root: &Path) -> Result<Connection, String> {
     fs::create_dir_all(root).map_err(|error| format!("Failed to create usage records directory: {error}"))?;
     let path = root.join(USAGE_DATABASE_FILE);
@@ -1969,6 +1891,7 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
     let mut next_inbox_recovery_at = tokio::time::Instant::now();
     let mut next_core_check_at = tokio::time::Instant::now();
     let mut core_ready = false;
+    let mut idle_polls = 0u32;
     loop {
         if token.is_cancelled() {
             return;
@@ -2033,7 +1956,11 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
             core_ready = current_core_status(Some(process_state.inner()), Some(config.port))
                 .map(|status| status.ready)
                 .unwrap_or(false);
-            next_core_check_at = tokio::time::Instant::now() + Duration::from_secs(2);
+            // A ready kernel rarely changes state and this probe opens a TCP
+            // connection every time. Keep it quick while starting or stopped so
+            // recovery stays prompt, then settle on the UI's own 10s cadence.
+            let delay = if core_ready { 10 } else { 2 };
+            next_core_check_at = tokio::time::Instant::now() + Duration::from_secs(delay);
         }
         if !core_ready {
             subscription = None;
@@ -2151,9 +2078,11 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
                     None,
                 );
                 retry_seconds = 1;
-                wait_or_cancel(&token, 1).await;
+                idle_polls = idle_polls.saturating_add(1);
+                wait_or_cancel(&token, idle_poll_seconds(idle_polls)).await;
             }
             Ok(batch) => {
+                idle_polls = 0;
                 let source_label = collector_source_label(&batch.source);
                 match persist_raw_usage_messages_from_source(
                     &root,
@@ -2279,6 +2208,17 @@ pub(crate) fn persist_local_usage_event(
     let outcome = persist_queue_items_from_source(&root, collector_source, vec![value], &config)?;
     publish_collected_records(app, outcome, "Saved desktop health check usage record");
     Ok(outcome.inserted)
+}
+
+/// Idle polling in HTTP compatibility mode: pick a burst up immediately, then
+/// settle at 3s while the queue stays empty. A live subscription is event-driven
+/// and never reaches this path.
+fn idle_poll_seconds(consecutive_empty: u32) -> u64 {
+    match consecutive_empty {
+        0 | 1 => 1,
+        2 => 2,
+        _ => 3,
+    }
 }
 
 async fn wait_or_cancel(token: &CancellationToken, seconds: u64) {
@@ -3076,10 +3016,10 @@ fn load_usage_overview(
     query: &UsageQuery,
 ) -> Result<UsageOverview, String> {
     let filter = build_usage_filter(query);
-    let (speed_predicate, speed_duration) = if query.speed_mode.as_deref() == Some("total") {
-        ("failed = 0 AND canceled = 0 AND generate != 0 AND output_tokens > 0 AND latency_ms > 0".to_string(), "latency_ms")
-    } else {
+    let (speed_predicate, speed_duration) = if query.speed_mode.as_deref() == Some("ttft") {
         (format!("failed = 0 AND canceled = 0 AND generate != 0 AND output_tokens > 0 AND ttft_ms IS NOT NULL AND ttft_ms > 0 AND latency_ms > ttft_ms AND latency_ms - ttft_ms >= {TPS_MIN_GENERATION_MS}"), "latency_ms - ttft_ms")
+    } else {
+        ("failed = 0 AND canceled = 0 AND generate != 0 AND output_tokens > 0 AND latency_ms > 0".to_string(), "latency_ms")
     };
     let summary_sql = format!(
         r#"
@@ -3814,11 +3754,12 @@ pub(crate) fn find_model_capabilities<'a>(
         .map(|(_, entry)| entry)
 }
 
-/// Looks up authoritative model capabilities from the imported external catalog.
-pub(crate) fn query_model_capabilities(model: &str) -> Option<ModelCapabilities> {
-    let connection = open_usage_database().ok()?;
-    let capabilities = load_model_capabilities(&connection).ok()?;
-    find_model_capabilities(&capabilities, model).cloned()
+/// Loads the external catalog once per operation, without reading request history.
+pub(crate) fn load_model_capabilities_snapshot() -> Vec<ModelCapabilities> {
+    let Ok(connection) = open_usage_database() else {
+        return Vec::new();
+    };
+    load_model_capabilities(&connection).unwrap_or_default()
 }
 
 pub(crate) async fn refresh_model_capabilities_catalog() -> Result<usize, String> {
@@ -7660,7 +7601,10 @@ mod tests {
         )
         .unwrap();
 
-        let overview = load_usage_overview(&connection, &UsageQuery::default()).unwrap();
+        let overview = load_usage_overview(&connection, &UsageQuery {
+            speed_mode: Some("ttft".to_string()),
+            ..UsageQuery::default()
+        }).unwrap();
 
         // Sum output tokens over the sum of eligible TTFT-subtracted windows.
         // Small outputs count; missing/zero TTFT and windows below 100 ms do not.
@@ -7676,6 +7620,10 @@ mod tests {
             / (3_000.0 + 5_000.0 + 2_000.0 + 2_000.0 + 3_000.0 + 1_050.0 + 1_000.0);
         assert!((total.tps - expected_total).abs() < 1e-9);
         assert_eq!(total.tps_sample_count, 7);
+
+        let default = load_usage_overview(&connection, &UsageQuery::default()).unwrap();
+        assert!((default.tps - expected_total).abs() < 1e-9);
+        assert_eq!(default.tps_sample_count, 7);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }
@@ -8194,5 +8142,18 @@ mod tests {
         assert_eq!(cost_for_price("gpt-6-sol", "", &tokens, &price), 0.0);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod idle_poll_tests {
+    use super::idle_poll_seconds;
+
+    #[test]
+    fn idle_poll_backs_off_and_caps_at_three_seconds() {
+        assert_eq!(idle_poll_seconds(1), 1);
+        assert_eq!(idle_poll_seconds(2), 2);
+        assert_eq!(idle_poll_seconds(3), 3);
+        assert_eq!(idle_poll_seconds(u32::MAX), 3);
     }
 }

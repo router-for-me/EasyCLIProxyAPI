@@ -510,6 +510,7 @@ function createState(scenario: BrowserMockScenario) {
       publishedAt: isoHoursAgo(18),
       currentBuildAt: null,
       autoUpdateSupported: true,
+      preserveCoreSupported: true,
       downloadUrl: 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip',
       downloadFileName: 'EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip',
       downloadSizeBytes: 48 * 1024 * 1024,
@@ -1517,10 +1518,12 @@ export function createBrowserMockRuntime(
         return state.appUpdateInfo.updateChannel;
       }
       case 'start_app_update': {
+        if (payload.preserveCore && !state.appUpdateInfo.preserveCoreSupported) throw new Error('Preserving the core is unsupported');
         Object.assign(state.appUpdateTask, {
           running: true,
           cancellable: true,
           phase: 'downloading',
+          preserveCore: payload.preserveCore === true,
           targetVersion: state.appUpdateInfo.latestVersion,
           downloadedBytes: 18 * 1024 * 1024,
           totalBytes: state.appUpdateInfo.downloadSizeBytes,

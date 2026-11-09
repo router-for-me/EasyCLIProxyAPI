@@ -307,7 +307,31 @@ fn update_workbuddy_model(
     model: &str,
     available_models: &[AgentModelOption],
 ) {
-    entry["name"] = json!("CPA");
+    let metadata = available_models.iter().find(|m| m.name == model);
+    let catalog_alias = metadata
+        .and_then(|m| m.alias.as_deref())
+        .map(str::trim)
+        .filter(|alias| !alias.is_empty() && !alias.eq_ignore_ascii_case(model))
+        .map(str::to_string);
+    let desired_name = catalog_alias.unwrap_or_else(|| format!("CPA / {model}"));
+    let current_name = entry
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string);
+    match current_name {
+        // Preserve a user-customized display name; only replace the
+        // generated defaults (the literal "CPA" and bare model ids).
+        Some(current)
+            if current != "CPA"
+                && workbuddy_request_model(&current) != model
+                && current != desired_name =>
+        {
+            entry["name"] = json!(current);
+        }
+        _ => entry["name"] = json!(desired_name),
+    }
     entry["vendor"] = json!(MANAGED_AGENT_PROVIDER_ID);
     entry["url"] = json!(format!(
         "{}/chat/completions",
@@ -318,13 +342,14 @@ fn update_workbuddy_model(
     entry["disabled"] = json!(false);
     // WorkBuddy prefixes local model IDs itself and removes that prefix before sending requests.
     entry["useCustomProtocol"] = json!(false);
-    if let Some(metadata) = available_models.iter().find(|m| m.name == model) {
+    if let Some(metadata) = metadata {
         if let Some(context) = metadata.context_window {
             entry["maxInputTokens"] = json!(context);
         }
         if let Some(input) = &metadata.input_modalities {
             entry["supportsImages"] = json!(input.iter().any(|s| s == "image"));
         }
+        super::configuration::update_workbuddy_reasoning_fields(entry, &metadata.reasoning_levels);
     }
 }
 

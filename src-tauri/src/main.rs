@@ -328,6 +328,7 @@ struct CoreProcessState {
     starting: AtomicBool,
     shutting_down: AtomicBool,
     shutdown_complete: AtomicBool,
+    preserve_on_exit: AtomicBool,
 }
 
 #[derive(Default)]
@@ -485,6 +486,7 @@ struct AppUpdateInfo {
     published_at: String,
     current_build_at: Option<String>,
     auto_update_supported: bool,
+    preserve_core_supported: bool,
     download_url: Option<String>,
     download_file_name: Option<String>,
     download_size_bytes: Option<u64>,
@@ -547,6 +549,7 @@ struct PendingAppUpdate {
 #[serde(rename_all = "camelCase")]
 struct AppUpdateTask {
     running: bool,
+    preserve_core: bool,
     cancellable: bool,
     phase: String,
     target_version: Option<String>,
@@ -562,6 +565,7 @@ impl Default for AppUpdateTask {
             running: false,
             cancellable: false,
             phase: "idle".to_string(),
+            preserve_core: false,
             target_version: None,
             downloaded_bytes: 0,
             total_bytes: None,
@@ -597,6 +601,8 @@ struct PortableUpdateDescriptor {
     ack_path: PathBuf,
     work_dir: PathBuf,
     target_version: String,
+    #[serde(default)]
+    preserve_core: bool,
 }
 
 #[cfg(target_os = "macos")]
@@ -611,6 +617,8 @@ struct MacosUpdateDescriptor {
     ack_path: PathBuf,
     work_dir: PathBuf,
     target_version: String,
+    #[serde(default)]
+    preserve_core: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -1947,6 +1955,7 @@ impl AppUpdateState {
             running: true,
             cancellable: true,
             phase: "downloading".to_string(),
+            preserve_core: inner.task.preserve_core,
             target_version: Some(pending.version.clone()),
             downloaded_bytes: 0,
             total_bytes: Some(pending.asset.size_bytes),
@@ -1998,6 +2007,7 @@ impl CoreProcessState {
             starting: AtomicBool::new(starting),
             shutting_down: AtomicBool::new(false),
             shutdown_complete: AtomicBool::new(false),
+            preserve_on_exit: AtomicBool::new(false),
         }
     }
 
@@ -2006,7 +2016,7 @@ impl CoreProcessState {
     }
 
     fn ensure_active(&self) -> Result<(), String> {
-        if self.is_shutting_down() {
+        if self.is_shutting_down() || self.preserve_on_exit.load(Ordering::Acquire) {
             Err("Application is exiting; kernel operation canceled".to_string())
         } else {
             Ok(())
@@ -2865,7 +2875,8 @@ fn main() {
                     }
                 }
 
-                match auto_install_bundled_core_if_needed(&core_app) {
+                let preserve_core = env::args_os().any(|arg| arg == "--preserve-core");
+                match auto_install_bundled_core_if_needed(&core_app, preserve_core) {
                     Ok(true) => eprintln!("Automatically installed or upgraded to the CPA kernel version bundled with the application"),
                     Ok(false) => {}
                     Err(error) => {
@@ -2880,6 +2891,7 @@ fn main() {
                 let adopted_process_ids = match adopt_existing_core_processes(
                     process_state.inner(),
                     &config,
+                    preserve_core,
                 ) {
                     Ok(process_ids) => process_ids,
                     Err(error) => {

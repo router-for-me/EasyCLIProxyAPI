@@ -3634,3 +3634,274 @@ fn default_tauri_capability_grants_app_version() {
         "src-tauri/capabilities/default.json must include core:app:allow-version"
     );
 }
+
+#[test]
+fn runtime_catalog_reasoning_levels_reach_workbuddy_opencode_and_harness() {
+    let mut models = parse_agent_model_options(&serde_json::json!({
+        "data": [
+            {"id": "reasoning-model", "object": "model", "created": 0, "owned_by": "test"},
+            {"id": "plain-model", "object": "model", "created": 0, "owned_by": "test"}
+        ]
+    }))
+    .unwrap();
+    assert!(models.iter().all(|model| model.reasoning_levels.is_empty()));
+    let runtime = codex_catalog::parse_runtime_models(&serde_json::json!({
+        "models": [{
+            "slug": "REASONING-MODEL",
+            "supported_reasoning_levels": [{"effort": "low"}, {"effort": "high"}]
+        }]
+    }))
+    .unwrap();
+    codex_catalog::merge_runtime_reasoning_levels(&mut models, &runtime);
+    assert_eq!(models[0].reasoning_levels, ["low", "high"]);
+    assert!(models[1].reasoning_levels.is_empty());
+
+    let workbuddy = build_workbuddy_agent_config(
+        None,
+        "http://127.0.0.1:8317/v1",
+        "key",
+        "reasoning-model",
+        &models,
+    )
+    .unwrap();
+    let workbuddy = parse_workbuddy_config(Some(&workbuddy)).unwrap();
+    let entry = &workbuddy["models"][0];
+    assert_eq!(entry["name"], "CPA / reasoning-model");
+    assert_eq!(entry["supportsReasoning"], true);
+    assert_eq!(entry["onlyReasoning"], true);
+    assert_eq!(entry["reasoning"]["defaultEffort"], "high");
+    assert_eq!(entry["reasoning"]["supportedEfforts"], serde_json::json!(["low", "high"]));
+
+    let opencode = build_opencode_agent_config(
+        None,
+        "http://127.0.0.1:8317/v1",
+        "key",
+        "reasoning-model",
+        &models,
+    )
+    .unwrap();
+    let opencode: serde_json::Value = serde_json::from_str(&opencode).unwrap();
+    let entry = &opencode["provider"]["cpa-gui"]["models"]["reasoning-model"];
+    assert_eq!(entry["reasoning"], true);
+    assert_eq!(entry["variants"]["low"]["reasoning_effort"], "low");
+    assert_eq!(entry["variants"]["high"]["reasoning_effort"], "high");
+    assert_eq!(entry["request"]["variant"], "high");
+
+    let harness = build_deepseek_harness_models(&models, "reasoning-model").unwrap();
+    assert_eq!(harness[0]["reasoningEfforts"]["low"].as_str(), Some("low"));
+    assert_eq!(harness[0]["reasoningEfforts"]["high"].as_str(), Some("high"));
+    assert!(harness[1].get("reasoningEfforts").is_none());
+}
+
+#[tokio::test]
+async fn prepared_reasoning_metadata_uses_the_client_catalog_and_tolerates_optional_failures() {
+    use std::io::{Read, Write};
+
+    for client in [AgentClient::WorkBuddy, AgentClient::OpenCode, AgentClient::DeepSeekHarness] {
+        for available in [true, false] {
+            if client == AgentClient::WorkBuddy && !available {
+                continue;
+            }
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = std::thread::spawn(move || {
+                let request_count = if client == AgentClient::DeepSeekHarness { 3 } else { 2 };
+                let mut paths = Vec::new();
+                for _ in 0..request_count {
+                    let (mut socket, _) = listener.accept().unwrap();
+                    socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                    let mut request = Vec::new();
+                    let mut buffer = [0; 2048];
+                    while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        let count = socket.read(&mut buffer).unwrap();
+                        assert!(count > 0);
+                        request.extend_from_slice(&buffer[..count]);
+                    }
+                    let request = String::from_utf8(request).unwrap();
+                    let path = request.split_whitespace().nth(1).unwrap().to_string();
+                    let (status, body) = match path.as_str() {
+                        "/v1/models" => (
+                            "200 OK",
+                            r#"{"data":[{"id":"reasoning-model","object":"model","created":0,"owned_by":"test"}]}"#,
+                        ),
+                        "/v1/models?client_version=0.162.1" => {
+                            assert!(request.to_ascii_lowercase().contains("authorization: bearer reasoning-test-key\r\n"));
+                            if available {
+                                (
+                                    "200 OK",
+                                    r#"{"models":[{"slug":"REASONING-MODEL","context_window":128000,"supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]}]}"#,
+                                )
+                            } else {
+                                ("503 Service Unavailable", r#"{"error":"catalog unavailable"}"#)
+                            }
+                        }
+                        "/v8/management/config.yaml" => ("200 OK", "config-version: 8\n"),
+                        _ => panic!("unexpected request path: {path}"),
+                    };
+                    write!(socket, "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                    paths.push(path);
+                }
+                assert_eq!(paths.iter().filter(|path| path.contains("client_version=")).count(), 1);
+            });
+            let config = GuiConfigFile {
+                port,
+                management_secret_key: "management-test-key".into(),
+                api_keys: vec![GuiApiKeyEntry {
+                    key: "reasoning-test-key".into(),
+                    remark: String::new(),
+                }],
+                ..GuiConfigFile::default()
+            };
+            let prepared = fetch_prepared_agent_models(client, &config).await;
+            server.join().unwrap();
+            let prepared = prepared.unwrap();
+            assert_eq!(prepared.models.len(), 1);
+            assert_eq!(prepared.models[0].name, "reasoning-model");
+            let expected = if available { vec!["low", "high"] } else { Vec::new() };
+            assert_eq!(prepared.models[0].reasoning_levels, expected);
+        }
+    }
+}
+
+#[test]
+fn reasoning_emitters_preserve_custom_fields_and_ignore_empty_levels() {
+    let levels = vec!["low".to_string(), "high".to_string()];
+    let mut workbuddy = serde_json::json!({
+        "supportsReasoning": false,
+        "onlyReasoning": false,
+        "reasoning": {
+            "canDisableThinking": true,
+            "defaultEffort": "low",
+            "supportedEfforts": ["low"]
+        }
+    });
+    let original_workbuddy = workbuddy.clone();
+    let mut opencode = serde_json::json!({
+        "reasoning": false,
+        "variants": {"low": {"reasoning_effort": "minimal"}},
+        "request": {"variant": "low"}
+    });
+    let mut harness: serde_norway::Value = serde_norway::from_str("reasoningEfforts:\n  low: minimal\n").unwrap();
+    for _ in 0..2 {
+        update_workbuddy_reasoning_fields(&mut workbuddy, &levels);
+        update_opencode_reasoning_fields(&mut opencode, &levels);
+        update_harness_reasoning_fields(&mut harness, &levels);
+    }
+    assert_eq!(workbuddy, original_workbuddy);
+    assert_eq!(opencode["reasoning"], false);
+    assert_eq!(opencode["variants"]["low"]["reasoning_effort"], "minimal");
+    assert_eq!(opencode["variants"]["high"]["reasoning_effort"], "high");
+    assert_eq!(opencode["request"]["variant"], "low");
+    assert_eq!(harness["reasoningEfforts"]["low"].as_str(), Some("minimal"));
+    assert_eq!(harness["reasoningEfforts"]["high"].as_str(), Some("high"));
+    for original in [serde_json::json!({}), workbuddy] {
+        let mut entry = original.clone();
+        update_workbuddy_reasoning_fields(&mut entry, &[]);
+        assert_eq!(entry, original);
+    }
+    for original in [serde_json::json!({}), opencode] {
+        let mut entry = original.clone();
+        update_opencode_reasoning_fields(&mut entry, &[]);
+        assert_eq!(entry, original);
+    }
+    for original in [serde_norway::Value::Mapping(serde_norway::Mapping::new()), harness] {
+        let mut entry = original.clone();
+        update_harness_reasoning_fields(&mut entry, &[]);
+        assert_eq!(entry, original);
+    }
+}
+
+#[test]
+fn opencode_managed_models_declare_top_level_reasoning_and_variants() {
+    let models = vec![AgentModelOption {
+        name: "tc-glm-5.3-flash".into(),
+        alias: None,
+        is_alias: false,
+        context_window: Some(128_000),
+        input_modalities: None,
+        reasoning_levels: vec!["max".into(), "xhigh".into(), "high".into()],
+        harness_metadata: None,
+    }];
+    let config = build_opencode_agent_config(
+        None,
+        "http://127.0.0.1:8317/v1",
+        "key",
+        "tc-glm-5.3-flash",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&config).unwrap();
+    let entry = &value["provider"]["cpa-gui"]["models"]["tc-glm-5.3-flash"];
+    // Top-level boolean only: capabilities.reasoning is dropped by OpenCode at runtime.
+    assert_eq!(entry["reasoning"], true);
+    assert!(entry.get("capabilities").is_none());
+    assert_eq!(entry["variants"]["max"]["reasoning_effort"], "max");
+    assert_eq!(entry["variants"]["xhigh"]["reasoning_effort"], "xhigh");
+    assert_eq!(entry["variants"]["high"]["reasoning_effort"], "high");
+    assert_eq!(entry["request"]["variant"], "xhigh");
+    // Models without configured levels keep the previous minimal shape.
+    let plain = vec![AgentModelOption {
+        name: "plain-model".into(),
+        alias: None,
+        is_alias: false,
+        context_window: Some(128_000),
+        input_modalities: None,
+        reasoning_levels: Vec::new(),
+        harness_metadata: None,
+    }];
+    let config = build_opencode_agent_config(
+        None,
+        "http://127.0.0.1:8317/v1",
+        "key",
+        "plain-model",
+        &plain,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&config).unwrap();
+    let entry = &value["provider"]["cpa-gui"]["models"]["plain-model"];
+    assert!(entry.get("reasoning").is_none());
+    assert!(entry.get("variants").is_none());
+    assert!(entry.get("request").is_none());
+}
+
+#[test]
+fn harness_managed_models_declare_reasoning_efforts() {
+    let models = vec![AgentModelOption {
+        name: "tc-glm-5.3-flash".into(),
+        alias: None,
+        is_alias: false,
+        context_window: Some(128_000),
+        input_modalities: None,
+        reasoning_levels: vec!["max".into(), "xhigh".into(), "high".into()],
+        harness_metadata: None,
+    }];
+    let rendered = build_deepseek_harness_models(&models, "tc-glm-5.3-flash").unwrap();
+    let entry = &rendered[0];
+    let id = entry.get("id").and_then(serde_norway::Value::as_str).unwrap();
+    assert_eq!(id, "tc-glm-5.3-flash");
+    let efforts = entry.get("reasoningEfforts").unwrap();
+    assert_eq!(
+        efforts.get("max").and_then(serde_norway::Value::as_str),
+        Some("max")
+    );
+    assert_eq!(
+        efforts.get("xhigh").and_then(serde_norway::Value::as_str),
+        Some("xhigh")
+    );
+    assert_eq!(
+        efforts.get("high").and_then(serde_norway::Value::as_str),
+        Some("high")
+    );
+    // Without configured levels the field is absent.
+    let plain = vec![AgentModelOption {
+        name: "plain-model".into(),
+        alias: None,
+        is_alias: false,
+        context_window: Some(128_000),
+        input_modalities: None,
+        reasoning_levels: Vec::new(),
+        harness_metadata: None,
+    }];
+    let rendered = build_deepseek_harness_models(&plain, "plain-model").unwrap();
+    assert!(rendered[0].get("reasoningEfforts").is_none());
+}
