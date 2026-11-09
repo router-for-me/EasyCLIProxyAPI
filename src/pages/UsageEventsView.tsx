@@ -300,7 +300,7 @@ function UsageEventCell({
   noRemarkLabel,
   showDate,
   compact,
-  speedMode = "ttft",
+  speedMode = "total",
   onCopyError,
 }: {
   record: UsageRecord;
