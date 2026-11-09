@@ -5,7 +5,7 @@ export type GenerationSpeedMode = 'total' | 'ttft';
 export const EVENT_SPEED_MODE_KEY = 'cpa-gui.usage-events-speed-mode.v1';
 
 export const getSpeedMode = (): GenerationSpeedMode =>
-  usagePreferences.getItem(EVENT_SPEED_MODE_KEY) === 'total' ? 'total' : 'ttft';
+  usagePreferences.getItem(EVENT_SPEED_MODE_KEY) === 'ttft' ? 'ttft' : 'total';
 
 export const setSpeedMode = (mode: GenerationSpeedMode): void => {
   usagePreferences.setItem(EVENT_SPEED_MODE_KEY, mode);
@@ -55,13 +55,15 @@ export const calculateTokenComposition = (tokens: {
 export const SPEED_MIN_GENERATION_MS = 100;
 
 /** Speed eligibility matches keeper: positive output and latency, plus a positive
- * TTFT below latency in decode mode. The additional 100 ms decode floor guards
- * against transport bursts; neither mode has a minimum output-token count. */
+ * TTFT below latency in ttft mode. The default is the total/end-to-end window
+ * covering the whole request latency; ttft mode is opt-in and additionally
+ * applies a 100 ms floor on the TTFT-subtracted window to guard against
+ * transport bursts. Neither mode has a minimum output-token count. */
 export const calculateGenerationSpeed = ({
   outputTokens,
   latencyMs,
   ttftMs,
-  mode = 'ttft',
+  mode = 'total',
 }: GenerationSpeedInput): number | null => {
   if (
     !Number.isFinite(outputTokens) ||

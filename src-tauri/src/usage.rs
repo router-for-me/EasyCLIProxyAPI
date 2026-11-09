@@ -2998,10 +2998,10 @@ fn load_usage_overview(
     query: &UsageQuery,
 ) -> Result<UsageOverview, String> {
     let filter = build_usage_filter(query);
-    let (speed_predicate, speed_duration) = if query.speed_mode.as_deref() == Some("total") {
-        ("failed = 0 AND canceled = 0 AND generate != 0 AND output_tokens > 0 AND latency_ms > 0".to_string(), "latency_ms")
-    } else {
+    let (speed_predicate, speed_duration) = if query.speed_mode.as_deref() == Some("ttft") {
         (format!("failed = 0 AND canceled = 0 AND generate != 0 AND output_tokens > 0 AND ttft_ms IS NOT NULL AND ttft_ms > 0 AND latency_ms > ttft_ms AND latency_ms - ttft_ms >= {TPS_MIN_GENERATION_MS}"), "latency_ms - ttft_ms")
+    } else {
+        ("failed = 0 AND canceled = 0 AND generate != 0 AND output_tokens > 0 AND latency_ms > 0".to_string(), "latency_ms")
     };
     let summary_sql = format!(
         r#"
@@ -7583,7 +7583,10 @@ mod tests {
         )
         .unwrap();
 
-        let overview = load_usage_overview(&connection, &UsageQuery::default()).unwrap();
+        let overview = load_usage_overview(&connection, &UsageQuery {
+            speed_mode: Some("ttft".to_string()),
+            ..UsageQuery::default()
+        }).unwrap();
 
         // Sum output tokens over the sum of eligible TTFT-subtracted windows.
         // Small outputs count; missing/zero TTFT and windows below 100 ms do not.
@@ -7599,6 +7602,10 @@ mod tests {
             / (3_000.0 + 5_000.0 + 2_000.0 + 2_000.0 + 3_000.0 + 1_050.0 + 1_000.0);
         assert!((total.tps - expected_total).abs() < 1e-9);
         assert_eq!(total.tps_sample_count, 7);
+
+        let default = load_usage_overview(&connection, &UsageQuery::default()).unwrap();
+        assert!((default.tps - expected_total).abs() < 1e-9);
+        assert_eq!(default.tps_sample_count, 7);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }
