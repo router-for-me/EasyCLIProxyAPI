@@ -1798,3 +1798,44 @@ fn app_update_preservation_is_per_attempt_and_survives_download_refresh() {
     state.start(CancellationToken::new()).unwrap();
     assert!(!state.snapshot().preserve_core);
 }
+
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+fn external_core_update_helper_checks_the_target_before_writing_or_launching() {
+    let root = agent_test_home("external-core-update-helper");
+    let app_dir = root.join("installed");
+    let work = root.join("updater");
+    fs::create_dir_all(&app_dir).unwrap();
+    fs::create_dir_all(&work).unwrap();
+    fs::write(app_dir.join(GUI_CONFIG_FILE), "external-core = true\n").unwrap();
+    let descriptor = PortableUpdateDescriptor {
+        parent_pid: std::process::id(),
+        current_exe: app_dir.join(PORTABLE_APP_BINARY),
+        staged_exe: work.join("new"),
+        current_manifest: app_dir.join("manifest"),
+        staged_manifest: work.join("manifest"),
+        backup_exe: app_dir.join("backup"),
+        backup_manifest: app_dir.join("backup-manifest"),
+        current_core_version: app_dir.join(CORE_VERSION_FILE),
+        staged_core_version: work.join(CORE_VERSION_FILE),
+        backup_core_version: app_dir.join("backup-version"),
+        staged_core_archive: work.join("archive"),
+        target_core_archive: app_dir.join("cpa-core/archive"),
+        install_core_archive: true,
+        ack_path: work.join("ack"),
+        work_dir: work.clone(),
+        target_version: "1.2.3".into(),
+        preserve_core: false,
+    };
+    let path = work.join("descriptor.json");
+    let bytes = serde_json::to_vec(&descriptor).unwrap();
+    fs::write(&path, &bytes).unwrap();
+    let error = run_portable_update_helper(&path).unwrap_err();
+    assert!(error.contains("update the application manually"), "{error}");
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    assert!(!descriptor.ack_path.exists());
+    assert!(!descriptor.current_exe.exists());
+    assert!(!descriptor.target_core_archive.exists());
+    assert!(!portable_update_helper_ack_path(&work).exists());
+    fs::remove_dir_all(root).unwrap();
+}

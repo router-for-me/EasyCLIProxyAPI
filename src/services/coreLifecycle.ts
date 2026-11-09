@@ -6,6 +6,8 @@ export type CoreStatus = {
   ready: boolean;
   starting: boolean;
   managed: boolean;
+  /** The core belongs to an outside service manager (`external-core = true`). */
+  external?: boolean;
   processId: number | null;
   currentVersion: string | null;
   installDir: string;

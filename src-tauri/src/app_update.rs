@@ -1088,6 +1088,8 @@ pub(crate) async fn start_app_update(
     state: tauri::State<'_, AppUpdateState>,
     preserve_core: Option<bool>,
 ) -> Result<(), String> {
+    // The update flow replaces and relaunches the application around a core it owns.
+    app.state::<CoreProcessState>().ensure_app_update_allowed()?;
     let preserve_core = preserve_core.unwrap_or(false);
     if preserve_core && !cfg!(any(windows, target_os = "macos")) {
         return Err("Updating without restarting the kernel is not supported on this platform".to_string());
@@ -2477,12 +2479,22 @@ pub(crate) fn cleanup_portable_update_payload(
     let _ = fs::remove_file(descriptor_path);
 }
 
+pub(crate) fn ensure_gui_update_allowed_at(config_path: &Path) -> Result<(), String> {
+    if external_core_requested_at(config_path) {
+        return Err("In-app updates are disabled while the core is externally managed; update the application manually".to_string());
+    }
+    Ok(())
+}
+
 #[cfg(any(windows, target_os = "linux"))]
 pub(crate) fn run_portable_update_helper(descriptor_path: &Path) -> Result<(), String> {
     let descriptor = serde_json::from_slice::<PortableUpdateDescriptor>(
         &fs::read(descriptor_path).map_err(|error| format!("Failed to read application update descriptor: {error}"))?,
     )
     .map_err(|error| format!("Failed to parse application update descriptor: {error}"))?;
+    let app_dir = descriptor.current_exe.parent()
+        .ok_or_else(|| "Application update target has no parent directory".to_string())?;
+    ensure_gui_update_allowed_at(&app_dir.join(GUI_CONFIG_FILE))?;
     validate_portable_update_descriptor(descriptor_path, &descriptor)?;
     acknowledge_portable_update_helper_start(&descriptor.work_dir)?;
     if let Err(error) =
@@ -3046,6 +3058,7 @@ fn cleanup_macos_update_payload(descriptor_path: &Path, descriptor: &MacosUpdate
 
 #[cfg(target_os = "macos")]
 pub(crate) fn run_portable_update_helper(descriptor_path: &Path) -> Result<(), String> {
+    ensure_gui_update_allowed_at(&gui_config_path()?)?;
     let descriptor = serde_json::from_slice::<MacosUpdateDescriptor>(
         &fs::read(descriptor_path).map_err(|error| format!("Failed to read application update descriptor: {error}"))?,
     )

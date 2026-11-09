@@ -6,6 +6,7 @@ const BUNDLED_CORE_HANDLED_VERSION_FILE: &str = "cpa-gui-bundled-core-handled.tx
 pub(crate) fn lock_core_operation(
     process_state: &CoreProcessState,
 ) -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    process_state.ensure_managed()?;
     let guard = CORE_OPERATION_LOCK
         .try_lock()
         .map_err(|_| "The kernel is performing another operation. Try again later".to_string())?;
@@ -467,6 +468,9 @@ pub(crate) fn defer_bundled_core_install(
 }
 
 pub(crate) fn auto_install_bundled_core_if_needed(app: &tauri::AppHandle, preserve_core: bool) -> Result<bool, String> {
+    if app.state::<CoreProcessState>().external_core {
+        return Ok(false);
+    }
     let install_dir = core_install_dir()?;
     let (info, archive_path) = match bundled_core_archive()? {
         Some(bundled) => bundled,
@@ -654,6 +658,7 @@ fn pause_core_for_install(
 pub(crate) fn pause_core_process_for_install(
     process_state: &CoreProcessState,
 ) -> Result<bool, String> {
+    process_state.ensure_managed()?;
     process_state.ensure_active()?;
     let was_running = current_core_status(Some(process_state), None)?.running
         || process_state.recovery.wants_running();
@@ -670,7 +675,7 @@ pub(crate) fn should_restore_core_after_install(
     config: &GuiConfigFile,
     shutting_down: bool,
 ) -> bool {
-    !shutting_down && (was_running || should_start_core_on_launch(config))
+    !config.external_core && !shutting_down && (was_running || should_start_core_on_launch(config))
 }
 
 fn restore_core_after_install<T>(
@@ -728,6 +733,7 @@ pub(crate) fn start_core_process_with_state(
     process_state: &CoreProcessState,
     gui_config_state: &GuiConfigState,
 ) -> Result<CoreStatus, String> {
+    process_state.ensure_managed()?;
     network_proxy::refresh(gui_config_state)?;
     let config = gui_config_state.snapshot()?;
     process_state.recovery.cancel();
@@ -772,6 +778,7 @@ pub(crate) fn restart_core_process_with_state(
     process_state: &CoreProcessState,
     gui_config_state: &GuiConfigState,
 ) -> Result<CoreStatus, String> {
+    process_state.ensure_managed()?;
     network_proxy::refresh(gui_config_state)?;
     let config = gui_config_state.snapshot()?;
     process_state.recovery.cancel();
@@ -1643,6 +1650,27 @@ pub(crate) fn current_core_status(
     let install_dir = core_install_dir()?;
     let binary_path = find_core_binary(&install_dir);
     let installed = binary_path.is_some();
+    if process_state.is_some_and(|state| state.external_core) {
+        let ready = management_port.is_some_and(is_management_port_open);
+        return Ok(CoreStatus {
+            installed,
+            running: ready,
+            ready,
+            starting: false,
+            recovery: None,
+            managed: false,
+            external: true,
+            process_id: None,
+            current_version: read_core_metadata(&install_dir).map(|metadata| metadata.version),
+            install_dir: path_to_string(&install_dir),
+            binary_path: binary_path.map(|path| path_to_string(&path)),
+            message: if ready {
+                "Externally managed core is reachable"
+            } else {
+                "External core is down; start it with its service manager"
+            }.to_string(),
+        });
+    }
     let starting = process_state.is_some_and(CoreProcessState::is_starting);
     let managed_pid = process_state.and_then(|state| state.managed_pid());
     let management_port_open = management_port.map(is_management_port_open);
@@ -1678,6 +1706,7 @@ pub(crate) fn current_core_status(
         starting,
         recovery: process_state.and_then(|state| state.recovery.status()),
         managed: managed_pid.is_some(),
+        external: false,
         process_id,
         current_version,
         install_dir: path_to_string(&install_dir),
@@ -1863,6 +1892,7 @@ pub(crate) fn start_core_process_inner(
     process_state: &CoreProcessState,
     gui_config: &GuiConfigFile,
 ) -> Result<(), String> {
+    process_state.ensure_managed()?;
     process_state.ensure_active()?;
     let mut resolved_config = gui_config.clone();
     resolved_config.proxy_url = network_proxy::resolve(gui_config);
@@ -2152,6 +2182,7 @@ pub(crate) fn configure_networked_command(command: &mut Command, proxy_url: &str
 }
 
 pub(crate) fn stop_core_process_inner(process_state: &CoreProcessState) -> Result<(), String> {
+    process_state.ensure_managed()?;
     process_state.recovery.cancel();
     let mut stopped_any = false;
     let mut errors = Vec::new();
@@ -2776,6 +2807,9 @@ pub(crate) fn adopt_existing_core_processes(
     config: &GuiConfigFile,
     preserve_core: bool,
 ) -> Result<Vec<u32>, String> {
+    if process_state.external_core {
+        return Ok(Vec::new());
+    }
     let install_dir = core_install_dir()?;
     let Some(binary_path) = find_core_binary(&install_dir) else {
         process_state.clear_adopted_processes()?;
@@ -2809,6 +2843,9 @@ pub(crate) fn adopt_existing_core_processes(
 }
 
 pub(crate) fn prepare_core_for_app_update(process_state: &CoreProcessState) -> Result<(), String> {
+    if process_state.external_core {
+        return Ok(());
+    }
     let _guard = lock_core_operation(process_state)?;
     let mut child = process_state.child.lock().map_err(|error| error.to_string())?;
     if let Some(child) = child.as_mut() {
@@ -2853,6 +2890,9 @@ pub(crate) fn shutdown_managed_core(
     process_state: &CoreProcessState,
     gui_config_state: &GuiConfigState,
 ) {
+    if process_state.external_core {
+        return;
+    }
     let was_running = process_state.managed_pid().is_some()
         || core_install_dir()
             .ok()
@@ -3594,7 +3634,7 @@ fn launched_by_session_autostart() -> bool {
 }
 
 pub(crate) fn should_start_core_on_launch(config: &GuiConfigFile) -> bool {
-    config.start_core_on_launch || config.run_on_startup
+    !config.external_core && (config.start_core_on_launch || config.run_on_startup)
 }
 
 pub(crate) fn configure_initial_main_window(

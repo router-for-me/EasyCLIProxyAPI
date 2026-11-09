@@ -45,8 +45,14 @@ fn wait_for_config_file_stability(path: &Path) {
 }
 
 fn patch_core_from_gui_config_if_valid(config: &GuiConfigFile) -> Result<(), String> {
+    patch_core_from_gui_config_at(config, &core_install_dir()?.join(CORE_CONFIG_FILE))
+}
+
+fn patch_core_from_gui_config_at(config: &GuiConfigFile, path: &Path) -> Result<(), String> {
+    if config.external_core {
+        return Ok(());
+    }
     let _guard = lock_core_config_file()?;
-    let path = core_install_dir()?.join(CORE_CONFIG_FILE);
     if !path.is_file() {
         return Ok(());
     }
@@ -141,6 +147,9 @@ fn handle_configuration_file_changes(
         for tracked_path in tracked_changes.iter().rev() {
             if is_gui_path(tracked_path) {
                 let parsed = (|| -> Result<GuiConfigFile, String> {
+                    if gui_state.is_external_core()? {
+                        return super::load_external_gui_config_at(tracked_path, &core_install_dir()?);
+                    }
                     let content = fs::read_to_string(tracked_path).map_err(|error| {
                         format!(
                             "Failed to read GUI configuration {}: {error}",
@@ -163,7 +172,8 @@ fn handle_configuration_file_changes(
                     }
                 };
                 let result = (|| -> Result<(), String> {
-                    gui_state.replace_external(config.clone())?;
+                    gui_state.replace_external(config)?;
+                    let config = gui_state.snapshot()?;
                     if !preserve_invalid_core_file {
                         patch_core_from_gui_config_if_valid(&config)?;
                     }
@@ -653,5 +663,17 @@ mod tests {
                 .add_path(directory);
         assert!(pending.record(event, &[(path.clone(), path.clone())]));
         assert_eq!(pending.paths, vec![path]);
+    }
+    #[test]
+    fn external_core_watcher_never_rewrites_service_configuration() {
+        let root = crate::unique_test_temp_path("external-core-watcher");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("config.yaml");
+        let original = "auth-dir: /service/oauth\nremote-management:\n  secret-key: '$2a$fixture'\n";
+        fs::write(&path, original).unwrap();
+        let config = GuiConfigFile { external_core: true, ..GuiConfigFile::default() };
+        patch_core_from_gui_config_at(&config, &path).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        fs::remove_dir_all(root).unwrap();
     }
 }
