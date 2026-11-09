@@ -160,6 +160,36 @@ Manually renamed files without a session ID in their filename or a database path
 4. Open **Version Management** and install the bundled or latest CLIProxyAPI core.
 5. Return to **Home**, start the core, then copy the required local endpoint or configure an OAuth/API provider.
 
+### Externally managed core
+
+For a core owned by systemd or another service manager, set `external-core = true`
+in the GUI's `config.toml` before launching it. This is a startup-only setting;
+restart the GUI after changing it. The default is `false`.
+
+External mode ignores `start-core-on-launch` and `run-on-startup`, skips bundled
+core installation and process adoption, and never starts, stops, restarts or
+recovers the core. Status checks report endpoint reachability without claiming
+process ownership. Manual core lifecycle/install commands are rejected.
+Management HTTP access and file-based configuration under `cpa-core` remain
+available; that directory can point to the service's configuration directory.
+
+Startup and background synchronization do not migrate the service's OAuth directory
+or rotate its management secret. Supply the existing cleartext management credential
+in the GUI configuration; a server-side hash is not a client credential. Invalid
+or unreadable external-mode configuration fails closed and is preserved for repair.
+Local plugin installation and standalone update helpers are blocked as well.
+Intentional configuration saves remain available, without an automatic core restart.
+Background system-proxy detection and reverse-proxy restoration do not rewrite
+the external core's configuration. Connection settings and client API keys are
+imported read-only from either the legacy or v8 core configuration; settings reads
+keep the resolved OAuth directory and do not normalize the service's key list.
+
+In-app GUI updates are disabled in external mode, because the update flow
+replaces and relaunches the application around a core it owns. Update manually by
+replacing the GUI executable; `config.toml` and the `cpa-core` directory stay in
+place. Quitting the GUI leaves the external service running, and the tray's
+start, stop and restart items are disabled.
+
 ## Upgrading
 
 Behind an enterprise proxy, administrators should install the corporate root CA

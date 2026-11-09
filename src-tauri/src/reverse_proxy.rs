@@ -170,6 +170,16 @@ fn read_saved_proxy_config(
     read_gui_proxy_config_at(&base_dir)
 }
 
+fn external_core_mode_at(
+    base_dir: &Path,
+    gui_state: Option<&crate::GuiConfigState>,
+) -> Result<bool, String> {
+    match gui_state {
+        Some(state) => state.is_external_core(),
+        None => Ok(crate::external_core_requested_at(&base_dir.join(crate::GUI_CONFIG_FILE))),
+    }
+}
+
 /// Moves settings written by older versions out of the kernel configuration.
 /// The kernel copy is removed only after the GUI configuration file holds the
 /// same values and, when the in-memory GUI settings are available, after they
@@ -191,6 +201,9 @@ fn migrate_proxy_config_from_kernel_at(
     kernel_dir: &Path,
     gui_state: Option<&crate::GuiConfigState>,
 ) -> Result<(), String> {
+    if external_core_mode_at(base_dir, gui_state)? {
+        return Ok(());
+    }
     if read_gui_proxy_config_at(base_dir)?.is_some() {
         return Ok(());
     }
@@ -291,6 +304,9 @@ fn persist_proxy_config_in_gui(
         None => {
             attach_saved_proxy_config(config.clone(), &base_dir)?;
         }
+    }
+    if external_core_mode_at(&base_dir, app.map(gui_state_of))? {
+        return Ok(());
     }
     if let Err(error) = remove_kernel_proxy_config() {
         eprintln!("Failed to remove reverse proxy settings from the kernel configuration: {error}");
@@ -803,9 +819,22 @@ pub struct ReverseProxyManagerState {
     inner: Arc<std::sync::Mutex<ReverseProxyInner>>,
     requests_total: Arc<AtomicU64>,
     operation: Arc<tokio::sync::Mutex<()>>,
+    external_core: bool,
 }
 
 impl ReverseProxyManagerState {
+    pub(crate) fn from_config(config: &crate::GuiConfigFile) -> Self {
+        Self { external_core: config.external_core, ..Self::default() }
+    }
+
+    fn prepare_core_hardening(&self) -> Result<ReverseProxyHardening, String> {
+        if self.external_core {
+            Ok(read_installed_core_hardening())
+        } else {
+            apply_core_hardening()
+        }
+    }
+
     #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
@@ -993,7 +1022,7 @@ impl ReverseProxyManagerState {
         let acceptor = TlsAcceptor::from(tls_config);
         let requests_total = self.requests_total.clone();
 
-        let mut hardening = match apply_core_hardening() {
+        let mut hardening = match self.prepare_core_hardening() {
             Ok(h) => h,
             Err(err) => {
                 eprintln!("Reverse proxy hardening failed: {err}");
@@ -1305,6 +1334,44 @@ mod tests {
     // tests that inspect the installed config while running in parallel.
     static INSTALLED_CONFIG_TEST_LOCK: tokio::sync::Mutex<()> =
         tokio::sync::Mutex::const_new(());
+
+    #[tokio::test]
+    async fn external_core_reverse_proxy_restore_never_migrates_or_hardens_service_yaml() {
+        let _test_guard = INSTALLED_CONFIG_TEST_LOCK.lock().await;
+        let base = crate::unique_test_temp_path("external-core-reverse-proxy");
+        std::fs::create_dir_all(&base).unwrap();
+        let kernel_dir = crate::core_runtime::core_install_dir().unwrap();
+        let path = kernel_dir.join(crate::CORE_CONFIG_FILE);
+        assert!(!path.exists(), "run with an isolated Cargo target directory");
+        std::fs::create_dir_all(&kernel_dir).unwrap();
+        struct Cleanup(std::path::PathBuf, std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+                let _ = std::fs::remove_dir(self.0.parent().unwrap());
+                let _ = std::fs::remove_dir_all(&self.1);
+            }
+        }
+        let _cleanup = Cleanup(path.clone(), base.clone());
+        let core = "host: 0.0.0.0\ntrusted-proxies: [10.0.0.1]\nreverse-proxy:\n  enabled: true\n";
+        let gui = "external-core = true\n";
+        std::fs::write(&path, core).unwrap();
+        std::fs::write(base.join(crate::GUI_CONFIG_FILE), gui).unwrap();
+        let config = crate::GuiConfigFile { external_core: true, ..crate::GuiConfigFile::default() };
+        let manager = ReverseProxyManagerState::from_config(&config);
+        let state = crate::GuiConfigState::new(config);
+        migrate_proxy_config_from_kernel_at(&base, &kernel_dir, Some(&state)).unwrap();
+        migrate_proxy_config_from_kernel_at(&base, &kernel_dir, None).unwrap();
+        assert!(!manager.prepare_core_hardening().unwrap().restart_required);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), core);
+        assert_eq!(std::fs::read_to_string(base.join(crate::GUI_CONFIG_FILE)).unwrap(), gui);
+        let managed = ReverseProxyManagerState::from_config(&crate::GuiConfigFile::default());
+        assert!(managed.prepare_core_hardening().unwrap().restart_required);
+        let hardened: serde_norway::Value = serde_norway::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(hardened["host"], "127.0.0.1");
+        assert_eq!(hardened["trusted-proxies"][0], "10.0.0.1");
+        assert_eq!(hardened["trusted-proxies"][1], "127.0.0.1");
+    }
 
     #[test]
     fn test_accept_errors_have_bounded_backoff() {
