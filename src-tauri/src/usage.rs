@@ -6142,6 +6142,7 @@ mod tests {
             port: 8317,
             allow_lan: false,
             host: "127.0.0.1".to_string(),
+            external_core: false,
             run_on_startup: false,
             start_core_on_launch: true,
             silent_start: false,

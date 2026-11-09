@@ -545,12 +545,14 @@ fn commit(
 ) -> Result<(), String> {
     let changed =
         next.proxy_url != current.proxy_url || next.proxy_override != current.proxy_override;
-    patch(&next.proxy_url)?;
+    if !current.external_core {
+        patch(&next.proxy_url)?;
+    }
     if changed {
         if let Err(error) = persist(&next) {
             return Err(config_update_error_with_rollback(
                 error,
-                patch(&current.proxy_url).err(),
+                if current.external_core { None } else { patch(&current.proxy_url).err() },
             ));
         }
         *current = next;
@@ -1035,5 +1037,38 @@ mod tests {
         .unwrap();
         assert!(persisted);
         assert!(current.proxy_override);
+    }
+    #[test]
+    fn external_core_proxy_refresh_and_rollback_never_patch_service_yaml() {
+        let root = crate::unique_test_temp_path("external-core-proxy");
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join(crate::CORE_CONFIG_FILE);
+        let original = "requests:\n  proxy-url: http://service-proxy:9000\n";
+        for external_core in [false, true] {
+            std::fs::write(&path, original).unwrap();
+            let mut current = GuiConfigFile {
+                external_core,
+                proxy_url: "http://service-proxy:9000".into(),
+                ..GuiConfigFile::default()
+            };
+            let mut next = current.clone();
+            next.proxy_url = "http://desktop-proxy:9001".into();
+            commit(&mut current, next, |proxy| {
+                std::fs::write(&path, proxy).unwrap();
+                Ok(())
+            }, |_| Ok(())).unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(),
+                if external_core { original } else { "http://desktop-proxy:9001" });
+        }
+        std::fs::write(&path, original).unwrap();
+        let mut current = GuiConfigFile { external_core: true, ..GuiConfigFile::default() };
+        let mut next = current.clone();
+        next.proxy_url = "http://desktop-proxy:9001".into();
+        assert!(commit(&mut current, next, |_| {
+            std::fs::write(&path, "must not patch or roll back the external core").unwrap();
+            Ok(())
+        }, |_| Err("GUI save rejected".into())).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

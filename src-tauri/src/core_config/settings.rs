@@ -1053,7 +1053,7 @@ fn resolve_core_relative_path(path: &Path, install_dir: &Path) -> PathBuf {
     normalize_path_lexically(&if path.is_absolute() {
         path.to_path_buf()
     } else {
-        install_dir.join(path)
+        fs::canonicalize(install_dir).unwrap_or_else(|_| install_dir.to_path_buf()).join(path)
     })
 }
 
@@ -1436,28 +1436,102 @@ pub(crate) fn file_modified_time(path: &Path) -> Option<SystemTime> {
     fs::metadata(path).ok()?.modified().ok()
 }
 
-pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
+pub(crate) fn external_core_requested_at(path: &Path) -> bool {
+    match fs::read_to_string(path) {
+        Ok(content) => external_core_requested_in(&content),
+        Err(error) => error.kind() != io::ErrorKind::NotFound,
+    }
+}
+
+fn external_core_requested_in(content: &str) -> bool {
+    if let Ok(document) = content.parse::<toml_edit::Document>() {
+        return document.get("external-core").and_then(toml_edit::Item::as_bool) == Some(true);
+    }
+    // A syntax error elsewhere must not disarm ownership protection.
+    content.lines().any(|line| {
+        let Some((key, value)) = line.split_once('=') else { return false; };
+        key.trim().trim_matches(['"', '\'']) == "external-core"
+            && value.split('#').next().is_some_and(|value| value.trim() == "true")
+    })
+}
+
+fn read_gui_config_at(path: &Path) -> Result<(GuiConfigFile, GuiConfigPresence, bool, bool), String> {
+    let content = fs::read_to_string(path)
+        .map_err(|error| format!("Failed to read GUI configuration {}: {error}", path_to_string(path)))?;
+    match (
+        toml::from_str::<GuiConfigFile>(&content),
+        toml::from_str::<GuiConfigPresence>(&content),
+    ) {
+        (Ok(config), Ok(presence)) => Ok((config, presence, false, false)),
+        _ if external_core_requested_in(&content) => {
+            Err("Invalid external-core GUI configuration; file preserved and core management disabled".to_string())
+        }
+        _ => Ok((GuiConfigFile::default(), GuiConfigPresence::default(), true, true)),
+    }
+}
+
+pub(crate) fn gui_config_startup_fallback(external_core: bool) -> GuiConfigFile {
+    GuiConfigFile {
+        external_core,
+        start_core_on_launch: !external_core,
+        run_on_startup: false,
+        auth_dir: if external_core {
+            auth_dir_path_for_core("", Path::new("."))
+                .map(|path| path_to_string(&path))
+                .unwrap_or_else(|_| DEFAULT_AUTH_DIR.to_string())
+        } else {
+            DEFAULT_AUTH_DIR.to_string()
+        },
+        api_keys: if external_core { Vec::new() } else { vec![default_api_key_entry()] },
+        management_secret_key: if external_core {
+            String::new()
+        } else {
+            LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string()
+        },
+        ..GuiConfigFile::default()
+    }
+}
+
+pub(crate) fn load_external_gui_config_at(
+    config_path: &Path,
+    install_dir: &Path,
+) -> Result<GuiConfigFile, String> {
+    let (mut config, presence, _, parse_failed) = read_gui_config_at(config_path)?;
+    if parse_failed {
+        return Err("Invalid external-core GUI configuration; file preserved and core management disabled".to_string());
+    }
+    config.external_core = true;
+    config.start_core_on_launch = false;
+    config.run_on_startup = false;
+    config.management_secret_key = presence.management_secret_key.unwrap_or_default();
+    let path = install_dir.join(CORE_CONFIG_FILE);
+    let content = fs::read_to_string(&path)
+        .map_err(|error| format!("Failed to read external kernel configuration: {error}"))?;
+    let document = yaml_serde_edit::YamlValue::parse(&content)
+        .map_err(|error| format!("Failed to parse external kernel configuration: {error}"))?;
+    let settings = core_config_settings_from_value(document.get())?;
+    apply_core_settings_to_gui_config(&mut config, &settings);
+    let auth_dir = presence.auth_dir.as_deref().unwrap_or(&settings.auth_dir);
+    config.auth_dir = path_to_string(&auth_dir_path_for_core(auth_dir, install_dir)?);
+    config.auth_dir_user_selected = true;
+    config.proxy_url = settings.proxy_url.clone();
+    config.proxy_override = true;
+    validate_gui_config(&config)?;
+    Ok(config)
+}
+
+pub(crate) fn load_or_create_gui_config(external_core: bool) -> Result<GuiConfigFile, String> {
     let config_path = gui_config_path()?;
+    if external_core || external_core_requested_at(&config_path) {
+        return load_external_gui_config_at(&config_path, &core_install_dir()?);
+    }
     let legacy_config_path = legacy_gui_config_path()?;
     let gui_config_exists = config_path.is_file();
     let legacy_config_exists = legacy_config_path.is_file();
     let had_existing_gui_config = gui_config_exists || legacy_config_exists;
 
     let (mut config, presence, mut changed, gui_parse_failed) = if gui_config_exists {
-        let content = fs::read_to_string(&config_path)
-            .map_err(|err| format!("Failed to read GUI configuration {}: {err}", path_to_string(&config_path)))?;
-        match (
-            toml::from_str::<GuiConfigFile>(&content),
-            toml::from_str::<GuiConfigPresence>(&content),
-        ) {
-            (Ok(config), Ok(presence)) => (config, presence, false, false),
-            _ => (
-                GuiConfigFile::default(),
-                GuiConfigPresence::default(),
-                true,
-                true,
-            ),
-        }
+        read_gui_config_at(&config_path)?
     } else if legacy_config_exists {
         let content = fs::read_to_string(&legacy_config_path).map_err(|err| {
             format!(
@@ -1678,11 +1752,20 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
     } else {
         None
     };
-    let recovered_secret = recover_management_secret(
-        &config.management_secret_key,
-        saved_management_secret,
-        installed_management_secret.as_deref(),
-    );
+    let recovered_secret = if config.external_core {
+        // A hashed server credential cannot authenticate the GUI. Require the
+        // operator's existing cleartext key instead of rotating the service key.
+        saved_management_secret
+            .filter(|key| validate_strong_management_secret_key(key).is_ok())
+            .unwrap_or_default()
+            .to_string()
+    } else {
+        recover_management_secret(
+            &config.management_secret_key,
+            saved_management_secret,
+            installed_management_secret.as_deref(),
+        )
+    };
     let management_secret_rotated = recovered_secret != config.management_secret_key;
     config.management_secret_key = recovered_secret;
     changed |= management_secret_rotated;
@@ -1691,12 +1774,12 @@ pub(crate) fn load_or_create_gui_config() -> Result<GuiConfigFile, String> {
     if changed {
         write_gui_config(&config)?;
     }
-    if management_secret_rotated {
+    if management_secret_rotated && !config.external_core {
         if let Err(error) = patch_core_management_secret_key(&config.management_secret_key) {
             eprintln!("Failed to update legacy CPA WebUI key; will retry the next time the kernel starts: {error}");
         }
     }
-    if !config.auth_dir.trim().is_empty() {
+    if !config.external_core && !config.auth_dir.trim().is_empty() {
         let install_dir = core_install_dir()?;
         let auth_dir = auth_dir_path_for_core(&config.auth_dir, &install_dir)?;
         fs::create_dir_all(&auth_dir)
@@ -1714,10 +1797,10 @@ pub(crate) fn apply_core_settings_to_gui_config(
     config.allow_lan = !is_loopback_host(&core_settings.host);
     // A kernel configuration without these fields falls back to kernel defaults;
     // keep the GUI selection and key list (with remarks) instead of replacing them.
-    if core_settings.auth_dir_configured {
+    if !config.external_core && core_settings.auth_dir_configured {
         config.auth_dir = core_settings.auth_dir.clone();
     }
-    if core_settings.api_keys_configured {
+    if config.external_core || core_settings.api_keys_configured {
         config.api_keys =
             merge_core_api_keys_with_gui_metadata(&config.api_keys, &core_settings.api_keys, None);
     }
@@ -1779,7 +1862,7 @@ pub(crate) fn effective_agent_api_key(config: &GuiConfigFile) -> &str {
         .iter()
         .map(|entry| entry.key.trim())
         .find(|key| !key.is_empty())
-        .unwrap_or(DEFAULT_API_KEY)
+        .unwrap_or(if config.external_core { "" } else { DEFAULT_API_KEY })
 }
 
 pub(crate) fn resolve_agent_api_key<'a>(
@@ -2175,7 +2258,7 @@ pub(crate) fn sanitize_gui_config_at(
         config.allow_lan = allow_lan;
         changed = true;
     }
-    if !config.auth_dir_user_selected {
+    if !config.external_core && !config.auth_dir_user_selected {
         match migrate_auth_dir_at(config, install_dir, persistent_auth_dir) {
             Ok(migrated) => changed |= migrated,
             Err(error) => {
@@ -2183,8 +2266,8 @@ pub(crate) fn sanitize_gui_config_at(
             }
         }
     }
-    if config.auth_dir.trim().is_empty()
-        || (!config.auth_dir_user_selected && Path::new(config.auth_dir.trim()) == persistent_auth_dir)
+    if !config.external_core && (config.auth_dir.trim().is_empty()
+        || (!config.auth_dir_user_selected && Path::new(config.auth_dir.trim()) == persistent_auth_dir))
     {
         config.auth_dir = DEFAULT_AUTH_DIR.to_string();
         changed = true;
@@ -2297,13 +2380,27 @@ pub(crate) fn write_gui_config_to_path(
     use toml_edit::{value, Array, Document, InlineTable, Item, Value};
 
     validate_gui_config(config)?;
-    let existing = fs::read_to_string(config_path).ok();
+    let existing = match fs::read_to_string(config_path) {
+        Ok(content) => Some(content),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("Failed to read GUI configuration before saving: {error}")),
+    };
+    if existing.as_deref().is_some_and(|content| {
+        (config.external_core || external_core_requested_in(content))
+            && toml::from_str::<GuiConfigFile>(content)
+                .map_or(true, |config| validate_gui_config(&config).is_err())
+    }) {
+        return Err("Invalid external-core GUI configuration; refusing to overwrite it".to_string());
+    }
     let mut document = existing
         .as_deref()
         .filter(|content| !content.trim().is_empty())
         .and_then(|content| content.parse::<Document>().ok())
         .unwrap_or_default();
     let root = document.as_table_mut();
+    if config.external_core || root.contains_key("external-core") {
+        set_codex_table_item(root, "external-core", value(config.external_core));
+    }
     if config.usage_statistics_disabled == Some(true) {
         set_codex_table_item(root, "usage_statistics_disabled", value(true));
     } else {

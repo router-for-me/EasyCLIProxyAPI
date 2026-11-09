@@ -169,7 +169,9 @@ pub(crate) fn copy_plugin(
 pub(crate) async fn install_local_plugin(
     source: String,
     gui_config_state: tauri::State<'_, GuiConfigState>,
+    process_state: tauri::State<'_, crate::CoreProcessState>,
 ) -> Result<String, String> {
+    process_state.ensure_managed()?;
     let config = gui_config_state.snapshot()?;
     let value = read_management_value(super::request_plugins(&config).await?).await?;
     let dir = value
@@ -194,6 +196,21 @@ pub(crate) async fn install_local_plugin(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn external_core_local_plugin_install_is_rejected_before_http_or_copy() {
+        use tauri::Manager;
+        let app = tauri::test::mock_app();
+        let config = GuiConfigFile { external_core: true, port: 0, ..GuiConfigFile::default() };
+        app.manage(crate::CoreProcessState::from_config(&config));
+        app.manage(GuiConfigState::new(config));
+        let error = install_local_plugin(
+            "/nonexistent/external-core-plugin.so".into(),
+            app.state(),
+            app.state(),
+        ).await.unwrap_err();
+        assert!(error.contains("externally managed"), "{error}");
+    }
     #[test]
     fn exclusive_publication_moves_complete_file_and_rejects_existing_target() {
         let root = crate::unique_test_temp_path("plugin-publication");

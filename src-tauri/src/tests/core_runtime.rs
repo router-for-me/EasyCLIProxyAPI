@@ -1717,3 +1717,55 @@ fn preserving_an_installed_core_defers_only_the_current_bundle() {
     assert_eq!(fs::read(root.join(core_binary_name())).unwrap(), b"running-core");
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn external_core_mode_defaults_off_and_overrides_startup_preferences() {
+    let default: GuiConfigFile = toml::from_str("").unwrap();
+    assert!(!default.external_core);
+    assert!(should_start_core_on_launch(&default));
+    let config: GuiConfigFile = toml::from_str(
+        "external-core = true\nstart-core-on-launch = true\nrun-on-startup = true\n",
+    ).unwrap();
+    assert!(toml::to_string(&config).unwrap().contains("external-core = true"));
+    assert!(!should_start_core_on_launch(&config));
+    assert!(!should_restore_core_after_install(true, &config, false));
+    assert!(!CoreProcessState::from_config(&config).is_starting());
+}
+
+#[test]
+fn external_core_rejects_lifecycle_and_install_before_side_effects() {
+    let config = GuiConfigFile { external_core: true, ..GuiConfigFile::default() };
+    let state = CoreProcessState::from_config(&config);
+    let gui = GuiConfigState::new(config.clone());
+    assert!(lock_core_operation(&state).unwrap_err().contains("externally managed"));
+    assert!(start_core_process_inner(&state, &config).unwrap_err().contains("externally managed"));
+    assert!(stop_core_process_with_state(&state, &gui).err().unwrap().contains("externally managed"));
+    assert!(restart_core_process_with_state(&state, &gui).err().unwrap().contains("externally managed"));
+    assert!(pause_core_process_for_install(&state).unwrap_err().contains("externally managed"));
+    assert!(state.ensure_app_update_allowed().unwrap_err().contains("update the application manually"));
+    assert!(state.adopt_process_ids(Path::new("unused"), vec![std::process::id()])
+        .unwrap_err().contains("externally managed"));
+    assert!(adopt_existing_core_processes(&state, &config, false).unwrap().is_empty());
+    prepare_core_for_app_update(&state).unwrap();
+    shutdown_managed_core(&state, &gui);
+    assert!(state.managed_pid().is_none());
+    assert!(!state.recovery.wants_running());
+    assert_eq!(gui.snapshot().unwrap().run_on_startup, config.run_on_startup);
+}
+
+#[test]
+fn external_core_status_tracks_reachability_without_adopting_a_process() {
+    let config = GuiConfigFile { external_core: true, ..GuiConfigFile::default() };
+    let state = CoreProcessState::from_config(&config);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let online = current_core_status(Some(&state), Some(port)).unwrap();
+    assert!(online.running && online.ready);
+    assert!(!online.managed);
+    assert!(online.process_id.is_none() && online.recovery.is_none());
+    drop(listener);
+    let offline = current_core_status(Some(&state), Some(port)).unwrap();
+    assert!(!offline.running && !offline.ready);
+    assert!(offline.message.contains("External core is down"));
+    assert!(!state.recovery.wants_running());
+}

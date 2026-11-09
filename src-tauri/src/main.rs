@@ -322,6 +322,7 @@ struct AppUpdateInner {
 
 #[derive(Default)]
 struct CoreProcessState {
+    external_core: bool,
     recovery: core_recovery::CoreRecovery,
     child: Mutex<Option<CoreChild>>,
     adopted_processes: Mutex<Vec<AdoptedCoreProcess>>,
@@ -451,6 +452,8 @@ struct CoreStatus {
     ready: bool,
     starting: bool,
     managed: bool,
+    /// The core belongs to an outside service manager (`external-core = true`).
+    external: bool,
     process_id: Option<u32>,
     current_version: Option<String>,
     install_dir: String,
@@ -658,6 +661,7 @@ struct GuiConfigFile {
     port: u16,
     allow_lan: bool,
     host: String,
+    external_core: bool,
     run_on_startup: bool,
     start_core_on_launch: bool,
     silent_start: bool,
@@ -979,6 +983,7 @@ impl Default for GuiConfigFile {
             port: 8317,
             allow_lan: false,
             host: "127.0.0.1".to_string(),
+            external_core: false,
             run_on_startup: false,
             start_core_on_launch: true,
             silent_start: false,
@@ -2009,6 +2014,7 @@ impl AppUpdateState {
 impl CoreProcessState {
     fn new(starting: bool) -> Self {
         Self {
+            external_core: false,
             recovery: core_recovery::CoreRecovery::default(),
             child: Mutex::new(None),
             adopted_processes: Mutex::new(Vec::new()),
@@ -2016,6 +2022,29 @@ impl CoreProcessState {
             shutting_down: AtomicBool::new(false),
             shutdown_complete: AtomicBool::new(false),
             preserve_on_exit: AtomicBool::new(false),
+        }
+    }
+
+    fn from_config(config: &GuiConfigFile) -> Self {
+        Self {
+            external_core: config.external_core,
+            ..Self::new(should_start_core_on_launch(config))
+        }
+    }
+
+    fn ensure_managed(&self) -> Result<(), String> {
+        if self.external_core {
+            Err("Core is externally managed; use its service manager for lifecycle and version changes".to_string())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn ensure_app_update_allowed(&self) -> Result<(), String> {
+        if self.external_core {
+            Err("In-app updates are disabled while the core is externally managed; update the application manually".to_string())
+        } else {
+            Ok(())
         }
     }
 
@@ -2077,6 +2106,7 @@ impl CoreProcessState {
     }
 
     fn adopt_process_ids(&self, binary_path: &Path, process_ids: Vec<u32>) -> Result<(), String> {
+        self.ensure_managed()?;
         let mut adopted = self
             .adopted_processes
             .lock()
@@ -2112,6 +2142,7 @@ impl CoreProcessState {
     }
 
     fn store_child(&self, child: CoreChild) -> Result<u32, String> {
+        self.ensure_managed()?;
         self.ensure_active()?;
         let pid = child.id();
         self.clear_adopted_processes()?;
@@ -2181,11 +2212,18 @@ impl GuiConfigState {
             .map_err(|_| "GUI configuration status lock is poisoned".to_string())
     }
 
-    fn replace_external(&self, config: GuiConfigFile) -> Result<(), String> {
+    fn is_external_core(&self) -> Result<bool, String> {
+        self.inner.lock()
+            .map(|config| config.external_core)
+            .map_err(|_| "GUI configuration status lock is poisoned".to_string())
+    }
+
+    fn replace_external(&self, mut config: GuiConfigFile) -> Result<(), String> {
         let mut current = self
             .inner
             .lock()
             .map_err(|_| "GUI configuration status lock is poisoned".to_string())?;
+        config.external_core = current.external_core;
         *current = config;
         Ok(())
     }
@@ -2385,6 +2423,9 @@ impl GuiConfigState {
     }
 
     fn sync_core_settings(&self, settings: &CoreConfigSettings) -> Result<GuiConfigFile, String> {
+        if self.is_external_core()? {
+            return self.replace_core_settings_external(settings);
+        }
         self.sync_core_settings_internal(settings, None, false, false)
     }
 
@@ -2396,6 +2437,9 @@ impl GuiConfigState {
         &self,
         settings: &CoreConfigSettings,
     ) -> Result<GuiConfigFile, String> {
+        if self.is_external_core()? {
+            return self.replace_core_settings_external(settings);
+        }
         self.sync_core_settings_internal(settings, None, true, false)
     }
 
@@ -2423,7 +2467,9 @@ impl GuiConfigState {
             config.host = settings.host.clone();
             config.port = settings.port;
             config.allow_lan = !is_loopback_host(&settings.host);
-            config.auth_dir = settings.auth_dir.clone();
+            if !config.external_core {
+                config.auth_dir = settings.auth_dir.clone();
+            }
             config.debug = settings.debug;
             config.commercial_mode = settings.commercial_mode;
             config.logging_to_file = settings.logging_to_file;
@@ -2597,7 +2643,10 @@ fn main() {
                 .next()
                 .map(PathBuf::from)
                 .ok_or_else(|| "Application update helper is missing its descriptor file".to_string())
-                .and_then(|path| run_portable_update_helper(&path));
+                .and_then(|path| {
+                    ensure_gui_update_allowed_at(&gui_config_path()?)?;
+                    run_portable_update_helper(&path)
+                });
             if let Err(error) = result {
                 eprintln!("{error}");
             }
@@ -2624,18 +2673,22 @@ fn main() {
     };
 
     let portable_update_ack = portable_update_ack_argument();
-    let gui_config = match load_or_create_gui_config() {
-        Ok(config) => config,
+    // Latch before loading: recovery must not turn a failed external config into
+    // permission to install, adopt or stop a systemd-owned core.
+    let external_core = gui_config_path()
+        .map(|path| external_core_requested_at(&path))
+        .unwrap_or(true);
+    let gui_config = match load_or_create_gui_config(external_core) {
+        Ok(mut config) => {
+            config.external_core |= external_core;
+            config
+        },
         Err(error) => {
             eprintln!("{error}");
             if portable_update_ack.is_some() {
                 return;
             }
-            let mut config = GuiConfigFile::default();
-            // If the GUI configuration cannot be read before the kernel starts,
-            // use the shared recovery key so requests and the generated kernel
-            // configuration stay synchronized.
-            config.management_secret_key = LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string();
+            let mut config = gui_config_startup_fallback(external_core);
             if let Err(sanitize_error) = sanitize_gui_config(&mut config) {
                 eprintln!("Failed to initialize fixed credentials directory: {sanitize_error}");
             }
@@ -2670,20 +2723,18 @@ fn main() {
         .manage(CoreDownloadState::default())
         .manage(AppUpdateState::default())
         .manage(window_activity::WindowActivity::default())
-        .manage(CoreProcessState::new(should_start_core_on_launch(
-            &gui_config,
-        )))
+        .manage(CoreProcessState::from_config(&gui_config))
         .manage(DeepSeekHarnessProcessState::default())
         .manage(usage::UsageCollectorState::default())
         .manage(agent_usage::AgentUsageState::default())
+        .manage(reverse_proxy::ReverseProxyManagerState::from_config(&gui_config))
         .manage(GuiConfigState::new(gui_config))
         .manage(plugin_webview::PluginWebviewState::default())
         .manage(MainWindowState::new(
             initial_window_size,
             initial_window_position,
         ))
-        .manage(AgentConfigStatusCache::default())
-        .manage(reverse_proxy::ReverseProxyManagerState::default());
+        .manage(AgentConfigStatusCache::default());
 
     let app = app.on_window_event(|window, event| {
         if window.label() != "main" {
