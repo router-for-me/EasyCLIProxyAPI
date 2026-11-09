@@ -156,7 +156,7 @@ mod native {
         _: usize,
         data: usize,
     ) -> LRESULT {
-        let _ = catch_unwind(AssertUnwindSafe(|| {
+        let _ = catch_unwind(AssertUnwindSafe(|| -> Option<LRESULT> {
             let app = &*(data as *const tauri::AppHandle);
             if message == WM_NCDESTROY {
                 stop(app);
@@ -174,13 +174,14 @@ mod native {
                 crate::window_activity::sync(app);
                 let result = DefSubclassProc(hwnd, message, wparam, lparam);
                 restore_webview_bounds(app);
-                return result;
+                return Some(result);
             } else if matches!(
                 message,
                 WM_WTSSESSION_CHANGE | WM_DISPLAYCHANGE | WM_DPICHANGED | WM_SETTINGCHANGE
             ) {
                 request(app);
             }
+            None
         }));
         DefSubclassProc(hwnd, message, wparam, lparam)
     }
