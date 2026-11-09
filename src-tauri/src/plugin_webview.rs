@@ -308,12 +308,14 @@ pub(crate) fn sync_window_activity(app: &AppHandle) -> Result<(), String> {
 fn apply_bounds(webview: &Webview, placed: Option<PlacedBounds>) -> Result<(), String> {
     // Pending layout requests must not reshow a plugin while its window is hidden.
     let window = webview.window();
-    let active = window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(true);
-    match placed.filter(|_| active) {
+    let visible = window.is_visible().unwrap_or(false);
+    match placed.filter(|_| visible) {
         Some(placed) => {
-            webview
-                .set_bounds(to_rect(placed))
-                .map_err(|error| error.to_string())?;
+            if !window.is_minimized().unwrap_or(false) {
+                webview
+                    .set_bounds(to_rect(placed))
+                    .map_err(|error| error.to_string())?;
+            }
             webview.show().map_err(|error| error.to_string())
         }
         None => webview.hide().map_err(|error| error.to_string()),

@@ -39,11 +39,11 @@ describe('usage preferences across updates', () => {
       expect(getInitialCollapseErrors()).toBe(true);
       browser.setItem('cpa-gui.usage-events-collapse-errors.v1', '0');
       expect(getInitialCollapseErrors()).toBe(false);
-      expect(getSpeedMode()).toBe('ttft');
+      expect(getSpeedMode()).toBe('total');
       browser.setItem('cpa-gui.usage-events-speed-mode.v1', 'ttft');
       expect(getSpeedMode()).toBe('ttft');
       browser.setItem('cpa-gui.usage-events-speed-mode.v1', 'invalid');
-      expect(getSpeedMode()).toBe('ttft');
+      expect(getSpeedMode()).toBe('total');
       browser.setItem(EVENT_SPEED_MODE_KEY, 'total');
       expect(getSpeedMode()).toBe('total');
       browser.clear();

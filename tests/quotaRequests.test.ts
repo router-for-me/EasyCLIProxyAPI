@@ -42,8 +42,8 @@ describe('quota API compatibility', () => {
     });
     expect(result).toMatchObject({ status: 'success', plan: 'pro', creditBalance: '12.5', creditsUnlimited: false, resetCredits: 2, resetCreditsApplicable: 0, resetCreditsError: 'HTTP 403: credits forbidden' });
     expect(result.subscriptionActiveUntil).toBe('2030-01-01T00:00:00Z');
-    expect(calls).toHaveLength(2);
-    for (const call of calls) {
+    expect(calls).toHaveLength(3);
+    for (const call of calls.filter((call) => !call.url.startsWith('https://chatgpt.com/backend-api/subscriptions'))) {
       expect(call.header['Chatgpt-Account-Id']).toBe('account-test');
       expect(call.header['User-Agent']).toContain('codex-tui/0.149.1');
       expect(call.authIndex).toBe('1');

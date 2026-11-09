@@ -8,8 +8,13 @@ pub(crate) fn normalize_proxy_url(value: &str) -> Result<String, String> {
     if value.is_empty() || value.chars().any(|c| c.is_control() || c.is_whitespace()) {
         return Err(invalid());
     }
-    let value = if let Some(rest) = value.strip_prefix("socks://") {
-        format!("socks5://{rest}")
+    let value = if let Some((scheme, rest)) = value.split_once("://") {
+        let scheme = if scheme.eq_ignore_ascii_case("socks") {
+            "socks5".to_string()
+        } else {
+            scheme.to_ascii_lowercase()
+        };
+        format!("{scheme}://{rest}")
     } else {
         value.to_string()
     };
@@ -852,6 +857,14 @@ mod tests {
             "socks5://127.0.0.1:1080"
         );
         assert!(normalize_optional_proxy_url("not a proxy").is_err());
+        for (input, expected) in [
+            ("SOCKS://127.0.0.1:1080", "socks5://127.0.0.1:1080"),
+            ("SoCkS5://User:Pass@localhost:1080", "socks5://User:Pass@localhost:1080"),
+            ("SOCKS5H://localhost:1080", "socks5h://localhost:1080"),
+            ("HTTP://localhost:7890", "http://localhost:7890"),
+        ] {
+            assert_eq!(normalize_proxy_url(input).unwrap(), expected);
+        }
         assert!(normalize_optional_proxy_url("http://127.0.0.1:7890/path").is_err());
         assert_eq!(
             parse_detected_proxy("  '127.0.0.1:7890'  ").unwrap(),

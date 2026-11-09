@@ -1350,6 +1350,7 @@ fn portable_update_replacement_preserves_user_data_and_can_roll_back() {
         ack_path: work_dir.join("update-started.ack"),
         work_dir,
         target_version: "1.2.3".to_string(),
+        preserve_core: false,
     };
 
     replace_portable_update_files(&descriptor).unwrap();
@@ -1479,6 +1480,7 @@ fn macos_update_descriptor_is_confined_to_the_app_and_temp_directories() {
         ack_path: work_dir.join("update-started.ack"),
         work_dir: work_dir.clone(),
         target_version: "1.2.3".to_string(),
+        preserve_core: false,
     };
     fs::create_dir_all(&work_dir).unwrap();
     let descriptor_path = work_dir.join("update-descriptor.json");
@@ -1772,4 +1774,27 @@ fn timestamped_preview_versions_are_recognized() {
     assert!(!is_timestamped_preview_version("v0.3.6"));
     assert!(!is_timestamped_preview_version("v0.3.6-preview-Linux-amd64"));
     assert!(!is_timestamped_preview_version("v0.3.6-dev"));
+}
+
+#[test]
+fn app_update_preservation_is_per_attempt_and_survives_download_refresh() {
+    let state = AppUpdateState::default();
+    state.start(CancellationToken::new()).unwrap();
+    assert!(!state.snapshot().preserve_core);
+    state.update_task(|task| task.preserve_core = true);
+    let pending = PendingAppUpdate {
+        version: "v1.2.3".to_string(),
+        asset: PortableUpdateAsset {
+            url: "https://example.test/app.zip".to_string(),
+            fallback_urls: Vec::new(),
+            sha256: "0".repeat(64),
+            size_bytes: 100,
+        },
+        arch: "amd64".to_string(),
+    };
+    state.start_download(&pending).unwrap();
+    assert!(state.snapshot().preserve_core);
+    state.finish("cancelled", None);
+    state.start(CancellationToken::new()).unwrap();
+    assert!(!state.snapshot().preserve_core);
 }

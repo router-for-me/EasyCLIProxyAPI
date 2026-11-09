@@ -1710,8 +1710,8 @@ pub(crate) fn replace_yaml_range(content: &str, start: usize, end: usize, block:
 pub(crate) fn clear_legacy_api_key_paths(document: &yaml_edit::Document) {
     use yaml_edit::path::YamlPath;
 
-    document.remove_path("auth.providers.config-api-key.api-key-entries");
-    document.remove_path("auth.providers.config-api-key.api-keys");
+    let _ = document.try_remove_path("auth.providers.config-api-key.api-key-entries");
+    let _ = document.try_remove_path("auth.providers.config-api-key.api-keys");
 }
 
 #[cfg(test)]
@@ -2187,4 +2187,42 @@ pub(crate) fn yaml_mapping_value_mut<'a>(
 
 pub(crate) fn yaml_key(key: &str) -> serde_norway::Value {
     serde_norway::Value::String(key.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_yaml_value_changes_preserves_root_sections_after_plain_scalar_apostrophe() {
+        let input = r#"plugins:
+    configs:
+        p:
+            store:
+                description: OpenCode Zen's free models.
+server:
+    port: 1
+upstream:
+    codex:
+        x: false
+"#;
+        let original = serde_norway::from_str::<serde_norway::Value>(input).unwrap();
+        let mut updated = original.clone();
+        set_core_yaml_path_value(
+            &mut updated,
+            &["upstream", "codex", "x"],
+            serde_norway::Value::Bool(true),
+        )
+        .unwrap();
+
+        let rendered = render_yaml_value_changes(input, &original, &updated)
+            .unwrap_or_else(|error| panic!("update after plain scalar apostrophe failed: {error}"));
+
+        assert_eq!(
+            rendered.lines().filter(|line| *line == "upstream:").count(),
+            1
+        );
+        let parsed = serde_norway::from_str::<serde_norway::Value>(&rendered).unwrap();
+        assert_eq!(parsed, updated);
+    }
 }

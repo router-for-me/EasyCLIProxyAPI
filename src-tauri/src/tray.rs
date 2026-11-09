@@ -43,6 +43,8 @@ pub(crate) fn show_main_window_on_main_thread(app_handle: &tauri::AppHandle) {
     if window.is_minimized().unwrap_or(false) {
         if let Err(error) = window.unminimize() {
             eprintln!("Failed to restore the main window: {error}");
+        } else {
+            crate::window_activity::sync(app_handle);
         }
     }
     if let Err(error) = window.set_focus() {
@@ -418,6 +420,8 @@ pub(crate) fn show_windows_main_window(app_handle: &tauri::AppHandle) {
     if window.is_minimized().unwrap_or(false) {
         if let Err(error) = window.unminimize() {
             eprintln!("Failed to restore the main window: {error}");
+        } else {
+            crate::window_activity::sync(app_handle);
         }
     }
     if let Err(error) = window.set_focus() {
