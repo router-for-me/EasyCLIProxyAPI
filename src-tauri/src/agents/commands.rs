@@ -1946,40 +1946,18 @@ pub(crate) fn parse_agent_model_options(
         let input_modalities = codex_catalog::parse_modalities(item).or_else(|| {
             codex_catalog::parse_modalities(&serde_json::json!({"input_modalities": item.get("input")}))
         });
-        let thinking_levels = parse_thinking_levels(item);
         let harness_metadata = harness_api_metadata(item);
 
         if let Some(model_alias) = model_alias {
             if keep_original {
-                append_agent_model_option(&mut models, &name, display_name, false, context_window, input_modalities.clone(), thinking_levels.clone(), harness_metadata.clone());
+                append_agent_model_option(&mut models, &name, display_name, false, context_window, input_modalities.clone(), harness_metadata.clone());
             }
-            append_agent_model_option(&mut models, &model_alias, Some(name), true, context_window, input_modalities, thinking_levels, harness_metadata);
+            append_agent_model_option(&mut models, &model_alias, Some(name), true, context_window, input_modalities, harness_metadata);
         } else {
-            append_agent_model_option(&mut models, &name, display_name, false, context_window, input_modalities, thinking_levels, harness_metadata);
+            append_agent_model_option(&mut models, &name, display_name, false, context_window, input_modalities, harness_metadata);
         }
     }
     Ok(models)
-}
-
-pub(crate) fn parse_thinking_levels(item: &serde_json::Value) -> Vec<String> {
-    item.get("thinking")
-        .or_else(|| item.get("Thinking"))
-        .and_then(|thinking| thinking.get("levels").or_else(|| thinking.get("Levels")))
-        .and_then(serde_json::Value::as_array)
-        .map(|levels| {
-            levels
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .map(|level| level.trim().to_ascii_lowercase())
-                .filter(|level| !level.is_empty())
-                .fold(Vec::new(), |mut result, level| {
-                    if !result.contains(&level) {
-                        result.push(level);
-                    }
-                    result
-                })
-        })
-        .unwrap_or_default()
 }
 
 pub(crate) fn append_agent_model_option(
@@ -1989,7 +1967,6 @@ pub(crate) fn append_agent_model_option(
     is_alias: bool,
     context_window: Option<u64>,
     input_modalities: Option<Vec<String>>,
-    thinking_levels: Vec<String>,
     harness_metadata: Option<serde_json::Value>,
 ) {
     let name = name.trim();
@@ -2007,7 +1984,7 @@ pub(crate) fn append_agent_model_option(
         .map(str::to_string);
     models.push(AgentModelOption {
         input_modalities,
-        reasoning_levels: thinking_levels,
+        reasoning_levels: Vec::new(),
         harness_metadata,
         name: name.to_string(),
         alias,
