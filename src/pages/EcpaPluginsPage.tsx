@@ -182,6 +182,121 @@ function TagPickerPanel({
   );
 }
 
+// Shared one-line tag filter used by the featured grid and the official store
+// tab. The caller owns the selected list; the row keeps to a single line and the
+// picker panel floats above the results.
+export function TagFilterRow({
+  allTags,
+  selectedTags,
+  onToggle,
+  onClear,
+  label,
+  allLabel,
+  pickerLabel,
+  clearLabel,
+  emptyLabel,
+}: {
+  allTags: string[];
+  selectedTags: string[];
+  onToggle: (tag: string) => void;
+  onClear: () => void;
+  label: string;
+  allLabel: string;
+  pickerLabel: string;
+  clearLabel: string;
+  emptyLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('.ecpa-tag-picker') || target?.closest('.ecpa-tag-picker-panel')) return;
+      setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setOpen(false);
+      buttonRef.current?.focus();
+    };
+    document.addEventListener('pointerdown', onPointer, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const visibleTags = useMemo(() => {
+    const picked = selectedTags.filter((tag) => allTags.includes(tag));
+    const rest = allTags.filter((tag) => !picked.includes(tag));
+    return [...picked, ...rest].slice(0, TAG_ROW_LIMIT);
+  }, [allTags, selectedTags]);
+  const hiddenTagCount = allTags.length - visibleTags.length;
+
+  return (
+    <div className="ecpa-tag-bar" role="group" aria-label={label}>
+      <button
+        type="button"
+        className={`filter-chip ecpa-tag-chip${selectedTags.length === 0 ? ' active' : ''}`}
+        aria-pressed={selectedTags.length === 0}
+        onClick={onClear}
+      >
+        {allLabel}
+      </button>
+      {visibleTags.map((tag) => {
+        const active = selectedTags.includes(tag);
+        return (
+          <button
+            key={tag}
+            type="button"
+            className={`filter-chip ecpa-tag-chip${active ? ' active' : ''}`}
+            aria-pressed={active}
+            onClick={() => onToggle(tag)}
+          >
+            {active ? <Check size={12} aria-hidden="true" /> : null}
+            {tag}
+          </button>
+        );
+      })}
+      {allTags.length > 0 ? (
+        <div className={`ecpa-tag-picker${open ? ' open' : ''}`}>
+          <button
+            ref={buttonRef}
+            type="button"
+            className={`filter-chip ecpa-tag-chip ecpa-tag-picker-trigger${selectedTags.length > 0 ? ' has-selection' : ''}`}
+            aria-haspopup="true"
+            aria-expanded={open}
+            aria-label={pickerLabel}
+            title={pickerLabel}
+            onClick={() => setOpen((value) => !value)}
+          >
+            <ChevronDown size={13} aria-hidden="true" />
+            {hiddenTagCount > 0 ? <span className="ecpa-tag-picker-count">{hiddenTagCount}</span> : null}
+            {selectedTags.length > 0 ? <span className="ecpa-tag-picker-badge">{selectedTags.length}</span> : null}
+          </button>
+          {open ? createPortal(
+            <TagPickerPanel
+              anchorRef={buttonRef}
+              allTags={allTags}
+              selectedTags={selectedTags}
+              onToggle={onToggle}
+              onClear={onClear}
+              label={label}
+              clearLabel={clearLabel}
+              emptyLabel={emptyLabel}
+            />,
+            document.body,
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function EcpaPluginsPage() {
   const { t, locale } = useI18n();
   const { askConfirmation, confirmationDialog } = useConfirmation();
@@ -444,8 +559,6 @@ export function EcpaPluginsPage() {
   // shows one line of chips and keeps the rest behind a picker panel, so a long
   // tag list never pushes the results down.
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [tagPickerOpen, setTagPickerOpen] = useState(false);
-  const tagPickerButtonRef = useRef<HTMLButtonElement>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -504,27 +617,6 @@ export function EcpaPluginsPage() {
     });
   }, [allTags]);
 
-  // The picker panel closes on an outside click or Escape, like a native select.
-  useEffect(() => {
-    if (!tagPickerOpen) return;
-    const onPointer = (event: PointerEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest('.ecpa-tag-picker') || target?.closest('.ecpa-tag-picker-panel')) return;
-      setTagPickerOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      setTagPickerOpen(false);
-      tagPickerButtonRef.current?.focus();
-    };
-    document.addEventListener('pointerdown', onPointer, true);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPointer, true);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [tagPickerOpen]);
 
   const filteredPlugins = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -552,15 +644,6 @@ export function EcpaPluginsPage() {
       : [...current, tag]);
   };
 
-  // One line of chips: the tags already chosen come first so a selection made in
-  // the panel is always visible, then the first tags in registry order fill the
-  // row. Everything else lives in the picker panel.
-  const visibleTags = useMemo(() => {
-    const picked = selectedTags.filter((tag) => allTags.includes(tag));
-    const rest = allTags.filter((tag) => !picked.includes(tag));
-    return [...picked, ...rest].slice(0, TAG_ROW_LIMIT);
-  }, [allTags, selectedTags]);
-  const hiddenTagCount = allTags.length - visibleTags.length;
 
   const handleOpenRepository = (repositoryUrl: string) => {
     const safeUrl = safePluginWebURL(repositoryUrl);
@@ -655,62 +738,17 @@ export function EcpaPluginsPage() {
       </div>
 
       <div className="ecpa-results-bar">
-        <div className="ecpa-tag-bar" role="group" aria-label={t('ecpaPlugins.tagFilter')}>
-          <button
-            type="button"
-            className={`filter-chip ecpa-tag-chip${selectedTags.length === 0 ? ' active' : ''}`}
-            aria-pressed={selectedTags.length === 0}
-            onClick={() => setSelectedTags([])}
-          >
-            {t('ecpaPlugins.tagAll')}
-          </button>
-          {visibleTags.map((tag) => {
-            const active = selectedTags.includes(tag);
-            return (
-              <button
-                key={tag}
-                type="button"
-                className={`filter-chip ecpa-tag-chip${active ? ' active' : ''}`}
-                aria-pressed={active}
-                onClick={() => toggleTag(tag)}
-              >
-                {active ? <Check size={12} aria-hidden="true" /> : null}
-                {tag}
-              </button>
-            );
-          })}
-          {allTags.length > 0 ? (
-            <div className={`ecpa-tag-picker${tagPickerOpen ? ' open' : ''}`}>
-              <button
-                ref={tagPickerButtonRef}
-                type="button"
-                className={`filter-chip ecpa-tag-chip ecpa-tag-picker-trigger${selectedTags.length > 0 ? ' has-selection' : ''}`}
-                aria-haspopup="true"
-                aria-expanded={tagPickerOpen}
-                aria-label={t('ecpaPlugins.tagPicker')}
-                title={t('ecpaPlugins.tagPicker')}
-                onClick={() => setTagPickerOpen((open) => !open)}
-              >
-                <ChevronDown size={13} aria-hidden="true" />
-                {hiddenTagCount > 0 ? <span className="ecpa-tag-picker-count">{hiddenTagCount}</span> : null}
-                {selectedTags.length > 0 ? <span className="ecpa-tag-picker-badge">{selectedTags.length}</span> : null}
-              </button>
-              {tagPickerOpen ? createPortal(
-                <TagPickerPanel
-                  anchorRef={tagPickerButtonRef}
-                  allTags={allTags}
-                  selectedTags={selectedTags}
-                  onToggle={toggleTag}
-                  onClear={() => setSelectedTags([])}
-                  label={t('ecpaPlugins.tagFilter')}
-                  clearLabel={t('ecpaPlugins.tagPickerClear')}
-                  emptyLabel={t('ecpaPlugins.tagPickerEmpty')}
-                />,
-                document.body,
-              ) : null}
-            </div>
-          ) : null}
-        </div>
+        <TagFilterRow
+          allTags={allTags}
+          selectedTags={selectedTags}
+          onToggle={toggleTag}
+          onClear={() => setSelectedTags([])}
+          label={t('ecpaPlugins.tagFilter')}
+          allLabel={t('ecpaPlugins.tagAll')}
+          pickerLabel={t('ecpaPlugins.tagPicker')}
+          clearLabel={t('ecpaPlugins.tagPickerClear')}
+          emptyLabel={t('ecpaPlugins.tagPickerEmpty')}
+        />
         <div className="ecpa-results-meta">
           {hasActiveFilter ? (
             <button type="button" className="link-button muted ecpa-clear-filters" onClick={handleClearFilters}>

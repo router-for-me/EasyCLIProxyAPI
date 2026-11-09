@@ -16,7 +16,7 @@ import {
   type PluginStoreEntry,
   type PluginStoreResponse,
 } from "../services/plugins";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PluginLogo } from "../components/ProviderLogo";
 import { Download, ExternalLink, Folder, LogIn, Puzzle, RefreshCw, Search, Settings2, Trash2, X } from "lucide-react";
 import { useI18n } from "../i18n";
@@ -33,7 +33,7 @@ import { PluginInstallDialog } from "./PluginInstallDialog";
 import { PluginOAuthDialog } from "./PluginOAuthDialog";
 import { GitHubTokenHint, isGitHubRateLimit } from "./PluginRateLimitHint";
 import { PluginSettingsPanel } from "./PluginSettingsPanel";
-import { EcpaPluginsPage } from "./EcpaPluginsPage";
+import { EcpaPluginsPage, TagFilterRow } from "./EcpaPluginsPage";
 import { Select } from "../components/Select";
 import "./PluginsPage.css";
 
@@ -54,6 +54,8 @@ export function PluginsPage() {
   const [search, setSearch] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const [filter, setFilter] = useState("all");
+  // Store tags are multi-select and share the featured page's one-line filter row.
+  const [storeTags, setStoreTags] = useState<string[]>([]);
   const [configPlugin, setConfigPlugin] = useState<PluginListEntry | null>(null);
   const [installEntry, setInstallEntry] = useState<PluginStoreEntry | null>(null);
   const [oauthPlugin, setOAuthPlugin] = useState<PluginListEntry | null>(null);
@@ -345,14 +347,28 @@ export function PluginsPage() {
     && ["matched", "assumed"].includes(entry.installSourceStatus)
     && (!entry.authRequired || entry.authConfigured),
   );
-  const storePlugins = (store?.plugins ?? []).filter(plugin => matches([plugin.id, plugin.name, plugin.description, getPluginStoreLocalizedDescription(plugin, locale), plugin.author, ...plugin.tags]) && (filter === "all" || (filter === "installed" && plugin.installed) || (filter === "updates" && plugin.updateAvailable)));
+  // A tag that leaves the store must not keep filtering silently.
+  const storeAllTags = useMemo(() => {
+    const seen = new Set<string>();
+    for (const entry of store?.plugins ?? []) for (const tag of entry.tags) if (tag) seen.add(tag);
+    return Array.from(seen);
+  }, [store]);
+  useEffect(() => {
+    setStoreTags(current => {
+      const kept = current.filter(tag => storeAllTags.includes(tag));
+      return kept.length === current.length ? current : kept;
+    });
+  }, [storeAllTags]);
+  const storePlugins = (store?.plugins ?? []).filter(plugin => matches([plugin.id, plugin.name, plugin.description, getPluginStoreLocalizedDescription(plugin, locale), plugin.author, ...plugin.tags])
+    && (filter === "all" || (filter === "installed" && plugin.installed) || (filter === "updates" && plugin.updateAvailable))
+    && (storeTags.length === 0 || storeTags.some(tag => plugin.tags.includes(tag))));
   const sourceErrors = (tab === "installed" ? localUpdates : store)?.sourceErrors ?? [];
   const locked = busy || loading || Boolean(configPlugin || installEntry || oauthPlugin);
 
   return <div className="plugins-page" role="region" aria-label={pt("title")}>
     <div className="plugin-navigation">
       {supported !== null && <Tabs activation="manual" className="plugin-tabs secondary-page-tabs" aria-label={pt("title")} value={tab} disabled={busy}
-        onChange={value => { setTab(value); setSearch(""); setFilter("all"); }}
+        onChange={value => { setTab(value); setSearch(""); setFilter("all"); setStoreTags([]); }}
         items={(["installed", "store", "ecpa", "settings"] as const).map(value => ({ value, id: `plugin-tab-${value}`, panelId: "plugin-tab-panel", label: pt(value === "installed" ? "local" : value === "ecpa" ? "featured" : value) }))} />}
       <div className="plugin-toolbar">
         {supported === true && tab !== "settings" && tab !== "ecpa" && <>
@@ -376,6 +392,19 @@ export function PluginsPage() {
         </>}
       </div>
     </div>
+    {tab === "store" && supported === true && storeAllTags.length > 0 && <div className="plugin-store-tag-bar">
+      <TagFilterRow
+        allTags={storeAllTags}
+        selectedTags={storeTags}
+        onToggle={tag => setStoreTags(current => current.includes(tag) ? current.filter(value => value !== tag) : [...current, tag])}
+        onClear={() => setStoreTags([])}
+        label={pt("tagFilter")}
+        allLabel={pt("tagAll")}
+        pickerLabel={pt("moreTags")}
+        clearLabel={pt("clearTags")}
+        emptyLabel={pt("noTags")}
+      />
+    </div>}
     <div className="plugin-tab-panel" id="plugin-tab-panel" role={supported !== null ? "tabpanel" : undefined} aria-labelledby={supported !== null ? `plugin-tab-${tab}` : undefined}>
     {tab !== "ecpa" && error && <Notice tone="error" icon={false} className="plugin-banner" action={<button className="secondary-button" disabled={busy || loading} onClick={() => void load(tabRef.current, tabRef.current === "installed")}>{pt("retry")}</button>}>{error}{isGitHubRateLimit(error) ? <GitHubTokenHint /> : null}</Notice>}
     {tab === "ecpa" ? <EcpaPluginsPage /> : supported === false ? <EmptyState className="plugin-empty" icon={<Puzzle size={36} />}>{pt("unsupported")}</EmptyState> : supported === null ? <EmptyState className="plugin-empty" role="status">{loading ? t("common.loading") : pt("retry")}</EmptyState> : <>
@@ -421,7 +450,7 @@ export function PluginsPage() {
               <div className="plugin-card-actions">{entry.installed && <span className="plugin-badge">{pt(entry.updateAvailable ? "updates" : "installed")}</span>}<button className="primary-button compact-button" disabled={locked || (entry.authRequired && !entry.authConfigured)} onClick={() => setInstallEntry(entry)}><Download size={15} />{pt(entry.authRequired && !entry.authConfigured ? "authMissing" : !entry.installed ? "install" : entry.updateAvailable ? "update" : "reinstall")}</button></div>
             </article>)}</div>
           </>}
-          {!loading && !error && (tab === "installed" ? !plugins.length : !storePlugins.length) && <EmptyState className="plugin-empty" icon={<Puzzle size={36} />} title={pt(search || filter !== "all" ? "noMatches" : "empty")} action={tab === "installed" && !search ? <button className="primary-button" onClick={() => setTab("store")}>{pt("store")}</button> : undefined}>{tab === "installed" && !search ? pt("emptyHint") : null}</EmptyState>}
+          {!loading && !error && (tab === "installed" ? !plugins.length : !storePlugins.length) && <EmptyState className="plugin-empty" icon={<Puzzle size={36} />} title={pt(search || filter !== "all" || storeTags.length > 0 ? "noMatches" : "empty")} action={tab === "installed" && !search ? <button className="primary-button" onClick={() => setTab("store")}>{pt("store")}</button> : undefined}>{tab === "installed" && !search ? pt("emptyHint") : null}</EmptyState>}
         </>}
       </>
     </>}

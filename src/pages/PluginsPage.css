@@ -122,3 +122,17 @@
 
 }
 .plugin-icon img.plugin-logo { width: 100%; height: 100%; padding: 4px; object-fit: contain; border-radius: inherit; }
+
+/* Store tag filter: reuses the featured page's one-line row, aligned with the
+   toolbar above it and separated from the grid by the panel padding. */
+.plugin-store-tag-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 0 10px;
+}
+
+.plugin-store-tag-bar .ecpa-tag-bar {
+  flex: 1 1 auto;
+}
