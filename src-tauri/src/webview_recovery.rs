@@ -53,6 +53,12 @@ fn client_size(width: i32, height: i32, minimized: bool) -> Option<tauri::Physic
         .then(|| tauri::PhysicalSize::new(width as u32, height as u32))
 }
 
+#[cfg(any(windows, test))]
+fn is_minimized_resize_message(message: u32, wparam: usize) -> bool {
+    message == windows_sys::Win32::UI::WindowsAndMessaging::WM_SIZE
+        && wparam == windows_sys::Win32::UI::WindowsAndMessaging::SIZE_MINIMIZED as usize
+}
+
 #[cfg(windows)]
 mod native {
     use super::*;
@@ -144,6 +150,7 @@ mod native {
         _: usize,
         data: usize,
     ) -> LRESULT {
+        let mut suppress = false;
         let _ = catch_unwind(AssertUnwindSafe(|| {
             let app = &*(data as *const tauri::AppHandle);
             if message == WM_NCDESTROY {
@@ -151,6 +158,13 @@ mod native {
                 WTSUnRegisterSessionNotification(hwnd);
                 RemoveWindowSubclass(hwnd, Some(events), ID);
                 drop(Box::from_raw(data as *mut tauri::AppHandle));
+            } else if is_minimized_resize_message(message, wparam) {
+                // Tao's undecorated WM_NCCALCSIZE leaves a non-zero iconic client rect,
+                // and tauri-runtime-wry resizes child WebViews on every Resized event
+                // without filtering SIZE_MINIMIZED. Synchronize activity directly and
+                // keep the main WebView at its normal bounds across minimize/restore.
+                crate::window_activity::sync(app);
+                suppress = true;
             } else if matches!(
                 message,
                 WM_WTSSESSION_CHANGE | WM_DISPLAYCHANGE | WM_DPICHANGED | WM_SETTINGCHANGE
@@ -158,6 +172,9 @@ mod native {
                 request(app);
             }
         }));
+        if suppress {
+            return 0;
+        }
         DefSubclassProc(hwnd, message, wparam, lparam)
     }
 
@@ -448,6 +465,30 @@ mod tests {
         assert_eq!(client_size(0, 1032, false), None);
         assert_eq!(client_size(1920, -1, false), None);
         assert_eq!(client_size(1920, 1032, true), None);
+    }
+
+    #[test]
+    fn minimized_resize_filter_matches_only_size_minimized_messages() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            SIZE_MAXIMIZED, SIZE_MINIMIZED, SIZE_RESTORED, WM_DPICHANGED, WM_SIZE,
+        };
+
+        assert!(is_minimized_resize_message(
+            WM_SIZE,
+            SIZE_MINIMIZED as usize
+        ));
+        assert!(!is_minimized_resize_message(
+            WM_SIZE,
+            SIZE_RESTORED as usize
+        ));
+        assert!(!is_minimized_resize_message(
+            WM_SIZE,
+            SIZE_MAXIMIZED as usize
+        ));
+        assert!(!is_minimized_resize_message(
+            WM_DPICHANGED,
+            SIZE_MINIMIZED as usize
+        ));
     }
 
     #[test]
