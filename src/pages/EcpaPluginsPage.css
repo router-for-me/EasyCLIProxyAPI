@@ -238,15 +238,16 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
   border-radius: var(--radius-full);
-  background: var(--primary-color);
-  color: var(--bg-card);
-  font-size: 10px;
+  background: var(--color-accent, var(--primary-color));
+  color: var(--color-accent-contrast, #fff);
+  font-size: 10.5px;
   font-weight: 600;
   line-height: 1;
+  box-shadow: 0 0 0 1px var(--bg-card);
 }
 
 /* Floating multi-select panel: portalled to the body so the grid never reflows. */
