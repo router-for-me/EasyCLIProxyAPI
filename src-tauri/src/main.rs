@@ -702,6 +702,12 @@ struct GuiConfigFile {
     max_retry_interval: i64,
     transient_error_cooldown_seconds: i64,
     streaming_bootstrap_retries: u32,
+    #[serde(
+        default,
+        rename = "reverse-proxy",
+        skip_serializing_if = "Option::is_none"
+    )]
+    reverse_proxy: Option<crate::reverse_proxy::ReverseProxyConfig>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -1014,6 +1020,7 @@ impl Default for GuiConfigFile {
             max_retry_interval: DEFAULT_MAX_RETRY_INTERVAL,
             transient_error_cooldown_seconds: DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS,
             streaming_bootstrap_retries: DEFAULT_STREAMING_BOOTSTRAP_RETRIES,
+            reverse_proxy: None,
         }
     }
 }
@@ -1057,6 +1064,7 @@ struct GuiConfigPresence {
     max_retry_interval: Option<i64>,
     transient_error_cooldown_seconds: Option<i64>,
     streaming_bootstrap_retries: Option<u32>,
+    reverse_proxy: Option<crate::reverse_proxy::ReverseProxyConfig>,
 }
 
 #[derive(Clone, Serialize)]

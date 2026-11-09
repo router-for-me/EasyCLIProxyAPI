@@ -28,13 +28,17 @@ mod real_kernel_tests;
 #[serde(rename_all = "camelCase")]
 pub struct ReverseProxyConfig {
     pub enabled: bool,
+    #[serde(rename = "listenHost", alias = "listen-host")]
     pub listen_host: String, // "0.0.0.0"
-    pub listen_port: u16,    // 443
+    #[serde(rename = "listenPort", alias = "listen-port")]
+    pub listen_port: u16, // 443
     // 0 means "follow the kernel port"; a nonzero value is an explicit target
     // that is never rewritten to the kernel port.
-    #[serde(default)]
-    pub target_port: u16,    // e.g. 8317
+    #[serde(default, alias = "target-port")]
+    pub target_port: u16, // e.g. 8317
+    #[serde(rename = "certPath", alias = "cert-path")]
     pub cert_path: String,
+    #[serde(rename = "keyPath", alias = "key-path")]
     pub key_path: String,
 }
 
@@ -136,7 +140,59 @@ fn read_installed_proxy_config() -> Result<Option<ReverseProxyConfig>, String> {
     read_proxy_config_document(document.get())
 }
 
-fn persist_proxy_config(config: &ReverseProxyConfig) -> Result<(), String> {
+/// The GUI's own durable configuration (config.toml). Its copy of the settings
+/// survives kernel configuration regeneration, which is why it is read first
+/// when the listener is restored and written first when settings are saved.
+fn read_gui_proxy_config_at(base_dir: &Path) -> Result<Option<ReverseProxyConfig>, String> {
+    let config_path = base_dir.join(crate::GUI_CONFIG_FILE);
+    let content = match std::fs::read_to_string(&config_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "Failed to read GUI configuration {}: {error}",
+                config_path.display()
+            ))
+        }
+    };
+    let config = toml::from_str::<crate::GuiConfigFile>(&content)
+        .map_err(|error| format!("Failed to parse GUI configuration: {error}"))?;
+    Ok(config.reverse_proxy)
+}
+
+fn read_saved_proxy_config() -> Result<Option<ReverseProxyConfig>, String> {
+    match crate::core_runtime::core_base_dir()
+        .and_then(|base_dir| read_gui_proxy_config_at(&base_dir))
+    {
+        Ok(Some(config)) => return Ok(Some(config)),
+        Ok(None) => {}
+        Err(error) => eprintln!("Failed to read reverse proxy settings from GUI configuration: {error}"),
+    }
+    read_installed_proxy_config()
+}
+
+/// Stores the settings in the GUI configuration file at `base_dir`, keeping
+/// every other field of the currently saved GUI settings.
+fn attach_saved_proxy_config(
+    config: ReverseProxyConfig,
+    base_dir: &Path,
+) -> Result<crate::GuiConfigFile, String> {
+    let config_path = base_dir.join(crate::GUI_CONFIG_FILE);
+    let mut gui_config = match std::fs::read_to_string(&config_path) {
+        Ok(content) => toml::from_str::<crate::GuiConfigFile>(&content).unwrap_or_default(),
+        Err(_) => crate::GuiConfigFile::default(),
+    };
+    gui_config.reverse_proxy = Some(config);
+    crate::core_config::write_gui_config_to_path(&gui_config, &config_path)?;
+    Ok(gui_config)
+}
+
+fn persist_proxy_config_in_gui(config: &ReverseProxyConfig) -> Result<(), String> {
+    let base_dir = crate::core_runtime::core_base_dir()?;
+    attach_saved_proxy_config(config.clone(), &base_dir).map(|_| ())
+}
+
+fn persist_proxy_config_in_kernel(config: &ReverseProxyConfig) -> Result<(), String> {
     let _config_guard = lock_core_config_file()?;
     let config_path = crate::core_runtime::core_install_dir()?.join(crate::CORE_CONFIG_FILE);
     let content = std::fs::read_to_string(&config_path).map_err(|error| {
@@ -152,6 +208,37 @@ fn persist_proxy_config(config: &ReverseProxyConfig) -> Result<(), String> {
         write_bytes_atomically(&config_path, updated.as_bytes())?;
     }
     Ok(())
+}
+
+/// Persists the settings in the GUI configuration first so a rejected or
+/// failing kernel config write cannot lose them across a restart.
+fn persist_proxy_config(config: &ReverseProxyConfig) -> Result<(), String> {
+    persist_proxy_config_in_gui(config)?;
+    if let Err(error) = persist_proxy_config_in_kernel(config) {
+        return Err(format!("failed to save configuration: {error}"));
+    }
+    Ok(())
+}
+
+/// Explains an OS access-denied bind failure, which on Windows (os error 10013)
+/// is usually a reserved or excluded port range rather than a listener conflict.
+fn describe_bind_error(bind_addr: &str, error: &std::io::Error) -> String {
+    #[cfg(windows)]
+    let access_denied = error.kind() == std::io::ErrorKind::PermissionDenied
+        || error.raw_os_error() == Some(10013);
+    #[cfg(not(windows))]
+    let access_denied = error.raw_os_error() == Some(libc::EACCES);
+    let base = format!("Failed to bind listener on {bind_addr}: {error}");
+    if !access_denied {
+        return base;
+    }
+    let port = bind_addr.rsplit(':').next().unwrap_or(bind_addr);
+    format!(
+        "{base}. Listening on port {port} is not allowed by the operating system; \
+         the port may be reserved or inside an excluded port range \
+         (Windows: `netsh interface ipv4 show excludedportrange protocol=tcp`). \
+         Choose a different listen port or reserve port {port} for this application."
+    )
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -667,6 +754,12 @@ impl ReverseProxyManagerState {
             .inner
             .lock()
             .map_err(|e| format!("Failed to acquire state lock: {e}"))?;
+        // A failed attempt must not keep looking like a running listener next
+        // to the new error.
+        guard.running = false;
+        guard.listening = None;
+        guard.target = None;
+        guard.listener = None;
         guard.error = Some(error.clone());
         Err(error)
     }
@@ -747,17 +840,16 @@ impl ReverseProxyManagerState {
                         previous.listen_port == config.listen_port
                             && previous.listen_host != config.listen_host
                     }) {
-                        return self.fail_start(format!("Failed to bind listener on {bind_addr}: {error}"));
+                        return self.fail_start(describe_bind_error(&bind_addr, &error));
                     }
                     self.stop_inner().await?;
                     match tokio::net::TcpListener::bind((config.listen_host.as_str(), config.listen_port)).await {
                         Ok(listener) => Arc::new(listener),
-                        Err(error) => return self.fail_start(format!("Failed to bind listener on {bind_addr}: {error}")),
+                        Err(error) => return self.fail_start(describe_bind_error(&bind_addr, &error)),
                     }
                 }
                 Err(err) => {
-                    let err_msg = format!("Failed to bind listener on {bind_addr}: {err}");
-                    return self.fail_start(err_msg);
+                    return self.fail_start(describe_bind_error(&bind_addr, &err));
                 }
             }
         };
@@ -770,22 +862,22 @@ impl ReverseProxyManagerState {
         let acceptor = TlsAcceptor::from(tls_config);
         let requests_total = self.requests_total.clone();
 
-        let (mut hardening, mut restart_error) = match apply_core_hardening() {
-            Ok(h) => (h, None),
-            Err(err) => (ReverseProxyHardening::default(), Some(err)),
+        let mut hardening = match apply_core_hardening() {
+            Ok(h) => h,
+            Err(err) => {
+                eprintln!("Reverse proxy hardening failed: {err}");
+                ReverseProxyHardening::default()
+            }
         };
 
         if hardening.restart_required {
             if let Some(app_handle) = app {
                 if let Err(err) = crate::core_runtime::restart_core_for_proxy(app_handle).await {
-                    restart_error = Some(format!("Failed to restart CPA kernel: {err}"));
+                    eprintln!("Reverse proxy hardening failed: Failed to restart CPA kernel: {err}");
                 } else {
                     hardening.restart_required = false;
                 }
             }
-        }
-        if let Some(error) = &restart_error {
-            eprintln!("Reverse proxy hardening failed: {error}");
         }
 
         let (client, target_tls, target_port) = match core_forward_client(&config) {
@@ -883,7 +975,10 @@ impl ReverseProxyManagerState {
         guard.running = true;
         guard.listening = Some(listening_addr.clone());
         guard.target = Some(target_addr);
-        guard.error = restart_error;
+        // A successful start replaces any bind or restore error from an earlier
+        // attempt, so a running listener never shows an unrelated stale error.
+        // Hardening problems keep their own notice instead.
+        guard.error = None;
         guard.stored_config = Some(config);
         guard.hardening = hardening;
         guard.shutdown_tx = Some(shutdown_tx);
@@ -958,7 +1053,7 @@ impl ReverseProxyManagerState {
         let saved = (|| {
             let config = match self.get_state()?.config {
                 Some(config) => Some(config),
-                None => read_installed_proxy_config()?,
+                None => read_saved_proxy_config()?,
             };
             if let Some(mut config) = config {
                 config.enabled = false;
@@ -984,7 +1079,7 @@ impl ReverseProxyManagerState {
 
     pub async fn restore(&self, app: tauri::AppHandle) -> Result<ReverseProxyState, String> {
         let _operation = self.operation.lock().await;
-        match read_installed_proxy_config() {
+        match read_saved_proxy_config() {
             Ok(Some(config)) => self.apply_inner(config, Some(app)).await,
             Ok(None) => self.get_state(),
             Err(error) => {
@@ -1002,7 +1097,9 @@ impl ReverseProxyManagerState {
         if process_state.is_shutting_down() || process_state.managed_pid().is_none() {
             return self.stop_inner().await;
         }
-        let result = match read_installed_proxy_config() {
+        // Restoring only starts the listener; it never rewrites the saved
+        // settings, so the next start can retry with the same configuration.
+        let result = match read_saved_proxy_config() {
             Ok(Some(config)) => self.apply_inner(config, None).await,
             Ok(None) => self.get_state(),
             Err(error) => {
@@ -1023,7 +1120,7 @@ pub async fn reverse_proxy_get_state(
 ) -> Result<ReverseProxyState, String> {
     let mut current = state.get_state()?;
     if current.config.is_none() {
-        current.config = read_installed_proxy_config()?;
+        current.config = read_saved_proxy_config()?;
     }
     let previous_restart_required = current.hardening.restart_required;
     let mut hardening = read_installed_core_hardening();
@@ -1800,6 +1897,96 @@ mod tests {
     }
 
     #[test]
+    fn test_bind_errors_name_the_port_and_explain_access_denied() {
+        let generic = std::io::Error::from(std::io::ErrorKind::AddrInUse);
+        let message = describe_bind_error("0.0.0.0:443", &generic);
+        assert!(message.contains("0.0.0.0:443"), "{message}");
+        assert!(!message.contains("excluded port range"), "{message}");
+
+        let denied = std::io::Error::from_raw_os_error(bind_access_denied_code());
+        let message = describe_bind_error("0.0.0.0:8444", &denied);
+        assert!(message.contains("0.0.0.0:8444"), "{message}");
+        assert!(message.contains("port 8444"), "{message}");
+        assert!(message.contains("reserved"), "{message}");
+        assert!(message.contains("excluded port range"), "{message}");
+    }
+
+    #[cfg(windows)]
+    fn bind_access_denied_code() -> i32 {
+        10013
+    }
+
+    #[cfg(not(windows))]
+    fn bind_access_denied_code() -> i32 {
+        libc::EACCES
+    }
+
+    fn test_saved_proxy_config() -> ReverseProxyConfig {
+        ReverseProxyConfig {
+            enabled: true,
+            listen_host: "0.0.0.0".to_string(),
+            listen_port: 443,
+            target_port: 8258,
+            cert_path: "/tls/cert.pem".to_string(),
+            key_path: "/tls/key.pem".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_saved_proxy_config_survives_gui_store_rewrite_and_kernel_regeneration() {
+        let config = test_saved_proxy_config();
+        let home = crate::unique_test_temp_path("cpa-gui-reverse-proxy-persist");
+        std::fs::create_dir_all(&home).unwrap();
+        let gui_config_path = home.join("config.toml");
+
+        // Save writes the settings into the GUI's own durable configuration.
+        let saved = crate::reverse_proxy::attach_saved_proxy_config(config.clone(), &home).unwrap();
+        assert_eq!(saved.reverse_proxy.as_ref(), Some(&config));
+        let stored = std::fs::read_to_string(&gui_config_path).unwrap();
+        let loaded: crate::GuiConfigFile = toml::from_str(&stored).unwrap();
+        assert_eq!(loaded.reverse_proxy.as_ref(), Some(&config));
+
+        // A later GUI save for unrelated settings keeps the block, and the
+        // block is dropped only when the settings are cleared on purpose.
+        let mut unrelated = loaded.clone();
+        unrelated.port = 9123;
+        crate::core_config::write_gui_config_to_path(&unrelated, &gui_config_path).unwrap();
+        let after_unrelated = std::fs::read_to_string(&gui_config_path).unwrap();
+        assert!(after_unrelated.contains("[reverse-proxy]"), "{after_unrelated}");
+        let reloaded: crate::GuiConfigFile = toml::from_str(&after_unrelated).unwrap();
+        assert_eq!(reloaded.port, 9123);
+        assert_eq!(reloaded.reverse_proxy.as_ref(), Some(&config));
+
+        // Kernel configuration regeneration keeps the block as well.
+        let template = "config-version: 8\nserver: {host: 0.0.0.0, port: 8317}\n";
+        let current = crate::core_config::patch_core_yaml_document(template, |document| {
+            patch_proxy_config_document(document, &config)
+        })
+        .unwrap()
+        .unwrap();
+        let regenerated =
+            crate::core_config::merge_core_config_yaml(template, Some(&current), &loaded).unwrap();
+        let document: serde_norway::Value = serde_norway::from_str(&regenerated).unwrap();
+        assert_eq!(
+            read_proxy_config_document(&document).unwrap(),
+            Some(config.clone()),
+            "{regenerated}"
+        );
+
+        // Reload prefers the durable GUI copy when the kernel copy is missing.
+        assert_eq!(
+            crate::reverse_proxy::read_gui_proxy_config_at(&home).unwrap(),
+            Some(config.clone())
+        );
+        let mut cleared = reloaded.clone();
+        cleared.reverse_proxy = None;
+        crate::core_config::write_gui_config_to_path(&cleared, &gui_config_path).unwrap();
+        assert!(!std::fs::read_to_string(&gui_config_path)
+            .unwrap()
+            .contains("reverse-proxy"));
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
     fn test_proxy_config_persists_paths_in_legacy_and_v8_documents() {
         let config = ReverseProxyConfig {
             enabled: true,
@@ -2133,8 +2320,18 @@ mod tests {
         assert_eq!(state.listening, Some(format!("127.0.0.1:{proxy_port}")));
         assert_eq!(state.target, Some(format!("127.0.0.1:{target_port}")));
 
+        let conflict_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let occupied_port = conflict_listener.local_addr().unwrap().port();
         let conflicting = ReverseProxyManagerState::new();
-        let error = conflicting.start(config.clone(), None).await.unwrap_err();
+        let error = conflicting.start(
+            ReverseProxyConfig {
+                listen_port: occupied_port,
+                ..config.clone()
+            },
+            None,
+        )
+        .await
+        .unwrap_err();
         assert!(error.contains("Failed to bind listener"));
         let failed_state = conflicting.get_state().unwrap();
         assert!(!failed_state.running);
@@ -2150,6 +2347,30 @@ mod tests {
             .as_ref()
             .unwrap()
             .is_finished());
+
+        // A successful start clears a bind failure from an earlier attempt so a
+        // running listener is never shown together with a stale bind error.
+        {
+            let mut guard = manager.inner.lock().unwrap();
+            guard.error = Some(format!(
+                "Failed to bind listener on 127.0.0.1:{proxy_port}: address in use"
+            ));
+        }
+        let state = manager.apply(config.clone(), None).await.unwrap();
+        assert!(state.running);
+        assert_eq!(state.error, None, "{state:?}");
+
+        // A second proxy instance that cannot bind reports the same specific
+        // error and stays stopped instead of looking like a running listener.
+        let error = conflicting
+            .apply(config.clone(), None)
+            .await
+            .unwrap_err();
+        assert!(error.contains("Failed to bind listener"), "{error}");
+        let failed_state = conflicting.get_state().unwrap();
+        assert!(!failed_state.running, "{failed_state:?}");
+        assert_eq!(failed_state.listening, None);
+        assert_eq!(failed_state.error, Some(error));
 
         // 4. Client sends request to proxy over HTTPS
         let client = reqwest::Client::builder()
