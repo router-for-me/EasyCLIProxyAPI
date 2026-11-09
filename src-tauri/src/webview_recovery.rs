@@ -53,10 +53,16 @@ fn client_size(width: i32, height: i32, minimized: bool) -> Option<tauri::Physic
         .then(|| tauri::PhysicalSize::new(width as u32, height as u32))
 }
 
-#[cfg(any(windows, test))]
+// windows_sys is a cfg(windows) dependency, so these paths must not be expanded
+// on other targets; the predicate itself stays target-independent and testable.
+#[cfg(windows)]
 fn is_minimized_resize_message(message: u32, wparam: usize) -> bool {
     message == windows_sys::Win32::UI::WindowsAndMessaging::WM_SIZE
         && wparam == windows_sys::Win32::UI::WindowsAndMessaging::SIZE_MINIMIZED as usize
+}
+
+fn is_minimized_resize_codes(message: u32, wparam: usize, size: u32, minimized: u32) -> bool {
+    message == size && wparam == minimized as usize
 }
 
 #[cfg(windows)]
@@ -242,7 +248,13 @@ mod native {
         }
         let handle = app.clone();
         tauri::async_runtime::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            // A dead browser process needs the environment to settle before the
+            // controller is replaced. A live webview only needs the bounds nudge,
+            // and delaying that leaves a restored window unpainted on Windows 11.
+            let dead = handle
+                .try_state::<State>()
+                .is_some_and(|state| state.decision.lock().unwrap().dead);
+            tokio::time::sleep(Duration::from_millis(if dead { 250 } else { 0 })).await;
             let app = handle.clone();
             if let Err(error) = handle.run_on_main_thread(move || refresh(&app)) {
                 handle.state::<State>().decision.lock().unwrap().queued = false;
@@ -469,26 +481,20 @@ mod tests {
 
     #[test]
     fn minimized_resize_filter_matches_only_size_minimized_messages() {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            SIZE_MAXIMIZED, SIZE_MINIMIZED, SIZE_RESTORED, WM_DPICHANGED, WM_SIZE,
-        };
+        // Values from the Win32 headers; windows_sys is a Windows-only dependency.
+        const WM_SIZE: u32 = 0x0005;
+        const WM_DPICHANGED: u32 = 0x02E0;
+        const SIZE_RESTORED: u32 = 0;
+        const SIZE_MINIMIZED: u32 = 1;
+        const SIZE_MAXIMIZED: u32 = 2;
 
-        assert!(is_minimized_resize_message(
-            WM_SIZE,
-            SIZE_MINIMIZED as usize
-        ));
-        assert!(!is_minimized_resize_message(
-            WM_SIZE,
-            SIZE_RESTORED as usize
-        ));
-        assert!(!is_minimized_resize_message(
-            WM_SIZE,
-            SIZE_MAXIMIZED as usize
-        ));
-        assert!(!is_minimized_resize_message(
-            WM_DPICHANGED,
-            SIZE_MINIMIZED as usize
-        ));
+        let matches = |message, wparam| {
+            is_minimized_resize_codes(message, wparam, WM_SIZE, SIZE_MINIMIZED)
+        };
+        assert!(matches(WM_SIZE, SIZE_MINIMIZED as usize));
+        assert!(!matches(WM_SIZE, SIZE_RESTORED as usize));
+        assert!(!matches(WM_SIZE, SIZE_MAXIMIZED as usize));
+        assert!(!matches(WM_DPICHANGED, SIZE_MINIMIZED as usize));
     }
 
     #[test]
