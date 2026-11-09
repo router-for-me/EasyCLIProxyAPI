@@ -3,9 +3,10 @@
 .plugins-page { display: flex; flex-direction: column; gap: 20px; min-width: 0; max-width: 1500px; margin: 0 auto; padding: 0 0 24px; }
 .plugin-global-toggle { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; }
 .plugin-navigation { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
-.plugin-navigation > .plugin-toolbar { margin-left: auto; justify-content: flex-end; min-width: 0; }
-.plugin-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.plugins-page .plugin-refresh, .plugins-page .plugin-development-guide, .plugins-page .plugin-check-updates, .plugins-page .plugin-update-all { width: auto; flex: none; }
+.plugin-navigation > .plugin-toolbar { margin-left: auto; justify-content: flex-end; flex: 0 0 auto; }
+.plugin-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; flex: 0 0 auto; }
+.plugin-toolbar select, .plugin-toolbar .secondary-button { white-space: nowrap; }
+.plugins-page .plugin-refresh, .plugins-page .plugin-development-guide, .plugins-page .plugin-check-updates, .plugins-page .plugin-update-all { flex: none; }
 .plugin-search { display: flex; align-items: center; gap: 8px; width: 260px; min-width: 0; min-height: 40px; box-sizing: border-box; padding: 0 8px 0 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-card); color: var(--text-tertiary); }
 .plugin-search > svg { flex: none; }
 .plugin-search input { appearance: none; border: 0; border-radius: var(--radius-none); background: transparent; color: var(--text-primary); flex: 1; width: 100%; min-width: 0; margin: 0; padding: 9px 0; font: inherit; font-size: 13px; line-height: 20px; }
@@ -73,7 +74,7 @@
 @media (max-width: 900px) { .app-shell:has(.plugin-resource-page) { grid-template-rows: max-content minmax(0, 1fr); } }
 .plugin-resource-status { margin: 24px; }
 .plugin-resource-host > .plugin-banner { margin: 16px; }
-@media (max-width: 700px) { .plugin-card { padding: 16px; } .plugin-navigation > .plugin-toolbar { flex: 1 1 100%; } .plugin-search { flex: 1 1 160px; width: auto; } }
+@media (max-width: 700px) { .plugin-card { padding: 16px; } .plugin-navigation > .plugin-toolbar { flex: 1 1 100%; flex-wrap: wrap; } .plugin-search { flex: 1 1 160px; width: auto; } }
 @media (max-width: 420px) { .plugin-card-title { grid-template-columns: 40px minmax(0, 1fr); } .plugin-card-title > .plugin-badge { grid-column: 2; justify-self: start; } }
 
 /* Keep technical metadata subordinate to the plugin name and available actions. */
@@ -122,3 +123,23 @@
 
 }
 .plugin-icon img.plugin-logo { width: 100%; height: 100%; padding: 4px; object-fit: contain; border-radius: inherit; }
+
+}
+
+/* The store results bar reuses the featured page layout verbatim. */
+.plugin-store-results-bar {
+  padding: 0 0 12px;
+}
+
+/* The "plugins globally disabled" state is a short pill in the toolbar so it keeps
+   the head → toolbar → filters → grid order and never needs truncation. */
+.plugin-disabled-hint {
+  flex: none;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+}

@@ -2388,6 +2388,23 @@ pub(crate) fn write_gui_config_to_path(
     ] {
         set_codex_table_item(root, key, item);
     }
+    // The reverse proxy section is GUI-owned but not part of GuiConfigPresence;
+    // it must be written and dropped explicitly so it survives unrelated saves.
+    if let Some(reverse_proxy) = config.reverse_proxy.as_ref() {
+        let mut table = match root.get("reverse-proxy") {
+            Some(Item::Table(table)) => table.clone(),
+            _ => toml_edit::Table::new(),
+        };
+        table.insert("enabled", value(reverse_proxy.enabled));
+        table.insert("listen-host", value(reverse_proxy.listen_host.as_str()));
+        table.insert("listen-port", value(i64::from(reverse_proxy.listen_port)));
+        table.insert("target-port", value(i64::from(reverse_proxy.target_port)));
+        table.insert("cert-path", value(reverse_proxy.cert_path.as_str()));
+        table.insert("key-path", value(reverse_proxy.key_path.as_str()));
+        root.insert("reverse-proxy", Item::Table(table));
+    } else {
+        root.remove("reverse-proxy");
+    }
     for key in [
         "proxy-mode",
         "proxy-manual-url",

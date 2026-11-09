@@ -31,8 +31,10 @@ pub(crate) fn merge_core_config_for_start(
         None
     };
     let merged = merge_core_config_yaml(&template, current.as_deref(), gui_config)?;
-    let merged = patch_core_yaml_document(&merged, crate::reverse_proxy::prepare_core_start)?
-        .unwrap_or(merged);
+    let merged = patch_core_yaml_document(&merged, |document| {
+        crate::reverse_proxy::prepare_core_start(document, gui_config.reverse_proxy.as_ref())
+    })?
+    .unwrap_or(merged);
     write_core_config_if_changed(&config_path, &merged)?;
 
     Ok(config_path)
@@ -1310,6 +1312,59 @@ pub(crate) fn core_config_uses_v8(document: &serde_norway::Value) -> bool {
                 .is_some_and(serde_norway::Value::is_mapping)
         })
         || yaml_mapping_value(root, "api-keys").is_some_and(serde_norway::Value::is_mapping)
+}
+
+/// Removes one top-level section from the kernel configuration text while
+/// keeping every other line and comment untouched. Used for sections that no
+/// longer belong in the kernel configuration, which the general value walker
+/// refuses to delete.
+pub(crate) fn remove_core_yaml_section(content: &str, section: &str) -> Result<Option<String>, String> {
+    let lines: Vec<&str> = content.split_inclusive('\n').collect();
+    let Some(first) = lines.iter().position(|line| is_root_yaml_section(line, section)) else {
+        return Ok(None);
+    };
+    let mut last = first + 1;
+    for (index, line) in lines.iter().enumerate().skip(first + 1) {
+        let body = line.trim_end_matches(['\r', '\n']);
+        if body.trim().is_empty() {
+            continue;
+        }
+        // The section owns every following line indented deeper than its key.
+        if body.len() == body.trim_start().len() {
+            break;
+        }
+        last = index + 1;
+    }
+    let start: usize = lines[..first].iter().map(|line| line.len()).sum();
+    let end: usize = lines[..last].iter().map(|line| line.len()).sum();
+    let mut updated = String::with_capacity(content.len());
+    updated.push_str(&content[..start]);
+    updated.push_str(&content[end..]);
+
+    let original = serde_norway::from_str::<serde_norway::Value>(content)
+        .map_err(|err| format!("Failed to parse kernel configuration: {err}"))?;
+    let mut expected = original.clone();
+    if let Some(mapping) = expected.as_mapping_mut() {
+        mapping.remove(serde_norway::Value::String(section.to_string()));
+    }
+    let actual = serde_norway::from_str::<serde_norway::Value>(&updated)
+        .map_err(|err| format!("Failed to validate updated kernel configuration: {err}"))?;
+    if actual != expected {
+        return Err(format!(
+            "Removing kernel configuration section {section} would change other settings; write rejected"
+        ));
+    }
+    Ok(Some(updated))
+}
+
+fn is_root_yaml_section(line: &str, section: &str) -> bool {
+    let body = line.trim_end_matches(['\r', '\n']);
+    let Some(rest) = body.strip_prefix(section) else {
+        return false;
+    };
+    // A top-level key starts at column zero and is followed by ": " or ":<end>".
+    body.len() == body.trim_start().len()
+        && (rest.starts_with(": ") || rest == ":" || rest.starts_with(":\t"))
 }
 
 pub(crate) fn core_config_declares_v8(document: &serde_norway::Value) -> bool {

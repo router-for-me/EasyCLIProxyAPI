@@ -6183,6 +6183,7 @@ mod tests {
             max_retry_interval: crate::DEFAULT_MAX_RETRY_INTERVAL,
             transient_error_cooldown_seconds: crate::DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS,
             streaming_bootstrap_retries: crate::DEFAULT_STREAMING_BOOTSTRAP_RETRIES,
+            reverse_proxy: None,
         };
         let record = normalize_usage_record(
             serde_json::json!({
