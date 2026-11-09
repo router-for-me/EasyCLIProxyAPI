@@ -594,3 +594,112 @@ fn workbuddy_detects_local_install_without_launching_it() {
         Some(executable)
     );
 }
+
+#[test]
+fn workbuddy_display_name_identifies_model_and_reasoning_fields_arrive() {
+    let models = vec![
+        AgentModelOption {
+            name: "tc-glm-5.3-flash".into(),
+            alias: Some("GLM-5.3-Flash (腾讯 TokenHub)".into()),
+            is_alias: true,
+            context_window: Some(128_000),
+            input_modalities: None,
+            reasoning_levels: vec!["max".into(), "xhigh".into(), "high".into()],
+            harness_metadata: None,
+        },
+        AgentModelOption {
+            name: "tc-deepseek-flash".into(),
+            alias: None,
+            is_alias: false,
+            context_window: Some(128_000),
+            input_modalities: None,
+            reasoning_levels: vec!["max".into(), "xhigh".into(), "high".into()],
+            harness_metadata: None,
+        },
+    ];
+    let config = build_workbuddy_agent_config(
+        None,
+        "http://127.0.0.1:8317/v1",
+        "key",
+        "tc-glm-5.3-flash",
+        &models,
+    )
+    .unwrap();
+    let value = parse_workbuddy_config(Some(&config)).unwrap();
+    // Catalog alias wins for the selected model's display name.
+    assert_eq!(
+        workbuddy_models(&value)[0]["name"],
+        "GLM-5.3-Flash (腾讯 TokenHub)"
+    );
+    // Reasoning fields are emitted from the configured levels.
+    let glm = &workbuddy_models(&value)[0];
+    assert_eq!(glm["supportsReasoning"], true);
+    assert_eq!(glm["onlyReasoning"], true);
+    assert_eq!(glm["reasoning"]["defaultEffort"], "xhigh");
+    assert_eq!(
+        glm["reasoning"]["supportedEfforts"],
+        json!(["max", "xhigh", "high"])
+    );
+    assert_eq!(glm["reasoning"]["canDisableThinking"], false);
+    // Re-applying must not wipe user-tuned reasoning fields or display names.
+    let mut tuned = value.clone();
+    tuned["models"][0]["name"] = json!("My Favorite Flash");
+    tuned["models"][0]["reasoning"]["defaultEffort"] = json!("high");
+    let next = build_workbuddy_agent_config(
+        Some(&tuned.to_string()),
+        "http://127.0.0.1:8317/v1",
+        "key",
+        "tc-glm-5.3-flash",
+        &models,
+    )
+    .unwrap();
+    let value = parse_workbuddy_config(Some(&next)).unwrap();
+    assert_eq!(workbuddy_models(&value)[0]["name"], "My Favorite Flash");
+    assert_eq!(workbuddy_models(&value)[0]["reasoning"]["defaultEffort"], "high");
+    assert_eq!(
+        workbuddy_models(&value)[0]["reasoning"]["supportedEfforts"],
+        json!(["max", "xhigh", "high"])
+    );
+    // A second model without a catalog alias still gets an identifiable name.
+    let with_second = build_workbuddy_agent_config(
+        Some(&next),
+        "http://127.0.0.1:8317/v1",
+        "key",
+        "tc-deepseek-flash",
+        &models,
+    )
+    .unwrap();
+    let value = parse_workbuddy_config(Some(&with_second)).unwrap();
+    let names: Vec<String> = workbuddy_models(&value)
+        .iter()
+        .filter_map(|m| m["name"].as_str().map(str::to_string))
+        .collect();
+    assert!(names.iter().any(|name| name == "CPA / tc-deepseek-flash"));
+    assert!(names.iter().all(|name| name != "CPA"));
+}
+
+#[test]
+fn workbuddy_models_without_configured_levels_stay_untouched() {
+    let models = vec![AgentModelOption {
+        name: "plain-model".into(),
+        alias: None,
+        is_alias: false,
+        context_window: Some(128_000),
+        input_modalities: None,
+        reasoning_levels: Vec::new(),
+        harness_metadata: None,
+    }];
+    let config = build_workbuddy_agent_config(
+        None,
+        "http://127.0.0.1:8317/v1",
+        "key",
+        "plain-model",
+        &models,
+    )
+    .unwrap();
+    let value = parse_workbuddy_config(Some(&config)).unwrap();
+    let entry = &workbuddy_models(&value)[0];
+    assert!(entry.get("supportsReasoning").is_none());
+    assert!(entry.get("onlyReasoning").is_none());
+    assert!(entry.get("reasoning").is_none());
+}
