@@ -4,6 +4,7 @@ import { Switch } from '../components/Switch';
 import { onConfigFilesChanged } from '../services/events';
 import { restartCoreProcess } from '../services/coreLifecycle';
 import { openExternalUrl } from '../services/appSettings';
+import { pollWhileActive } from '../services/windowActivity';
 import {
   getCoreConfigSettings,
   getSoftwareSettings,
@@ -447,7 +448,7 @@ export function ConfigPanelPage() {
   useEffect(() => {
     if (activeSubpage !== 'proxy' || proxyAction !== null || proxyInitialLoading) return;
     let disposed = false;
-    const timer = window.setInterval(() => {
+    const stopPolling = pollWhileActive(() => {
       void getReverseProxyState().then(state => {
         if (!disposed) setProxyState(state);
       }).catch(error => {
@@ -456,7 +457,7 @@ export function ConfigPanelPage() {
     }, 2000);
     return () => {
       disposed = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [activeSubpage, proxyAction, proxyInitialLoading]);
 
