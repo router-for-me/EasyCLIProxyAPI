@@ -35,7 +35,6 @@ import { PluginOAuthDialog } from "./PluginOAuthDialog";
 import { GitHubTokenHint, isGitHubRateLimit } from "./PluginRateLimitHint";
 import { PluginSettingsPanel } from "./PluginSettingsPanel";
 import { EcpaPluginsPage, TagFilterRow } from "./EcpaPluginsPage";
-import { Select } from "../components/Select";
 import "./PluginsPage.css";
 
 type Tab = "installed" | "store" | "ecpa" | "settings";
@@ -397,13 +396,11 @@ export function PluginsPage() {
           <button type="button" className="icon-button quiet ghost tiny-button plugin-search-clear" disabled={!search} aria-label={t("common.clear")} title={t("common.clear")}
             onClick={() => { setSearch(""); searchRef.current?.focus(); }}><X size={15} aria-hidden="true" /></button>
         </div>
-        {tab === "store" && <Select aria-label={pt("store")} value={filter} onChange={e => setFilter(e.target.value)}>{["all", "installed", "updates"].map(value => <option key={value} value={value}>{pt(value as "all" | "installed" | "updates")}</option>)}</Select>}
-        {tab === "installed" && <>
+                {tab === "installed" && <>
           <button type="button" className="secondary-button plugin-check-updates" disabled={locked || !installedPlugins.length} onClick={() => void load("installed", true, true)}><RefreshCw size={16} aria-hidden="true" />{pt("checkUpdates")}</button>
           <button type="button" className={`${updatablePlugins.length > 0 ? "primary-button" : "secondary-button"} plugin-update-all`} disabled={locked || !installedPlugins.length || (localUpdates !== null && updatablePlugins.length === 0)} onClick={() => void updateAll()}><Download size={16} aria-hidden="true" />{updatablePlugins.length > 0 ? `${pt("updateAll")} (${updatablePlugins.length})` : pt("updateAll")}</button>
         </>}
-        {tab === "store" && <button type="button" className="secondary-button plugin-check-updates" disabled={locked} onClick={() => void load("store", true, true)}><RefreshCw size={16} aria-hidden="true" />{pt("checkUpdates")}</button>}
-        </>}
+                </>}
         {tab !== "ecpa" && <>
         {supported === true && <button type="button" className="secondary-button plugin-development-guide" disabled={locked} onClick={() => void installLocal()}><Download size={16} aria-hidden="true" />{pt("localInstall")}</button>}
         <button type="button" className="secondary-button plugin-development-guide" onClick={() => void openExternalUrl({ url: "https://help.router-for.me/cn/plugin/development.html" }).catch(reason => { if (mounted.current) setError(message(reason)); })}><ExternalLink size={16} aria-hidden="true" />{pt("developmentGuide")}</button>
@@ -411,25 +408,29 @@ export function PluginsPage() {
         </>}
       </div>
     </div>
-    {tab === "store" && supported === true && storeAllTags.length > 0 && <div className="plugin-store-tag-bar">
-      <TagFilterRow
-        allTags={storeAllTags}
-        selectedTags={storeTags}
-        onToggle={tag => setStoreTags(current => current.includes(tag) ? current.filter(value => value !== tag) : [...current, tag])}
-        onClear={() => setStoreTags([])}
-        label={pt("tagFilter")}
-        allLabel={pt("tagAll")}
-        pickerLabel={pt("moreTags")}
-        clearLabel={pt("clearTags")}
-        emptyLabel={pt("noTags")}
-      />
-    </div>}
     <div className="plugin-tab-panel" id="plugin-tab-panel" role={supported !== null ? "tabpanel" : undefined} aria-labelledby={supported !== null ? `plugin-tab-${tab}` : undefined}>
     {tab !== "ecpa" && error && <Notice tone="error" icon={false} className="plugin-banner" action={<button className="secondary-button" disabled={busy || loading} onClick={() => void load(tabRef.current, tabRef.current === "installed")}>{pt("retry")}</button>}>{error}{isGitHubRateLimit(error) ? <GitHubTokenHint /> : null}</Notice>}
     {tab === "ecpa" ? <EcpaPluginsPage /> : supported === false ? <EmptyState className="plugin-empty" icon={<Puzzle size={36} />}>{pt("unsupported")}</EmptyState> : supported === null ? <EmptyState className="plugin-empty" role="status">{loading ? t("common.loading") : pt("retry")}</EmptyState> : <>
       {data && !data.pluginsEnabled && <Notice tone="info" icon={false} className="plugin-banner">{pt("disabledHint")}</Notice>}
       {restartRequired && <Notice tone="info" icon={false} className="plugin-banner" action={<button className="secondary-button" disabled={locked} onClick={async () => { if (await askConfirmation({ title: pt("restartButton"), message: pt("restartConfirm") })) void mutate(async () => { await restartCoreProcess(); if (mounted.current) setRestartRequired(false); }, pt("saved")); }}>{pt("restartButton")}</button>}>{pt("restart")}</Notice>}
       <>
+        {tab !== "settings" && !loading && storeAllTags.length > 0 ? <div className="ecpa-results-bar plugin-store-results-bar">
+          <TagFilterRow
+            allTags={storeAllTags}
+            selectedTags={storeTags}
+            onToggle={tag => setStoreTags(current => current.includes(tag) ? current.filter(value => value !== tag) : [...current, tag])}
+            onClear={() => setStoreTags([])}
+            label={pt("tagFilter")}
+            allLabel={pt("tagAll")}
+            pickerLabel={pt("moreTags")}
+            clearLabel={pt("clearTags")}
+            emptyLabel={pt("noTags")}
+          />
+          <div className="ecpa-results-meta">
+            {(search || storeTags.length > 0) ? <button type="button" className="link-button muted ecpa-clear-filters" onClick={() => { setSearch(""); setStoreTags([]); }}>{pt("clearFilters")}</button> : null}
+            <span className="ecpa-results-count">{pt("resultCount").replace("{count}", String(tab === "store" ? storePlugins.length : plugins.length))}</span>
+          </div>
+        </div> : null}
         {tab === "settings" ? <PluginSettingsPanel onSaved={() => { notice.showNotice(pt("saved")); void load(); }} globalControl={<label className="plugin-global-toggle"><Switch checked={data?.pluginsEnabled ?? false} disabled={locked || !data} onChange={e => { const enabled = e.target.checked; void mutate(() => pluginsApi.updateSettings({ enabled }), pt("saved")); }} />{pt("global")}</label>} /> : <>
           {sourceErrors.length ? <details className="plugin-source-errors surface-frame"><summary>{pt("sourceErrors")}</summary>{sourceErrors.map((entry, index) => <p key={index}>{entry.sourceName || entry.sourceId || entry.sourceUrl}: {entry.message}</p>)}{sourceErrors.some(entry => isGitHubRateLimit(entry.message)) ? <GitHubTokenHint /> : null}</details> : null}
           {loading && <p className="plugin-loading" role="status">{t("common.loading")}…</p>}
