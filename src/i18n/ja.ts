@@ -2499,5 +2499,7 @@ export const jaOverrides = {
   'ecpaPlugins.copyId': 'プラグイン ID をコピー',
   'ecpaPlugins.copied': 'コピーしました',
   'ecpaPlugins.emptyFiltered': '一致するプラグインはありません',
+  'ecpaPlugins.emptyFilteredHint': '別のキーワードを試すか、フィルターを解除してください。',
+  'ecpaPlugins.loadingPage': '注目プラグインを読み込み中…',
   'ecpaPlugins.clearFilters': 'フィルターを解除',
 } satisfies Record<MessageKey, string>;

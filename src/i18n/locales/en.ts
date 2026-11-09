@@ -2499,5 +2499,7 @@ export const en: Record<MessageKey, string> = {
   'ecpaPlugins.copyId': 'Copy Plugin ID',
   'ecpaPlugins.copied': 'Copied',
   'ecpaPlugins.emptyFiltered': 'No matching plugins',
+  'ecpaPlugins.emptyFilteredHint': 'Try another keyword, or clear the filters.',
+  'ecpaPlugins.loadingPage': 'Loading featured plugins…',
   'ecpaPlugins.clearFilters': 'Clear Filters',
 };
