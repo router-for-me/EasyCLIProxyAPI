@@ -154,7 +154,6 @@ const PORTABLE_APP_BINARY: &str = "EasyCLIProxyAPI";
 const CORE_INSTALL_PROGRESS_EVENT: &str = "core-install-progress";
 const CORE_STATUS_EVENT: &str = "core-status-changed";
 const CONFIG_FILES_CHANGED_EVENT: &str = "config-files-changed";
-const VERSION_DOWNLOAD_SOURCE_CHANGED_EVENT: &str = "version-download-source-changed";
 static VERSION_SOURCE_DETECTION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 const WINDOWS_CLOSE_REQUEST_EVENT: &str = "windows-close-requested";
@@ -813,34 +812,21 @@ fn version_source_url(source: &VersionDownloadCandidate, github_url: &str) -> St
         .unwrap_or_else(|| github_url.to_string())
 }
 
-fn version_download_source_candidates(
-    preferred: VersionDownloadCandidate,
+fn validate_version_download_source(
+    source: &VersionDownloadCandidate,
     gitcode_available: bool,
-    custom_mirrors: &[String],
-) -> Vec<VersionDownloadCandidate> {
-    let mut candidates = vec![
-        preferred,
-        VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
-        VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
-        VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
-        VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
-    ];
-    candidates.retain(|candidate| {
-        gitcode_available || candidate.source != VersionDownloadSource::Gitcode
-    });
-    candidates.extend(
-        custom_mirrors
-            .iter()
-            .map(|url| VersionDownloadCandidate::custom(url)),
-    );
-    candidates
-        .into_iter()
-        .fold(Vec::new(), |mut sources, source| {
-            if !sources.contains(&source) {
-                sources.push(source);
-            }
-            sources
-        })
+) -> Result<(), String> {
+    if source.source == VersionDownloadSource::Gitcode && !gitcode_available {
+        return Err("The selected GitCode source is not available for this operation".to_string());
+    }
+    if source.source == VersionDownloadSource::Custom {
+        let url = source
+            .custom_url
+            .as_deref()
+            .ok_or("No custom mirror is selected")?;
+        normalize_custom_download_mirror_url(url)?;
+    }
+    Ok(())
 }
 
 fn normalize_custom_download_mirror_url(value: &str) -> Result<String, String> {
@@ -2336,33 +2322,6 @@ impl GuiConfigState {
         })
     }
 
-    fn switch_download_source_after_failure(
-        &self,
-        expected_source: &VersionDownloadCandidate,
-        fallback_source: &VersionDownloadCandidate,
-    ) -> Result<Option<GuiConfigFile>, String> {
-        let mut current = self
-            .inner
-            .lock()
-            .map_err(|_| "GUI configuration status lock is poisoned".to_string())?;
-        if current.selected_download_candidate() != *expected_source
-            || expected_source == fallback_source
-        {
-            return Ok(None);
-        }
-
-        let mut config = current.clone();
-        config.download_source = fallback_source.source;
-        if let Some(url) = &fallback_source.custom_url {
-            config.active_custom_download_mirror = url.clone();
-        }
-        config.prefer_gitcode_downloads = fallback_source.source == VersionDownloadSource::Gitcode;
-        sanitize_gui_config(&mut config)?;
-        write_gui_config(&config)?;
-        *current = config.clone();
-        Ok(Some(config))
-    }
-
     fn set_window_geometry(
         &self,
         size: SavedWindowSize,
@@ -2571,8 +2530,6 @@ struct GithubRelease {
 struct GithubAsset {
     name: String,
     browser_download_url: String,
-    #[serde(default)]
-    fallback_download_urls: Vec<String>,
     size: Option<u64>,
     digest: Option<String>,
 }

@@ -1561,7 +1561,6 @@ export function createBrowserMockRuntime(
       case 'get_version_source_settings': return clone(state.versionSource);
       case 'set_download_source': {
         state.versionSource.source = readString(payload.source) || 'github';
-        emit('version-download-source-changed', state.versionSource);
         return clone(state.versionSource);
       }
       case 'add_custom_download_mirror': {
