@@ -4068,17 +4068,26 @@ pub(crate) fn build_zcode_agent_config(
                     .or(option.context_window),
                 Some(cw) => Some(cw).or(inferred_cw),
             };
-            if let Some(context_window) = effective_cw {
+            if let Some(context_window) = effective_cw.filter(|value| *value > 0) {
                 properties.insert("contextWindow".to_string(), serde_json::json!(context_window));
             } else if manual.is_none() {
                 properties.remove("contextWindow");
             }
         }
         let specs = ensure_json_object_entry(config_obj, "optionSpecs");
-        if let Some(mot) = inferred_mot {
+        if let Some(mot) = inferred_mot.filter(|value| *value > 0) {
             specs.entry("maxOutputTokens").or_insert_with(|| serde_json::json!({ "max": mot }));
         }
         if let Some(mot_obj) = specs.get_mut("maxOutputTokens").and_then(serde_json::Value::as_object_mut) { mot_obj.remove("map"); }
+        // ZCode requires maxOutputTokens.max to be strictly positive. Catalog
+        // entries for video models carry a zero budget, and earlier writes may
+        // have persisted one, so drop it before rendering the rule.
+        let invalid_max = specs.get("maxOutputTokens").map_or(false, |mot| {
+            mot.get("max").and_then(serde_json::Value::as_u64).map_or(true, |max| max == 0)
+        });
+        if invalid_max {
+            specs.remove("maxOutputTokens");
+        }
         if manual.is_some() && !specs.contains_key("maxOutputTokens") {
             specs.insert("maxOutputTokens".to_string(), serde_json::json!({ "max": zcode::ZCODE_MANUAL_MAX_OUTPUT_TOKENS_FALLBACK }));
         }

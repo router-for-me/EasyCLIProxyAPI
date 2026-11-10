@@ -101,8 +101,11 @@ pub(crate) fn infer_zcode_model_knowledge_with_catalog(
 ) -> (Option<u64>, Option<u64>, bool, bool, Vec<String>) {
     let (mut cw, mut mot, img, pdf, rl) = infer_zcode_model_knowledge(model_id);
     if let Some(capabilities) = crate::usage::find_model_capabilities(catalog, model_id) {
-        cw = cw.or(capabilities.context_window);
-        mot = mot.or(capabilities.max_output_tokens);
+        // A zero budget means the catalog has no usable value (video models
+        // report no text output tokens). ZCode validates both numbers as
+        // strictly positive, so zero must be treated as unknown here.
+        cw = cw.or(capabilities.context_window.filter(|value| *value > 0));
+        mot = mot.or(capabilities.max_output_tokens.filter(|value| *value > 0));
     }
     (cw, mot, img, pdf, rl)
 }
@@ -223,7 +226,7 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
     entry.insert("modelId".into(), serde_json::json!(model_id));
     let cfg = ensure_json_object_entry(entry, "config");
     let mut properties = cfg.get("properties").and_then(Value::as_object).cloned().unwrap_or_default();
-    if let Some(cw) = config.context_window {
+    if let Some(cw) = config.context_window.filter(|value| *value > 0) {
         properties.insert("contextWindow".into(), serde_json::json!(cw));
     } else {
         properties.remove("contextWindow");
@@ -239,7 +242,7 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
     properties.insert("supportsMidConversationSystem".into(), serde_json::json!(config.supports_mid_conversation_system));
 
     let mut option_specs = cfg.get("optionSpecs").and_then(Value::as_object).cloned().unwrap_or_default();
-    if let Some(mot) = config.max_output_tokens {
+    if let Some(mot) = config.max_output_tokens.filter(|value| *value > 0) {
         let mot_obj = ensure_json_object_entry(&mut option_specs, "maxOutputTokens");
         mot_obj.insert("max".into(), serde_json::json!(mot));
         mot_obj.remove("map");
@@ -249,6 +252,12 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
             serde_json::json!({ "max": ZCODE_MANUAL_MAX_OUTPUT_TOKENS_FALLBACK }),
         );
     } else {
+        option_specs.remove("maxOutputTokens");
+    }
+    let invalid_max = option_specs.get("maxOutputTokens").map_or(false, |mot| {
+        mot.get("max").and_then(Value::as_u64).map_or(true, |max| max == 0)
+    });
+    if invalid_max {
         option_specs.remove("maxOutputTokens");
     }
     let mut rl = option_specs.get("reasoningLevel").and_then(Value::as_object).cloned().unwrap_or_default();

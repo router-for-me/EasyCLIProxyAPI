@@ -1539,6 +1539,45 @@ fn zcode_agent_config_backfills_manual_rule_max_output_tokens() {
 }
 
 #[test]
+fn zcode_agent_config_drops_zero_max_output_tokens_from_provider_rules() {
+    // Video models report a zero output budget. ZCode rejects the whole
+    // provider config when maxOutputTokens.max is zero, so the writer must
+    // drop the field instead of persisting it.
+    let models = test_agent_models(&["seedance-zero"]);
+    let existing = r#"{"schemaVersion":1,"config":{"providerConfigRules":{"providerRules":[{"providerId":"cpa-gui","providerName":"EasyCLIProxyAPI","enabled":true,"config":{"group":"standard-personal","access":{"type":"api-key","apiKey":"old"},"api":{"type":"anthropic-messages","baseUrl":"http://127.0.0.1:8317/v1"},"personalModelIds":["seedance-zero"],"modelOrder":["seedance-zero"]}}]},"modelConfigRules":{"providerModelRules":[{"providerId":"cpa-gui","modelId":"seedance-zero","config":{"enabled":true,"optionSpecs":{"maxOutputTokens":{"max":0}}}}],"manualProviderModelRules":[]}}}"#;
+    let rendered = build_zcode_agent_config(
+        Some(existing),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "seedance-zero",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let provider_rules = value["config"]["modelConfigRules"]["providerModelRules"].as_array().unwrap();
+    let rule = provider_rules.iter().find(|rule| rule["modelId"] == "seedance-zero").unwrap();
+    assert!(rule["config"]["optionSpecs"].get("maxOutputTokens").is_none());
+}
+
+#[test]
+fn zcode_agent_config_replaces_zero_max_output_tokens_on_manual_rules() {
+    let models = test_agent_models(&["manual-zero"]);
+    let existing = r#"{"schemaVersion":1,"config":{"providerConfigRules":{"providerRules":[{"providerId":"cpa-gui","providerName":"EasyCLIProxyAPI","enabled":true,"config":{"group":"standard-personal","access":{"type":"api-key","apiKey":"old"},"api":{"type":"anthropic-messages","baseUrl":"http://127.0.0.1:8317/v1"},"personalModelIds":["manual-zero"],"modelOrder":["manual-zero"]}}]},"modelConfigRules":{"providerModelRules":[],"manualProviderModelRules":[{"providerId":"cpa-gui","modelId":"manual-zero","config":{"enabled":true,"optionSpecs":{"maxOutputTokens":{"max":0}},"properties":{"contextWindow":128000}}}]}}}"#;
+    let rendered = build_zcode_agent_config(
+        Some(existing),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "manual-zero",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let manual_rules = value["config"]["modelConfigRules"]["manualProviderModelRules"].as_array().unwrap();
+    let rule = manual_rules.iter().find(|rule| rule["modelId"] == "manual-zero").unwrap();
+    assert_eq!(rule["config"]["optionSpecs"]["maxOutputTokens"], serde_json::json!({ "max": 128_000 }));
+}
+
+#[test]
 fn zcode_desktop_and_cli_share_the_provider_configuration() {
     let home = agent_test_home("zcode-shared-provider-config");
     let paths = agent_config_paths(AgentClient::ZCode, &home);
