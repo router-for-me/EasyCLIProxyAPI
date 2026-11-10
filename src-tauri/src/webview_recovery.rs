@@ -156,7 +156,7 @@ mod native {
         _: usize,
         data: usize,
     ) -> LRESULT {
-        let _ = catch_unwind(AssertUnwindSafe(|| -> Option<LRESULT> {
+        let handled = catch_unwind(AssertUnwindSafe(|| -> Option<LRESULT> {
             let app = &*(data as *const tauri::AppHandle);
             if message == WM_NCDESTROY {
                 stop(app);
@@ -166,15 +166,11 @@ mod native {
             } else if is_minimized_resize_message(message, wparam) {
                 // Tao's undecorated WM_NCCALCSIZE leaves a non-zero iconic client rect at
                 // (-32000, -32000), and tauri-runtime-wry resizes child WebViews on every
-                // Resized event without filtering SIZE_MINIMIZED. Withhold the iconic
-                // dimensions from the WebView, but let the message through: WebView2 keeps
-                // its controller position through the WM_WINDOWPOSCHANGED that
-                // DefWindowProc raises while handling WM_SIZE, and swallowing the message
-                // makes the restore path depend on framework internals.
+                // Resized event without filtering SIZE_MINIMIZED. Handled here and not
+                // forwarded, so the iconic dimensions never reach Tao and the main WebView
+                // keeps its real bounds across minimize/restore.
                 crate::window_activity::sync(app);
-                let result = DefSubclassProc(hwnd, message, wparam, lparam);
-                restore_webview_bounds(app);
-                return Some(result);
+                return Some(0);
             } else if matches!(
                 message,
                 WM_WTSSESSION_CHANGE | WM_DISPLAYCHANGE | WM_DPICHANGED | WM_SETTINGCHANGE
@@ -182,7 +178,12 @@ mod native {
                 request(app);
             }
             None
-        }));
+        }))
+        .ok()
+        .flatten();
+        if let Some(result) = handled {
+            return result;
+        }
         DefSubclassProc(hwnd, message, wparam, lparam)
     }
 
@@ -193,41 +194,6 @@ mod native {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .stopped = true;
-        }
-    }
-
-    /// `WM_SIZE(SIZE_MINIMIZED)` reaches the window procedure and the runtime may
-    /// shrink the child WebView to the iconic client rect, so put the controller
-    /// back on the real client area once the message is handled.
-    fn restore_webview_bounds(app: &tauri::AppHandle) {
-        let Some(window) = app.get_window("main") else {
-            return;
-        };
-        let mut rect = windows_sys::Win32::Foundation::RECT {
-            left: 0,
-            top: 0,
-            right: 0,
-            bottom: 0,
-        };
-        if unsafe {
-            GetClientRect(
-                window.hwnd().map(|h| h.0 as HWND).unwrap_or_default(),
-                &mut rect,
-            )
-        } == 0
-        {
-            return;
-        }
-        let minimized = window.is_minimized().unwrap_or(true);
-        let Some(size) = client_size(rect.right - rect.left, rect.bottom - rect.top, minimized)
-        else {
-            return;
-        };
-        if let Some(view) = app.get_webview("main") {
-            let _ = view.set_bounds(tauri::Rect {
-                position: tauri::PhysicalPosition::new(0, 0).into(),
-                size: size.into(),
-            });
         }
     }
 
@@ -525,6 +491,34 @@ mod tests {
             client_size(175, 19, false),
             Some(tauri::PhysicalSize::new(175, 19))
         );
+    }
+
+    #[test]
+    fn minimized_resize_is_handled_without_forwarding() {
+        // Values from the Win32 headers; windows_sys is a Windows-only dependency.
+        const WM_SIZE: u32 = 0x0005;
+        const WM_DPICHANGED: u32 = 0x02E0;
+        const SIZE_RESTORED: u32 = 0;
+        const SIZE_MINIMIZED: u32 = 1;
+
+        assert!(is_minimized_resize_codes(
+            WM_SIZE,
+            SIZE_MINIMIZED as usize,
+            WM_SIZE,
+            SIZE_MINIMIZED
+        ));
+        assert!(!is_minimized_resize_codes(
+            WM_SIZE,
+            SIZE_RESTORED as usize,
+            WM_SIZE,
+            SIZE_MINIMIZED
+        ));
+        assert!(!is_minimized_resize_codes(
+            WM_DPICHANGED,
+            0,
+            WM_SIZE,
+            SIZE_MINIMIZED
+        ));
     }
 
     #[test]
