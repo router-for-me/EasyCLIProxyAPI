@@ -1463,14 +1463,7 @@ async fn launch_portable_update_helper<T: Serialize>(
     .map_err(|error| format!("Failed to write application update descriptor: {error}"))?;
     let helper_ack_path = portable_update_helper_ack_path(work_dir);
     let _ = fs::remove_file(&helper_ack_path);
-    let mut command = Command::new(helper_path);
-    command
-        .arg("--portable-update-helper")
-        .arg(&descriptor_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    configure_background_command(&mut command);
+    let mut command = portable_update_helper_command(helper_path, &descriptor_path);
     let mut child = command
         .spawn()
         .map_err(|error| format!("Failed to start application update helper: {error}"))?;
@@ -1494,6 +1487,24 @@ async fn launch_portable_update_helper<T: Serialize>(
     }
     app.exit(0);
     Ok(())
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+pub(crate) fn portable_update_helper_command(helper_path: &Path, descriptor_path: &Path) -> Command {
+    let mut command = Command::new(helper_path);
+    command
+        .arg("--portable-update-helper")
+        .arg(descriptor_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    configure_background_command(&mut command);
+    command
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
