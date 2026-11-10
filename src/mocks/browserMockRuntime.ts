@@ -901,6 +901,9 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
     return clone(file);
   }
   if (method === 'GET' && path === '/credentials/models') return mockModelDefinitions();
+  if (method === 'POST' && path === '/models/refresh') {
+    return { ok: true, status: 'ok', changed_providers: [], catalog: [], codex_catalog: [], devin_catalog: [], sources: [], catalogs: [] };
+  }
   if (method === 'GET' && path.startsWith('/routing/model-definitions/')) return mockModelDefinitions();
   if (method === 'GET' && path === '/config/oauth/excluded-models') {
     return clone(state.oauthExcludedModels);
