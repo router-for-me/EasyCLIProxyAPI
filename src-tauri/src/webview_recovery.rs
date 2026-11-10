@@ -218,7 +218,9 @@ mod native {
         {
             return;
         }
-        let Some(size) = client_size(rect.right - rect.left, rect.bottom - rect.top, false) else {
+        let minimized = window.is_minimized().unwrap_or(true);
+        let Some(size) = client_size(rect.right - rect.left, rect.bottom - rect.top, minimized)
+        else {
             return;
         };
         if let Some(view) = app.get_webview("main") {
@@ -512,6 +514,17 @@ mod tests {
         assert_eq!(client_size(0, 1032, false), None);
         assert_eq!(client_size(1920, -1, false), None);
         assert_eq!(client_size(1920, 1032, true), None);
+    }
+
+    #[test]
+    fn iconic_minimized_client_rect_is_rejected() {
+        // GetClientRect reports the iconic client rect (e.g. 175x19) right after
+        // WM_SIZE(SIZE_MINIMIZED); it must never become the WebView bounds.
+        assert_eq!(client_size(175, 19, true), None);
+        assert_eq!(
+            client_size(175, 19, false),
+            Some(tauri::PhysicalSize::new(175, 19))
+        );
     }
 
     #[test]
