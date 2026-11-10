@@ -1798,3 +1798,31 @@ fn app_update_preservation_is_per_attempt_and_survives_download_refresh() {
     state.start(CancellationToken::new()).unwrap();
     assert!(!state.snapshot().preserve_core);
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_update_helper_has_private_process_group() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = agent_test_home("update-helper-process-group");
+    let helper = root.join("helper");
+    fs::write(&helper, "#!/bin/sh\nexec /bin/sleep 30\n").unwrap();
+    fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
+    let descriptor = root.join("update-descriptor.json");
+    let mut command = portable_update_helper_command(&helper, &descriptor);
+    let mut child = command.spawn().unwrap();
+    let pid = child.id() as libc::pid_t;
+    let group = unsafe { libc::getpgid(pid) };
+    let parent_group = unsafe { libc::getpgrp() };
+    let running = child.try_wait().unwrap().is_none();
+    let _ = child.kill();
+    child.wait().unwrap();
+    fs::remove_dir_all(root).unwrap();
+
+    assert!(running);
+    assert_eq!(group, pid);
+    assert_ne!(group, parent_group);
+    assert_eq!(command.get_args().collect::<Vec<_>>(), vec![
+        std::ffi::OsStr::new("--portable-update-helper"), descriptor.as_os_str(),
+    ]);
+}

@@ -1717,3 +1717,16 @@ fn preserving_an_installed_core_defers_only_the_current_bundle() {
     assert_eq!(fs::read(root.join(core_binary_name())).unwrap(), b"running-core");
     fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_core_child_has_private_process_group() {
+    let child = spawn_core_child(core_child_sleep_command()).unwrap();
+    let pid = child.id() as libc::pid_t;
+    let group = unsafe { libc::getpgid(pid) };
+    let parent_group = unsafe { libc::getpgrp() };
+    drop(child);
+    assert_eq!(group, pid);
+    assert_ne!(group, parent_group);
+    assert!(!is_process_alive(pid as u32));
+}

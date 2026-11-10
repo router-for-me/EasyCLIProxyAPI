@@ -88,6 +88,11 @@ pub(crate) fn spawn_core_child(command: Command) -> Result<CoreChild, String> {
     #[cfg(not(target_os = "linux"))]
     let child = {
         let mut command = command;
+        #[cfg(target_os = "macos")]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
         command
             .spawn()
             .map_err(|error| format!("Failed to start CPA kernel: {error}"))?
