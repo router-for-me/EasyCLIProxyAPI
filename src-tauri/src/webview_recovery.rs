@@ -251,13 +251,8 @@ mod native {
         }
         let handle = app.clone();
         tauri::async_runtime::spawn(async move {
-            // A dead browser process needs the environment to settle before the
-            // controller is replaced. A live webview only needs the bounds nudge,
-            // and delaying that leaves a restored window unpainted on Windows 11.
-            let dead = handle
-                .try_state::<State>()
-                .is_some_and(|state| state.decision.lock().unwrap().dead);
-            tokio::time::sleep(Duration::from_millis(if dead { 250 } else { 0 })).await;
+            // The recovery nudge waits for the WebView environment to settle.
+            tokio::time::sleep(Duration::from_millis(250)).await;
             let app = handle.clone();
             if let Err(error) = handle.run_on_main_thread(move || refresh(&app)) {
                 handle.state::<State>().decision.lock().unwrap().queued = false;
