@@ -22,7 +22,10 @@ describe('remote model catalog refresh', () => {
       ok: true, status: 'ok', changed_providers: ['codex', 'claude'],
       catalog: [{ id: 'new-model' }], codex_catalog: [], devin_catalog: [], sources: [], catalogs: [],
     };
+    const commands: string[] = [];
     mockIPC((command, args) => {
+      commands.push(command);
+      if (command === 'refresh_managed_codex_model_catalog') return true;
       expect(command).toBe('management_request');
       expect(args?.request).toEqual({
         method: 'POST', path: '/models/refresh', query: undefined, body: undefined, timeoutMs: 120_000,
@@ -30,12 +33,18 @@ describe('remote model catalog refresh', () => {
       return response;
     });
     expect(await refreshModelCatalogs()).toEqual(response);
+    expect(commands).toEqual(['management_request', 'refresh_managed_codex_model_catalog']);
   });
 
   it('accepts omitted or null change lists as successful refreshes', async () => {
     for (const changed_providers of [undefined, null, []]) {
-      mockIPC(() => ({ ok: true, status: 'ok', changed_providers }));
+      const commands: string[] = [];
+      mockIPC((command) => {
+        commands.push(command);
+        return command === 'management_request' ? { ok: true, status: 'ok', changed_providers } : false;
+      });
       expect((await refreshModelCatalogs()).ok).toBe(true);
+      expect(commands).toEqual(['management_request', 'refresh_managed_codex_model_catalog']);
     }
   });
 
@@ -43,11 +52,38 @@ describe('remote model catalog refresh', () => {
     for (const response of [null, {}, { ok: false, status: 'ok' }, { ok: true, status: 'failed' },
       { ok: true, status: 'ok', changed_providers: 'codex' },
       { ok: true, status: 'ok', changed_providers: [null] }]) {
-      mockIPC(() => response);
+      const commands: string[] = [];
+      mockIPC((command) => { commands.push(command); return response; });
       await expect(refreshModelCatalogs()).rejects.toThrow('invalid model catalog refresh response');
+      expect(commands).toEqual(['management_request']);
     }
     mockIPC(() => ({ ok: false, error: 'Catalog source is invalid' }));
     await expect(refreshModelCatalogs()).rejects.toThrow('Catalog source is invalid');
+  });
+
+  it('waits for the core refresh before synchronizing the installed Codex catalog', async () => {
+    const commands: string[] = [];
+    let complete!: (value: unknown) => void;
+    mockIPC((command) => {
+      commands.push(command);
+      if (command === 'management_request') return new Promise((resolve) => { complete = resolve; });
+      return true;
+    });
+    const refresh = refreshModelCatalogs();
+    expect(commands).toEqual(['management_request']);
+    complete({ ok: true, status: 'ok' });
+    await refresh;
+    expect(commands).toEqual(['management_request', 'refresh_managed_codex_model_catalog']);
+  });
+
+  it('reports a Codex synchronization failure after a successful core refresh', async () => {
+    mockIPC((command) => {
+      if (command === 'management_request') return { ok: true, status: 'ok' };
+      throw new Error('Unable to write Codex catalog');
+    });
+    await expect(refreshModelCatalogs()).rejects.toThrow(
+      'Core model catalogs refreshed, but the Codex model catalog could not be synchronized: Unable to write Codex catalog',
+    );
   });
 
   it('explains unsupported cores and preserves authentication and network failures', async () => {

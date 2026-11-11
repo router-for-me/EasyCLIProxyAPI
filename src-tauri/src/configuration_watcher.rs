@@ -2,7 +2,7 @@ use super::{
     agent_managed_paths, apply_gui_managed_settings, consume_software_write,
     core_config_settings_from_value, core_install_dir, gui_config_path, is_loopback_host,
     lock_core_config_file, normalized_config_path, path_to_string,
-    refresh_agent_config_status_cache, request_codex_model_catalog_refresh, validate_gui_config,
+    refresh_agent_config_status_cache, validate_gui_config,
     write_core_config_if_changed, AgentClient, AgentConfigStatusCache, ConfigFilesChangedPayload,
     CoreConfigSettings, GuiConfigFile, GuiConfigState, CONFIG_FILES_CHANGED_EVENT,
     CORE_CONFIG_FILE,
@@ -208,8 +208,6 @@ fn handle_configuration_file_changes(
                 break;
             }
         }
-
-        request_codex_model_catalog_refresh();
     }
 
     refresh_agents |= tracked_changes
