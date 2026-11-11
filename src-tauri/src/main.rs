@@ -154,7 +154,6 @@ const PORTABLE_APP_BINARY: &str = "EasyCLIProxyAPI";
 const CORE_INSTALL_PROGRESS_EVENT: &str = "core-install-progress";
 const CORE_STATUS_EVENT: &str = "core-status-changed";
 const CONFIG_FILES_CHANGED_EVENT: &str = "config-files-changed";
-const VERSION_DOWNLOAD_SOURCE_CHANGED_EVENT: &str = "version-download-source-changed";
 static VERSION_SOURCE_DETECTION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 const WINDOWS_CLOSE_REQUEST_EVENT: &str = "windows-close-requested";
@@ -702,6 +701,12 @@ struct GuiConfigFile {
     max_retry_interval: i64,
     transient_error_cooldown_seconds: i64,
     streaming_bootstrap_retries: u32,
+    #[serde(
+        default,
+        rename = "reverse-proxy",
+        skip_serializing_if = "Option::is_none"
+    )]
+    reverse_proxy: Option<crate::reverse_proxy::ReverseProxyConfig>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -807,34 +812,21 @@ fn version_source_url(source: &VersionDownloadCandidate, github_url: &str) -> St
         .unwrap_or_else(|| github_url.to_string())
 }
 
-fn version_download_source_candidates(
-    preferred: VersionDownloadCandidate,
+fn validate_version_download_source(
+    source: &VersionDownloadCandidate,
     gitcode_available: bool,
-    custom_mirrors: &[String],
-) -> Vec<VersionDownloadCandidate> {
-    let mut candidates = vec![
-        preferred,
-        VersionDownloadCandidate::builtin(VersionDownloadSource::Github),
-        VersionDownloadCandidate::builtin(VersionDownloadSource::Gitcode),
-        VersionDownloadCandidate::builtin(VersionDownloadSource::GhProxy),
-        VersionDownloadCandidate::builtin(VersionDownloadSource::GhFast),
-    ];
-    candidates.retain(|candidate| {
-        gitcode_available || candidate.source != VersionDownloadSource::Gitcode
-    });
-    candidates.extend(
-        custom_mirrors
-            .iter()
-            .map(|url| VersionDownloadCandidate::custom(url)),
-    );
-    candidates
-        .into_iter()
-        .fold(Vec::new(), |mut sources, source| {
-            if !sources.contains(&source) {
-                sources.push(source);
-            }
-            sources
-        })
+) -> Result<(), String> {
+    if source.source == VersionDownloadSource::Gitcode && !gitcode_available {
+        return Err("The selected GitCode source is not available for this operation".to_string());
+    }
+    if source.source == VersionDownloadSource::Custom {
+        let url = source
+            .custom_url
+            .as_deref()
+            .ok_or("No custom mirror is selected")?;
+        normalize_custom_download_mirror_url(url)?;
+    }
+    Ok(())
 }
 
 fn normalize_custom_download_mirror_url(value: &str) -> Result<String, String> {
@@ -1014,6 +1006,7 @@ impl Default for GuiConfigFile {
             max_retry_interval: DEFAULT_MAX_RETRY_INTERVAL,
             transient_error_cooldown_seconds: DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS,
             streaming_bootstrap_retries: DEFAULT_STREAMING_BOOTSTRAP_RETRIES,
+            reverse_proxy: None,
         }
     }
 }
@@ -1057,6 +1050,7 @@ struct GuiConfigPresence {
     max_retry_interval: Option<i64>,
     transient_error_cooldown_seconds: Option<i64>,
     streaming_bootstrap_retries: Option<u32>,
+    reverse_proxy: Option<crate::reverse_proxy::ReverseProxyConfig>,
 }
 
 #[derive(Clone, Serialize)]
@@ -2328,33 +2322,6 @@ impl GuiConfigState {
         })
     }
 
-    fn switch_download_source_after_failure(
-        &self,
-        expected_source: &VersionDownloadCandidate,
-        fallback_source: &VersionDownloadCandidate,
-    ) -> Result<Option<GuiConfigFile>, String> {
-        let mut current = self
-            .inner
-            .lock()
-            .map_err(|_| "GUI configuration status lock is poisoned".to_string())?;
-        if current.selected_download_candidate() != *expected_source
-            || expected_source == fallback_source
-        {
-            return Ok(None);
-        }
-
-        let mut config = current.clone();
-        config.download_source = fallback_source.source;
-        if let Some(url) = &fallback_source.custom_url {
-            config.active_custom_download_mirror = url.clone();
-        }
-        config.prefer_gitcode_downloads = fallback_source.source == VersionDownloadSource::Gitcode;
-        sanitize_gui_config(&mut config)?;
-        write_gui_config(&config)?;
-        *current = config.clone();
-        Ok(Some(config))
-    }
-
     fn set_window_geometry(
         &self,
         size: SavedWindowSize,
@@ -2563,8 +2530,6 @@ struct GithubRelease {
 struct GithubAsset {
     name: String,
     browser_download_url: String,
-    #[serde(default)]
-    fallback_download_urls: Vec<String>,
     size: Option<u64>,
     digest: Option<String>,
 }
@@ -2826,7 +2791,6 @@ fn main() {
 
             network_proxy::start_monitor(app.handle().clone());
             core_recovery::start(app.handle().clone());
-            start_codex_model_catalog_sync(app.handle().clone());
             agent_usage::start_background_sync(app.handle().clone());
 
             let usage_app = app.handle().clone();
@@ -3011,6 +2975,7 @@ fn main() {
             uninstall_pi_provider,
             check_codex_oauth_login,
             update_codex_model_catalog,
+            refresh_managed_codex_model_catalog,
             get_deepseek_harness_model_catalog_editor,
             save_deepseek_harness_model_catalog_editor,
             get_codex_model_catalog_editor,

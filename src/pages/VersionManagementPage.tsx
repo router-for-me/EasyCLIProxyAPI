@@ -1,4 +1,4 @@
-import { onCoreInstallProgress, onConfigFilesChanged, onVersionDownloadSourceChanged } from '../services/events';
+import { onCoreInstallProgress, onConfigFilesChanged } from '../services/events';
 import { openExternalUrl } from '../services/appSettings';
 import {
   getVersionSourceSettings,
@@ -395,7 +395,6 @@ export function VersionManagementPage() {
     let disposed = false;
     let unlisten: (() => void) | null = null;
     let unlistenConfig: (() => void) | null = null;
-    let unlistenVersionSource: (() => void) | null = null;
 
     onCoreInstallProgress((event) => {
       const showTaskUi = manualInstallInProgressRef.current;
@@ -419,18 +418,6 @@ export function VersionManagementPage() {
       else unlistenConfig = stop;
     });
 
-    void onVersionDownloadSourceChanged((event) => {
-      if (disposed) return;
-      setVersionSource(event.payload);
-      setVersionSourceError('');
-      showNotice({ key: 'kernel.versions.sourceAutoSwitched', variables: {
-        source: downloadSourceLabel(event.payload.source, t),
-      } }, 'info');
-    }).then((stop) => {
-      if (disposed) stop();
-      else unlistenVersionSource = stop;
-    });
-
     loadInstallTask();
     void loadCoreVersions();
     void loadVersionSourceSettings();
@@ -452,7 +439,6 @@ export function VersionManagementPage() {
       disposed = true;
       unlisten?.();
       unlistenConfig?.();
-      unlistenVersionSource?.();
     };
   }, []);
 

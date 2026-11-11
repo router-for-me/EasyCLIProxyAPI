@@ -901,6 +901,9 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
     return clone(file);
   }
   if (method === 'GET' && path === '/credentials/models') return mockModelDefinitions();
+  if (method === 'POST' && path === '/models/refresh') {
+    return { ok: true, status: 'ok', changed_providers: [], catalog: [], codex_catalog: [], devin_catalog: [], sources: [], catalogs: [] };
+  }
   if (method === 'GET' && path.startsWith('/routing/model-definitions/')) return mockModelDefinitions();
   if (method === 'GET' && path === '/config/oauth/excluded-models') {
     return clone(state.oauthExcludedModels);
@@ -1509,6 +1512,7 @@ export function createBrowserMockRuntime(
       }
 
       case 'check_app_update': return clone(state.appUpdateInfo);
+      case 'refresh_managed_codex_model_catalog': return false;
       case 'get_app_update_task': return clone(state.appUpdateTask);
       case 'get_update_channel': return state.appUpdateInfo.updateChannel ?? 'stable';
       case 'list_update_channels': return ['stable', 'preview', 'preview-20261104-1623'];
@@ -1561,7 +1565,6 @@ export function createBrowserMockRuntime(
       case 'get_version_source_settings': return clone(state.versionSource);
       case 'set_download_source': {
         state.versionSource.source = readString(payload.source) || 'github';
-        emit('version-download-source-changed', state.versionSource);
         return clone(state.versionSource);
       }
       case 'add_custom_download_mirror': {

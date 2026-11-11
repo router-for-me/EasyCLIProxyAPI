@@ -21,6 +21,8 @@ const state = {
   latestReleaseVersion: '3.0.0',
   holdInstall: false,
   releaseInstall: null as null | (() => void),
+  holdStore: false,
+  releaseStore: null as null | (() => void),
   settings: {
     enabled: true, dir: 'plugins', 'store-sources': ['https://registry.example.test/plugins.json'],
     'store-auth': [{ host: 'registry.example.test', 'token-env': 'PLUGIN_FIXTURE_TOKEN' }],
@@ -163,10 +165,13 @@ mockIPC(async (command, args) => {
       })),
     };
   }
-  if (request.path === '/plugins/store' && request.method === 'GET') return {
-    plugins_enabled: state.settings.enabled, plugins_dir: state.settings.dir, plugins: storeEntries,
-    source_errors: [{ source_id: 'offline', source_name: 'Offline source', message: 'Fixture registry unavailable' }],
-  };
+  if (request.path === '/plugins/store' && request.method === 'GET') {
+    if (state.holdStore) await new Promise<void>(resolve => { state.releaseStore = resolve; });
+    return {
+      plugins_enabled: state.settings.enabled, plugins_dir: state.settings.dir, plugins: storeEntries,
+      source_errors: [{ source_id: 'offline', source_name: 'Offline source', message: 'Fixture registry unavailable' }],
+    };
+  }
   if (request.path === '/config/plugins') {
     if (request.method === 'GET') return structuredClone(state.settings);
     if (request.method === 'PATCH') {
