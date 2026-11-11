@@ -251,18 +251,9 @@ pub(crate) fn open_external_url(app: tauri::AppHandle, url: String) -> Result<()
 
 #[tauri::command]
 pub(crate) async fn check_app_update(
-    app: tauri::AppHandle,
     state: tauri::State<'_, AppUpdateState>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<AppUpdateInfo, String> {
-    // Startup and manual version checks also refresh model defaults. Keep this
-    // independent so a catalog download failure does not fail the version check.
-    let catalog_app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        if let Err(error) = update_codex_model_catalog_inner(&catalog_app).await {
-            eprintln!("Failed to update Codex model catalog during version check; continuing with current catalog: {error}");
-        }
-    });
     let config = gui_config_state.snapshot()?;
     let (info, _) = resolve_app_update(&config).await?;
     state.set_available(AppUpdateTask {

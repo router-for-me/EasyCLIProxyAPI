@@ -35,7 +35,6 @@ pub(crate) fn resolve_pi_executable(
 
 static CODEX_CATALOG_SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static CODEX_CATALOG_UPDATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-static CODEX_CATALOG_REFRESH: tokio::sync::Notify = tokio::sync::Notify::const_new();
 static CODEX_CATALOG_FILE_SIGNATURES: std::sync::Mutex<
     Option<HashMap<PathBuf, Option<(u64, Option<SystemTime>)>>>,
 > = std::sync::Mutex::new(None);
@@ -656,9 +655,6 @@ pub(crate) async fn update_codex_model_catalog_inner(
     write_bytes_atomically(&path, catalog_json.as_bytes())?;
     record_codex_catalog_file_signature(&path);
     let changed = codex_catalog::activate_catalog_json(&catalog_json)?;
-    if changed {
-        request_codex_model_catalog_refresh();
-    }
     Ok(CodexModelCatalogUpdateResult {
         outcome: if changed { "updated" } else { "unchanged" }.to_string(),
     })
@@ -746,9 +742,8 @@ fn codex_catalog_file_changed(path: &Path) -> bool {
 }
 
 /// Reloads the local catalog update file and the saved model customizations
-/// when they changed on disk after they were last loaded. Without this, the
-/// background synchronization keeps regenerating the Codex catalog from the
-/// copies read at startup and reverts external edits to these files.
+/// when they changed on disk after they were last loaded, so explicit catalog
+/// edits use the latest files rather than the copies read at startup.
 fn reload_changed_codex_catalog_files(app: &tauri::AppHandle) {
     match codex_model_catalog_override_path(app) {
         Ok(path) if codex_catalog_file_changed(&path) => {
@@ -1333,6 +1328,37 @@ pub(crate) async fn fetch_prepared_agent_models(
     }
 }
 
+/// Refresh the installed CPA-managed catalog only when explicitly requested.
+#[tauri::command]
+pub(crate) async fn refresh_managed_codex_model_catalog(
+    app: tauri::AppHandle,
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<bool, String> {
+    let _sync_guard = CODEX_CATALOG_SYNC_LOCK.lock().await;
+    let config = gui_config_state.snapshot()?;
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
+    if codex_native_oauth_enabled(&home)? {
+        return Ok(false);
+    }
+    let paths = agent_config_paths(AgentClient::Codex, &home);
+    let (configured, _, _) = inspect_agent_managed_config(
+        AgentClient::Codex,
+        &paths,
+        config.port,
+        effective_agent_api_key(&config),
+    )?;
+    if !configured {
+        return Ok(false);
+    }
+    let runtime_models = fetch_codex_catalog_runtime_models(&config).await?;
+    reload_changed_codex_catalog_files(&app);
+    let prepared = prepare_codex_agent_models(&runtime_models)?;
+    sync_prepared_codex_model_catalog(&app, &config, &prepared)
+}
+
 fn sync_prepared_codex_model_catalog(
     app: &tauri::AppHandle,
     config: &GuiConfigFile,
@@ -1366,57 +1392,6 @@ fn sync_prepared_codex_model_catalog(
         );
     }
     Ok(changed)
-}
-
-pub(crate) async fn refresh_applied_codex_model_catalog(
-    app: &tauri::AppHandle,
-    config: &GuiConfigFile,
-) -> Result<bool, String> {
-    let _sync_guard = CODEX_CATALOG_SYNC_LOCK.lock().await;
-    let runtime_models = fetch_codex_catalog_runtime_models(config).await?;
-    reload_changed_codex_catalog_files(app);
-    let prepared = prepare_codex_agent_models(&runtime_models)?;
-    sync_prepared_codex_model_catalog(app, config, &prepared)
-}
-
-pub(crate) fn request_codex_model_catalog_refresh() {
-    CODEX_CATALOG_REFRESH.notify_one();
-}
-
-pub(crate) fn start_codex_model_catalog_sync(app: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        let Ok(home) = app.path().home_dir() else {
-            return;
-        };
-        let mut interval = tokio::time::interval(Duration::from_secs(30));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {},
-                _ = CODEX_CATALOG_REFRESH.notified() => {
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                },
-            }
-            let Ok(config) = app.state::<GuiConfigState>().snapshot() else {
-                continue;
-            };
-            let paths = agent_config_paths(AgentClient::Codex, &home);
-            if !matches!(
-                inspect_agent_managed_config(
-                    AgentClient::Codex,
-                    &paths,
-                    config.port,
-                    effective_agent_api_key(&config),
-                ),
-                Ok((true, _, _))
-            ) {
-                continue;
-            }
-            if let Err(error) = refresh_applied_codex_model_catalog(&app, &config).await {
-                eprintln!("Failed to synchronize Codex model catalog in the background; keeping the existing configuration: {error}");
-            }
-        }
-    });
 }
 
 pub(crate) fn agent_uses_cpa_runtime_context_windows(client: AgentClient) -> bool {

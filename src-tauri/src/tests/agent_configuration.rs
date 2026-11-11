@@ -2429,7 +2429,7 @@ async fn codex_configuration_uses_public_v1_model_ids_for_selection_and_files() 
                 r#"{"models":[{"id":"public-model","context_window":1048576,"supported_reasoning_levels":["low","medium","high"],"default_reasoning_level":"medium"},{"id":"client-only-model","context_window":1048576}]}"#
             } else {
                 assert_eq!(path, "/v8/management/config.yaml");
-                "config-version: 8\n"
+                "config-version: 8\napi-keys:\n  codex:\n    - name: test-provider\n      models:\n        - name: another-model\n          max-context-length: 64000\n      keys: [{api-key: upstream-test-key}]\n"
             };
             write!(socket, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
             paths.push(path);
@@ -2458,6 +2458,29 @@ async fn codex_configuration_uses_public_v1_model_ids_for_selection_and_files() 
     assert_eq!(public_model["max_context_window"], 1_048_576);
     assert_eq!(public_model["default_reasoning_level"], "medium");
     assert_eq!(public_model["supported_reasoning_levels"].as_array().unwrap().len(), 3);
+    let configured_model = catalog["models"].as_array().unwrap().iter().find(|model| model["slug"] == "another-model").unwrap();
+    assert_eq!(configured_model["context_window"], 64_000);
+    assert_eq!(configured_model["max_context_window"], 64_000);
+
+    // The manual homepage refresh writes both enriched metadata and configured
+    // context limits to the existing managed catalog, removing stale entries.
+    let home = agent_test_home("codex-manual-catalog-refresh");
+    apply_agent_configuration(
+        AgentClient::Codex, &home, port, "public-test-key", "public-model",
+        &test_agent_models(&["public-model", "stale-model"]),
+        Some(&test_codex_models(&["public-model", "stale-model"])),
+    ).unwrap();
+    assert!(sync_codex_model_catalog_if_configured(
+        &home, port, "public-test-key", &prepared.models, prepared.codex_catalog.as_deref().unwrap(),
+    ).unwrap());
+    let written: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(codex_model_catalog_path(&home)).unwrap(),
+    ).unwrap();
+    assert_eq!(written, catalog);
+    assert!(!sync_codex_model_catalog_if_configured(
+        &home, port, "public-test-key", &prepared.models, prepared.codex_catalog.as_deref().unwrap(),
+    ).unwrap());
+    fs::remove_dir_all(home).unwrap();
 }
 
 #[test]

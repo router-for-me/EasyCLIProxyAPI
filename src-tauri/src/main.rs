@@ -2791,7 +2791,6 @@ fn main() {
 
             network_proxy::start_monitor(app.handle().clone());
             core_recovery::start(app.handle().clone());
-            start_codex_model_catalog_sync(app.handle().clone());
             agent_usage::start_background_sync(app.handle().clone());
 
             let usage_app = app.handle().clone();
@@ -2976,6 +2975,7 @@ fn main() {
             uninstall_pi_provider,
             check_codex_oauth_login,
             update_codex_model_catalog,
+            refresh_managed_codex_model_catalog,
             get_deepseek_harness_model_catalog_editor,
             save_deepseek_harness_model_catalog_editor,
             get_codex_model_catalog_editor,

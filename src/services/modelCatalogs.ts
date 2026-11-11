@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { getCurrentLocale, translate } from '../i18n';
 import { isRecord, managementApi, readString } from './managementApi';
 
@@ -29,6 +30,13 @@ export async function refreshModelCatalogs(): Promise<RefreshModelCatalogsRespon
         || !response.changed_providers.every((provider) => typeof provider === 'string' && provider.trim())))) {
     throw new Error(readString(response, 'error')
       || translate(getCurrentLocale(), 'home.catalog.invalidResponse'));
+  }
+  try {
+    await invoke<boolean>('refresh_managed_codex_model_catalog');
+  } catch (error) {
+    throw new Error(translate(getCurrentLocale(), 'home.catalog.codexSyncFailed', {
+      error: error instanceof Error ? error.message : String(error),
+    }));
   }
   return response as RefreshModelCatalogsResponse;
 }

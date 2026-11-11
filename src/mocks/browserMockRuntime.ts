@@ -1512,6 +1512,7 @@ export function createBrowserMockRuntime(
       }
 
       case 'check_app_update': return clone(state.appUpdateInfo);
+      case 'refresh_managed_codex_model_catalog': return false;
       case 'get_app_update_task': return clone(state.appUpdateTask);
       case 'get_update_channel': return state.appUpdateInfo.updateChannel ?? 'stable';
       case 'list_update_channels': return ['stable', 'preview', 'preview-20261104-1623'];
