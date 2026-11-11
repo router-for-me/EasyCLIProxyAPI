@@ -4125,19 +4125,25 @@ pub(crate) fn build_zcode_agent_config(
         if manual.is_some() && !specs.contains_key("maxOutputTokens") {
             specs.insert("maxOutputTokens".to_string(), serde_json::json!({ "max": zcode::ZCODE_MANUAL_MAX_OUTPUT_TOKENS_FALLBACK }));
         }
-        if !option.reasoning_levels.is_empty() {
-            let is_generated_map = |m: &str| {
-                m == ZCODE_CPA_REASONING_MAP || m == "reasoningLevel == \"none\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}"
-            };
-            let generated = manual.is_none() && specs.get("reasoningLevel")
-                .and_then(|spec| spec.get("map")).and_then(serde_json::Value::as_str)
-                .map(is_generated_map).unwrap_or(false);
+        let mut reasoning_levels = zcode::sanitize_reasoning_levels(&option.reasoning_levels);
+        if reasoning_levels.is_empty() && manual.is_some() {
+            reasoning_levels = zcode::ZCODE_MANUAL_REASONING_LEVELS_FALLBACK.iter().map(|level| (*level).to_string()).collect();
+        }
+        let is_generated_map = |m: &str| {
+            m == ZCODE_CPA_REASONING_MAP || m == "reasoningLevel == \"none\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}"
+        };
+        let generated = manual.is_none() && specs.get("reasoningLevel")
+            .and_then(|spec| spec.get("map")).and_then(serde_json::Value::as_str)
+            .map(is_generated_map).unwrap_or(false);
+        if !reasoning_levels.is_empty() {
             if generated || !specs.contains_key("reasoningLevel") {
                 specs.insert("reasoningLevel".into(), serde_json::json!({
-                    "values": option.reasoning_levels,
+                    "values": reasoning_levels,
                     "map": ZCODE_CPA_REASONING_MAP,
                 }));
             }
+        } else if generated {
+            specs.remove("reasoningLevel");
         }
         if specs.is_empty() {
             config_obj.remove("optionSpecs");

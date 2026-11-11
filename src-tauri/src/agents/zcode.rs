@@ -123,6 +123,10 @@ pub(crate) const ZCODE_MANUAL_MAX_OUTPUT_TOKENS_FALLBACK: u64 = 128_000;
 /// rule valid with this fallback instead of persisting a non-positive value.
 pub(crate) const ZCODE_MANUAL_CONTEXT_WINDOW_FALLBACK: u64 = 200_000;
 
+/// Manual model rules must carry a non-empty `reasoningLevel.values` list; this
+/// generic ladder keeps the rule valid when the catalog reports no levels.
+pub(crate) const ZCODE_MANUAL_REASONING_LEVELS_FALLBACK: [&str; 3] = ["low", "medium", "high"];
+
 /// ZCode rejects `reasoningLevel.values` when the list is empty or repeats a
 /// level, so trim, drop blanks and deduplicate before rendering a rule.
 pub(crate) fn sanitize_reasoning_levels(levels: &[String]) -> Vec<String> {
@@ -280,7 +284,10 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
     } else {
         option_specs.remove("maxOutputTokens");
     }
-    let reasoning_levels = sanitize_reasoning_levels(&config.reasoning_levels);
+    let mut reasoning_levels = sanitize_reasoning_levels(&config.reasoning_levels);
+    if reasoning_levels.is_empty() && config.is_manual {
+        reasoning_levels = ZCODE_MANUAL_REASONING_LEVELS_FALLBACK.iter().map(|level| (*level).to_string()).collect();
+    }
     if reasoning_levels.is_empty() {
         option_specs.remove("reasoningLevel");
     } else {
