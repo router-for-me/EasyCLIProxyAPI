@@ -1370,6 +1370,7 @@ fn initialize_usage_schema(connection: &Connection) -> Result<(), String> {
         .map_err(|error| format!("Failed to initialize SQLite usage records schema: {error}"))?;
     ensure_usage_failure_columns(connection)?;
     ensure_usage_response_model_column(connection)?;
+    cleanup_contaminated_synced_model_prices(connection)?;
     connection
         .execute(
             "CREATE INDEX IF NOT EXISTS idx_usage_events_canceled_timestamp ON usage_events(canceled, timestamp_ms DESC)",
@@ -3888,6 +3889,68 @@ fn find_exact_model_price<'a>(
     None
 }
 
+fn strip_reasoning_effort_suffix(model: &str) -> Option<&str> {
+    let model = model.trim();
+    let tail = model.rsplit('/').next().unwrap_or(model);
+    let lower_tail = tail.to_ascii_lowercase();
+    for suffix in [
+        "-extra-low",
+        "-minimal",
+        "-low",
+        "-medium",
+        "-high",
+        "-xhigh",
+        "-none",
+        "-thinking",
+    ] {
+        if lower_tail.len() > suffix.len() && lower_tail.ends_with(suffix) {
+            return model.get(..model.len() - suffix.len());
+        }
+    }
+    for suffix in ["-max", "-ultra"] {
+        if lower_tail.len() > suffix.len() && lower_tail.ends_with(suffix) {
+            let stem = &lower_tail[..lower_tail.len() - suffix.len()];
+            let has_explicit_tier = stem.split(['-', '.']).any(|token| {
+                matches!(
+                    token,
+                    "flash"
+                        | "pro"
+                        | "lite"
+                        | "mini"
+                        | "nano"
+                        | "opus"
+                        | "sonnet"
+                        | "haiku"
+                        | "fable"
+                        | "mythos"
+                        | "codex"
+                        | "sol"
+                        | "astra"
+                        | "luna"
+                        | "terra"
+                        | "cyber"
+                        | "argon"
+                )
+            });
+            if has_explicit_tier {
+                return model.get(..model.len() - suffix.len());
+            }
+        }
+    }
+    None
+}
+
+fn find_automatic_model_price<'a>(
+    prices: &'a HashMap<String, ModelPrice>,
+    model: &str,
+    accepts: impl Fn(&ModelPrice) -> bool + Copy,
+) -> Option<&'a ModelPrice> {
+    find_exact_model_price(prices, model, accepts).or_else(|| {
+        let base = strip_reasoning_effort_suffix(model)?;
+        find_exact_model_price(prices, base, accepts)
+    })
+}
+
 fn resolve_model_price<'a>(
     model: &'a str,
     alias: &'a str,
@@ -3895,9 +3958,9 @@ fn resolve_model_price<'a>(
 ) -> Option<(&'a str, ModelPrice)> {
     // Price the routed model first. Manual entries remain editable in the merged
     // catalog, but must not hide an automatic price from the bundled catalog.
-    let automatic = find_exact_model_price(prices, model, |price| price.source != "manual")
+    let automatic = find_automatic_model_price(prices, model, |price| price.source != "manual")
         .or_else(|| {
-            find_exact_model_price(cached_bundled_model_prices().ok()?, model, |_| true)
+            find_automatic_model_price(cached_bundled_model_prices().ok()?, model, |_| true)
         });
     if let Some(price) = automatic {
         return Some((model, price.clone()));
@@ -3984,7 +4047,7 @@ fn load_model_prices(connection: &Connection) -> Result<HashMap<String, ModelPri
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Failed to read model pricing: {error}"))?;
     for price in prices {
-        if price.source != "litellm" {
+        if is_valid_saved_model_price(&price) {
             if let Some(existing) = merged
                 .keys()
                 .find(|model| model.eq_ignore_ascii_case(&price.model))
@@ -3996,6 +4059,40 @@ fn load_model_prices(connection: &Connection) -> Result<HashMap<String, ModelPri
         }
     }
     Ok(merged)
+}
+
+fn is_valid_saved_model_price(price: &ModelPrice) -> bool {
+    if price.source == "litellm" {
+        return false;
+    }
+    if matches!(price.source.as_str(), "models.dev" | "litellm-sync") {
+        return synced_source_matches_model(&price.model, &price.source_model_id);
+    }
+    true
+}
+
+fn cleanup_contaminated_synced_model_prices(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT model, source_model_id FROM model_prices WHERE source IN ('models.dev', 'litellm-sync')",
+        )
+        .map_err(|error| format!("Failed to prepare model pricing cleanup query: {error}"))?;
+    let stale_models = statement
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|error| format!("Failed to query synced model pricing: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to read synced model pricing: {error}"))?
+        .into_iter()
+        .filter_map(|(model, source_model_id)| {
+            (!synced_source_matches_model(&model, &source_model_id)).then_some(model)
+        })
+        .collect::<Vec<_>>();
+    for model in stale_models {
+        connection
+            .execute("DELETE FROM model_prices WHERE model = ?1", params![model])
+            .map_err(|error| format!("Failed to clean contaminated model pricing: {error}"))?;
+    }
+    Ok(())
 }
 
 fn validate_model_price(price: &ModelPrice) -> Result<(), String> {
@@ -4160,7 +4257,62 @@ pub(crate) async fn delete_usage_model_price(model: String) -> Result<(), String
     .await
 }
 
-fn sync_price_for_model<'a>(model: &str, prices: &'a [ModelPrice]) -> Option<&'a ModelPrice> {
+fn official_sync_provider_prefixes(family: &str) -> Option<&'static [&'static str]> {
+    if family.starts_with("gpt-")
+        || family.starts_with("chatgpt-")
+        || family == "o1"
+        || family.starts_with("o1-")
+        || family == "o3"
+        || family.starts_with("o3-")
+        || family == "o4"
+        || family.starts_with("o4-")
+    {
+        Some(&["openai/"])
+    } else if family.starts_with("claude-") {
+        Some(&["anthropic/"])
+    } else if family.starts_with("gemini-") {
+        Some(&["google/", "gemini/"])
+    } else if family.starts_with("deepseek-") {
+        Some(&["deepseek/"])
+    } else if family.starts_with("grok-") {
+        Some(&["xai/"])
+    } else {
+        None
+    }
+}
+
+pub(crate) fn synced_source_matches_model(model: &str, source_model_id: &str) -> bool {
+    let model = model.trim();
+    let source_model_id = source_model_id.trim();
+    if model.is_empty() || source_model_id.is_empty() {
+        return false;
+    }
+    if source_model_id.eq_ignore_ascii_case(model)
+        || strip_reasoning_effort_suffix(model)
+            .is_some_and(|base| source_model_id.eq_ignore_ascii_case(base))
+    {
+        return true;
+    }
+    let source_tail = canonical_model_tail(source_model_id);
+    if source_tail.is_empty() {
+        return false;
+    }
+    let tail_matches = canonical_model_tail(model) == source_tail
+        || strip_reasoning_effort_suffix(model)
+            .is_some_and(|base| canonical_model_tail(base) == source_tail);
+    if !tail_matches {
+        return false;
+    }
+    let family = normalized_model_tail(model);
+    if let Some(prefixes) = official_sync_provider_prefixes(&family) {
+        let lower_source = source_model_id.to_ascii_lowercase();
+        return !lower_source.contains('/')
+            || prefixes.iter().any(|prefix| lower_source.starts_with(prefix));
+    }
+    true
+}
+
+fn sync_exact_price_for_model<'a>(model: &str, prices: &'a [ModelPrice]) -> Option<&'a ModelPrice> {
     let model = model.trim();
     if model.is_empty() {
         return None;
@@ -4173,11 +4325,17 @@ fn sync_price_for_model<'a>(model: &str, prices: &'a [ModelPrice]) -> Option<&'a
         return Some(exact[0]);
     }
     let tail = model.rsplit('/').next().unwrap_or(model);
-    let family = tail.to_ascii_lowercase();
+    let family = normalized_model_tail(model);
     let mut candidates = prices
         .iter()
         .filter(|price| price.model.eq_ignore_ascii_case(tail))
         .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        candidates = prices
+            .iter()
+            .filter(|price| normalized_model_tail(&price.model) == family)
+            .collect();
+    }
     if candidates.is_empty() {
         let normalized = canonical_model_tail(tail);
         candidates = prices
@@ -4185,49 +4343,48 @@ fn sync_price_for_model<'a>(model: &str, prices: &'a [ModelPrice]) -> Option<&'a
             .filter(|price| canonical_model_tail(&price.model) == normalized)
             .collect();
     }
-    let provider = if family.starts_with("gpt-")
-        || family.starts_with("chatgpt-")
-        || family.starts_with("o1-")
-        || family.starts_with("o3-")
-        || family.starts_with("o4-")
-    {
-        Some("openai")
-    } else if family.starts_with("claude-") {
-        Some("anthropic")
-    } else if family.starts_with("gemini-") {
-        Some("google")
-    } else if family.starts_with("deepseek-") {
-        Some("deepseek")
-    } else if family.starts_with("grok-") {
-        Some("xai")
-    } else {
-        None
-    };
-    if let Some(provider) = provider {
+    if let Some(prefixes) = official_sync_provider_prefixes(&family) {
         let official = candidates
             .iter()
-            .filter(|price| price.source_model_id.starts_with(&format!("{provider}/")))
+            .copied()
+            .filter(|price| {
+                let lower_source = price.source_model_id.to_ascii_lowercase();
+                prefixes.iter().any(|prefix| lower_source.starts_with(prefix))
+            })
             .collect::<Vec<_>>();
         if official.len() == 1 {
             return Some(official[0]);
         }
+        let bare = candidates
+            .iter()
+            .copied()
+            .filter(|price| !price.source_model_id.contains('/'))
+            .collect::<Vec<_>>();
+        if bare.len() == 1 {
+            return Some(bare[0]);
+        }
+        return None;
     }
     (candidates.len() == 1).then(|| candidates[0])
 }
 
+fn sync_price_for_model<'a>(model: &str, prices: &'a [ModelPrice]) -> Option<&'a ModelPrice> {
+    sync_exact_price_for_model(model, prices).or_else(|| {
+        let base = strip_reasoning_effort_suffix(model)?;
+        sync_exact_price_for_model(base, prices)
+    })
+}
+
 fn build_model_price_preview(
-    models: &[(String, String)],
+    models: &[String],
     remote_prices: &[ModelPrice],
     source: &str,
     source_url: &str,
 ) -> ModelPriceSyncPreview {
     let mut matches = Vec::new();
     let mut unmatched = Vec::new();
-    for (model, alias) in models {
-        let matched = [model.as_str(), alias.as_str()]
-            .into_iter()
-            .find_map(|candidate| sync_price_for_model(candidate, remote_prices));
-        if let Some(price) = matched {
+    for model in models {
+        if let Some(price) = sync_price_for_model(model, remote_prices) {
             let mut price = price.clone();
             price.model = model.clone();
             matches.push(price);
@@ -4246,19 +4403,16 @@ fn build_model_price_preview(
 fn collect_price_preview_models(
     connection: &Connection,
     query: &UsageQuery,
-) -> Result<Vec<(String, String)>, String> {
-    let mut models = std::collections::BTreeMap::<String, (String, String)>::new();
+) -> Result<Vec<String>, String> {
+    let mut models = std::collections::BTreeMap::<String, String>::new();
     for price in load_model_prices(connection)?.values() {
-        models.insert(price.model.to_ascii_lowercase(), (price.model.clone(), String::new()));
+        models.insert(price.model.to_ascii_lowercase(), price.model.clone());
     }
     let filter = build_usage_filter(query);
     for group in load_usage_cost_groups(connection, &filter)? {
-        let entry = models
+        models
             .entry(group.model.to_ascii_lowercase())
-            .or_insert_with(|| (group.model, String::new()));
-        if entry.1.is_empty() && !group.alias.trim().is_empty() {
-            entry.1 = group.alias;
-        }
+            .or_insert(group.model);
     }
     Ok(models.into_values().collect())
 }
@@ -4367,7 +4521,7 @@ pub(crate) async fn apply_usage_model_prices(prices: Vec<ModelPrice>) -> Result<
     for price in &prices {
         validate_model_price(price)?;
         if !matches!(price.source.as_str(), "models.dev" | "litellm-sync")
-            || price.source_model_id.trim().is_empty()
+            || !synced_source_matches_model(&price.model, &price.source_model_id)
         {
             return Err("Invalid pricing synchronization source".to_string());
         }
@@ -7890,68 +8044,169 @@ mod tests {
     }
 
     #[test]
-    fn price_preview_matches_official_models_without_guessing_dynamic_aliases() {
+    fn price_preview_matches_official_and_reasoning_models_without_guessing_aliases() {
         let catalog = serde_json::json!({
             "openai": { "models": { "gpt-6-sol": { "cost": { "input": 2.0, "output": 10.0 } } } },
-            "google": { "models": { "gpt-6-sol": { "cost": { "input": 90.0, "output": 90.0 } } } }
+            "google": { "models": {
+                "gpt-6-sol": { "cost": { "input": 90.0, "output": 90.0 } },
+                "gemini-3.8-flash": { "cost": { "input": 0.75, "output": 3.75 } }
+            } },
+            "anthropic": { "models": {
+                "claude-fable-5": { "cost": { "input": 10.0, "output": 50.0 } },
+                "claude-fable-5-1": { "cost": { "input": 10.0, "output": 50.0 } }
+            } },
+            "openrouter": { "models": {
+                "gpt-new-unreleased": { "cost": { "input": 88.0, "output": 88.0 } }
+            } },
+            "alibaba": { "models": {
+                "qwen3": { "cost": { "input": 0.2, "output": 0.6 } }
+            } }
         });
         let remote = parse_models_dev_prices(&catalog.to_string(), 1).unwrap();
         let models = vec![
-            ("gpt-6-sol".to_string(), String::new()),
-            ("gpt-daybreak-blue-latest".to_string(), String::new()),
-            ("my-alias".to_string(), "gpt-6-sol".to_string()),
+            "gpt-6-sol".to_string(),
+            "gpt-6-sol-max".to_string(),
+            "gemini-3.8-flash-high".to_string(),
+            "gpt-daybreak-blue-latest".to_string(),
+            "gpt-new-unreleased".to_string(),
+            "qwen3-max".to_string(),
+            "my-alias".to_string(),
         ];
-        let preview = build_model_price_preview(&models, &remote, "Models.dev", MODEL_PRICE_SYNC_URL);
-        assert_eq!(preview.matches.len(), 2);
+        let preview =
+            build_model_price_preview(&models, &remote, "Models.dev", MODEL_PRICE_SYNC_URL);
+        assert_eq!(preview.matches.len(), 3);
+        assert_eq!(preview.matches[0].model, "gpt-6-sol");
         assert_eq!(preview.matches[0].prompt, 2.0);
         assert_eq!(preview.matches[0].source_model_id, "openai/gpt-6-sol");
-        assert_eq!(preview.matches[1].model, "my-alias");
-        assert_eq!(preview.unmatched, ["gpt-daybreak-blue-latest"]);
+        assert_eq!(preview.matches[1].model, "gpt-6-sol-max");
+        assert_eq!(preview.matches[1].source_model_id, "openai/gpt-6-sol");
+        assert_eq!(preview.matches[2].model, "gemini-3.8-flash-high");
+        assert_eq!(preview.matches[2].prompt, 0.75);
+        assert_eq!(preview.matches[2].source_model_id, "google/gemini-3.8-flash");
+        assert_eq!(
+            preview.unmatched,
+            [
+                "gpt-daybreak-blue-latest",
+                "gpt-new-unreleased",
+                "qwen3-max",
+                "my-alias",
+            ]
+        );
     }
 
     #[test]
-    fn price_preview_uses_usage_alias_for_models_with_existing_prices() {
-        let root = test_root("price-preview-existing-alias");
-        let connection = open_test_database(&root);
-        upsert_model_price(
-            &connection,
-            &ModelPrice {
-                model: "my-alias".to_string(),
-                prompt: 1.0,
-                completion: 2.0,
-                source: "manual".to_string(),
-                ..ModelPrice::default()
-            },
-        )
-        .unwrap();
-        connection
-            .execute(
-                "INSERT INTO usage_events (event_key, timestamp, timestamp_ms, local_hour, model, alias, created_at) VALUES ('preview-alias', '2026-09-24T00:00:00Z', 1, '2026-09-24T00', 'my-alias', 'gpt-6-sol', '2026-09-24T00:00:00Z')",
-                [],
-            )
-            .unwrap();
+    fn price_preview_prevents_cross_provider_alias_contamination_and_heals_poisoned_rows() {
+        let root = test_root("price-preview-no-alias-contamination");
+        let mut connection = open_test_database(&root);
+        for (key, model, alias) in [
+            ("r1", "gemini-4-argon-high", "claude-fable-5"),
+            ("r2", "gemini-3.8-flash-high", "claude-fable-5"),
+            ("r3", "deepseek-v4-1-flash-1017-uncensored", "claude-fable-5-1"),
+            ("r4", "SCNet-Max", "claude-opus-5"),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO usage_events (event_key, timestamp, timestamp_ms, local_hour, model, alias, input_tokens, output_tokens, total_tokens, created_at) VALUES (?1, '2026-09-24T00:00:00Z', 1, '2026-09-24-00', ?2, ?3, 100000, 100000, 200000, '2026-09-24T00:00:00Z')",
+                    params![key, model, alias],
+                )
+                .unwrap();
+        }
 
         let models = collect_price_preview_models(&connection, &UsageQuery::default()).unwrap();
-        let remote = parse_models_dev_prices(
+        let litellm_remote = parse_litellm_prices(
             &serde_json::json!({
-                "openai": { "models": { "gpt-6-sol": { "cost": { "input": 2.0, "output": 10.0 } } } }
+                "claude-fable-5": { "mode": "chat", "input_cost_per_token": 0.00001, "output_cost_per_token": 0.00005 },
+                "claude-fable-5-1": { "mode": "chat", "input_cost_per_token": 0.00001, "output_cost_per_token": 0.00005 },
+                "claude-opus-5": { "mode": "chat", "input_cost_per_token": 0.000005, "output_cost_per_token": 0.000025 },
+                "gemini/gemini-3.8-flash": { "mode": "chat", "input_cost_per_token": 0.00000075, "output_cost_per_token": 0.00000375 },
+                "vertex_ai/gemini-3.8-flash": { "mode": "chat", "input_cost_per_token": 0.00000075, "output_cost_per_token": 0.00000375 }
             })
             .to_string(),
             1,
         )
         .unwrap();
         let preview =
-            build_model_price_preview(&models, &remote, "Models.dev", MODEL_PRICE_SYNC_URL);
-        let matched = preview
+            build_model_price_preview(&models, &litellm_remote, "LiteLLM", LITELLM_PRICE_SYNC_URL);
+        let flash_high = preview
             .matches
             .iter()
-            .find(|price| price.model == "my-alias")
+            .find(|price| price.model == "gemini-3.8-flash-high")
             .unwrap();
-        assert_eq!(matched.source_model_id, "openai/gpt-6-sol");
-        assert!(!preview.unmatched.contains(&"my-alias".to_string()));
+        assert_eq!(flash_high.source_model_id, "gemini/gemini-3.8-flash");
+        assert!((flash_high.prompt - 0.75).abs() < 1e-9);
+        for unpriced in [
+            "gemini-4-argon-high",
+            "deepseek-v4-1-flash-1017-uncensored",
+            "SCNet-Max",
+        ] {
+            assert!(
+                preview.matches.iter().all(|price| price.model != unpriced),
+                "{unpriced} must not inherit alias pricing"
+            );
+            assert!(preview.unmatched.iter().any(|model| model == unpriced));
+        }
+
+        // Offline resolution already prices gemini-3.8-flash-high via bundled gemini-3.8-flash
+        // while leaving unpriced cross-alias routes unpriced.
+        let initial_pricing = load_usage_pricing(&connection, &UsageQuery::default()).unwrap();
+        assert_eq!(initial_pricing.priced_requests, 1);
+        assert!((initial_pricing.total_cost - 0.45).abs() < 1e-9);
+
+        // Simulate pre-existing poisoned rows from older versions and verify both read-time
+        // rejection and startup schema self-healing cleanup.
+        upsert_model_price(
+            &connection,
+            &ModelPrice {
+                model: "gemini-4-argon-high".to_string(),
+                prompt: 10.0,
+                completion: 50.0,
+                prompt_configured: true,
+                completion_configured: true,
+                source: "models.dev".to_string(),
+                source_model_id: "anthropic/claude-fable-5".to_string(),
+                updated_at_ms: 10,
+                ..ModelPrice::default()
+            },
+        )
+        .unwrap();
+        let loaded = load_model_prices(&connection).unwrap();
+        assert!(!loaded.contains_key("gemini-4-argon-high"));
+
+        migrate_usage_database(&mut connection, &root).unwrap();
+        let remaining_poisoned: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM model_prices WHERE model = 'gemini-4-argon-high'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining_poisoned, 0);
+        assert!(!synced_source_matches_model(
+            "gemini-4-argon-high",
+            "anthropic/claude-fable-5"
+        ));
 
         drop(connection);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn apply_usage_model_prices_rejects_cross_model_source_ids() {
+        let rejected = apply_usage_model_prices(vec![ModelPrice {
+            model: "gemini-4-argon-high".to_string(),
+            prompt: 10.0,
+            completion: 50.0,
+            prompt_configured: true,
+            completion_configured: true,
+            source: "models.dev".to_string(),
+            source_model_id: "anthropic/claude-fable-5".to_string(),
+            ..ModelPrice::default()
+        }])
+        .await;
+        assert_eq!(
+            rejected.err().as_deref(),
+            Some("Invalid pricing synchronization source")
+        );
     }
 
     #[test]
