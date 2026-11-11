@@ -105,6 +105,11 @@ const report = (overrides: Record<string, unknown> = {}) => normalizeAgentUsageR
 });
 
 describe('Agent usage report normalization', () => {
+  it('uses the legacy reasoning token count when the newer field is null', () => {
+    const parsed = report({ totals: { reasoningOutputTokens: null, reasoningTokens: 42 } });
+    expect(parsed.totals.reasoningTokens).toBe(42);
+  });
+
   it('keeps totals, sources, series and timeline rows', () => {
     const parsed = report();
     expect(parsed.schemaVersion).toBe(2);
