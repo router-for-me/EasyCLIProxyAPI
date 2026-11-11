@@ -1657,6 +1657,27 @@ fn zcode_agent_config_falls_back_to_an_available_default_model() {
 }
 
 #[test]
+fn zcode_agent_config_backfills_empty_manual_reasoning_levels() {
+    // Manual rules must keep a non-empty reasoningLevel.values list; an empty
+    // list makes ZCode reject the whole provider config.
+    let models = test_agent_models(&["manual-empty-reasoning"]);
+    let existing = r#"{"schemaVersion":1,"config":{"providerConfigRules":{"providerRules":[{"providerId":"cpa-gui","providerName":"EasyCLIProxyAPI","enabled":true,"config":{"group":"standard-personal","access":{"type":"api-key","apiKey":"old"},"api":{"type":"anthropic-messages","baseUrl":"http://127.0.0.1:8317/v1"},"personalModelIds":["manual-empty-reasoning"],"modelOrder":["manual-empty-reasoning"]}}]},"modelConfigRules":{"providerModelRules":[],"manualProviderModelRules":[{"providerId":"cpa-gui","modelId":"manual-empty-reasoning","config":{"enabled":true,"optionSpecs":{"maxOutputTokens":{"max":128000},"reasoningLevel":{"values":[],"map":"reasoningLevel == \"none\" ? {} : {}"}},"properties":{"contextWindow":128000}}}]}}}"#;
+    let rendered = build_zcode_agent_config(
+        Some(existing),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "manual-empty-reasoning",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let rules = value["config"]["modelConfigRules"]["manualProviderModelRules"].as_array().unwrap();
+    let rule = rules.iter().find(|rule| rule["modelId"] == "manual-empty-reasoning").unwrap();
+    let levels = rule["config"]["optionSpecs"]["reasoningLevel"]["values"].as_array().unwrap();
+    assert!(!levels.is_empty(), "manual reasoningLevel.values must not be empty");
+}
+
+#[test]
 fn zcode_desktop_and_cli_share_the_provider_configuration() {
     let home = agent_test_home("zcode-shared-provider-config");
     let paths = agent_config_paths(AgentClient::ZCode, &home);
