@@ -4,6 +4,7 @@ import { Dialog } from "../components/Dialog";
 import { Switch } from "../components/Switch";
 import { Checkbox } from "../components/Checkbox";
 import { MessageNotice } from "../appNotice";
+import { useConfirmation } from "../components/ConfirmationDialog";
 import { useI18n } from "../i18n";
 import {
   getZCodeModelCatalogEditor,
@@ -12,7 +13,38 @@ import {
   type ZCodeCatalogEditorSnapshot,
 } from "../services/zcodeModelCatalog";
 
-const COMMON_REASONING_LEVELS = ["disabled", "enabled", "low", "medium", "high", "xhigh", "max"];
+const COMMON_REASONING_LEVELS = [
+  "disabled",
+  "enabled",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+];
+
+function sameZCodeModelConfiguration(
+  a: ZCodeCatalogEditorModel["configuration"],
+  b: ZCodeCatalogEditorModel["configuration"]
+): boolean {
+  if (a.contextWindow !== b.contextWindow) return false;
+  if (a.maxOutputTokens !== b.maxOutputTokens) return false;
+  if (a.supportsImage !== b.supportsImage) return false;
+  if (a.supportsPdf !== b.supportsPdf) return false;
+  if (a.supportsVideo !== b.supportsVideo) return false;
+  if (a.supportsJsonSchemaOutput !== b.supportsJsonSchemaOutput) return false;
+  if (a.supportsNativeWebSearch !== b.supportsNativeWebSearch) return false;
+  if (a.supportsMidConversationSystem !== b.supportsMidConversationSystem) return false;
+  if (a.isManual !== b.isManual) return false;
+  if (a.reasoningMap !== b.reasoningMap) return false;
+  if (a.reasoningLevels.length !== b.reasoningLevels.length) return false;
+  const setA = new Set(a.reasoningLevels);
+  for (const level of b.reasoningLevels) {
+    if (!setA.has(level)) return false;
+  }
+  return true;
+}
 
 export function ZCodeModelCatalogDialog({
   onClose,
@@ -22,6 +54,7 @@ export function ZCodeModelCatalogDialog({
   onSaved: () => void | Promise<void>;
 }) {
   const { t } = useI18n();
+  const { askConfirmation, confirmationDialog } = useConfirmation();
   const [snapshot, setSnapshot] = useState<ZCodeCatalogEditorSnapshot | null>(null);
   const [models, setModels] = useState<ZCodeCatalogEditorModel[]>([]);
   const [modelOrder, setModelOrder] = useState<string[]>([]);
@@ -65,10 +98,29 @@ export function ZCodeModelCatalogDialog({
     return models.filter((m) => m.id.toLowerCase().includes(q));
   }, [models, search]);
 
+  const dirty = useMemo(() => {
+    if (!snapshot) return false;
+    if (snapshot.models.length !== models.length) return true;
+    if (
+      modelOrder.length !== snapshot.modelOrder.length ||
+      modelOrder.some((id, idx) => id !== snapshot.modelOrder[idx])
+    ) {
+      return true;
+    }
+    return models.some((m) => {
+      const saved = snapshot.models.find((s) => s.id === m.id);
+      if (!saved) return true;
+      if (saved.enabled !== m.enabled) return true;
+      return !sameZCodeModelConfiguration(m.configuration, saved.configuration);
+    });
+  }, [models, modelOrder, snapshot]);
+
   const toggleModelEnabled = (id: string, enabled: boolean) => {
     setModels((prev) =>
       prev.map((m) => (m.id === id ? { ...m, enabled } : m))
     );
+    setError("");
+    setNotice("");
   };
 
   const updateSelectedConfig = (
@@ -78,6 +130,8 @@ export function ZCodeModelCatalogDialog({
     setModels((prev) =>
       prev.map((m) => (m.id === selectedId ? { ...m, configuration: { ...updater(m.configuration), isManual: true } } : m))
     );
+    setError("");
+    setNotice("");
   };
 
   const toggleReasoningLevel = (level: string) => {
@@ -97,10 +151,37 @@ export function ZCodeModelCatalogDialog({
     setModels((prev) =>
       prev.map((m) => (m.id === selectedId ? { ...m, configuration: { ...m.defaults } } : m))
     );
+    setError("");
+    setNotice("");
+  };
+
+  const availableReasoningLevels = useMemo(() => {
+    const custom =
+      selectedModel?.configuration.reasoningLevels.filter(
+        (l) => !COMMON_REASONING_LEVELS.includes(l)
+      ) ?? [];
+    return [...COMMON_REASONING_LEVELS, ...custom];
+  }, [selectedModel?.configuration.reasoningLevels]);
+
+  const requestClose = async () => {
+    if (saving) return;
+    if (
+      dirty &&
+      !(await askConfirmation({
+        title: t("agents.catalog.unsaved"),
+        message: t("agents.catalog.discardHint"),
+        confirmText: t("agents.catalog.discard"),
+        cancelText: t("agents.catalog.keepEditing"),
+        variant: "danger",
+      }))
+    ) {
+      return;
+    }
+    onClose();
   };
 
   const save = async () => {
-    if (!snapshot || loading || saving) return;
+    if (!snapshot || !dirty || loading || saving) return;
     setSaving(true);
     setError("");
     setNotice("");
@@ -112,8 +193,11 @@ export function ZCodeModelCatalogDialog({
       setSnapshot(next);
       setModels(next.models);
       setModelOrder(next.modelOrder);
+      setNotice(
+        t("agents.zcode.catalog.saved") ||
+          "ZCode 模型列表与规则已保存并同步至 provider_config.json"
+      );
       await onSaved();
-      onClose();
     } catch (e) {
       setError(String(e));
     } finally {
@@ -126,7 +210,7 @@ export function ZCodeModelCatalogDialog({
       className="config-dialog codex-catalog-dialog"
       backdropClassName="codex-catalog-backdrop"
       labelledBy="zcode-catalog-title"
-      onClose={saving ? undefined : onClose}
+      onClose={() => void requestClose()}
       closeDisabled={saving}
       dismissOnBackdrop
     >
@@ -138,7 +222,13 @@ export function ZCodeModelCatalogDialog({
           </h2>
           <p>{t("agents.zcode.catalog.subtitle") || "管理注入到 ZCode 的可用模型、显示与隐藏、上下文窗口及参数规则。"}</p>
         </div>
-        <button type="button" className="icon-button quiet" onClick={onClose} disabled={saving} aria-label={t("common.close")}>
+        <button
+          type="button"
+          className="icon-button quiet"
+          onClick={() => void requestClose()}
+          disabled={saving}
+          aria-label={t("common.close")}
+        >
           <X size={18} aria-hidden="true" />
         </button>
       </header>
@@ -193,9 +283,6 @@ export function ZCodeModelCatalogDialog({
         </aside>
 
         <main className="codex-catalog-editor">
-          {error ? <MessageNotice tone="error" message={error} /> : null}
-          {notice ? <MessageNotice tone="success" message={notice} /> : null}
-
           {selectedModel ? (
             <div className="codex-catalog-form">
               <div className="codex-catalog-model-heading" style={{ gridColumn: "1 / -1" }}>
@@ -246,7 +333,7 @@ export function ZCodeModelCatalogDialog({
               <fieldset className="wide codex-catalog-choice-group surface-frame">
                 <legend>思考等级 (reasoningLevel)</legend>
                 <div className="codex-catalog-chips">
-                  {COMMON_REASONING_LEVELS.map((level) => {
+                  {availableReasoningLevels.map((level) => {
                     const activeLevels = selectedModel.configuration.reasoningLevels;
                     const checked = activeLevels.includes(level);
                     return (
@@ -347,23 +434,45 @@ export function ZCodeModelCatalogDialog({
         </main>
       </div>
 
-      <footer className="dialog-footer codex-catalog-footer" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <footer className="dialog-footer codex-catalog-footer">
         <div>
-          <button type="button" className="secondary-button" onClick={restoreSelectedDefaults} disabled={saving || !selectedModel}>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={restoreSelectedDefaults}
+            disabled={saving || !selectedModel}
+          >
             <RotateCcw size={15} />
             恢复推荐配置
           </button>
         </div>
-        <div className="dialog-footer-actions" style={{ display: "flex", gap: "8px" }}>
-          <button type="button" className="secondary-button" onClick={onClose} disabled={saving}>
+        <div className="codex-catalog-footer-hint">
+          {error ? <MessageNotice message={error} onDismiss={() => setError("")} /> : null}
+          <MessageNotice tone="success" message={!error ? notice : null} onDismiss={() => setNotice("")} />
+          <span>{dirty ? t("agents.catalog.unsaved") : t("agents.catalog.saveHint")}</span>
+        </div>
+        <div className="dialog-footer-actions codex-catalog-footer-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => void requestClose()}
+            disabled={saving}
+          >
             {t("common.cancel")}
           </button>
-          <button type="button" className="primary-button" onClick={save} disabled={saving || loading}>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => void save()}
+            disabled={!snapshot || !dirty || loading || saving}
+          >
             {saving ? <LoaderCircle size={15} className="spin" /> : null}
-            {t("common.save")}
+            {saving ? t("common.saving") : t("common.save")}
           </button>
         </div>
       </footer>
+
+      {confirmationDialog}
     </Dialog>
   );
 }

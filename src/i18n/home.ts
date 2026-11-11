@@ -1,4 +1,13 @@
 export const homeZhCN = {
+  'home.catalog.refresh': "刷新模型目录",
+  'home.catalog.refreshing': "正在同步目录…",
+  'home.catalog.hint': "立即同步远程模型目录和能力定义，无需重启内核",
+  'home.catalog.success': "模型目录同步成功。",
+  'home.catalog.updated': "模型目录同步成功，已更新：{providers}。",
+  'home.catalog.failed': "模型目录同步失败：{error}",
+  'home.catalog.unsupported': "当前内核不支持刷新模型目录，请在版本管理中更新内核。",
+  'home.catalog.invalidResponse': "内核未返回有效的模型目录刷新结果。",
+  'home.catalog.codexSyncFailed': '内核模型目录已刷新，但 Codex 模型目录同步失败：{error}',
   'home.runtime.ready': '本地代理已就绪',
   'home.runtime.stopped': '启动内核后即可连接客户端',
   'home.runtime.notInstalled': '请先在版本管理中安装内核',
@@ -52,6 +61,15 @@ export const homeZhCN = {
 } as const;
 
 export const homeEn: Record<keyof typeof homeZhCN, string> = {
+  'home.catalog.refresh': "Refresh Model Catalogs",
+  'home.catalog.refreshing': "Syncing Catalogs…",
+  'home.catalog.hint': "Sync remote model catalogs and capabilities without restarting the core",
+  'home.catalog.success': "Model catalogs synchronized successfully.",
+  'home.catalog.updated': "Model catalogs synchronized. Updated providers: {providers}.",
+  'home.catalog.failed': "Failed to synchronize model catalogs: {error}",
+  'home.catalog.unsupported': "This core does not support model catalog refresh. Update the core in Version Management.",
+  'home.catalog.invalidResponse': "The core returned an invalid model catalog refresh response.",
+  'home.catalog.codexSyncFailed': 'Core model catalogs refreshed, but the Codex model catalog could not be synchronized: {error}',
   'home.runtime.ready': 'Local proxy is ready',
   'home.runtime.stopped': 'Start the core to connect your clients',
   'home.runtime.notInstalled': 'Install a core in Version Management',
@@ -105,6 +123,15 @@ export const homeEn: Record<keyof typeof homeZhCN, string> = {
 };
 
 export const homeJa: Record<keyof typeof homeZhCN, string> = {
+  'home.catalog.refresh': "モデルカタログを更新",
+  'home.catalog.refreshing': "カタログを同期中…",
+  'home.catalog.hint': "コアを再起動せずにリモートのモデルカタログと機能定義を同期",
+  'home.catalog.success': "モデルカタログを同期しました。",
+  'home.catalog.updated': "モデルカタログを同期しました。更新されたプロバイダー：{providers}。",
+  'home.catalog.failed': "モデルカタログを同期できませんでした：{error}",
+  'home.catalog.unsupported': "このコアはモデルカタログの更新に対応していません。バージョン管理でコアを更新してください。",
+  'home.catalog.invalidResponse': "コアから有効なモデルカタログ更新結果が返されませんでした。",
+  'home.catalog.codexSyncFailed': 'コアのモデルカタログは更新されましたが、Codex のモデルカタログを同期できませんでした：{error}',
   'home.runtime.ready': 'ローカルプロキシは準備完了です',
   'home.runtime.stopped': 'コアを起動してクライアントを接続',
   'home.runtime.notInstalled': 'バージョン管理からコアをインストール',

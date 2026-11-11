@@ -3562,10 +3562,12 @@ fn parse_models_dev_capabilities(
             let limit = model.get("limit");
             let context_window = limit
                 .and_then(|limit| limit.get("context"))
-                .and_then(Value::as_u64);
+                .and_then(Value::as_u64)
+                .filter(|value| *value > 0);
             let max_output_tokens = limit
                 .and_then(|limit| limit.get("output"))
-                .and_then(Value::as_u64);
+                .and_then(Value::as_u64)
+                .filter(|value| *value > 0);
             let input_modalities = model
                 .get("modalities")
                 .and_then(|modalities| modalities.get("input"))
@@ -3612,8 +3614,8 @@ fn parse_litellm_capabilities(
     let models = catalog.as_object().ok_or("Invalid LiteLLM capabilities catalog format")?;
     let mut capabilities = Vec::new();
     for (model_id, entry) in models {
-        let context_window = entry.get("max_input_tokens").and_then(Value::as_u64);
-        let max_output_tokens = entry.get("max_output_tokens").and_then(Value::as_u64);
+        let context_window = entry.get("max_input_tokens").and_then(Value::as_u64).filter(|value| *value > 0);
+        let max_output_tokens = entry.get("max_output_tokens").and_then(Value::as_u64).filter(|value| *value > 0);
         let mut input_modalities = vec!["text".to_string()];
         if entry.get("supports_vision").and_then(Value::as_bool) == Some(true) {
             input_modalities.push("image".to_string());
@@ -6183,6 +6185,7 @@ mod tests {
             max_retry_interval: crate::DEFAULT_MAX_RETRY_INTERVAL,
             transient_error_cooldown_seconds: crate::DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS,
             streaming_bootstrap_retries: crate::DEFAULT_STREAMING_BOOTSTRAP_RETRIES,
+            reverse_proxy: None,
         };
         let record = normalize_usage_record(
             serde_json::json!({

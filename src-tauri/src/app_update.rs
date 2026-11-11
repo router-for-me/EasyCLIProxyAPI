@@ -244,24 +244,6 @@ pub(crate) fn gitcode_version_source_available() -> bool {
     configured_gitcode_gui_repository().is_some() && configured_gitcode_core_repository().is_some()
 }
 
-pub(crate) fn persist_automatic_download_source_switch(
-    app: &tauri::AppHandle,
-    gui_config_state: &GuiConfigState,
-    requested_source: &VersionDownloadCandidate,
-    resolved_source: &VersionDownloadCandidate,
-) -> Result<(), String> {
-    let Some(config) =
-        gui_config_state.switch_download_source_after_failure(requested_source, resolved_source)?
-    else {
-        return Ok(());
-    };
-    app.emit(
-        VERSION_DOWNLOAD_SOURCE_CHANGED_EVENT,
-        version_source_settings(&config),
-    )
-    .map_err(|error| format!("Failed to notify automatic download source switch: {error}"))
-}
-
 #[tauri::command]
 pub(crate) fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
     open_external_url_inner(&app, &url)
@@ -269,19 +251,11 @@ pub(crate) fn open_external_url(app: tauri::AppHandle, url: String) -> Result<()
 
 #[tauri::command]
 pub(crate) async fn check_app_update(
-    app: tauri::AppHandle,
     state: tauri::State<'_, AppUpdateState>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<AppUpdateInfo, String> {
-    // Startup and manual version checks also refresh model defaults. Keep this
-    // independent so a catalog download failure does not fail the version check.
-    let catalog_app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        if let Err(error) = update_codex_model_catalog_inner(&catalog_app).await {
-            eprintln!("Failed to update Codex model catalog during version check; continuing with current catalog: {error}");
-        }
-    });
-    let (info, _) = resolve_app_update(&app, gui_config_state.inner()).await?;
+    let config = gui_config_state.snapshot()?;
+    let (info, _) = resolve_app_update(&config).await?;
     state.set_available(AppUpdateTask {
         phase: if info.update_available {
             "available".to_string()
@@ -296,11 +270,9 @@ pub(crate) async fn check_app_update(
 }
 
 async fn resolve_app_update(
-    app: &tauri::AppHandle,
-    gui_config_state: &GuiConfigState,
+    config: &GuiConfigFile,
 ) -> Result<(AppUpdateInfo, Option<PendingAppUpdate>), String> {
     let _detection_guard = VERSION_SOURCE_DETECTION_LOCK.lock().await;
-    let config = gui_config_state.snapshot()?;
     let proxy_url = config.proxy_url.clone();
     let client = build_http_client_with_proxy(
         reqwest::Client::builder()
@@ -316,39 +288,35 @@ async fn resolve_app_update(
     let requested_source = config.selected_download_candidate();
     let current_version = normalize_version(env!("CARGO_PKG_VERSION"));
     let update_channel = normalize_update_channel(&config.update_channel);
-    let github_token = gui_github_token(&config).await;
     let mut channel_tag = update_channel_tag(&update_channel);
+    validate_version_download_source(
+        &requested_source,
+        configured_gitcode_gui_repository().is_some() && channel_tag.is_none(),
+    )?;
     if channel_tag.as_deref() == Some(PREVIEW_CHANNEL_MARKER) {
+        let github_token = if requested_source.source == VersionDownloadSource::Github {
+            gui_github_token(config).await
+        } else {
+            None
+        };
         // Resolve the rolling preview channel to the newest timestamped release.
         // Never fall back to a fixed tag: a preview build must not be silently
         // offered the stable release, and a deleted rolling tag would otherwise
         // turn every update check into a 404.
-        match fetch_latest_preview_tag(&client, github_token.as_deref()).await {
+        match fetch_latest_preview_tag(&client, github_token.as_deref(), &requested_source).await {
             Some(tag) => channel_tag = Some(tag),
             None => {
-                return Err(
-                    "No preview release is available right now. Try again after a preview build is published."
-                        .to_string(),
-                )
+                return Err(format!(
+                    "No preview release could be resolved from {}. Check the selected source and try again.",
+                    requested_source.display_name(),
+                ))
             }
         }
     }
     let is_preview = channel_tag.is_some();
-    let (manifest, resolved_source) = fetch_portable_update_manifest(
-        &client,
-        requested_source.clone(),
-        &config.custom_download_mirrors,
-        channel_tag.as_deref(),
-    )
-    .await?;
-    if !(is_preview && resolved_source.source == VersionDownloadSource::Gitcode) {
-        persist_automatic_download_source_switch(
-            app,
-            gui_config_state,
-            &requested_source,
-            &resolved_source,
-        )?;
-    }
+    let (manifest, resolved_source) =
+        fetch_portable_update_manifest(&client, requested_source.clone(), channel_tag.as_deref())
+            .await?;
     let latest_version = normalize_version(&manifest.version);
     let current_build_at = local_portable_app_built_at();
     let local_manifest = read_local_portable_app_manifest();
@@ -371,26 +339,26 @@ async fn resolve_app_update(
     let target = portable_update_target();
     let asset_catalog = manifest.full_assets.as_ref().unwrap_or(&manifest.assets);
     let asset = target.and_then(|(key, _)| asset_catalog.get(key)).cloned();
-    let download_url = asset.as_ref().map(|value| {
-        if value.url.starts_with("https://github.com/") {
-            version_source_url(&resolved_source, &value.url)
-        } else {
-            value.url.clone()
-        }
-    });
+    let download_url = asset
+        .as_ref()
+        .map(|value| portable_update_download_url(value, &resolved_source))
+        .transpose()?;
     let download_file_name = download_url
         .as_deref()
         .and_then(portable_update_asset_file_name);
     let download_size_bytes = asset.as_ref().map(|value| value.size_bytes);
     let mut manifest_error = None;
-    let portable_support = target.map(|(_, arch)| match validate_local_portable_app_manifest(arch) {
-        Ok(supported) => supported || is_preview || is_test_env,
-        Err(_) if is_preview || is_test_env => true,
-        Err(error) => {
-            manifest_error = Some(error);
-            false
-        }
-    });
+    let portable_support =
+        target.map(
+            |(_, arch)| match validate_local_portable_app_manifest(arch) {
+                Ok(supported) => supported || is_preview || is_test_env,
+                Err(_) if is_preview || is_test_env => true,
+                Err(error) => {
+                    manifest_error = Some(error);
+                    false
+                }
+            },
+        );
     let auto_update_supported = portable_support == Some(true) && asset.is_some();
     let unsupported_reason = if auto_update_supported {
         None
@@ -399,7 +367,9 @@ async fn resolve_app_update(
     } else if portable_support != Some(true) {
         Some("This application is not a portable version that supports automatic upgrades. Manually download the first supported version".to_string())
     } else {
-        Some("The update manifest does not include the current platform or architecture".to_string())
+        Some(
+            "The update manifest does not include the current platform or architecture".to_string(),
+        )
     };
 
     let pending = if update_available && auto_update_supported {
@@ -434,41 +404,40 @@ async fn resolve_app_update(
 pub(crate) async fn fetch_portable_update_manifest(
     client: &reqwest::Client,
     source: VersionDownloadCandidate,
-    custom_mirrors: &[String],
     channel_tag: Option<&str>,
 ) -> Result<(PortableUpdateManifest, VersionDownloadCandidate), String> {
     let gitcode_repository = configured_gitcode_gui_repository();
-    let mut failures = Vec::new();
-    for candidate in version_download_source_candidates(
-        source,
+    validate_version_download_source(
+        &source,
         gitcode_repository.is_some() && channel_tag.is_none(),
-        custom_mirrors,
-    ) {
-        let result = match candidate.source {
-            VersionDownloadSource::Gitcode => {
-                fetch_portable_update_manifest_from_gitcode(
-                    client,
-                    gitcode_repository.expect("GitCode candidate requires a configured repository"),
-                )
-                .await
-            }
-            VersionDownloadSource::Github
-            | VersionDownloadSource::GhProxy
-            | VersionDownloadSource::GhFast
-            | VersionDownloadSource::Custom => {
-                let url = match channel_tag {
-                    Some(tag) => version_source_url(&candidate, &preview_manifest_url(tag)),
-                    None => version_source_url(&candidate, APP_UPDATE_MANIFEST_URL),
-                };
-                fetch_portable_update_manifest_url(client, &url).await
-            }
-        };
-        match result {
-            Ok(manifest) => return Ok((manifest, candidate)),
-            Err(error) => failures.push(format!("{}: {error}", candidate.display_name())),
+    )?;
+    let result = match source.source {
+        VersionDownloadSource::Gitcode => {
+            fetch_portable_update_manifest_from_gitcode(
+                client,
+                gitcode_repository.expect("GitCode candidate requires a configured repository"),
+            )
+            .await
         }
-    }
-    Err(format!("All application version check sources failed: {}", failures.join("; ")))
+        VersionDownloadSource::Github
+        | VersionDownloadSource::GhProxy
+        | VersionDownloadSource::GhFast
+        | VersionDownloadSource::Custom => {
+            let url = match channel_tag {
+                Some(tag) => version_source_url(&source, &preview_manifest_url(tag)),
+                None => version_source_url(&source, APP_UPDATE_MANIFEST_URL),
+            };
+            fetch_portable_update_manifest_url(client, &url).await
+        }
+    };
+    result
+        .map(|manifest| (manifest, source.clone()))
+        .map_err(|error| {
+            format!(
+                "{} application version check failed: {error}",
+                source.display_name()
+            )
+        })
 }
 
 pub(crate) async fn fetch_portable_update_manifest_from_gitcode(
@@ -861,22 +830,28 @@ pub(crate) fn portable_update_target() -> Option<(&'static str, &'static str)> {
 }
 
 /// Returns the newest `preview-<stamp>` release tag from the GitHub releases list.
-async fn fetch_latest_preview_tag(client: &reqwest::Client, token: Option<&str>) -> Option<String> {
-    if let Some(tag) = fetch_preview_tags_from_api(client, token).await {
+async fn fetch_latest_preview_tag(
+    client: &reqwest::Client,
+    token: Option<&str>,
+    source: &VersionDownloadCandidate,
+) -> Option<String> {
+    if let Some(tag) = fetch_preview_tags_from_api(client, token, source).await {
         return Some(tag);
     }
-    fetch_preview_tags_from_atom(client).await
+    fetch_preview_tags_from_atom(client, source).await
 }
 
 async fn fetch_preview_tags_from_api(
     client: &reqwest::Client,
     token: Option<&str>,
+    source: &VersionDownloadCandidate,
 ) -> Option<String> {
     let mut request = client
-        .get(GUI_RELEASES_API_URL)
+        .get(version_source_url(source, GUI_RELEASES_API_URL))
         .header(reqwest::header::USER_AGENT, "EasyCLIProxyAPI")
         .header(reqwest::header::ACCEPT, "application/vnd.github+json");
-    if let Some(token) = token {
+    // Credentials belong to GitHub and must never be sent to a mirror.
+    if let Some(token) = token.filter(|_| source.source == VersionDownloadSource::Github) {
         request = request.bearer_auth(token);
     }
     let response = request.send().await.ok()?;
@@ -894,9 +869,12 @@ async fn fetch_preview_tags_from_api(
 /// The REST API is rate limited to 60 requests an hour for anonymous callers, so
 /// a failed or throttled lookup must not be reported as "no preview exists".
 /// The Atom feed carries the same tags without that quota.
-async fn fetch_preview_tags_from_atom(client: &reqwest::Client) -> Option<String> {
+async fn fetch_preview_tags_from_atom(
+    client: &reqwest::Client,
+    source: &VersionDownloadCandidate,
+) -> Option<String> {
     let response = client
-        .get(GUI_RELEASES_ATOM_URL)
+        .get(version_source_url(source, GUI_RELEASES_ATOM_URL))
         .header(reqwest::header::USER_AGENT, "EasyCLIProxyAPI")
         .header(
             reqwest::header::ACCEPT,
@@ -1105,9 +1083,12 @@ pub(crate) async fn start_app_update(
         let outcome = async {
             let state = update_app.state::<AppUpdateState>();
             let gui_config_state = update_app.state::<GuiConfigState>();
+            // Pin the source for the whole operation, including manifest refresh
+            // and archive download, even if settings change while checking.
+            let config = gui_config_state.snapshot()?;
             let pending = refresh_app_update_for_install(state.inner(), &token, async {
                 let (info, pending) =
-                    resolve_app_update(&update_app, gui_config_state.inner()).await?;
+                    resolve_app_update(&config).await?;
                 pending.ok_or_else(|| {
                     if info.update_available {
                         info.unsupported_reason
@@ -1119,7 +1100,6 @@ pub(crate) async fn start_app_update(
             })
             .await?;
             let _ = update_app.emit(APP_UPDATE_PROGRESS_EVENT, state.snapshot());
-            let config = gui_config_state.snapshot()?;
             download_and_stage_portable_app_update(
                 &update_app,
                 &pending,
@@ -1463,14 +1443,7 @@ async fn launch_portable_update_helper<T: Serialize>(
     .map_err(|error| format!("Failed to write application update descriptor: {error}"))?;
     let helper_ack_path = portable_update_helper_ack_path(work_dir);
     let _ = fs::remove_file(&helper_ack_path);
-    let mut command = Command::new(helper_path);
-    command
-        .arg("--portable-update-helper")
-        .arg(&descriptor_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    configure_background_command(&mut command);
+    let mut command = portable_update_helper_command(helper_path, &descriptor_path);
     let mut child = command
         .spawn()
         .map_err(|error| format!("Failed to start application update helper: {error}"))?;
@@ -1494,6 +1467,24 @@ async fn launch_portable_update_helper<T: Serialize>(
     }
     app.exit(0);
     Ok(())
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+pub(crate) fn portable_update_helper_command(helper_path: &Path, descriptor_path: &Path) -> Command {
+    let mut command = Command::new(helper_path);
+    command
+        .arg("--portable-update-helper")
+        .arg(descriptor_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    configure_background_command(&mut command);
+    command
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -1563,65 +1554,42 @@ pub(crate) async fn download_portable_update_archive(
         proxy_url,
         "Failed to create application update download client",
     )?;
-    let urls = portable_update_download_urls(&pending.asset, download_source);
-    let mut failures = Vec::new();
-    for (index, url) in urls.iter().enumerate() {
-        update_app_task(app, |task| {
-            task.downloaded_bytes = 0;
-            task.percent = Some(0.0);
-            if index > 0 {
-                task.message = Some(format!(
-                    "Download failed; switching to {}",
-                    update_download_source_name(url)
-                ));
-            }
-        });
-        match download_portable_update_archive_url(app, pending, token, destination, &client, url)
-            .await
-        {
-            Ok(()) => return Ok(()),
-            Err(error) if token.is_cancelled() => return Err(error),
-            Err(error) => failures.push(error),
-        }
-    }
-    Err(format!("All application update download sources failed: {}", failures.join("; ")))
+    let url = portable_update_download_url(&pending.asset, download_source)?;
+    update_app_task(app, |task| {
+        task.downloaded_bytes = 0;
+        task.percent = Some(0.0);
+    });
+    download_portable_update_archive_url(app, pending, token, destination, &client, &url).await
 }
 
-pub(crate) fn portable_update_download_urls(
+pub(crate) fn portable_update_download_url(
     asset: &PortableUpdateAsset,
     source: &VersionDownloadCandidate,
-) -> Vec<String> {
-    portable_update_download_urls_for_repository(asset, source, configured_gitcode_gui_repository())
+) -> Result<String, String> {
+    portable_update_download_url_for_repository(asset, source, configured_gitcode_gui_repository())
 }
 
-pub(crate) fn portable_update_download_urls_for_repository(
+pub(crate) fn portable_update_download_url_for_repository(
     asset: &PortableUpdateAsset,
     source: &VersionDownloadCandidate,
     repository: Option<&str>,
-) -> Vec<String> {
-    let mut urls = std::iter::once(asset.url.as_str())
-        .chain(
-            asset
-                .fallback_urls
-                .iter()
-                .filter(|_| repository.is_some())
-                .map(String::as_str),
-        )
-        .map(str::to_string)
-        .collect::<Vec<_>>();
+) -> Result<String, String> {
+    validate_version_download_source(source, repository.is_some())?;
+    // fallbackUrls remains part of the manifest format for older clients. It
+    // supplies GitCode metadata only when the user explicitly selected GitCode.
     if source.source == VersionDownloadSource::Gitcode {
-        urls.sort_by_key(|url| update_download_source_name(url) != "GitCode");
-    } else if source.proxy_prefix().is_some() {
-        if let Some(github_url) = urls
-            .iter()
-            .find(|url| update_download_source_name(url) == "GitHub")
+        return std::iter::once(&asset.url)
+            .chain(asset.fallback_urls.iter())
+            .find(|url| update_download_source_name(url) == "GitCode")
             .cloned()
-        {
-            urls.insert(0, version_source_url(source, &github_url));
-        }
+            .ok_or_else(|| {
+                "The selected GitCode source has no application update package".to_string()
+            });
     }
-    urls.dedup();
-    urls
+    if update_download_source_name(&asset.url) != "GitHub" {
+        return Err("The selected source has no GitHub application update package".to_string());
+    }
+    Ok(version_source_url(source, &asset.url))
 }
 
 pub(crate) fn update_download_source_name(url: &str) -> String {
@@ -3161,18 +3129,32 @@ pub(crate) async fn list_update_channels(
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<Vec<String>, String> {
     let config = gui_config_state.snapshot()?;
+    let source = config.selected_download_candidate();
+    validate_version_download_source(&source, configured_gitcode_gui_repository().is_some())?;
+    let mut channels = vec!["stable".to_string(), "preview".to_string()];
+    let selected_channel = normalize_update_channel(&config.update_channel);
+    if !channels.contains(&selected_channel) {
+        channels.push(selected_channel);
+    }
+    // GitCode has no preview channel catalog. Keep local choices without
+    // querying another source for the missing metadata.
+    if source.source == VersionDownloadSource::Gitcode {
+        return Ok(channels);
+    }
     let proxy_url = config.proxy_url.clone();
     let client = build_http_client_with_proxy(
         reqwest::Client::builder()
+            .redirect(release_https_redirect_policy_with_mirrors(
+                &config.custom_download_mirrors,
+            ))
             .connect_timeout(Duration::from_secs(6))
             .read_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(15)),
         &proxy_url,
         "Failed to create channel list client",
     )?;
-    let mut channels = vec!["stable".to_string(), "preview".to_string()];
     if let Ok(response) = client
-        .get(GUI_RELEASES_API_URL)
+        .get(version_source_url(&source, GUI_RELEASES_API_URL))
         .header(reqwest::header::USER_AGENT, "EasyCLIProxyAPI")
         .header(reqwest::header::ACCEPT, "application/vnd.github+json")
         .send()
@@ -3202,9 +3184,6 @@ pub(crate) async fn list_update_channels(
         };
         rank(a).cmp(&rank(b)).then_with(|| a.cmp(b))
     });
-    if !channels.iter().any(|value| value == &normalize_update_channel(&config.update_channel)) {
-        channels.push(normalize_update_channel(&config.update_channel));
-    }
     Ok(channels)
 }
 

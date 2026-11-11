@@ -16,6 +16,7 @@ import { HomeAccessPanel } from './HomeAccessPanel';
 import { HomeOverviewCards } from './HomeOverviewCards';
 import { RoutingPanel } from '../components/routing/RoutingPanel';
 import { CoreHealthPanel } from './CoreHealthPanel';
+import { ModelCatalogRefreshButton } from '../components/ModelCatalogRefreshButton';
 import { useHomeOverview } from './useHomeOverview';
 import './HomeDashboard.css';
 
@@ -209,12 +210,14 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
 
   return (
     <section className="page kernel-page home-page home-dashboard" aria-label={t('app.nav.home')}>
-      <HomeOverviewCards snapshot={overview.snapshot} loading={overview.loading} coreReady={coreReady} onRefresh={overview.refresh} actions={<CoreHealthPanel compact
-        coreReady={coreReady} models={overview.snapshot?.models ?? []}
-        modelsLoading={overview.loading}
-        modelsError={overview.snapshot?.errors.models ?? ''}
-        onRefreshModels={overview.refresh} contextKey={healthContext}
-      />} />
+      <HomeOverviewCards snapshot={overview.snapshot} loading={overview.loading} coreReady={coreReady} onRefresh={overview.refresh} actions={<>
+        <ModelCatalogRefreshButton key={`${coreReady}:${healthContext}`} disabled={!coreReady || coreProcessBusy || overview.loading} onRefreshed={overview.refresh} />
+        <CoreHealthPanel compact
+          coreReady={coreReady} models={overview.snapshot?.models ?? []}
+          modelsLoading={overview.loading}
+          modelsError={overview.snapshot?.errors.models ?? ''}
+          onRefreshModels={overview.refresh} contextKey={healthContext}
+        /></>} />
       <RoutingPanel coreReady={coreReady} />
       <div className="home-top-grid">
         <div className="panel surface-panel control-panel">

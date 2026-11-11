@@ -13,6 +13,15 @@ export type MessageVariables = Record<string, string | number>;
 
 export const zhTW: Record<MessageKey, string> = {
   ...createTraditionalMessages(zhCN),
+  'home.catalog.refresh': "重新整理模型目錄",
+  'home.catalog.refreshing': "正在同步目錄…",
+  'home.catalog.hint': "立即同步遠端模型目錄和能力定義，無需重新啟動核心",
+  'home.catalog.success': "模型目錄同步成功。",
+  'home.catalog.updated': "模型目錄同步成功，已更新：{providers}。",
+  'home.catalog.failed': "模型目錄同步失敗：{error}",
+  'home.catalog.unsupported': "目前核心不支援重新整理模型目錄，請在版本管理中更新核心。",
+  'home.catalog.invalidResponse': "核心未傳回有效的模型目錄重新整理結果。",
+  'home.catalog.codexSyncFailed': '核心模型目錄已重新整理，但 Codex 模型目錄同步失敗：{error}',
   ...routingZhTW,
   ...themeDiyZhTW,
   ...authFileTagsZhTW,

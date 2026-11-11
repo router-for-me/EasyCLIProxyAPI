@@ -20,6 +20,7 @@
     "test:ui:cli-launch-arguments": "node tests/cli-launch-arguments-ui.cjs",
     "test:desktop:agent-environment": "node tests/agent-environment-desktop.cjs",
     "test:ui:credential-tags": "node tests/credential-tags-ui.cjs",
+    "test:ui:model-catalogs": "node tests/model-catalog-refresh-ui.cjs",
     "screenshots": "node scripts/capture-readme-screenshots.cjs",
     "theme:schema": "bun scripts/theme-schema.mjs",
     "sync:kernel-version": "node scripts/update-bundled-core.mjs",

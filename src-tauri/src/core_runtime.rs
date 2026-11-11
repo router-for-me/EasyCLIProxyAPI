@@ -88,6 +88,11 @@ pub(crate) fn spawn_core_child(command: Command) -> Result<CoreChild, String> {
     #[cfg(not(target_os = "linux"))]
     let child = {
         let mut command = command;
+        #[cfg(target_os = "macos")]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
         command
             .spawn()
             .map_err(|error| format!("Failed to start CPA kernel: {error}"))?
@@ -135,7 +140,7 @@ pub(crate) async fn run_core_command<R: tauri::Runtime>(
     if status.running {
         if let Some(manager) = app.try_state::<crate::reverse_proxy::ReverseProxyManagerState>() {
             if let Err(error) = manager
-                .restore_after_core_start(app.state::<CoreProcessState>().inner())
+                .restore_after_core_start(&app, app.state::<CoreProcessState>().inner())
                 .await
             {
                 eprintln!("Failed to restore reverse proxy after kernel start: {error}");
@@ -169,7 +174,6 @@ async fn run_core_command_without_proxy<R: tauri::Runtime>(
 
 #[tauri::command]
 pub(crate) async fn check_latest_core(
-    app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<CoreLatest, String> {
     let _detection_guard = VERSION_SOURCE_DETECTION_LOCK.lock().await;
@@ -177,20 +181,7 @@ pub(crate) async fn check_latest_core(
     let config = gui_config_state.snapshot()?;
     let proxy_url = config.proxy_url.clone();
     let client = http_client(&proxy_url, &config.custom_download_mirrors)?;
-    let requested_source = config.selected_download_candidate();
-    let (release, resolved_source) = fetch_release(
-        &client,
-        None,
-        requested_source.clone(),
-        &config.custom_download_mirrors,
-    )
-    .await?;
-    persist_automatic_download_source_switch(
-        &app,
-        gui_config_state.inner(),
-        &requested_source,
-        &resolved_source,
-    )?;
+    let (release, _) = fetch_release(&client, None, config.selected_download_candidate()).await?;
     let asset = select_release_asset(&release, &platform)?;
 
     Ok(CoreLatest {
@@ -216,31 +207,24 @@ pub(crate) async fn list_core_versions(
     let config = gui_config_state.snapshot()?;
     let client = http_client(&config.proxy_url, &config.custom_download_mirrors)?;
     let repository = configured_gitcode_core_repository();
-    let mut failures = Vec::new();
-    for candidate in version_download_source_candidates(
-        config.selected_download_candidate(),
-        repository.is_some(),
-        &config.custom_download_mirrors,
-    ) {
-        let result = fetch_core_versions_from_source(&client, &candidate, repository).await;
-        match result {
-            Ok(releases) => {
-                let versions = core_version_options(releases, &platform);
-                if !versions.is_empty() {
-                    return Ok(versions);
-                }
-                failures.push(format!(
-                    "{}: No selectable kernel versions",
-                    candidate.display_name()
-                ));
-            }
-            Err(error) => failures.push(format!("{}: {error}", candidate.display_name())),
-        }
+    let source = config.selected_download_candidate();
+    validate_version_download_source(&source, repository.is_some())?;
+    let releases = fetch_core_versions_from_source(&client, &source, repository)
+        .await
+        .map_err(|error| {
+            format!(
+                "{} kernel version list failed: {error}",
+                source.display_name()
+            )
+        })?;
+    let versions = core_version_options(releases, &platform);
+    if versions.is_empty() {
+        return Err(format!(
+            "{}: No selectable kernel versions",
+            source.display_name()
+        ));
     }
-    Err(format!(
-        "All kernel version list sources failed: {}",
-        failures.join("；")
-    ))
+    Ok(versions)
 }
 
 pub(crate) async fn fetch_core_versions_from_source(
@@ -537,10 +521,8 @@ pub(crate) async fn install_core_version(
 
         // Stage download, SHA-256 verification, and archive extraction BEFORE stopping the running core.
         let staged_result = tauri::async_runtime::block_on(stage_core_version_inner(
-            &app,
             &window,
             state.inner(),
-            gui_config_state.inner(),
             token,
             version,
             &proxy_url,
@@ -787,10 +769,8 @@ pub(crate) fn restart_core_process_with_state(
 }
 
 pub(crate) async fn stage_core_version_inner(
-    app: &tauri::AppHandle,
     window: &tauri::Window,
     state: &CoreDownloadState,
-    gui_config_state: &GuiConfigState,
     token: CancellationToken,
     version: Option<String>,
     proxy_url: &str,
@@ -800,23 +780,15 @@ pub(crate) async fn stage_core_version_inner(
     let platform = current_core_platform()?;
     let client = http_client(proxy_url, &custom_mirrors)?;
     state.progress(window, "Check version", 0, None, true);
-    let requested_source = download_source.clone();
-    let (release, resolved_source) = fetch_release_cancelable(
-        &client,
-        version.as_deref(),
-        &token,
-        download_source,
-        &custom_mirrors,
-    )
-    .await?;
+    let (release, resolved_source) =
+        fetch_release_cancelable(&client, version.as_deref(), &token, download_source).await?;
     let asset = select_release_asset(&release, &platform)?;
-    let download_candidates = core_download_candidates(
+    let download_url = core_download_url(
         &release.tag_name,
         asset,
-        resolved_source,
+        &resolved_source,
         configured_gitcode_core_repository(),
-        &custom_mirrors,
-    );
+    )?;
 
     let install_dir = core_install_dir()?;
     let base_dir = core_base_dir()?;
@@ -832,10 +804,10 @@ pub(crate) async fn stage_core_version_inner(
         .ok_or_else(|| format!("Invalid asset filename: {}", asset.name))?;
     let archive_path = download_dir.join(archive_file_name);
 
-    let (downloaded, successful_source) = download_asset(
+    let downloaded = download_asset(
         &client,
         asset,
-        &download_candidates,
+        &download_url,
         &archive_path,
         window,
         state,
@@ -843,12 +815,6 @@ pub(crate) async fn stage_core_version_inner(
     )
     .await?;
     validate_downloaded_asset(asset, &downloaded)?;
-    persist_automatic_download_source_switch(
-        app,
-        gui_config_state,
-        &requested_source,
-        &successful_source,
-    )?;
 
     ensure_not_cancelled(&token, Some(&archive_path))?;
     state.progress(
@@ -965,8 +931,9 @@ pub(crate) async fn fetch_release(
     client: &reqwest::Client,
     version: Option<&str>,
     source: VersionDownloadCandidate,
-    custom_mirrors: &[String],
 ) -> Result<(GithubRelease, VersionDownloadCandidate), String> {
+    let gitcode_repository = configured_gitcode_core_repository();
+    validate_version_download_source(&source, gitcode_repository.is_some())?;
     if let Some(version) = version {
         return Ok((
             release_from_tag_for_repositories(
@@ -977,30 +944,27 @@ pub(crate) async fn fetch_release(
             source,
         ));
     }
-    let gitcode_repository = configured_gitcode_core_repository();
-    let mut failures = Vec::new();
-    for candidate in
-        version_download_source_candidates(source, gitcode_repository.is_some(), custom_mirrors)
-    {
-        let result = match candidate.source {
-            VersionDownloadSource::Gitcode => {
-                fetch_release_from_gitcode(
-                    client,
-                    gitcode_repository.expect("GitCode candidate requires a configured repository"),
-                )
-                .await
-            }
-            VersionDownloadSource::Github
-            | VersionDownloadSource::GhProxy
-            | VersionDownloadSource::GhFast
-            | VersionDownloadSource::Custom => fetch_release_from_github(client, &candidate).await,
-        };
-        match result {
-            Ok(release) => return Ok((release, candidate)),
-            Err(error) => failures.push(format!("{}: {error}", candidate.display_name())),
+    let result = match source.source {
+        VersionDownloadSource::Gitcode => {
+            fetch_release_from_gitcode(
+                client,
+                gitcode_repository.expect("GitCode candidate requires a configured repository"),
+            )
+            .await
         }
-    }
-    Err(format!("All kernel version check sources failed: {}", failures.join("；")))
+        VersionDownloadSource::Github
+        | VersionDownloadSource::GhProxy
+        | VersionDownloadSource::GhFast
+        | VersionDownloadSource::Custom => fetch_release_from_github(client, &source).await,
+    };
+    result
+        .map(|release| (release, source.clone()))
+        .map_err(|error| {
+            format!(
+                "{} kernel version check failed: {error}",
+                source.display_name()
+            )
+        })
 }
 
 pub(crate) async fn fetch_release_from_github(
@@ -1156,37 +1120,21 @@ pub(crate) fn release_from_tag_for_repositories(
         ("windows", "aarch64", "zip"),
     ]
     .into_iter()
-    .map(|(os, arch, extension)| {
+    .filter_map(|(os, arch, extension)| {
         let name = format!("CLIProxyAPI_{version}_{os}_{arch}.{extension}");
         let github_url = format!("{RELEASE_DOWNLOAD_PREFIX}{tag}/{name}");
         let gitcode_url = gitcode_repository
             .map(|repository| gitcode_release_attachment_url(repository, &tag, &name));
-        let (browser_download_url, fallback_download_urls) = match source.source {
-            VersionDownloadSource::Gitcode => match gitcode_url {
-                Some(gitcode_url) => (gitcode_url, vec![github_url]),
-                None => (github_url, Vec::new()),
-            },
-            VersionDownloadSource::GhProxy | VersionDownloadSource::GhFast => {
-                let mirror_url = version_source_url(source, &github_url);
-                let mut fallbacks = vec![github_url];
-                fallbacks.extend(gitcode_url);
-                (mirror_url, fallbacks)
-            }
-            VersionDownloadSource::Github => (github_url, gitcode_url.into_iter().collect()),
-            VersionDownloadSource::Custom => {
-                let mirror_url = version_source_url(source, &github_url);
-                let mut fallbacks = vec![github_url];
-                fallbacks.extend(gitcode_url);
-                (mirror_url, fallbacks)
-            }
+        let browser_download_url = match source.source {
+            VersionDownloadSource::Gitcode => gitcode_url?,
+            _ => version_source_url(source, &github_url),
         };
-        GithubAsset {
+        Some(GithubAsset {
             browser_download_url,
-            fallback_download_urls,
             name,
             size: None,
             digest: None,
-        }
+        })
     })
     .collect();
     GithubRelease {
@@ -1195,44 +1143,30 @@ pub(crate) fn release_from_tag_for_repositories(
     }
 }
 
-pub(crate) fn core_download_candidates(
+pub(crate) fn core_download_url(
     tag: &str,
     asset: &GithubAsset,
-    preferred: VersionDownloadCandidate,
+    source: &VersionDownloadCandidate,
     gitcode_repository: Option<&str>,
-    custom_mirrors: &[String],
-) -> Vec<(VersionDownloadCandidate, String)> {
+) -> Result<String, String> {
+    validate_version_download_source(source, gitcode_repository.is_some())?;
     let tag = normalize_version(tag);
-    let generated_github_url = format!("{RELEASE_DOWNLOAD_PREFIX}{tag}/{}", asset.name);
-    let provided_urls = std::iter::once(&asset.browser_download_url)
-        .chain(asset.fallback_download_urls.iter())
-        .collect::<Vec<_>>();
-    let github_url = provided_urls
-        .iter()
-        .find(|url| core_download_source_name(url) == "GitHub")
-        .map(|url| (*url).clone())
-        .unwrap_or(generated_github_url);
-    let gitcode_url = provided_urls
-        .iter()
-        .find(|url| core_download_source_name(url) == "GitCode")
-        .map(|url| (*url).clone())
-        .or_else(|| {
-            gitcode_repository
-                .map(|repository| gitcode_release_attachment_url(repository, &tag, &asset.name))
-        });
-    version_download_source_candidates(preferred, gitcode_url.is_some(), custom_mirrors)
-        .into_iter()
-        .filter_map(|candidate| {
-            let url = match candidate.source {
-                VersionDownloadSource::Github => github_url.clone(),
-                VersionDownloadSource::Gitcode => gitcode_url.clone()?,
-                VersionDownloadSource::GhProxy
-                | VersionDownloadSource::GhFast
-                | VersionDownloadSource::Custom => version_source_url(&candidate, &github_url),
-            };
-            Some((candidate, url))
-        })
-        .collect()
+    if source.source == VersionDownloadSource::Gitcode {
+        return Ok(gitcode_release_attachment_url(
+            gitcode_repository.expect("validated GitCode repository"),
+            &tag,
+            &asset.name,
+        ));
+    }
+    let github_url = if asset
+        .browser_download_url
+        .starts_with(RELEASE_DOWNLOAD_PREFIX)
+    {
+        asset.browser_download_url.clone()
+    } else {
+        format!("{RELEASE_DOWNLOAD_PREFIX}{tag}/{}", asset.name)
+    };
+    Ok(version_source_url(source, &github_url))
 }
 
 pub(crate) fn release_tag_from_url(url: &reqwest::Url) -> Option<String> {
@@ -1310,7 +1244,6 @@ pub(crate) fn parse_release_assets(html: &str) -> Vec<GithubAsset> {
             assets.push(GithubAsset {
                 name: name.to_string(),
                 browser_download_url,
-                fallback_download_urls: Vec::new(),
                 size: None,
                 digest,
             });
@@ -1340,10 +1273,9 @@ pub(crate) async fn fetch_release_cancelable(
     version: Option<&str>,
     token: &CancellationToken,
     source: VersionDownloadCandidate,
-    custom_mirrors: &[String],
 ) -> Result<(GithubRelease, VersionDownloadCandidate), String> {
     tokio::select! {
-        result = fetch_release(client, version, source, custom_mirrors) => result,
+        result = fetch_release(client, version, source) => result,
         _ = token.cancelled() => Err("Download canceled".to_string()),
     }
 }
@@ -1468,51 +1400,32 @@ pub(crate) fn core_release_asset_name(version: &str, platform: &CorePlatform) ->
 pub(crate) async fn download_asset(
     client: &reqwest::Client,
     asset: &GithubAsset,
-    download_candidates: &[(VersionDownloadCandidate, String)],
+    url: &str,
     archive_path: &Path,
     window: &tauri::Window,
     state: &CoreDownloadState,
     token: &CancellationToken,
-) -> Result<(DownloadedArchive, VersionDownloadCandidate), String> {
-    let mut failures = Vec::new();
-    for (index, (candidate, url)) in download_candidates.iter().enumerate() {
-        if index > 0 {
-            state.progress(
-                window,
-                &format!("Download failed; switching to {}", candidate.display_name()),
-                0,
-                asset.size,
-                true,
-            );
-        }
-        let result = download_asset_inner(
-            client,
-            url,
-            archive_path,
-            asset.size,
-            asset.digest.as_deref(),
-            window,
-            state,
-            token,
-        )
-        .await;
-        match result {
-            Ok(downloaded) => return Ok((downloaded, candidate.clone())),
-            Err(error) if token.is_cancelled() => {
-                let _ = fs::remove_file(archive_path);
-                return Err(error);
-            }
-            Err(error) => {
-                let _ = fs::remove_file(archive_path);
-                failures.push(error);
-            }
-        }
-    }
-    if failures.is_empty() {
+) -> Result<DownloadedArchive, String> {
+    let result = download_asset_inner(
+        client,
+        url,
+        archive_path,
+        asset.size,
+        asset.digest.as_deref(),
+        window,
+        state,
+        token,
+    )
+    .await;
+    if result.is_err() {
         let _ = fs::remove_file(archive_path);
-        return Err("Kernel release has no available download URL".to_string());
     }
-    Err(format!("All kernel download sources failed: {}", failures.join("；")))
+    result.map_err(|error| {
+        format!(
+            "{} kernel download failed: {error}",
+            core_download_source_name(url)
+        )
+    })
 }
 
 pub(crate) fn core_download_source_name(url: &str) -> String {

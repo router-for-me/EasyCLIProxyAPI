@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Copy, Download, ExternalLink, KeyRound, Puzzle, RefreshCw, Search, TriangleAlert, X } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { Check, ChevronDown, Copy, Download, ExternalLink, KeyRound, Puzzle, RefreshCw, Search, TriangleAlert, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { EmptyState } from '../components/EmptyState';
 import { Notice } from '../components/Notice';
 import { PluginLogo } from '../components/ProviderLogo';
@@ -29,6 +30,9 @@ import './EcpaPluginsPage.css';
 
 const COPY_FEEDBACK_MS = 1500;
 const ALL_TAG = '';
+// Chips outside this many are offered in the picker panel only, so the filter
+// row stays one line at every tag count.
+const TAG_ROW_LIMIT = 6;
 
 // The registry entry may carry an auth flag even though the bundled parser does
 // not surface it. Read it defensively so a synthesized store entry matches the
@@ -70,6 +74,227 @@ function synthesizeEcpaStoreEntry(plugin: InstallableEcpaPlugin): PluginStoreEnt
     effectiveEnabled: false,
     updateAvailable: false,
   };
+}
+
+// Floating multi-select panel for the tag filter. It is portalled so the results
+// grid can never be pushed down by it, anchored under its trigger, and it closes
+// on an outside click or Escape (handled by the page).
+function TagPickerPanel({
+  anchorRef,
+  allTags,
+  selectedTags,
+  onToggle,
+  onClear,
+  label,
+  clearLabel,
+  emptyLabel,
+}: {
+  anchorRef: RefObject<HTMLButtonElement | null>;
+  allTags: string[];
+  selectedTags: string[];
+  onToggle: (tag: string) => void;
+  onClear: () => void;
+  label: string;
+  clearLabel: string;
+  emptyLabel: string;
+}) {
+  const [position, setPosition] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // The panel follows its trigger while it is open (the row gains a selection
+  // badge, and cards may reflow), and it never runs past the viewport: when the
+  // space below is short it opens upwards, and the option list scrolls inside the
+  // panel instead of clipping its last row.
+  useLayoutEffect(() => {
+    const place = () => {
+      const anchor = anchorRef.current;
+      if (!anchor) return;
+      const rect = anchor.getBoundingClientRect();
+      const edgeGap = 12;
+      const triggerGap = 6;
+      const width = Math.min(320, Math.max(240, rect.width * 3));
+      const left = Math.min(Math.max(edgeGap, rect.left - width + rect.width), window.innerWidth - edgeGap - width);
+      const spaceBelow = window.innerHeight - rect.bottom - triggerGap - edgeGap;
+      const spaceAbove = rect.top - triggerGap - edgeGap;
+      const openUp = spaceBelow < 260 && spaceAbove > spaceBelow;
+      const maxHeight = Math.max(160, Math.min(420, openUp ? spaceAbove : spaceBelow));
+      const top = openUp ? Math.max(edgeGap, rect.top - triggerGap - maxHeight) : rect.bottom + triggerGap;
+      setPosition({ top, left, width, maxHeight });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [anchorRef, selectedTags]);
+
+  // Keep the focused option visible after each toggle rather than letting the
+  // list jump back to the top.
+  useEffect(() => {
+    const active = panelRef.current?.querySelector<HTMLButtonElement>('.ecpa-tag-picker-option.selected');
+    active?.scrollIntoView({ block: 'nearest' });
+  }, [selectedTags]);
+
+  useEffect(() => {
+    panelRef.current?.querySelector<HTMLButtonElement>('.ecpa-tag-picker-option')?.focus();
+  }, []);
+
+  if (!position) return null;
+
+  return (
+    <div
+      ref={panelRef}
+      className="ecpa-tag-picker-panel"
+      role="dialog"
+      aria-label={label}
+      style={{ top: position.top, left: position.left, width: position.width, maxHeight: position.maxHeight }}
+    >
+      {allTags.length === 0 ? (
+        <p className="ecpa-tag-picker-empty">{emptyLabel}</p>
+      ) : (
+        <div className="ecpa-tag-picker-options" role="group" aria-label={label}>
+          {allTags.map((tag) => {
+            const active = selectedTags.includes(tag);
+            return (
+              <button
+                key={tag}
+                type="button"
+                role="checkbox"
+                aria-checked={active}
+                className={`ecpa-tag-picker-option${active ? ' selected' : ''}`}
+                onClick={() => onToggle(tag)}
+              >
+                <span className="ecpa-tag-picker-check" aria-hidden="true">
+                  {active ? <Check size={12} /> : null}
+                </span>
+                <span>{tag}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <div className="ecpa-tag-picker-footer">
+        <button type="button" className="link-button muted ecpa-tag-picker-clear" onClick={onClear}>{clearLabel}</button>
+      </div>
+    </div>
+  );
+}
+
+// Shared one-line tag filter used by the featured grid and the official store
+// tab. The caller owns the selected list; the row keeps to a single line and the
+// picker panel floats above the results.
+export function TagFilterRow({
+  allTags,
+  selectedTags,
+  onToggle,
+  onClear,
+  label,
+  allLabel,
+  pickerLabel,
+  clearLabel,
+  emptyLabel,
+}: {
+  allTags: string[];
+  selectedTags: string[];
+  onToggle: (tag: string) => void;
+  onClear: () => void;
+  label: string;
+  allLabel: string;
+  pickerLabel: string;
+  clearLabel: string;
+  emptyLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('.ecpa-tag-picker') || target?.closest('.ecpa-tag-picker-panel')) return;
+      setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setOpen(false);
+      buttonRef.current?.focus();
+    };
+    document.addEventListener('pointerdown', onPointer, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const visibleTags = useMemo(() => {
+    const picked = selectedTags.filter((tag) => allTags.includes(tag));
+    const rest = allTags.filter((tag) => !picked.includes(tag));
+    return [...picked, ...rest].slice(0, TAG_ROW_LIMIT);
+  }, [allTags, selectedTags]);
+  const hiddenTagCount = allTags.length - visibleTags.length;
+
+  return (
+    <div className="ecpa-tag-bar" role="group" aria-label={label}>
+      <button
+        type="button"
+        className={`filter-chip ecpa-tag-chip${selectedTags.length === 0 ? ' active' : ''}`}
+        aria-pressed={selectedTags.length === 0}
+        onClick={onClear}
+      >
+        {allLabel}
+      </button>
+      {visibleTags.map((tag) => {
+        const active = selectedTags.includes(tag);
+        return (
+          <button
+            key={tag}
+            type="button"
+            className={`filter-chip ecpa-tag-chip${active ? ' active' : ''}`}
+            aria-pressed={active}
+            onClick={() => onToggle(tag)}
+          >
+            {active ? <Check size={12} aria-hidden="true" /> : null}
+            {tag}
+          </button>
+        );
+      })}
+      {allTags.length > 0 ? (
+        <div className={`ecpa-tag-picker${open ? ' open' : ''}`}>
+          <button
+            ref={buttonRef}
+            type="button"
+            className={`filter-chip ecpa-tag-chip ecpa-tag-picker-trigger${selectedTags.length > 0 ? ' has-selection' : ''}`}
+            aria-haspopup="true"
+            aria-expanded={open}
+            aria-label={pickerLabel}
+            title={pickerLabel}
+            onClick={() => setOpen((value) => !value)}
+          >
+            <ChevronDown size={13} aria-hidden="true" />
+            {hiddenTagCount > 0 ? <span className="ecpa-tag-picker-count">{hiddenTagCount}</span> : null}
+            {selectedTags.length > 0 ? <span className="ecpa-tag-picker-badge">{selectedTags.length}</span> : null}
+          </button>
+          {open ? createPortal(
+            <TagPickerPanel
+              anchorRef={buttonRef}
+              allTags={allTags}
+              selectedTags={selectedTags}
+              onToggle={onToggle}
+              onClear={onClear}
+              label={label}
+              clearLabel={clearLabel}
+              emptyLabel={emptyLabel}
+            />,
+            document.body,
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function EcpaPluginsPage() {
@@ -330,7 +555,10 @@ export function EcpaPluginsPage() {
   const token = useMemo(() => readEcpaGitHubToken(), []);
   const [tokenInvalid, setTokenInvalid] = useState(false);
   const [search, setSearch] = useState('');
-  const [selectedTag, setSelectedTag] = useState<string>(ALL_TAG);
+  // Tags are multi-select: no entry means every tag is allowed. The filter row
+  // shows one line of chips and keeps the rest behind a picker panel, so a long
+  // tag list never pushes the results down.
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -381,16 +609,19 @@ export function EcpaPluginsPage() {
     return Array.from(tagSet);
   }, [plugins]);
 
+  // A tag that disappears from the registry must not keep filtering silently.
   useEffect(() => {
-    if (selectedTag !== ALL_TAG && !allTags.includes(selectedTag)) {
-      setSelectedTag(ALL_TAG);
-    }
-  }, [allTags, selectedTag]);
+    setSelectedTags((current) => {
+      const kept = current.filter((tag) => allTags.includes(tag));
+      return kept.length === current.length ? current : kept;
+    });
+  }, [allTags]);
+
 
   const filteredPlugins = useMemo(() => {
     const query = search.trim().toLowerCase();
     return plugins.filter((plugin) => {
-      if (selectedTag !== ALL_TAG && !plugin.tags.includes(selectedTag)) {
+      if (selectedTags.length > 0 && !selectedTags.some((tag) => plugin.tags.includes(tag))) {
         return false;
       }
       if (!query) return true;
@@ -399,13 +630,20 @@ export function EcpaPluginsPage() {
         .toLowerCase();
       return haystack.includes(query);
     });
-  }, [plugins, search, selectedTag, locale]);
+  }, [plugins, search, selectedTags, locale]);
 
   const handleClearFilters = () => {
     setSearch('');
-    setSelectedTag(ALL_TAG);
+    setSelectedTags([]);
     searchRef.current?.focus();
   };
+
+  const toggleTag = (tag: string) => {
+    setSelectedTags((current) => current.includes(tag)
+      ? current.filter((value) => value !== tag)
+      : [...current, tag]);
+  };
+
 
   const handleOpenRepository = (repositoryUrl: string) => {
     const safeUrl = safePluginWebURL(repositoryUrl);
@@ -431,7 +669,7 @@ export function EcpaPluginsPage() {
     }, COPY_FEEDBACK_MS);
   };
 
-  const hasActiveFilter = Boolean(search.trim()) || selectedTag !== ALL_TAG;
+  const hasActiveFilter = Boolean(search.trim()) || selectedTags.length > 0;
 
   const tokenSettingsLink = (muted = false) => (
     <button type="button" className={`link-button ecpa-token-settings-link${muted ? ' muted' : ''}`} onClick={() => openSettingField(['server', 'github-token'])}>
@@ -500,30 +738,17 @@ export function EcpaPluginsPage() {
       </div>
 
       <div className="ecpa-results-bar">
-        <div className="ecpa-tag-bar" role="group" aria-label={t('ecpaPlugins.tagFilter')}>
-          <button
-            type="button"
-            className={`filter-chip ecpa-tag-chip${selectedTag === ALL_TAG ? ' active' : ''}`}
-            aria-pressed={selectedTag === ALL_TAG}
-            onClick={() => setSelectedTag(ALL_TAG)}
-          >
-            {t('ecpaPlugins.tagAll')}
-          </button>
-          {allTags.map((tag) => {
-            const active = selectedTag === tag;
-            return (
-              <button
-                key={tag}
-                type="button"
-                className={`filter-chip ecpa-tag-chip${active ? ' active' : ''}`}
-                aria-pressed={active}
-                onClick={() => setSelectedTag(active ? ALL_TAG : tag)}
-              >
-                {tag}
-              </button>
-            );
-          })}
-        </div>
+        <TagFilterRow
+          allTags={allTags}
+          selectedTags={selectedTags}
+          onToggle={toggleTag}
+          onClear={() => setSelectedTags([])}
+          label={t('ecpaPlugins.tagFilter')}
+          allLabel={t('ecpaPlugins.tagAll')}
+          pickerLabel={t('ecpaPlugins.tagPicker')}
+          clearLabel={t('ecpaPlugins.tagPickerClear')}
+          emptyLabel={t('ecpaPlugins.tagPickerEmpty')}
+        />
         <div className="ecpa-results-meta">
           {hasActiveFilter ? (
             <button type="button" className="link-button muted ecpa-clear-filters" onClick={handleClearFilters}>
@@ -635,11 +860,6 @@ export function EcpaPluginsPage() {
                     <TriangleAlert size={14} aria-hidden="true" />
                     <span>{unavailable}</span>
                   </p>
-                ) : storePending ? (
-                  <p className="ecpa-plugin-unavailable" aria-live="polite">
-                    <RefreshCw size={14} aria-hidden="true" />
-                    <span>{t('ecpaPlugins.loadingStore')}</span>
-                  </p>
                 ) : null}
 
                 {installErrors[plugin.id] && <Notice tone="error" variant="text">{t('ecpaPlugins.installFailed', { error: installErrors[plugin.id] })}</Notice>}
@@ -662,49 +882,53 @@ export function EcpaPluginsPage() {
                     <ExternalLink size={15} aria-hidden="true" />
                     {t('ecpaPlugins.openRepo')}
                   </button>
-                  {installBlocked ? (
-                    <button
-                      type="button"
-                      className="secondary-button compact-button ecpa-install-blocked"
-                      title={unavailable}
-                      disabled
-                    >
-                      {t('ecpaPlugins.install')}
-                    </button>
-                  ) : isInstalled ? (
-                    <>
-                      <span className={`ecpa-plugin-installed-badge${hasUpdate ? ' has-update' : ''}`}>
-                        {hasUpdate ? <Download size={13} aria-hidden="true" /> : <Check size={13} aria-hidden="true" />}
-                        {t(hasUpdate ? 'ecpaPlugins.updateAvailable' : 'ecpaPlugins.installed')}
-                      </span>
-                      {hasUpdate ? (
-                        <button type="button" className="primary-button compact-button" disabled={actionBusy || !entry}
-                          title={!entry ? unavailable : undefined}
-                          onClick={() => {
-                            if (!entry) return;
-                            installSynthesized.current = !listedEntry;
-                            installAsUpdate.current = true;
-                            setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
-                            setInstallEntry(entry);
-                          }}>
-                          {t(isSwitchingSource ? 'ecpaPlugins.sourceSwitch' : isInstalling ? 'ecpaPlugins.installing' : 'ecpaPlugins.update')}
-                        </button>
-                      ) : null}
-                    </>
-                  ) : (
-                    <button type="button" className="primary-button compact-button"
-                      disabled={actionBusy || !entry}
-                      title={entry ? undefined : waiting || unavailable}
-                      onClick={() => {
-                        if (!entry) return;
-                        installSynthesized.current = !listedEntry;
-                        installAsUpdate.current = false;
-                        setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
-                        setInstallEntry(entry);
-                      }}>
-                      {t(storePending ? 'ecpaPlugins.loadingStore' : isSwitchingSource ? 'ecpaPlugins.sourceSwitch' : isInstalling ? 'ecpaPlugins.installing' : 'ecpaPlugins.install')}
-                    </button>
-                  )}
+                  <span className="ecpa-plugin-action-slot">
+                    {installBlocked ? (
+                      <button
+                        type="button"
+                        className="secondary-button compact-button ecpa-install-blocked"
+                        title={unavailable}
+                        disabled
+                      >
+                        {t('ecpaPlugins.install')}
+                      </button>
+                    ) : isInstalled ? (
+                      <>
+                        <span className={`ecpa-plugin-installed-badge${hasUpdate ? ' has-update' : ''}`}>
+                          {hasUpdate ? <Download size={13} aria-hidden="true" /> : <Check size={13} aria-hidden="true" />}
+                          {t(hasUpdate ? 'ecpaPlugins.updateAvailable' : 'ecpaPlugins.installed')}
+                        </span>
+                        {hasUpdate ? (
+                          <button type="button" className="primary-button compact-button" disabled={actionBusy || !entry}
+                            title={isSwitchingSource ? t('ecpaPlugins.sourceSwitch') : !entry ? unavailable : undefined}
+                            onClick={() => {
+                              if (!entry) return;
+                              installSynthesized.current = !listedEntry;
+                              installAsUpdate.current = true;
+                              setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
+                              setInstallEntry(entry);
+                            }}>
+                            {t(isSwitchingSource ? 'ecpaPlugins.sourceSwitch' : isInstalling ? 'ecpaPlugins.installing' : 'ecpaPlugins.update')}
+                          </button>
+                        ) : null}
+                      </>
+                    ) : (
+                      <button type="button" className="primary-button compact-button"
+                        disabled={actionBusy || !entry}
+                        title={isSwitchingSource ? t('ecpaPlugins.sourceSwitch') : entry ? undefined : waiting || unavailable}
+                        aria-busy={storePending || undefined}
+                        onClick={() => {
+                          if (!entry) return;
+                          installSynthesized.current = !listedEntry;
+                          installAsUpdate.current = false;
+                          setInstallErrors(previous => ({ ...previous, [plugin.id]: '' }));
+                          setInstallEntry(entry);
+                        }}>
+                        {storePending ? <RefreshCw size={14} className="spin" aria-hidden="true" /> : null}
+                        {t(storePending ? 'common.loading' : isSwitchingSource ? 'ecpaPlugins.sourceSwitch' : isInstalling ? 'ecpaPlugins.installing' : 'ecpaPlugins.install')}
+                      </button>
+                    )}
+                  </span>
                 </div>
               </article>
             );

@@ -1539,6 +1539,124 @@ fn zcode_agent_config_backfills_manual_rule_max_output_tokens() {
 }
 
 #[test]
+fn zcode_agent_config_omits_non_positive_context_and_max_output_tokens() {
+    // ZCode validates contextWindow and optionSpecs.maxOutputTokens.max as positive
+    // integers. A single non-positive value makes ZCode reject the whole personal
+    // provider config and fall back to an empty in-memory config, so every custom
+    // provider disappears from the model picker. Models such as image generators
+    // report no limits, which must be omitted instead of written as 0.
+    let home = agent_test_home("zcode-non-positive-limits");
+    let path = home.join(".zcode/v2/provider_config.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut models = test_agent_models(&["gpt-image-test"]);
+    models[0].context_window = Some(0);
+    let rendered = build_zcode_agent_config(
+        None,
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "gpt-image-test",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let rules = value["config"]["modelConfigRules"]["providerModelRules"].as_array().unwrap();
+    let rule = rules.iter().find(|rule| rule["modelId"] == "gpt-image-test").unwrap();
+    assert!(
+        rule["config"]["properties"].get("contextWindow").is_none(),
+        "non-positive contextWindow must be omitted: {:?}",
+        rule
+    );
+    assert!(
+        rule["config"]
+            .get("optionSpecs")
+            .and_then(|specs| specs.get("maxOutputTokens"))
+            .is_none(),
+        "unknown maxOutputTokens must be omitted for provider rules: {:?}",
+        rule
+    );
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn zcode_agent_config_repairs_zero_manual_token_limits() {
+    // A manual rule that already carries max: 0 / contextWindow: 0 (for example,
+    // persisted by an earlier sync) must be repaired to positive values; otherwise
+    // ZCode discards the whole provider config on the next load.
+    let models = test_agent_models(&["custom-image-model"]);
+    let existing = r#"{"schemaVersion":1,"config":{"providerConfigRules":{"providerRules":[{"providerId":"cpa-gui","providerName":"EasyCLIProxyAPI","enabled":true,"config":{"group":"standard-personal","access":{"type":"api-key","apiKey":"old"},"api":{"type":"anthropic-messages","baseUrl":"http://127.0.0.1:8317/v1"},"personalModelIds":["custom-image-model"],"modelOrder":["custom-image-model"]}}]},"modelConfigRules":{"providerModelRules":[],"manualProviderModelRules":[{"providerId":"cpa-gui","modelId":"custom-image-model","config":{"enabled":true,"optionSpecs":{"maxOutputTokens":{"max":0},"reasoningLevel":{"values":["low"],"map":"reasoningLevel == \"none\" ? {} : {}"}},"properties":{"contextWindow":0}}}]}}}"#;
+    let rendered = build_zcode_agent_config(
+        Some(existing),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "custom-image-model",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let rules = value["config"]["modelConfigRules"]["manualProviderModelRules"].as_array().unwrap();
+    let rule = rules.iter().find(|rule| rule["modelId"] == "custom-image-model").unwrap();
+    let max = rule["config"]["optionSpecs"]["maxOutputTokens"]["max"].as_u64().unwrap();
+    assert!(max > 0, "manual maxOutputTokens.max must be positive, got {max}");
+    let context_window = rule["config"]["properties"]["contextWindow"].as_u64().unwrap();
+    assert!(context_window > 0, "manual contextWindow must be positive, got {context_window}");
+}
+
+#[test]
+fn zcode_reasoning_levels_are_deduplicated_and_trimmed() {
+    let levels = vec![
+        "low".to_string(),
+        " low ".to_string(),
+        String::new(),
+        "high".to_string(),
+        "low".to_string(),
+    ];
+    assert_eq!(
+        crate::agents::sanitize_reasoning_levels(&levels),
+        vec!["low".to_string(), "high".to_string()]
+    );
+}
+
+#[test]
+fn zcode_agent_config_prunes_removed_models_without_reordering() {
+    // Disabled or deleted gateway models vanish from /v1/models but used to
+    // stay in personalModelIds/modelOrder forever, so ZCode kept listing them.
+    let models = test_agent_models(&["live-a", "live-b"]);
+    let existing = r#"{"schemaVersion":1,"config":{"providerConfigRules":{"providerRules":[{"providerId":"cpa-gui","providerName":"EasyCLIProxyAPI","enabled":true,"config":{"group":"standard-personal","access":{"type":"api-key","apiKey":"old"},"api":{"type":"anthropic-messages","baseUrl":"http://127.0.0.1:8317/v1"},"personalModelIds":["live-a","gone-b","live-a"],"modelOrder":["gone-b","live-a"]}}]},"modelConfigRules":{"providerModelRules":[],"manualProviderModelRules":[]}}}"#;
+    let rendered = build_zcode_agent_config(
+        Some(existing),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "live-a",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let provider = value["config"]["providerConfigRules"]["providerRules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rule| rule["providerId"] == "cpa-gui")
+        .unwrap();
+    assert_eq!(provider["config"]["modelOrder"], serde_json::json!(["live-a"]));
+    assert_eq!(provider["config"]["personalModelIds"], serde_json::json!(["live-a"]));
+}
+
+#[test]
+fn zcode_agent_config_falls_back_to_an_available_default_model() {
+    let models = test_agent_models(&["live-a", "live-b"]);
+    let rendered = build_zcode_agent_config(
+        None,
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "gone-c",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    assert_eq!(value["config"]["defaultModelSelection"]["modelId"], "live-a");
+}
+
+#[test]
 fn zcode_desktop_and_cli_share_the_provider_configuration() {
     let home = agent_test_home("zcode-shared-provider-config");
     let paths = agent_config_paths(AgentClient::ZCode, &home);
@@ -2429,7 +2547,7 @@ async fn codex_configuration_uses_public_v1_model_ids_for_selection_and_files() 
                 r#"{"models":[{"id":"public-model","context_window":1048576,"supported_reasoning_levels":["low","medium","high"],"default_reasoning_level":"medium"},{"id":"client-only-model","context_window":1048576}]}"#
             } else {
                 assert_eq!(path, "/v8/management/config.yaml");
-                "config-version: 8\n"
+                "config-version: 8\napi-keys:\n  codex:\n    - name: test-provider\n      models:\n        - name: another-model\n          max-context-length: 64000\n      keys: [{api-key: upstream-test-key}]\n"
             };
             write!(socket, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
             paths.push(path);
@@ -2458,6 +2576,29 @@ async fn codex_configuration_uses_public_v1_model_ids_for_selection_and_files() 
     assert_eq!(public_model["max_context_window"], 1_048_576);
     assert_eq!(public_model["default_reasoning_level"], "medium");
     assert_eq!(public_model["supported_reasoning_levels"].as_array().unwrap().len(), 3);
+    let configured_model = catalog["models"].as_array().unwrap().iter().find(|model| model["slug"] == "another-model").unwrap();
+    assert_eq!(configured_model["context_window"], 64_000);
+    assert_eq!(configured_model["max_context_window"], 64_000);
+
+    // The manual homepage refresh writes both enriched metadata and configured
+    // context limits to the existing managed catalog, removing stale entries.
+    let home = agent_test_home("codex-manual-catalog-refresh");
+    apply_agent_configuration(
+        AgentClient::Codex, &home, port, "public-test-key", "public-model",
+        &test_agent_models(&["public-model", "stale-model"]),
+        Some(&test_codex_models(&["public-model", "stale-model"])),
+    ).unwrap();
+    assert!(sync_codex_model_catalog_if_configured(
+        &home, port, "public-test-key", &prepared.models, prepared.codex_catalog.as_deref().unwrap(),
+    ).unwrap());
+    let written: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(codex_model_catalog_path(&home)).unwrap(),
+    ).unwrap();
+    assert_eq!(written, catalog);
+    assert!(!sync_codex_model_catalog_if_configured(
+        &home, port, "public-test-key", &prepared.models, prepared.codex_catalog.as_deref().unwrap(),
+    ).unwrap());
+    fs::remove_dir_all(home).unwrap();
 }
 
 #[test]

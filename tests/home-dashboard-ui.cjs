@@ -49,6 +49,63 @@ const base = process.env.HOME_DASHBOARD_TEST_BASE_URL || 'http://127.0.0.1:1421'
     const value = id => page.locator(`[data-stat="${id}"] .home-stat-value`);
     const runtimeValue = label => page.locator('.control-panel .panel-detail-row').filter({ has: page.getByText(label, { exact: true }) }).locator('dd');
     const meter = id => page.locator(`[data-stat="${id}"] .home-stat-track[role="meter"]`);
+    const catalogs = () => page.locator('.model-catalog-refresh');
+    const catalogCalls = () => page.evaluate(() => window.homeFixture.calls.filter(call => call.cmd === 'management_request' && call.args.request.path === '/models/refresh'));
+    const codexSyncs = () => page.evaluate(() => window.homeFixture.calls.filter(call => call.cmd === 'refresh_managed_codex_model_catalog').length);
+    const modelReads = () => page.evaluate(() => window.homeFixture.calls.filter(call => call.cmd === 'get_core_models').length);
+
+    await open('', page, false);
+    await page.locator('.home-overview[aria-busy="false"]').waitFor();
+    assert.equal((await catalogCalls()).length, 0, 'Catalog synchronization must be explicitly requested');
+    assert.equal(await codexSyncs(), 0, 'Codex synchronization must be explicitly requested');
+    await page.evaluate(() => {
+      window.homeFixture.holdCatalog = true;
+      window.homeFixture.models = [{ name: 'newly-synchronized-model' }];
+    });
+    const beforeRefresh = await modelReads();
+    await catalogs().click();
+    await page.locator('.model-catalog-refresh[aria-busy="true"]').waitFor();
+    assert.equal(await catalogs().isDisabled(), true);
+    await catalogs().evaluate(button => { button.click(); button.click(); });
+    assert.equal((await catalogCalls()).length, 1, 'Repeated clicks cannot start concurrent refreshes');
+    assert.equal(await modelReads(), beforeRefresh, 'Models reload only after successful synchronization');
+    assert.equal(await codexSyncs(), 0, 'Codex synchronization waits for the core refresh');
+    await page.evaluate(() => window.homeFixture.releaseCatalog());
+    await page.getByText('Model catalogs synchronized. Updated providers: codex, claude.', { exact: true }).waitFor();
+    assert.equal(await codexSyncs(), 1, 'A manual refresh also synchronizes the Codex catalog once');
+    await page.waitForFunction(() => document.querySelector('[data-stat="models"] .home-stat-value')?.textContent === '1');
+    assert.ok(await modelReads() > beforeRefresh);
+    await showHealth();
+    await page.getByText('newly-synchronized-model', { exact: true }).waitFor();
+    await closeHealth();
+
+    await page.evaluate(() => { window.homeFixture.catalogResponse = { ok: true, status: 'ok', changed_providers: null }; });
+    await catalogs().click();
+    await page.getByText('Model catalogs synchronized successfully.', { exact: true }).waitFor();
+    assert.equal(await codexSyncs(), 2, 'An unchanged core catalog still updates Codex configuration metadata');
+    for (const failure of ['Management API error (502): download failed', 'Management API error (404): not found', 'invalid']) {
+      await page.locator('.home-overview[aria-busy="false"]').waitFor();
+      await page.evaluate(failure => {
+        window.homeFixture.catalogError = failure === 'invalid' ? '' : failure;
+        if (failure === 'invalid') window.homeFixture.catalogResponse = { ok: false, error: 'Invalid catalog source' };
+      }, failure);
+      const beforeFailure = await modelReads();
+      await catalogs().click();
+      const detail = failure.includes('(404)') ? 'Update the core in Version Management' : failure === 'invalid' ? 'Invalid catalog source' : 'download failed';
+      await page.locator('.action-feedback-message').filter({ hasText: detail }).waitFor();
+      assert.equal(await modelReads(), beforeFailure, 'Failed synchronization must not reload models');
+      assert.equal(await value('models').textContent(), '1', 'Failed synchronization preserves the current model list');
+      assert.equal(await codexSyncs(), 2, 'A failed core refresh cannot synchronize Codex');
+    }
+    await open('offline', page, false);
+    await page.locator('.home-overview[aria-busy="false"]').waitFor();
+    assert.equal(await catalogs().isDisabled(), true);
+    assert.equal((await catalogCalls()).length, 0);
+    console.log('Model catalog refresh checks passed: explicit POST, duplicate prevention, reload, provider feedback, failures and stopped core.');
+    if (process.env.HOME_DASHBOARD_TEST_SCOPE === 'catalogs') {
+      assert.deepEqual(errors, []);
+      return;
+    }
 
     await open('', page, false);
     await page.locator('.home-overview[aria-busy="false"]').waitFor();

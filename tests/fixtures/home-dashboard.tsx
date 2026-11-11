@@ -8,6 +8,7 @@ import { AppUpdateProvider } from '../../src/appUpdate';
 import { KernelPage } from '../../src/pages/Kernel';
 import { CoreHealthPanel } from '../../src/pages/CoreHealthPanel';
 import { createBrowserMockRuntime } from '../../src/mocks/browserMockRuntime';
+import { initializeWindowActivity } from '../../src/services/windowActivity';
 import '../../src/styles/index.css';
 
 const params = new URLSearchParams(location.search);
@@ -22,6 +23,11 @@ const fixture = {
   models: initialModels,
   modelError: params.has('modelError') ? 'Fixture model list unavailable' : '',
   holdModels: params.has('loading'),
+  catalogResponse: { ok: true, status: 'ok', changed_providers: ['codex', 'claude'] } as unknown,
+  catalogError: '',
+  holdCatalog: false,
+  catalogReleases: [] as Array<() => void>,
+  releaseCatalog: () => { fixture.holdCatalog = false; fixture.catalogReleases.splice(0).forEach((release) => release()); },
   modelReleases: [] as Array<() => void>,
   holdProbes: false,
   probeReleases: [] as Array<() => void>,
@@ -44,6 +50,11 @@ Object.defineProperty(navigator, 'clipboard', {
 
 mockIPC(async (cmd, args: any = {}) => {
   fixture.calls.push({ cmd, args, at: Date.now() });
+  if (cmd === 'management_request' && args.request.path === '/models/refresh') {
+    if (fixture.holdCatalog) await new Promise<void>((resolve) => { fixture.catalogReleases.push(resolve); });
+    if (fixture.catalogError) throw new Error(fixture.catalogError);
+    return fixture.catalogResponse;
+  }
   if (cmd === 'get_gui_settings') return { host: '127.0.0.1', port: fixture.port, runOnStartup: false };
   if (cmd === 'get_core_config_settings') {
     if (fixture.keyError) throw new Error('Fixture key unavailable');
@@ -80,6 +91,7 @@ mockIPC(async (cmd, args: any = {}) => {
   }
   return runtime.invoke(cmd, args);
 }, { shouldMockEvents: true });
+void initializeWindowActivity();
 
 function PanelHarness() {
   const [models, setModels] = useState(initialModels);

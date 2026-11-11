@@ -162,13 +162,43 @@ export async function readCurrentCoreVersion(coreVersionFile) {
   }
 }
 
+// A pinned value skips the upstream lookup entirely. Releases use this when an
+// upstream tag is missing a platform asset: following "latest" would move the
+// build onto an incomplete release and fail one platform's download.
+export const readCoreVersionPin = () => normalizeVersion(process.env.CORE_VERSION_PIN || '');
+// `--freeze` pins to the version already in core-version.txt without a lookup.
+export const readFreezeFlag = (argv = process.argv) => argv.includes('--freeze');
+
 export async function updateBundledCore({
   rootDir = defaultRoot,
   coreVersionFile = join(rootDir, 'core-version.txt'),
   checkOnly = false,
   fetchLatest = fetchLatestUpstreamVersion,
+  pinnedVersion = readCoreVersionPin(),
+  freeze = false,
 } = {}) {
   const currentVersion = await readCurrentCoreVersion(coreVersionFile);
+
+  if (freeze && !pinnedVersion) {
+    if (!currentVersion) {
+      throw new Error('Cannot freeze the bundled kernel: core-version.txt is empty');
+    }
+    console.log(`Kernel version is frozen at ${currentVersion}`);
+    return { updated: false, updateAvailable: false, currentVersion, latestVersion: currentVersion, pinned: true };
+  }
+
+  if (pinnedVersion) {
+    if (checkOnly) {
+      throw new Error(`Kernel version is pinned to ${pinnedVersion}; skipping the upstream check`);
+    }
+    if (pinnedVersion !== currentVersion) {
+      await writeFile(coreVersionFile, `${pinnedVersion}\n`, 'utf8');
+      console.log(`Pinned core-version.txt: ${currentVersion || 'none'} -> ${pinnedVersion}`);
+      return { updated: true, updateAvailable: false, currentVersion, latestVersion: pinnedVersion, pinned: true };
+    }
+    console.log(`Kernel version is pinned to ${pinnedVersion}`);
+    return { updated: false, updateAvailable: false, currentVersion, latestVersion: pinnedVersion, pinned: true };
+  }
 
   let latestVersion;
   try {
@@ -216,7 +246,7 @@ const entryPoint = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).hre
 if (import.meta.url === entryPoint) {
   const checkOnly = process.argv.includes('--check');
   try {
-    const result = await updateBundledCore({ checkOnly });
+    const result = await updateBundledCore({ checkOnly, freeze: readFreezeFlag() });
     if (checkOnly && result.updateAvailable) {
       process.exit(1);
     }

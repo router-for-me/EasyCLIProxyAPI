@@ -96,6 +96,10 @@ describe('VersionManagement update triggers', () => {
       ? ancestor.name.getText(pageSource)
       : undefined).toBe('updateVersionSource');
   });
+
+  it('does not subscribe to automatic source switching', () => {
+    expect(findCalls('onVersionDownloadSourceChanged')).toHaveLength(0);
+  });
 });
 
 describe('VersionManagement helper functions', () => {
