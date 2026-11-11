@@ -1,0 +1,19 @@
+[
+  {"id":"claude-code","name":"Claude Code","headers":["claude-cli/2.1.280 (external, cli)"],"collisions":["claude/4.5","my-claude-code/1"]},
+  {"id":"claude-desktop","name":"Claude Desktop","headers":["claude-cli/2.1.295 (external, claude-desktop-3p)","Mozilla/5.0 (Windows NT 10.0) Claude/2.7 Chrome/140.0 Electron/37.2"],"collisions":["Mozilla/5.0 (Claude/2.7 Electron/37.2)","not-claude-desktop/1"]},
+  {"id":"codex","name":"Codex","headers":["codex_cli_rs/0.154.0 (Linux; x64)","codex-tui/0.154.0"],"collisions":["codex_cli_rs_tools/1","not-codex/1"]},
+  {"id":"gemini-cli","name":"Gemini CLI","headers":["GeminiCLI/0.66.0/test-model (linux; x64)"],"collisions":["GeminiCLI-fake/1","google-api-nodejs-client/10"]},
+  {"id":"opencode","name":"OpenCode","headers":["opencode/1.4.2"],"collisions":["not-opencode/1","OpenAI/Python 1.0 (opencode/1.4.2)"]},
+  {"id":"openclaw","name":"OpenClaw","headers":["OpenClaw/2026.11.19"],"collisions":["my-openclaw/1","unknown (/home/openclaw/token)"]},
+  {"id":"hermes","name":"Hermes Agent","headers":["HermesAgent/0.9.3","hermes-agent/0.9.3 (cli; linux)","hermes/0.9.3","codex_cli_rs/0.0.0 (Hermes Agent)","OpenAI/Python 1.55.0 (Hermes Agent)"],"collisions":["hermes","HermesAgent-tools/1","codex_cli_rs_tools/1 (Hermes Agent)"]},
+  {"id":"deepseek-harness","name":"DeepSeek Harness","headers":["deepseek-harness/0.3.2 (linux)","dsh/0.3.2"],"collisions":["deepseek/1","dsh","dsh-tools/1","deepseek-harness-extra/1"]},
+  {"id":"zcode","name":"ZCode","headers":["ZCode/3.11.2","zcode-cli/3.11.2"],"collisions":["zcode-helper/1","my-zcode/1"]},
+  {"id":"workbuddy","name":"WorkBuddy","headers":["WorkBuddy/5.10.1 workbuddy-ai/5.10.1 CLI/2.170.0","workbuddy-ai/5.10.1"],"collisions":["workbuddy-service/1","networkbuddy/1"]},
+  {"id":"antigravity-cli","name":"Antigravity CLI","headers":["agy/1.2.17","antigravity-cli/1.2.17"],"collisions":["agy","antigravity/hub/1.23.2 windows/amd64 google-api-nodejs-client/10.3.0","agy-extra/1"]},
+  {"id":"copilot-cli","name":"Copilot CLI","headers":["copilot/1.1.0","copilot-cli/1.1.0","github-copilot-cli/1.1.0"],"collisions":["copilot","github-copilot/1.1.0","copilot-service/1"]},
+  {"id":"vscode-copilot","name":"VSCode Copilot","headers":["GitHubCopilotChat/0.70.1","vscode-copilot/0.70.1"],"collisions":["vscode_agent_host/0.163.0","GitHubCopilotChat-helper/1","githubcopilot/1"]},
+  {"id":"kimi-code","name":"Kimi Code","headers":["KimiCLI/1.5","kimi-code-cli/2.4.2","kimi-code-desktop/1.2.2"],"collisions":["kimi/3.1","kimi-code-helper/1","kimicli-extra/1"]},
+  {"id":"grok-build","name":"Grok Build","headers":["grok-shell/0.2.108 (linux; x64)","grok-pager/0.2.108 grok-shell/0.2.108","grok-build/0.2.108"],"collisions":["grok/4.0","grok-shell-tools/1"]},
+  {"id":"omp","name":"Oh My Pi","headers":["omp/19.0.1","oh-my-pi/19.0.1"],"collisions":["omp","compile/1","oh-my-pi-helper/1","OpenAI/Python 1.0 (omp/19.0.1)"]},
+  {"id":"pi","name":"Pi","headers":["pi/19.0.1 (linux; node/v26.13.0; x64)","pi-coding-agent/19.0.1","undici pi-coding-agent/19.0.1"],"collisions":["pi","pipeline/1","pi-agent-helper/1","optimized/1","OpenAI/Python 1.0 (pi-coding-agent/19.0.1)"]}
+]

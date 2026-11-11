@@ -35,12 +35,34 @@ test('retries network and interrupted body transfers', async () => {
   expect(bytes.toString()).toBe('complete');
 });
 
-test('fails immediately on missing assets', async () => {
+test('retries assets that are still uploading', async () => {
+  let calls = 0;
+  const bytes = await downloadReleaseBytes(url, {
+    ...quiet,
+    fetchImpl: async () => {
+      calls += 1;
+      return calls < 3 ? new Response('', { status: 404 }) : new Response('uploaded');
+    },
+  });
+  expect(calls).toBe(3);
+  expect(bytes.toString()).toBe('uploaded');
+});
+
+test('stops retrying permanently missing assets', async () => {
   let calls = 0;
   await expect(downloadReleaseBytes(url, {
     ...quiet,
     fetchImpl: async () => { calls += 1; return new Response('', { status: 404 }); },
-  })).rejects.toThrow('HTTP 404');
+  })).rejects.toThrow('failed after 5 attempt(s): HTTP 404');
+  expect(calls).toBe(5);
+});
+
+test('fails immediately on non-retryable client errors', async () => {
+  let calls = 0;
+  await expect(downloadReleaseBytes(url, {
+    ...quiet,
+    fetchImpl: async () => { calls += 1; return new Response('', { status: 403 }); },
+  })).rejects.toThrow('HTTP 403');
   expect(calls).toBe(1);
 });
 

@@ -2,6 +2,7 @@ import { Notice } from '../components/Notice';
 import { onConfigFilesChanged } from '../services/events';
 import { restartCoreProcess, startCoreProcess, stopCoreProcess } from '../services/coreLifecycle';
 import { getCoreConfigSettings, getCoreTlsSettings } from '../services/coreSettings';
+import { selectedRemoteEndpoint } from '../services/remoteCpa';
 import { getGuiSettings } from '../services/appSettings';
 import { useEffect, useRef, useState } from 'react';
 import { getVersion } from '../services/platform';
@@ -124,7 +125,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
 
   const loadGuiSettings = async () => {
     try {
-      const settings = await getGuiSettings();
+      const settings = selectedRemoteEndpoint() ? await getCoreConfigSettings() : await getGuiSettings();
       setListenHost(settings.host);
       setCustomPort(String(settings.port));
       savedPortRef.current = settings.port;
@@ -169,6 +170,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
   };
 
   const currentVersion = coreStatus?.currentVersion ?? '';
+  const externalEndpoint = selectedRemoteEndpoint();
   const coreInstalled = Boolean(coreStatus?.installed);
   const coreRunning = Boolean(coreStatus?.running);
   const coreReady = Boolean(coreStatus?.ready);
@@ -220,10 +222,25 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
         /></>} />
       <RoutingPanel coreReady={coreReady} />
       <div className="home-top-grid">
-        <div className="panel surface-panel control-panel">
+        {externalEndpoint ? <div className="panel surface-panel control-panel">
+          <div className="panel-heading home-panel-heading">
+            <h2 id="home-cpa-runtime" tabIndex={-1}>{t('home.runtime.externalTitle')}</h2>
+            <button type="button" className="icon-button quiet ghost small-button" onClick={() => void refreshStatus()} title={t('home.runtime.checkConnection')} aria-label={t('home.runtime.checkConnection')}><RefreshCw size={15} aria-hidden="true" /></button>
+          </div>
+          <dl className="panel-detail-grid home-runtime-details">
+            <div className="panel-detail-row"><dt>{t('remote.endpoint')}</dt><dd>{externalEndpoint}</dd></div>
+            <div className="panel-detail-row"><dt>{t('home.runtime.connectionStatus')}</dt><dd>
+              <span role="status" className={`home-runtime-state ${statusError ? 'error' : coreReady ? 'success' : 'pending'}`}>
+                <span className="home-runtime-dot" aria-hidden="true" />
+                {t(statusError ? 'home.runtime.connectionFailed' : coreReady ? 'remote.apiReady' : 'common.detecting')}
+              </span>
+            </dd></div>
+          </dl>
+          <Notice tone={statusError ? 'warn' : 'info'} variant="text" className="home-runtime-message">{t(statusError ? 'home.runtime.checkEndpointHint' : 'home.runtime.externalHint')}</Notice>
+        </div> : <div className="panel surface-panel control-panel">
           <div className="panel-heading home-panel-heading">
             <div>
-              <h2>{t('kernel.control.title')}</h2>
+              <h2 id="home-cpa-runtime" tabIndex={-1}>{t('kernel.control.title')}</h2>
               <p>{t(!coreStatus ? (statusError ? 'home.runtime.unknown' : 'home.runtime.checking') : coreReady ? 'home.runtime.ready' : coreInstalled ? 'home.runtime.stopped' : 'home.runtime.notInstalled')}</p>
             </div>
             <button type="button" className="icon-button quiet ghost small-button" disabled={coreProcessBusy} onClick={() => void refreshStatus()} title={t('kernel.control.refresh')} aria-label={t('kernel.control.refresh')}><RefreshCw size={15} aria-hidden="true" /></button>
@@ -306,7 +323,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
             </button>
           </div>
           <FloatingNotice key={processFeedback.revision} notice={processFeedback.notice} onDismiss={processFeedback.clearNotice} />
-        </div>
+        </div>}
         <HomeAccessPanel
           profiles={apiProfiles} apiKey={homeApiKey} keyError={homeApiKeyError}
           ready={coreReady} copiedField={copiedApiField} onCopy={copyApiValue}

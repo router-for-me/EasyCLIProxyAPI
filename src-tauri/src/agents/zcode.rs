@@ -156,6 +156,8 @@ pub(crate) struct ZCodeModelConfig {
     pub reasoning_levels: Vec<String>,
     pub reasoning_map: Option<String>,
     pub is_manual: bool,
+    #[serde(default)]
+    pub system_prompt: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -192,6 +194,8 @@ pub(crate) struct ZCodeSubagentItem {
     pub model: Option<String>,
     pub thought_level: Option<String>,
     pub tools: Vec<String>,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -386,6 +390,7 @@ pub(crate) fn zcode_editor_snapshot(
 
     let mut editor_models = Vec::new();
     let mut seen_ids = std::collections::HashSet::new();
+    let (default_system_prompt, model_prompt_overrides) = zcode_model_system_prompts_for_editor(home);
 
     let catalog = crate::usage::load_model_capabilities_snapshot();
     for option in available_models {
@@ -396,6 +401,11 @@ pub(crate) fn zcode_editor_snapshot(
             Some(500_000) | None => inferred_cw.or(option.context_window),
             Some(cw) => Some(cw).or(inferred_cw),
         };
+
+        let model_system_prompt = model_prompt_overrides
+            .get(&option.name)
+            .cloned()
+            .unwrap_or_else(|| default_system_prompt.clone());
 
         let default_config = ZCodeModelConfig {
             context_window: effective_default_cw,
@@ -409,6 +419,7 @@ pub(crate) fn zcode_editor_snapshot(
             reasoning_levels: if inferred_rl.is_empty() { option.reasoning_levels.clone() } else { inferred_rl },
             reasoning_map: Some(ZCODE_CPA_REASONING_MAP.to_string()),
             is_manual: false,
+            system_prompt: default_system_prompt.clone(),
         };
 
         let configuration = if let Some(manual_rule) = manual_rules.get(&option.name) {
@@ -427,6 +438,7 @@ pub(crate) fn zcode_editor_snapshot(
                 reasoning_map: if rl.is_some() { map } else { default_config.reasoning_map.clone() },
                 reasoning_levels: rl.unwrap_or_else(|| default_config.reasoning_levels.clone()),
                 is_manual: true,
+                system_prompt: model_system_prompt,
             }
         } else if let Some(prov_rule) = provider_rules.get(&option.name) {
             let (cw, mot, img, pdf, vid, json_out, search, sys) = parse_zcode_rule_properties(prov_rule);
@@ -444,9 +456,13 @@ pub(crate) fn zcode_editor_snapshot(
                 reasoning_map: if rl.is_some() { map } else { default_config.reasoning_map.clone() },
                 reasoning_levels: rl.unwrap_or_else(|| default_config.reasoning_levels.clone()),
                 is_manual: false,
+                system_prompt: model_system_prompt,
             }
         } else {
-            default_config.clone()
+            ZCodeModelConfig {
+                system_prompt: model_system_prompt,
+                ..default_config.clone()
+            }
         };
 
         let enabled = if !has_personal_model_ids {
@@ -467,6 +483,10 @@ pub(crate) fn zcode_editor_snapshot(
         if !seen_ids.contains(mid) {
             let (cw, mot, img, pdf, vid, json_out, search, sys) = parse_zcode_rule_properties(manual_rule);
             let (rl, map) = parse_zcode_rule_reasoning(manual_rule);
+            let model_prompt = model_prompt_overrides
+                .get(mid)
+                .cloned()
+                .unwrap_or_else(|| default_system_prompt.clone());
             let cfg = ZCodeModelConfig {
                 context_window: cw,
                 max_output_tokens: mot,
@@ -479,13 +499,18 @@ pub(crate) fn zcode_editor_snapshot(
                 reasoning_levels: rl.unwrap_or_default(),
                 reasoning_map: map.clone(),
                 is_manual: true,
+                system_prompt: model_prompt,
+            };
+            let defaults_cfg = ZCodeModelConfig {
+                system_prompt: default_system_prompt.clone(),
+                ..cfg.clone()
             };
             let enabled = personal_model_ids.contains(mid);
             editor_models.push(ZCodeCatalogEditorModel {
                 id: mid.clone(),
                 enabled,
-                configuration: cfg.clone(),
-                defaults: cfg,
+                configuration: cfg,
+                defaults: defaults_cfg,
             });
         }
     }
@@ -639,12 +664,29 @@ pub(crate) fn save_zcode_editor(
 
 fn parse_subagent_markdown(file_path: &Path) -> Option<ZCodeSubagentItem> {
     let content = fs::read_to_string(file_path).ok()?;
-    if !content.starts_with("---\n") && !content.starts_with("---\r\n") {
+    let prefix_len = if content.starts_with("---\r\n") {
+        5
+    } else if content.starts_with("---\n") {
+        4
+    } else {
         return None;
-    }
-    let rest = &content[4..];
-    let end_idx = rest.find("\n---").or_else(|| rest.find("\r\n---"))?;
+    };
+    let rest = &content[prefix_len..];
+    let (end_idx, sep_len) = if let Some(idx) = rest.find("\r\n---") {
+        (idx, 5)
+    } else if let Some(idx) = rest.find("\n---") {
+        (idx, 4)
+    } else {
+        return None;
+    };
     let frontmatter = &rest[..end_idx];
+    let after_sep = &rest[end_idx + sep_len..];
+    let body_text = after_sep
+        .strip_prefix("\r\n")
+        .or_else(|| after_sep.strip_prefix('\n'))
+        .unwrap_or(after_sep)
+        .trim()
+        .to_string();
 
     let mut name = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
     let mut description = String::new();
@@ -662,10 +704,12 @@ fn parse_subagent_markdown(file_path: &Path) -> Option<ZCodeSubagentItem> {
             description = v.to_string();
         } else if let Some(val) = trimmed.strip_prefix("model:") {
             let v = val.trim().trim_matches('"').trim_matches('\'');
-            if !v.is_empty() && v != "inherit" { model = Some(v.to_string()); }
+            // Report the literal value: the editor needs to tell a pinned model apart from
+            // "inherit", and the save path only writes when something actually changed.
+            if !v.is_empty() { model = Some(v.to_string()); }
         } else if let Some(val) = trimmed.strip_prefix("thoughtLevel:") {
             let v = val.trim().trim_matches('"').trim_matches('\'');
-            if !v.is_empty() && v != "inherit" { thought_level = Some(v.to_string()); }
+            if !v.is_empty() { thought_level = Some(v.to_string()); }
         } else if let Some(val) = trimmed.strip_prefix("tools:") {
             let v = val.trim().trim_matches('[').trim_matches(']');
             tools = v.split(',').map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string()).filter(|s| !s.is_empty()).collect();
@@ -679,6 +723,7 @@ fn parse_subagent_markdown(file_path: &Path) -> Option<ZCodeSubagentItem> {
         model,
         thought_level,
         tools,
+        system_prompt: Some(body_text),
     })
 }
 
@@ -818,11 +863,25 @@ pub(crate) fn save_zcode_subagent_config_inner(
     fs::write(&settings_path, rendered)
         .map_err(|e| format!("Failed to write ZCode settings: {e}"))?;
 
+    let existing_snapshot = zcode_subagent_snapshot(home)?;
+    let allowed_paths: std::collections::HashSet<PathBuf> = existing_snapshot
+        .subagents
+        .iter()
+        .map(|item| PathBuf::from(&item.file_path))
+        .collect();
+
     for sub in &request.subagents {
         let p = Path::new(&sub.file_path);
-        if !p.is_file() { continue; }
+        if !allowed_paths.contains(p) || !p.is_file() {
+            continue;
+        }
         if let Ok(content) = fs::read_to_string(p) {
-            if let Some(updated) = update_subagent_frontmatter(&content, sub.model.as_deref(), sub.thought_level.as_deref()) {
+            if let Some(updated) = update_subagent_frontmatter(
+                &content,
+                sub.model.as_deref(),
+                sub.thought_level.as_deref(),
+                sub.system_prompt.as_deref(),
+            ) {
                 fs::write(p, updated)
                     .map_err(|e| format!("Failed to write ZCode subagent {}: {e}", p.display()))?;
             }
@@ -832,34 +891,59 @@ pub(crate) fn save_zcode_subagent_config_inner(
     zcode_subagent_snapshot(home)
 }
 
-fn update_subagent_frontmatter(content: &str, model: Option<&str>, thought_level: Option<&str>) -> Option<String> {
-    if !content.starts_with("---\n") && !content.starts_with("---\r\n") {
+fn update_subagent_frontmatter(
+    content: &str,
+    model: Option<&str>,
+    thought_level: Option<&str>,
+    system_prompt: Option<&str>,
+) -> Option<String> {
+    let prefix_len = if content.starts_with("---\r\n") {
+        5
+    } else if content.starts_with("---\n") {
+        4
+    } else {
         return None;
-    }
-    let rest = &content[4..];
-    let end_idx = rest.find("\n---").or_else(|| rest.find("\r\n---"))?;
+    };
+    let rest = &content[prefix_len..];
+    let (end_idx, _sep_len) = if let Some(idx) = rest.find("\r\n---") {
+        (idx, 5)
+    } else if let Some(idx) = rest.find("\n---") {
+        (idx, 4)
+    } else {
+        return None;
+    };
     let frontmatter = &rest[..end_idx];
-    let body = &rest[end_idx..];
+    let original_tail = &rest[end_idx..];
 
-    let mut lines: Vec<String> = frontmatter.lines().map(String::from).collect();
+    let original_lines: Vec<String> = frontmatter.lines().map(String::from).collect();
+    let mut lines = original_lines.clone();
     let mut has_model = false;
     let mut has_thought = false;
+    let newline = if content.starts_with("---\r\n") { "\r\n" } else { "\n" };
 
+    // An absent value means "keep what the file already says"; only a real change rewrites
+    // the line, so a plain refresh of the dialog cannot churn every subagent file.
     for line in lines.iter_mut() {
         let trimmed = line.trim();
         if trimmed.starts_with("model:") {
             has_model = true;
-            if let Some(m) = model.filter(|s| !s.trim().is_empty()) {
-                *line = format!("model: {m}");
-            } else {
-                *line = "model: inherit".into();
+            match model.filter(|s| !s.trim().is_empty()) {
+                Some(m) if trimmed != format!("model: {m}") => *line = format!("model: {m}"),
+                Some(_) => {}
+                None if !trimmed.starts_with("model: inherit") => *line = "model: inherit".into(),
+                None => {}
             }
         } else if trimmed.starts_with("thoughtLevel:") {
             has_thought = true;
-            if let Some(tl) = thought_level.filter(|s| !s.trim().is_empty()) {
-                *line = format!("thoughtLevel: {tl}");
-            } else {
-                *line = "thoughtLevel: inherit".into();
+            match thought_level.filter(|s| !s.trim().is_empty()) {
+                Some(tl) if trimmed != format!("thoughtLevel: {tl}") => {
+                    *line = format!("thoughtLevel: {tl}")
+                }
+                Some(_) => {}
+                None if !trimmed.starts_with("thoughtLevel: inherit") => {
+                    *line = "thoughtLevel: inherit".into()
+                }
+                None => {}
             }
         }
     }
@@ -875,7 +959,110 @@ fn update_subagent_frontmatter(content: &str, model: Option<&str>, thought_level
         }
     }
 
-    Some(format!("---\n{}{}", lines.join("\n"), body))
+    let Some(next_prompt) = system_prompt else {
+        return Some(format!("---{newline}{}{}", lines.join(newline), original_tail));
+    };
+    let normalized = next_prompt.replace("\r\n", "\n");
+    let body = normalized.trim();
+    // The editor shows `body`, so an unchanged body means "keep the original tail verbatim",
+    // including its trailing spaces and closing newline. Only an edit re-serializes the file.
+    let prompt_unchanged = subagent_body_text(original_tail) == body;
+    if prompt_unchanged && lines == original_lines {
+        return None;
+    }
+    if prompt_unchanged {
+        return Some(format!("---{newline}{}{}", lines.join(newline), original_tail));
+    }
+    if body.is_empty() {
+        return Some(format!("---{newline}{}{newline}---{newline}", lines.join(newline)));
+    }
+    Some(format!(
+        "---{newline}{}{newline}---{newline}{newline}{body}{newline}",
+        lines.join(newline)
+    ))
+}
+
+/// Body text after the closing `---` fence in the same form the editor shows it, so an
+/// untouched body is not mistaken for an edited one.
+fn subagent_body_text(tail: &str) -> String {
+    let after_fence = if let Some(rest) = tail.strip_prefix("\r\n---") {
+        rest
+    } else if let Some(rest) = tail.strip_prefix("\n---") {
+        rest
+    } else {
+        tail
+    };
+    after_fence
+        .strip_prefix("\r\n")
+        .or_else(|| after_fence.strip_prefix('\n'))
+        .unwrap_or(after_fence)
+        .trim()
+        // The editor compares LF text; a CRLF file must not look edited just for its endings.
+        .replace("\r\n", "\n")
+}
+
+#[cfg(test)]
+mod subagent_frontmatter_tests {
+    use super::update_subagent_frontmatter;
+
+    const FILE: &str = "---\nname: reviewer\nmodel: inherit\ndescription: Reviews code\n---\n\nReview the diff.\n\nKeep the report short.  \n";
+
+    #[test]
+    fn unchanged_prompt_and_model_skip_the_write() {
+        let updated =
+            update_subagent_frontmatter(FILE, None, None, Some("Review the diff.\n\nKeep the report short."));
+        assert!(updated.is_none(), "an unchanged subagent must not be rewritten, got {updated:?}");
+    }
+
+    #[test]
+    fn model_only_change_keeps_the_body_byte_for_byte() {
+        let updated = update_subagent_frontmatter(
+            FILE,
+            Some("cpa-gui/glm-5.3"),
+            None,
+            Some("Review the diff.\n\nKeep the report short."),
+        )
+        .expect("a model change must still update the frontmatter");
+        assert_eq!(updated, FILE.replace("model: inherit", "model: cpa-gui/glm-5.3"));
+    }
+
+    #[test]
+    fn edited_prompt_replaces_the_body() {
+        let updated = update_subagent_frontmatter(FILE, None, None, Some("New instructions."))
+            .expect("an edited prompt must be written");
+        assert_eq!(
+            updated,
+            "---\nname: reviewer\nmodel: inherit\ndescription: Reviews code\n---\n\nNew instructions.\n"
+        );
+    }
+
+    #[test]
+    fn crlf_files_keep_their_line_endings() {
+        let crlf = "---\r\nname: reviewer\r\nmodel: inherit\r\n---\r\n\r\nBody line.\r\n";
+        let updated = update_subagent_frontmatter(crlf, None, Some("high"), Some("Body line."))
+            .expect("a thought level change must be written");
+        assert_eq!(
+            updated,
+            "---\r\nname: reviewer\r\nmodel: inherit\r\nthoughtLevel: high\r\n---\r\n\r\nBody line.\r\n"
+        );
+    }
+
+    #[test]
+    fn crlf_multiline_body_is_not_rewritten_when_unchanged() {
+        let crlf = "---\r\nname: reviewer\r\nmodel: inherit\r\n---\r\n\r\nFirst paragraph.\r\n\r\nSecond paragraph.\r\n";
+        // What the editor submits: the trimmed body as LF text.
+        let edited = "First paragraph.\n\nSecond paragraph.";
+        assert!(
+            update_subagent_frontmatter(crlf, None, None, Some(edited)).is_none(),
+            "a CRLF file whose body is unchanged must not be rewritten"
+        );
+        let updated = update_subagent_frontmatter(crlf, Some("glm-5.3"), None, Some(edited))
+            .expect("a model change must still be written");
+        assert_eq!(
+            updated,
+            "---\r\nname: reviewer\r\nmodel: glm-5.3\r\n---\r\n\r\nFirst paragraph.\r\n\r\nSecond paragraph.\r\n"
+        );
+    }
 }
 
 #[tauri::command]
@@ -909,13 +1096,22 @@ pub(crate) async fn get_zcode_model_catalog_editor_in_directories(
 pub(crate) async fn save_zcode_model_catalog_editor(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
+    status_cache: tauri::State<'_, AgentConfigStatusCache>,
     request: ZCodeCatalogEditorSaveRequest,
     config_directories: Option<AgentConfigDirectories>,
+    preserve_system_prompts: Option<bool>,
 ) -> Result<ZCodeCatalogEditorSnapshot, String> {
     let directories = validate_agent_config_directories(config_directories)?;
     AGENT_CONFIG_DIRECTORIES
         .scope(directories, async move {
-            save_zcode_model_catalog_editor_in_directories(app, gui_config_state, request).await
+            save_zcode_model_catalog_editor_in_directories(
+                app,
+                gui_config_state,
+                status_cache,
+                request,
+                preserve_system_prompts.unwrap_or(false),
+            )
+            .await
         })
         .await
 }
@@ -923,15 +1119,42 @@ pub(crate) async fn save_zcode_model_catalog_editor(
 pub(crate) async fn save_zcode_model_catalog_editor_in_directories(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
+    status_cache: tauri::State<'_, AgentConfigStatusCache>,
     request: ZCodeCatalogEditorSaveRequest,
+    preserve_system_prompts: bool,
 ) -> Result<ZCodeCatalogEditorSnapshot, String> {
     let config = gui_config_state.snapshot()?;
     let models = fetch_prepared_agent_models(AgentClient::ZCode, &config).await?;
     let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
+    // The model settings dialog no longer edits prompts. A stale catalog snapshot
+    // (including a reset to recommended model settings) must not overwrite their rules.
+    let model_prompts = (!preserve_system_prompts).then(|| {
+        request
+            .models
+            .iter()
+            .map(|m| {
+                let prompt = m.configuration.system_prompt.trim();
+                (
+                    m.id.clone(),
+                    (!prompt.is_empty()).then(|| m.configuration.system_prompt.clone()),
+                )
+            })
+            .collect()
+    });
+    {
+        let _guard = crate::AGENT_CONFIG_FILE_LOCK
+            .lock()
+            .map_err(|_| "Agent configuration file lock is poisoned")?;
+        save_zcode_editor(&home, &models.models, request)?;
+    }
+    if let Some(model_prompts) = model_prompts {
+        sync_zcode_catalog_model_prompts(&app, &home, config.port, model_prompts).await?;
+    }
+    let _ = status_cache.clear();
     let _guard = crate::AGENT_CONFIG_FILE_LOCK
         .lock()
         .map_err(|_| "Agent configuration file lock is poisoned")?;
-    save_zcode_editor(&home, &models.models, request)
+    zcode_editor_snapshot(&home, &models.models)
 }
 
 #[tauri::command]

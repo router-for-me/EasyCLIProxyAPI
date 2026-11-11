@@ -3,6 +3,7 @@ import { CredentialTagManager } from '../components/CredentialTagManager';
 import { refreshCredential } from '../services/authFileOperations';
 import { mergeCredentialTags } from '../services/credentialTags';
 import { EmptyState } from '../components/EmptyState';
+import { CredentialCardActions } from '../components/CredentialCardActions';
 import { Checkbox } from '../components/Checkbox';
 import { commitFetchedQuota } from '../services/quotaEnrichment';
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -32,7 +33,6 @@ import {
   RefreshCw,
   Search,
   Settings2,
-  SlidersHorizontal,
   X,
 } from 'lucide-react';
 import antigravityIcon from '../assets/icons/antigravity.svg';
@@ -626,8 +626,13 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
               const health = authFileHealth(file);
               const cooldownSnapshot = normalizeAuthFileCooldowns(file.cooldowns, receivedAtMs, observedAt);
               const hasCooldown = Boolean(cooldownSnapshot?.records?.length);
-              const showCooldown = hasCooldown || cooldownSnapshot?.records === null;
-              const statusLabel = hasCooldown && !health.disabled ? t('authFiles.list.cooling') : t(health.label === 'authFiles.health.active' ? 'authFiles.list.available' : health.label);
+              // A suspension is terminal, so it keeps its own strip even without
+              // cooldown data; its long prose belongs on that line, not in the badge.
+              const suspended = health.suspension !== undefined;
+              const showCooldown = hasCooldown || cooldownSnapshot?.records === null || suspended;
+              const statusLabel = hasCooldown && !health.disabled ? t('authFiles.list.cooling')
+                : health.label === 'authFiles.health.active' ? t('authFiles.list.available')
+                  : suspended ? t('authFiles.status.disabled') : t(health.label);
               const expanded = expandedFiles.has(key);
               const detailsId = `auth-file-details-${encodeURIComponent(key)}`;
               const cooldownResetIndex = authFileCooldownResetIndex(file);
@@ -688,20 +693,15 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
                     {quotaProvider ? <AuthFileQuotaPanel compact dense quota={quota} file={file} disabled={busy || disabled} onRefresh={() => void refreshQuota(file)} onReset={quotaProvider === 'codex' || quotaProvider === 'claude' ? () => void resetQuota(file, quota) : undefined} /> : <span className="auth-list-muted">{t('authFiles.list.noQuota')}</span>}
                     <QuotaActionFeedback quota={quota} name={displayName} />
                   </div>
-                  <footer className="auth-card-actions auth-list-cell" data-label={t('authFiles.list.actions')}>
-                    <div className="auth-list-icon-actions">
-                      <button type="button" className="secondary-button small-button" onClick={() => void refreshQuota(file)} disabled={busy || disabled || !quotaProvider || quota.status === 'loading'} title={t('authFiles.quota.refresh')}><RefreshCw size={14} className={quota.status === 'loading' ? 'spin' : ''} aria-hidden="true" />{t('authFiles.action.refreshQuota')}</button>
-                      <button type="button" className="secondary-button small-button" onClick={() => setSettingsName(name)} disabled={busy || resettingCooldown || !isOAuthCredentialFile(file)} title={t(isOAuthCredentialFile(file) ? 'authFiles.settings.title' : 'authFiles.fileOnly')}>{t('authFiles.action.settings')}</button>
-                      <button type="button" className="secondary-button small-button" onClick={() => void openOauthModelSettings({ provider: providerKey(file), label: providerName(file), scope: 'credential', name })} disabled={busy || resettingCooldown || !isOAuthCredentialFile(file)} title={t('authFiles.models.settings')}><SlidersHorizontal size={14} aria-hidden="true" />{t('authFiles.models.excludeButton')}</button>
-                      <button type="button" className="secondary-button small-button" onClick={() => setModelViewName(name)} disabled={busy || !providerKey(file)} title={t('authFiles.models.viewTitle')}>{t('authFiles.action.models')}</button>
-                      <button type="button" className="secondary-button small-button" onClick={() => void copyName(name)} disabled={busy} title={t('authFiles.copyName')}>{copied === name ? <Check size={14} aria-hidden="true" /> : null}{t('authFiles.action.copy')}</button>
-                      <button type="button" className="danger-button small-button" onClick={() => void deleteFile(file)} disabled={busy || resettingCooldown || isRuntimeOnly(file)} title={t('common.delete')}>{t('common.delete')}</button>
-                    </div>
-                    <div className="auth-list-main-actions">
-                      <button type="button" className={`${disabled ? 'primary-button' : 'secondary-button'} compact-button auth-card-toggle`} role="switch" aria-checked={!disabled} aria-label={`${t(disabled ? 'common.enable' : 'common.disable')} ${identity || displayName}`} onClick={() => void toggleStatus(file)} disabled={busy || resettingCooldown || !isOAuthCredentialFile(file)} title={t(isOAuthCredentialFile(file) ? disabled ? 'common.enable' : 'common.disable' : 'authFiles.fileOnly')}>{t(disabled ? 'common.enable' : 'common.disable')}</button>
-                      <button type="button" className="secondary-button small-button auth-list-details-button" onClick={() => toggleDetails(key)} aria-expanded={expanded} aria-controls={detailsId}>{t(expanded ? 'authFiles.list.collapse' : 'authFiles.list.details')}</button>
-                    </div>
-                  </footer>
+                  <CredentialCardActions
+                    identity={identity || displayName} disabled={disabled} busy={busy} resettingCooldown={resettingCooldown}
+                    oauth={isOAuthCredentialFile(file)} runtimeOnly={isRuntimeOnly(file)} hasProvider={Boolean(providerKey(file))}
+                    canRefresh={Boolean(quotaProvider)} refreshing={quota.status === 'loading'} copied={copied === name}
+                    expanded={expanded} detailsId={detailsId}
+                    onRefresh={() => void refreshQuota(file)} onSettings={() => setSettingsName(name)}
+                    onExclusions={() => void openOauthModelSettings({ provider: providerKey(file), label: providerName(file), scope: 'credential', name })}
+                    onModels={() => setModelViewName(name)} onCopy={() => void copyName(name)} onDelete={() => void deleteFile(file)}
+                    onToggle={() => void toggleStatus(file)} onDetails={() => toggleDetails(key)} />
                   </div>
                   {showCooldown ? <AuthFileHealthStatus compact file={file} receivedAtMs={receivedAtMs} observedAt={observedAt}
                     resetting={resettingCooldown} resetDisabled={busy || loading}

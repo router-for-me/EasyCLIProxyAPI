@@ -1,10 +1,12 @@
 import { pollWhileActive } from '../services/windowActivity';
 import { useMemo, useSyncExternalStore } from 'react';
-import { ChevronDown, CircleHelp, Clock3, Info, LoaderCircle, PauseCircle, RotateCcw, ShieldAlert } from 'lucide-react';
+import { ChevronDown, CircleHelp, Clock3, ExternalLink, Info, LoaderCircle, PauseCircle, RotateCcw, ShieldAlert } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { usePrivacyMask } from '../privacy';
+import { openExternalUrl } from '../services/appSettings';
 import { authFileIdentities } from '../services/authFiles';
 import {
+  authFileAppeal,
   authFileHealth,
   cooldownReasonKey,
   normalizeAuthFileCooldowns,
@@ -72,7 +74,11 @@ function HealthStatus({ file, snapshot, nowMs, resetting = false, resetDisabled 
   const hasTimers = cooldown.rows.length > 0;
   const healthy = health.label === 'authFiles.health.active';
   if (healthy && !hasTimers && snapshot?.records !== null) return null;
-  const hasDetails = hasTimers || Boolean(health.message);
+  // Only a suspension the running core currently reports offers the appeal link.
+  // A persisted-only link is historical evidence, so it must not prompt an appeal
+  // for a credential that a manual or quota disable explains.
+  const appeal = health.suspension === 'tos' && !health.suspensionHistorical ? authFileAppeal(file) : undefined;
+  const hasDetails = hasTimers || Boolean(health.message) || Boolean(appeal);
   const reasonSet = new Set(cooldown.active.map(({ record }) => cooldownReasonKey(record.reason)));
   if (reasonSet.has('authFiles.health.reason.credentialQuota')) reasonSet.delete('authFiles.health.reason.quota');
   const reasons = Array.from(reasonSet);
@@ -144,6 +150,13 @@ function HealthStatus({ file, snapshot, nowMs, resetting = false, resetDisabled 
               </li>
             ))}
           </ul>
+          {appeal ? <p className="auth-health-appeal">
+            {t('authFiles.health.tosAppealHint')}
+            <button type="button" className="secondary-button compact-button" onClick={() => void openExternalUrl({ url: appeal.url })}>
+              <ExternalLink size={14} aria-hidden="true" />
+              {appeal.text ?? t('authFiles.health.tosAppealLink')}
+            </button>
+          </p> : null}
           {snapshot?.observedAt ? <p className="auth-health-hint">{t('authFiles.health.observed')} <time dateTime={snapshot.observedAt}>{formatTimestamp(snapshot.observedAt)}</time></p> : null}
           {hasTimers ? <p className="auth-health-hint">{t('authFiles.health.note')}</p> : null}
         </div>

@@ -1,101 +1,232 @@
 .live-routing-panel {
-  padding: 22px 26px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  background: var(--panel-bg, var(--bg-card));
-  overflow: hidden;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  min-width: 0;
+  padding: 16px 18px 12px;
+  container-type: inline-size;
+}
+
+.live-routing-heading,
+.live-routing-title,
+.live-routing-actions {
+  display: flex;
+  align-items: center;
   min-width: 0;
 }
 
 .live-routing-heading {
-  display: flex;
   justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
 }
 
-.live-routing-heading > div {
-  display: flex;
+.live-routing-title {
   flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
+  gap: 4px 10px;
 }
 
 .live-routing-heading h2 {
-  font-size: 18px;
-  font-weight: 650;
-  color: var(--text-primary);
   margin: 0;
+  font-size: 15px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .live-routing-state {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  font-size: 13px;
+  gap: 6px;
   color: var(--text-secondary);
+  font-size: 12px;
 }
 
 .live-routing-state span[aria-hidden="true"] {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
+  flex: none;
   border-radius: 50%;
-  background: var(--success-color, #10b981);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--success-color, #10b981) 25%, transparent);
+  background: var(--success-color);
+}
+
+.live-routing-panel.has-error .live-routing-state span[aria-hidden="true"] {
+  background: var(--warning-color);
 }
 
 .live-routing-panel.paused .live-routing-state span[aria-hidden="true"] {
   background: var(--text-tertiary);
-  box-shadow: none;
+}
+
+.live-routing-actions {
+  flex-wrap: wrap;
+  gap: 7px;
 }
 
 .live-routing-count {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
-  padding: 4px 10px;
-  border-radius: var(--radius-full);
-}
-
-.live-routing-panel.paused .live-routing-count {
+  font-size: 11.5px;
   color: var(--text-secondary);
-  background: var(--bg-tertiary);
+  white-space: nowrap;
 }
 
 .live-routing-heading .icon-button {
-  width: 36px;
-  height: 36px;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
 }
 
 .live-routing-warning {
-  font-size: 12px;
+  margin: 0;
   color: var(--warning-color);
-  margin: 6px 0;
+  font-size: 12px;
   overflow-wrap: anywhere;
 }
 
-.live-routing-map {
-  display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(176px, 212px) minmax(260px, 1.15fr);
-  column-gap: clamp(56px, 8vw, 128px);
+.routing-window-metrics,
+.routing-request-controls {
+  display: flex;
   align-items: center;
-  min-height: 300px;
-  position: relative;
-  padding: 16px 10px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
-.live-routing-map::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background-image: radial-gradient(color-mix(in srgb, var(--border-color) 65%, transparent) 1px, transparent 1.5px);
-  background-size: 18px 18px;
-  background-position: 9px 9px;
-  mask-image: radial-gradient(ellipse 80% 90% at 50% 50%, #000 55%, transparent 100%);
-  -webkit-mask-image: radial-gradient(ellipse 80% 90% at 50% 50%, #000 55%, transparent 100%);
+.routing-window-metrics {
+  gap: 6px 20px;
+  margin: 0;
+  padding-block-end: 9px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.routing-window-metrics > div {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.routing-window-metrics dt,
+.routing-context-label,
+.routing-text-button {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.routing-window-metrics dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.routing-window-metrics dd.routing-row-failures {
+  color: var(--error-color);
+}
+
+.routing-request-controls {
+  gap: 6px 10px;
+}
+
+.routing-depth-control {
+  max-width: 160px;
+}
+
+.routing-record-control {
+  width: min(380px, 100%);
+  min-width: 0;
+}
+
+.routing-depth-control .select-menu-trigger,
+.routing-record-control .select-menu-trigger {
+  min-height: 30px;
+  font-size: 12px;
+}
+
+.routing-text-button {
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.routing-text-button:hover {
+  color: var(--text-primary);
+}
+
+.routing-map-frame {
+  min-width: 0;
+  padding: 12px clamp(9px, 2cqi, 18px);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-surface-subtle) 58%, var(--bg-card));
+}
+
+.routing-empty {
+  display: grid;
+  gap: 8px;
+  padding-block: 16px;
+}
+
+.routing-empty > p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.routing-empty > p.live-routing-warning {
+  color: var(--warning-color);
+}
+
+.routing-empty > p svg {
+  flex: none;
+}
+
+.routing-unobserved-cooling {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 10px 0 0;
+  padding: 9px 0 0;
+  border-top: 1px solid var(--color-border-subtle);
+  list-style: none;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.routing-empty .routing-unobserved-cooling {
+  margin-top: 0;
+}
+
+.routing-unobserved-cooling li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.routing-unobserved-cooling li span:last-child {
+  color: var(--warning-color);
+}
+
+.live-routing-map {
+  --route-heading-height: 24px;
+  --route-row-height: 48px;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px clamp(22px, 4.8cqi, 58px);
+  max-width: 1040px;
+  margin-inline: auto;
 }
 
 .live-routing-edges {
@@ -105,192 +236,323 @@
   height: 100%;
   overflow: visible;
   pointer-events: none;
-  z-index: 1;
 }
 
 .routing-edge {
   fill: none;
-  stroke: var(--border-color);
-  stroke-width: 2.2;
+  stroke: var(--text-tertiary);
   stroke-linecap: round;
-  transition: stroke 0.25s ease, stroke-width 0.25s ease;
+  transition: stroke 0.2s ease, stroke-width 0.2s ease, opacity 0.2s ease;
 }
 
-.routing-edge-ghost {
-  stroke: color-mix(in srgb, var(--border-color) 70%, transparent);
-  stroke-dasharray: 4 4;
-  stroke-width: 1.2;
+.routing-edge-focused:not(.routing-edge-failing),
+.routing-edge-flow {
+  stroke: var(--primary-color);
+}
+
+.routing-edge-failing {
+  stroke: var(--error-color);
+  stroke-dasharray: 4 6;
 }
 
 .routing-edge-flow {
-  fill: none;
-  stroke-width: 2.6;
-  stroke-linecap: round;
-  stroke-dasharray: 6 8;
-  animation: routing-edge-flow 1.5s linear infinite;
+  stroke-dasharray: 3 6;
+  animation: routing-edge-flow 1.6s linear 1;
 }
 
 @keyframes routing-edge-flow {
-  from { stroke-dashoffset: 28; }
+  from { stroke-dashoffset: 18; }
   to { stroke-dashoffset: 0; }
 }
 
 .routing-packet {
+  fill: var(--primary-color);
   pointer-events: none;
-  filter: drop-shadow(0 0 3px currentColor);
 }
 
-.routing-map-column {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 0;
+.routing-map-column,
+.routing-map-center {
   position: relative;
-  z-index: 2;
+  min-width: 0;
 }
 
 .routing-column-head {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 6px;
-  margin-bottom: 4px;
-  font-size: 12.5px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-tertiary);
+  align-items: baseline;
+  gap: 6px;
+  min-height: var(--route-heading-height);
+  padding: 0 2px 4px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 550;
+  line-height: 1.4;
 }
 
 .routing-column-count {
-  min-width: 22px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--bg-secondary);
-  font-size: 12px;
-  font-weight: 600;
-  text-align: center;
+  color: var(--text-tertiary);
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
-  color: var(--text-secondary);
+}
+
+.routing-node-list,
+.routing-agent-routes,
+.routing-group-children {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.routing-group {
+  min-width: 0;
+}
+
+.routing-group-children {
+  padding: 5px 0 0 16px;
+}
+
+.routing-agent-routes[hidden],
+.routing-group-children[hidden] {
+  display: none;
 }
 
 .routing-node {
+  --route-color: var(--text-tertiary);
   position: relative;
   display: flex;
-  align-items: center;
-  gap: 14px;
-  min-height: 68px;
-  padding: 14px 18px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  align-items: stretch;
   min-width: 0;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  min-height: var(--route-row-height);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  transition: border-color 0.2s ease;
 }
 
-.routing-node.node-ghost {
+.routing-node.node-focused {
+  --route-color: var(--primary-color);
+  border-color: color-mix(in srgb, var(--primary-color) 44%, var(--color-border-subtle));
+}
+
+.routing-node.node-flowing {
+  --route-color: var(--primary-color);
+  border-color: color-mix(in srgb, var(--primary-color) 60%, var(--color-border-subtle));
+}
+
+.routing-node.node-failing {
+  --route-color: var(--error-color);
+  border-color: color-mix(in srgb, var(--error-color) 50%, var(--color-border-subtle));
   border-style: dashed;
-  border-color: color-mix(in srgb, var(--border-color) 75%, transparent);
-  background: transparent;
-  box-shadow: none;
 }
 
 .routing-node.node-resting {
-  border-color: var(--warning-color, #f59e0b);
-  background: color-mix(in srgb, var(--warning-color, #f59e0b) 5%, var(--bg-card));
+  --route-color: var(--warning-color);
+}
+
+.routing-node.node-unrelated .routing-node-focus:not(.routing-agent-toggle) {
+  opacity: 0.72;
+}
+
+/* Focus and disclosure remain independent controls. */
+.routing-node-focus,
+.routing-group-toggle {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.routing-node-focus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 9px;
+  border-radius: inherit;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.routing-node-focus:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.routing-group-toggle {
+  display: grid;
+  place-items: center;
+  flex: 0 0 32px;
+  padding: 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  color: var(--text-secondary);
+}
+
+.routing-node-focus:focus-visible,
+.routing-group-toggle:focus-visible,
+.routing-text-button:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.routing-group-toggle:hover,
+.routing-node-focus:not(:disabled):hover {
+  background: color-mix(in srgb, var(--primary-color) 7%, transparent);
+}
+
+.routing-agent-toggle > svg:last-child,
+.routing-group-toggle svg {
+  transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+
+.routing-agent-toggle > svg.open,
+.routing-group-toggle svg.open {
+  transform: none;
 }
 
 .routing-node-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
-  flex-shrink: 0;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--route-color, var(--text-tertiary)) 12%, transparent);
-  color: var(--route-color, var(--text-secondary));
+  width: 22px;
+  height: 22px;
+  flex: none;
+}
+
+[data-theme="dark"] .routing-node-mark[data-monochrome] img {
+  filter: invert(1);
 }
 
 .routing-row-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
+  display: grid;
   flex: 1;
-  gap: 4px;
+  min-width: 0;
+  gap: 2px;
+}
+
+.routing-row-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 7px;
+  min-width: 0;
 }
 
 .routing-row-name {
-  font-size: 14.5px;
-  font-weight: 600;
+  min-width: 0;
   color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.routing-row-credential {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.routing-agent-toggle > svg:last-child {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.routing-agent-route-heading,
+.routing-folded-hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.routing-agent-route-heading {
+  padding: 2px;
+  font-weight: 600;
+}
+
+.routing-agent-routes:not([hidden]) ~ .routing-agent-routes:not([hidden]) {
+  margin-top: 4px;
+}
+
+.routing-folded-hint {
+  padding: 5px 2px;
+}
+
+.routing-node-details,
+.routing-node-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  min-width: 0;
+}
+
+.routing-node-state:empty,
+.routing-node-details:has(> .routing-node-state:only-child:empty) {
+  display: none;
+}
+
+.routing-row-meta,
+.routing-row-failures,
+.routing-cooldown-pill {
+  font-size: 11.5px;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
 }
 
 .routing-row-meta {
-  font-size: 12.5px;
-  color: var(--text-tertiary);
-  font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--text-secondary);
 }
 
 .routing-row-failures {
-  color: var(--error-color, #ef4444);
-}
-
-.routing-node-state {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  flex-shrink: 0;
+  color: var(--error-color);
 }
 
 .routing-cooldown-pill {
-  font-size: 11.5px;
-  font-weight: 500;
-  color: var(--warning-color, #f59e0b);
-  background: color-mix(in srgb, var(--warning-color, #f59e0b) 12%, transparent);
-  padding: 4px 10px;
-  border-radius: var(--radius-full);
-  white-space: nowrap;
+  color: var(--warning-color);
 }
 
-.routing-port {
+.routing-credential-row {
+  min-height: 34px;
+}
+
+.routing-credential-row .routing-row-text {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 3px 8px;
+}
+
+.routing-credential-row .routing-row-name {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.routing-port,
+.gateway-rail {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  width: 10px;
-  height: 10px;
+  pointer-events: none;
+}
+
+.routing-port {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--bg-card);
-  border: 2px solid var(--route-color, var(--border-color));
+  border: 1.5px solid var(--route-color);
 }
 
-.routing-port.port-out {
-  right: -5px;
-}
-
-.routing-port.port-in {
-  left: -5px;
-}
-
-.routing-port.port-ghost {
-  border-color: color-mix(in srgb, var(--border-color) 70%, transparent);
-  background: transparent;
-}
+.routing-port.port-out { right: -3px; }
+.routing-port.port-in { left: -3px; }
 
 .routing-map-center {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  position: relative;
-  z-index: 2;
+  padding-top: var(--route-heading-height);
 }
 
 .routing-gateway {
@@ -299,87 +561,141 @@
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  text-align: center;
-  padding: 24px 18px;
-  width: 100%;
-  max-width: 196px;
-  min-height: 176px;
-  border-radius: 16px;
-  border: 1px solid var(--border-color);
-  background: var(--bg-card);
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
-}
-
-.routing-gateway.gateway-idle {
-  opacity: 0.92;
-}
-
-.gateway-rail {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 4px;
-  height: 48px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--primary-color) 40%, var(--border-color));
-}
-
-.gateway-rail-in {
-  left: -2px;
-}
-
-.gateway-rail-out {
-  right: -2px;
-}
-
-.gateway-mark {
-  display: grid;
-  place-items: center;
-  width: 52px;
-  height: 52px;
-  border-radius: 12px;
-  margin-bottom: 12px;
-  background: color-mix(in srgb, var(--primary-color) 8%, var(--bg-secondary));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-color) 60%, transparent);
+  gap: 4px;
+  min-height: var(--route-row-height);
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 28%, var(--color-border-subtle));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--primary-color) 8%, var(--bg-card));
 }
 
 .gateway-mark img {
-  border-radius: 8px;
   display: block;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  object-fit: contain;
 }
 
 .gateway-name {
-  font-size: 16px;
-  font-weight: 650;
   color: var(--text-primary);
-  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
 }
 
-.gateway-meta {
-  font-size: 12.5px;
-  color: var(--text-tertiary);
+.gateway-rail {
+  width: 2px;
+  height: 34px;
+  border-radius: 2px;
+  background: var(--text-tertiary);
+}
+
+.gateway-rail-in { left: -1px; }
+.gateway-rail-out { right: -1px; }
+
+.routing-request-context {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.routing-request-identity,
+.routing-request-facts,
+.live-routing-panel footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 12px;
+  min-width: 0;
+}
+
+.routing-request-identity > *,
+.routing-request-facts > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.routing-request-identity strong {
+  color: var(--text-primary);
+  font-weight: 550;
+}
+
+.routing-request-facts {
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
 
+.routing-request-id,
 .live-routing-panel footer {
-  display: flex;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-  color: var(--text-tertiary);
-  font-size: 12px;
-  padding-top: 14px;
-  margin-top: 8px;
-  border-top: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
+  color: var(--text-secondary);
 }
 
-.live-routing-panel.paused .routing-edge-flow {
-  animation-play-state: paused;
+.live-routing-panel footer {
+  justify-content: space-between;
+  padding-top: 7px;
+  border-top: 1px solid var(--color-border-subtle);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@container (max-width: 740px) {
+  .routing-credential-row .routing-row-text {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container (max-width: 540px) {
+  .live-routing-map {
+    column-gap: 14px;
+  }
+
+  .routing-window-metrics {
+    column-gap: 12px;
+  }
+
+  .routing-node-focus {
+    gap: 6px;
+    padding-inline: 7px;
+  }
+
+  .routing-group-toggle {
+    flex-basis: 28px;
+  }
+
+  .routing-group-children {
+    padding-inline-start: 10px;
+  }
+}
+
+@container (max-width: 400px) {
+  .live-routing-map {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .live-routing-edges,
+  .routing-port,
+  .gateway-rail {
+    display: none;
+  }
+
+  .routing-map-center {
+    padding: 3px 0;
+  }
+
+  .routing-gateway {
+    width: fit-content;
+    min-height: 34px;
+    padding: 3px 8px;
+  }
 }
 
 @media (max-width: 640px) {
   .live-routing-panel {
-    padding: 14px;
+    padding: 12px;
   }
 }
 
@@ -389,5 +705,11 @@
   }
   .routing-packet {
     display: none;
+  }
+  .routing-edge,
+  .routing-node,
+  .routing-agent-toggle > svg:last-child,
+  .routing-group-toggle svg {
+    transition: none;
   }
 }

@@ -66,7 +66,8 @@ test('service IPC commands are registered and have browser mock contracts', () =
     });
   }
   const backend = readFileSync(join(root, 'src-tauri/src/main.rs'), 'utf8');
-  const registered = new Set(backend.match(/generate_handler!\[([\s\S]*?)\]/)?.[1].match(/\b\w+\b/g));
+  const registered = new Set([...backend.matchAll(/generate_handler!\[([\s\S]*?)\]/g)]
+    .flatMap(match => match[1].match(/\b\w+\b/g) ?? []));
   const mocked = new Set<string>();
   for (const path of files(join(root, 'src/mocks'))) {
     walk(source(path), node => {

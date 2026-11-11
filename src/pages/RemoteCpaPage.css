@@ -1,0 +1,58 @@
+@layer pages {
+  .config-dialog.cpa-connection-dialog {
+    /* The shared config-dialog uses fixed tracks for legacy five-row forms. */
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    width: min(520px, 100%);
+    height: auto;
+    min-width: 0;
+    max-height: calc(100vh - 40px);
+    gap: 0;
+    padding: 0;
+  }
+
+  .cpa-connection-dialog > :is(.config-dialog-heading, .cpa-connection-form, .cpa-connection-footer) {
+    padding: clamp(12px, 3vw, 20px);
+  }
+
+  .cpa-connection-dialog > .config-dialog-heading {
+    padding-block-end: 10px;
+  }
+
+  .cpa-connection-dialog > .cpa-connection-form {
+    min-height: 0;
+    padding-block-start: 4px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .cpa-connection-dialog > .cpa-connection-footer {
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
+    border-top: 1px solid var(--color-border-strong);
+    padding-block: 12px;
+  }
+
+  .cpa-connection-dialog button { white-space: normal; }
+  .cpa-connection-hint { color: var(--color-text-secondary); font-size: var(--font-size-caption); }
+
+  .cpa-remote-workspace > * { min-width: 0; }
+
+  .cpa-remote-workspace {
+    display: grid;
+    align-content: start;
+    gap: 18px;
+    max-width: 1440px;
+    margin-inline: auto;
+    padding: clamp(18px, 4vw, 42px);
+    overflow: auto;
+    height: 100%;
+  }
+
+  .cpa-connection-form p { margin: 0; }
+  .cpa-connection-form { display: grid; gap: 12px; }
+  .cpa-connection-field { display: grid; gap: 6px; }
+  .cpa-connection-field textarea { resize: vertical; width: 100%; min-width: 0; }
+  .cpa-error { color: var(--danger-color, #d83636); }
+}

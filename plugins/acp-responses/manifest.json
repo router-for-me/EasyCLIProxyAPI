@@ -1,0 +1,17 @@
+{
+  "id": "ecpa-acp-responses",
+  "name": "ECPA ACP Responses",
+  "version": "0.1.0",
+  "license": "MIT",
+  "abi_version": 1,
+  "schema_version": 10,
+  "minimum_kernel": "8.0.78",
+  "install_type": "local-native-library",
+  "entrypoints": {
+    "linux": "ecpa-acp-responses.so",
+    "darwin": "ecpa-acp-responses.dylib",
+    "windows": "ecpa-acp-responses.dll"
+  },
+  "capabilities": ["model_router", "executor", "request_lifecycle_plugin"],
+  "default_enabled": false
+}

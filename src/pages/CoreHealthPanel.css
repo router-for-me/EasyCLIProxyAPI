@@ -47,6 +47,7 @@
 .core-health-status { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border-radius: var(--radius-md); color: var(--text-quaternary); background: var(--bg-tertiary); font-size: 11px; white-space: nowrap; }
 .core-health-status.healthy { color: var(--success-badge-text); background: var(--success-badge-bg); }
 .core-health-status.failed { color: var(--failure-badge-text); background: var(--failure-badge-bg); }
+.core-health-status.budget-exhausted { color: var(--color-warning-text); background: var(--color-warning-subtle); }
 .core-health-status.checking { color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 8%, var(--bg-card)); }
 .core-health-latency, .core-health-time { color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .core-health-latency span, .core-health-time { color: var(--text-quaternary); }

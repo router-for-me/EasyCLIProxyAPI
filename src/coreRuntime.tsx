@@ -15,7 +15,7 @@ type CoreRuntimeContextValue = {
 
 const CoreRuntimeContext = createContext<CoreRuntimeContextValue | null>(null);
 
-export function CoreRuntimeProvider({ children }: { children: ReactNode }) {
+export function CoreRuntimeProvider({ children, enabled = true, targetRevision }: { children: ReactNode; enabled?: boolean; targetRevision?: number }) {
   const [status, setStatus] = useState<CoreStatus | null>(null);
   const [statusError, setStatusError] = useState('');
   const refreshRequest = useRef<Promise<void> | null>(null);
@@ -32,7 +32,7 @@ export function CoreRuntimeProvider({ children }: { children: ReactNode }) {
   const refreshStatus = useCallback(() => {
     if (refreshRequest.current) return refreshRequest.current;
     const revision = statusRevision.current;
-    refreshRequest.current = getCoreStatus()
+    const pending = getCoreStatus()
       .then((nextStatus) => {
         if (revision === statusRevision.current) publishStatus(nextStatus);
       })
@@ -41,15 +41,19 @@ export function CoreRuntimeProvider({ children }: { children: ReactNode }) {
         setStatus(null);
         setStatusError(String(error));
       })
-      .finally(() => { refreshRequest.current = null; });
-    return refreshRequest.current;
+      .finally(() => { if (refreshRequest.current === pending) refreshRequest.current = null; });
+    refreshRequest.current = pending;
+    return pending;
   }, [publishStatus]);
 
   useEffect(() => {
+    if (!enabled) return;
+    setStatus(null);
+    setStatusError('');
     let disposed = false;
     let unlisten: (() => void) | null = null;
 
-    onCoreStatusChanged((event) => {
+    if (targetRevision === undefined) onCoreStatusChanged((event) => {
       if (!disposed && windowActivity.active()) {
         publishStatus(event.payload);
       }
@@ -69,10 +73,12 @@ export function CoreRuntimeProvider({ children }: { children: ReactNode }) {
 
     return () => {
       disposed = true;
+      ++statusRevision.current;
+      refreshRequest.current = null;
       unlisten?.();
       stopPolling();
     };
-  }, [publishStatus, refreshStatus]);
+  }, [publishStatus, refreshStatus, enabled, targetRevision]);
 
   const value = useMemo(
     () => ({ status, statusError, refreshStatus, publishStatus }),

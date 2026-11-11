@@ -391,12 +391,11 @@ fn observed_child_exit_schedules_recovery_once_without_a_new_monitor() {
 fn intentional_child_stop_does_not_request_recovery() {
     let state = CoreProcessState::new(false);
     state.store_child(spawn_core_child(core_child_sleep_command()).unwrap()).unwrap();
-    // Same ordering as stop_core_process_inner, without scanning or stopping
-    // any real installed kernels in the developer's workspace.
-    state.recovery.cancel();
-    let mut child = state.take_child().unwrap();
-    terminate_child(&mut child).unwrap();
-    drop(child);
+    let mut unrelated = core_child_sleep_command().spawn().unwrap();
+    stop_core_processes(&state, false).unwrap();
+    assert!(unrelated.try_wait().unwrap().is_none());
+    unrelated.kill().unwrap();
+    unrelated.wait().unwrap();
     assert_eq!(state.managed_pid(), None);
     assert!(!state.recovery.wants_running());
     assert!(state.recovery.status().is_none());
@@ -1498,6 +1497,58 @@ fn rematerializing_core_binary_preserves_bytes_and_cleans_up_temporary_file() {
     assert_eq!(fs::read(&binary_path).unwrap(), b"signed core bytes");
     #[cfg(unix)]
     assert_ne!(fs::metadata(&binary_path).unwrap().ino(), original_inode);
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn core_file_replace_installs_a_read_only_source_and_keeps_the_target_replaceable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = agent_test_home("core-replace-read-only-source");
+    let source = root.join("read-only-core");
+    let target = root.join(CORE_METADATA_FILE);
+    fs::write(&source, b"new content").unwrap();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o555)).unwrap();
+    fs::write(&target, b"old content").unwrap();
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o555)).unwrap();
+
+    copy_core_file_replace(&source, &target).unwrap();
+
+    assert_eq!(fs::read(&target).unwrap(), b"new content");
+    assert_eq!(fs::read(&source).unwrap(), b"new content");
+    assert_eq!(
+        fs::metadata(&source).unwrap().permissions().mode() & 0o777,
+        0o555
+    );
+    let mode = fs::metadata(&target).unwrap().permissions().mode();
+    assert_eq!(mode & 0o600, 0o600, "target must stay writable: {mode:o}");
+    assert_eq!(
+        mode & 0o111,
+        0o111,
+        "executable bits must be preserved: {mode:o}"
+    );
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn rematerializing_a_read_only_core_binary_succeeds_and_stays_writable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = agent_test_home("core-rematerialize-read-only");
+    fs::create_dir_all(&root).unwrap();
+    let binary_path = root.join(core_binary_name());
+    fs::write(&binary_path, b"signed core bytes").unwrap();
+    fs::set_permissions(&binary_path, fs::Permissions::from_mode(0o555)).unwrap();
+
+    rematerialize_core_binary(&binary_path).unwrap();
+
+    assert_eq!(fs::read(&binary_path).unwrap(), b"signed core bytes");
+    let mode = fs::metadata(&binary_path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o600, 0o600, "binary must stay writable: {mode:o}");
     assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
     fs::remove_dir_all(root).unwrap();
 }

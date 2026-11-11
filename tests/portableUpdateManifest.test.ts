@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,7 @@ test('macOS uses a new primary channel and keeps the legacy manifest alias', () 
   expect(portableUpdateManifestNames('linux')).toEqual(['portable-update-linux.json']);
 });
 
-test('macOS manifest CLI publishes both update channels', async () => {
+test('macOS manifest CLI publishes both aliases with older stable release notes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'easycli-darwin-manifest-cli-'));
   try {
     for (const arch of ['amd64', 'aarch64']) {
@@ -35,6 +35,11 @@ test('macOS manifest CLI publishes both update channels', async () => {
     const notes = { 'zh-CN': '## 新增\n\n- 软件更新说明。\n', en: '## Added\n\n- Release notes.\n' };
     const notesPath = join(root, 'release-notes.json');
     await writeFile(notesPath, JSON.stringify(notes), 'utf8');
+    for (const tag of ['v1.1.10', 'v1.2.2', 'v1.2.2-beta.1', 'v1.2.3', 'v1.2.10', 'only-preview']) {
+      const directory = join(root, 'docs', 'release-notes', tag);
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, 'ja.md'), `Notes for ${tag}\n`);
+    }
     const result = spawnSync('node', [
       script,
       '--directory',
@@ -47,7 +52,7 @@ test('macOS manifest CLI publishes both update channels', async () => {
       'v1.2.3',
       '--release-notes',
       notesPath,
-    ], { encoding: 'utf8' });
+    ], { cwd: root, encoding: 'utf8' });
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
@@ -60,6 +65,10 @@ test('macOS manifest CLI publishes both update channels', async () => {
     expect(legacy).toEqual(primary);
     expect(primary.releaseNotes).toEqual(notes);
     expect(primary.releaseNotes.ja).toBeUndefined();
+    expect(primary.releaseNotesHistory).toEqual({
+      '1.1.10': { ja: 'Notes for v1.1.10\n' },
+      '1.2.2': { ja: 'Notes for v1.2.2\n' },
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -166,7 +175,7 @@ describe('跨平台便携更新清单', () => {
   test('only-preview 标签保留发布标签并引用带版本号文件名', async () => {
     const root = await mkdtemp(join(tmpdir(), 'easycli-preview-manifest-test-'));
     try {
-      for (const arch of ['amd64', 'aarch64']) {
+      for (const arch of ['amd64']) {
         await writeFile(
           join(root, `EasyCLIProxyAPI-v0.3.6-preview-Windows-${arch}.zip`),
           `windows ${arch} preview package`,
@@ -181,7 +190,7 @@ describe('跨平台便携更新清单', () => {
         publishedAt: '2026-11-03T00:00:00.000Z',
       });
 
-      for (const arch of ['amd64', 'aarch64']) {
+      for (const arch of ['amd64']) {
         expect(manifest.assets[`windows-${arch}`].url).toEndWith(
           `/releases/download/only-preview/EasyCLIProxyAPI-v0.3.6-preview-Windows-${arch}.zip`,
         );
@@ -190,8 +199,28 @@ describe('跨平台便携更新清单', () => {
         'https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/only-preview',
       );
       expect(manifest.version).toBe('0.3.6-preview');
+      expect(Object.keys(manifest.assets)).toEqual(['windows-amd64']);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 });
+
+for (const tag of ['preview-20261121-0146', 'v0.3.117-preview.20261121-0146']) {
+  test(`Preview ${tag} requires only Windows x64 and refuses other platform manifests`, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'easycli-preview-x64-'));
+    const version = '0.3.117-preview.20261121-0146';
+    try {
+      await writeFile(join(root, `EasyCLIProxyAPI-v${version}-Windows-amd64.zip`), 'preview');
+      const options = { directory: root, tag, version };
+      const manifest = await generatePortableUpdateManifest(options);
+      expect(Object.keys(manifest.assets)).toEqual(['windows-amd64']);
+      expect(manifest.assets['windows-amd64'].url).toContain(`/download/${tag}/`);
+      for (const platform of ['linux', 'darwin']) {
+        await expect(generatePortableUpdateManifest({ ...options, platform })).rejects.toThrow('Windows x64 only');
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}

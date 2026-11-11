@@ -44,8 +44,10 @@ import {
   Wallet,
   Wrench,
   X,
+  Plus,
 } from 'lucide-react';
 import { getCurrentLocale, useI18n } from '../i18n';
+import type { MessageKey } from '../i18n/resources';
 import { usePrivacyMask } from '../privacy';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { calculateTokenComposition, getSpeedMode } from '../services/usageMetrics';
@@ -557,6 +559,7 @@ export function UsageRecordsPage() {
             <strong>
               {status?.state === 'collecting'
                 ? t('usage.collector.collecting')
+                : status?.state === 'disabled' ? t('remote.usageDisabled')
                 : status?.state === 'error'
                 ? t('usage.collector.error')
                 : t('usage.collector.waiting')}
@@ -590,12 +593,7 @@ export function UsageRecordsPage() {
         <EmptyState className="usage-initial-loading" icon={<Database size={22} />}>{t('usage.loading')}</EmptyState>
       ) : null}
 
-      {activeTab === 'live-routing' ? (
-        <div className="usage-live-routing-layout">
-          <UsageStatGrid overview={overview ?? emptyOverview} />
-          <RoutingPanel />
-        </div>
-      ) : null}
+      {activeTab === 'live-routing' ? <RoutingPanel /> : null}
       {activeTab === 'overview' && overview ? <OverviewView overview={overview} range={overviewRange} /> : null}
       {activeTab === 'analysis' && (analysis || overview) ? <UsageAnalysisView analysis={analysis} overview={overview} range={overviewRange} /> : null}
       {activeTab === 'events' ? (
@@ -1553,7 +1551,38 @@ const parsePrice = (value: string) => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 };
 
-const priceUnit = (value: number | undefined) => (Number.isFinite(value) ? `$${Number(value).toFixed(4)}` : '—');
+/** Formats one per-million rate with the fixed four decimals the price list uses everywhere. */
+const formatRate = (value: number | undefined) => (Number.isFinite(value) ? `$${Number(value).toFixed(4)}` : '—');
+
+/**
+ * What this model has actually cost so far, per 1K tokens. Both figures come from the backend:
+ * `estimatedCost` is billed with the real long-context and service-tier rules, so dividing the
+ * two keeps this label honest without restating those rules here.
+ */
+const realisedUnitPrice = (cost: number, tokens: number) =>
+  (tokens > 0 && Number.isFinite(cost) ? formatMicroUsd((cost / tokens) * 1000) : null);
+
+/** Small amounts keep enough decimals to stay meaningful instead of collapsing to "$0.0000". */
+const formatMicroUsd = (amount: number) => {
+  if (!Number.isFinite(amount)) return '—';
+  const digits = amount >= 0.01 ? 4 : amount >= 0.0001 ? 6 : 8;
+  return `$${amount.toFixed(digits)}`;
+};
+
+/** The chip says where a price came from; an unpriced model gets a muted, low-emphasis one. */
+const priceStatus = (price: ModelPrice | null): 'manual' | 'synced' | 'unpriced' =>
+  !price ? 'unpriced' : price.source === 'manual' ? 'manual' : 'synced';
+
+/** True while the editor is creating a model that does not exist yet. */
+const emptyDraft = (draft: PriceDraft) => draft.model === '' && draft.prompt === '' && draft.completion === ''
+  && draft.cacheRead === '' && draft.cacheCreation === '';
+
+const RATE_FIELDS = [
+  { key: 'prompt', labelKey: 'usage.pricing.prompt', shortKey: 'usage.pricing.shortPrompt', required: true },
+  { key: 'completion', labelKey: 'usage.pricing.completion', shortKey: 'usage.pricing.shortCompletion', required: true },
+  { key: 'cacheRead', labelKey: 'usage.pricing.cacheRead', shortKey: 'usage.pricing.shortCacheRead', required: false },
+  { key: 'cacheCreation', labelKey: 'usage.pricing.cacheCreation', shortKey: 'usage.pricing.shortCacheCreation', required: false },
+] as const satisfies readonly { key: keyof PriceDraft; labelKey: MessageKey; shortKey: MessageKey; required: boolean }[];
 
 function PricingView({
   pricing,
@@ -1579,11 +1608,18 @@ function PricingView({
   const [syncDrafts, setSyncDrafts] = useState<SyncPriceDraft[]>([]);
   const [syncError, setSyncError] = useState('');
   const { notice, revision, showNotice, clearNotice } = useAppNotice();
+  const modelInputRef = useRef<HTMLInputElement | null>(null);
 
-  const visibleRows = pricing.rows.filter((row) => {
-    const keyword = search.trim().toLowerCase();
-    return !keyword || row.model.toLowerCase().includes(keyword);
-  });
+  const keyword = search.trim().toLowerCase();
+  const visibleRows = pricing.rows.filter((row) => !keyword || row.model.toLowerCase().includes(keyword));
+  const unpricedCount = pricing.rows.filter((row) => !row.price).length;
+  const coverageRatio = pricing.totalRequests > 0 ? Math.min(1, Math.max(0, pricing.pricedRequests / pricing.totalRequests)) : 0;
+
+  const creatingPrice = draft ? emptyDraft(draft) : false;
+  // Focus lands in the name field only for a brand-new model; existing rows keep the row's context.
+  useLayoutEffect(() => {
+    if (creatingPrice) modelInputRef.current?.focus();
+  }, [creatingPrice]);
 
   const savePrice = async () => {
     if (!draft?.model.trim()) {
@@ -1624,6 +1660,7 @@ function PricingView({
     clearNotice();
     try {
       await deleteUsageModelPrice({ model });
+      setDraft((current) => (current?.model === model ? null : current));
       showNotice({ key: 'usage.pricing.deleted' });
       await onChanged();
     } catch (deleteError) {
@@ -1692,24 +1729,52 @@ function PricingView({
     setSyncDrafts((current) => current.map((item, currentIndex) => currentIndex === index ? { ...item, ...update } : item));
   };
 
+  const setAllSyncSelected = (selected: boolean) => {
+    setSyncDrafts((current) => current.map((item) => ({ ...item, selected })));
+  };
+
   const changeSyncSource = (source: 'models-dev' | 'litellm') => {
     setSyncSource(source);
     try { usagePreferences.setItem('cpa-gui.pricing-sync-source.v1', source); } catch {}
   };
+
+  const openEditor = (model: string, price: ModelPrice | null) => setDraft(priceDraftFor(model, price));
+
+  const previousPrice = draft ? draftPreviousPrice(draft, pricing.rows) : null;
+  const selectedSyncCount = syncDrafts.filter((item) => item.selected).length;
+  const allSyncSelected = syncDrafts.length > 0 && selectedSyncCount === syncDrafts.length;
 
   return (
     <section className="panel surface-card usage-pricing-panel">
       {confirmationDialog}
       <div className="usage-pricing-toolbar">
         <div className="usage-pricing-summary">
-          <strong>{formatUsd(pricing.totalCost)}</strong>
-          <span>
-            {t('usage.pricing.coverage', {
-              priced: compactNumber(pricing.pricedRequests),
-              total: compactNumber(pricing.totalRequests),
-              saved: compactNumber(pricing.savedPrices),
-            })}
-          </span>
+          <span className="usage-pricing-summary-label">{t('usage.pricing.cost')}</span>
+          <strong className="usage-pricing-summary-value">{formatUsd(pricing.totalCost)}</strong>
+          <div className="usage-pricing-coverage">
+            <div
+              className="usage-pricing-coverage-track"
+              role="progressbar"
+              aria-label={t('usage.pricing.coverageLabel')}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(coverageRatio * 100)}
+              title={t('usage.pricing.coverageValue', {
+                priced: compactNumber(pricing.pricedRequests),
+                total: compactNumber(pricing.totalRequests),
+              })}
+            >
+              <span className="usage-pricing-coverage-fill" style={{ width: `${coverageRatio * 100}%` }} />
+            </div>
+            <span className="usage-pricing-coverage-text">
+              {t('usage.pricing.coverageValue', {
+                priced: compactNumber(pricing.pricedRequests),
+                total: compactNumber(pricing.totalRequests),
+              })}
+              {' · '}
+              {t('usage.pricing.savedPrices', { count: compactNumber(pricing.savedPrices) })}
+            </span>
+          </div>
         </div>
         <div className="usage-pricing-actions">
           <div className="usage-pricing-action-group">
@@ -1722,17 +1787,25 @@ function PricingView({
                 aria-label={t('usage.pricing.search')}
               />
             </div>
-            <button type="button" className="secondary-button compact-button" onClick={() => setDraft(emptyPriceDraft())}>
+            <button type="button" className="secondary-button compact-button usage-pricing-add" onClick={() => setDraft(emptyPriceDraft())}>
+              <Plus size={14} aria-hidden="true" />
               {t('usage.pricing.add')}
             </button>
           </div>
-          <div className="usage-pricing-action-group">
+          <div className="usage-pricing-action-group usage-pricing-sync-group">
             <Select value={syncSource} onChange={(event) => changeSyncSource(event.currentTarget.value as 'models-dev' | 'litellm')} aria-label={t('usage.pricing.syncSource')}>
               <option value="models-dev">Models.dev</option>
               <option value="litellm">LiteLLM</option>
             </Select>
-            <button type="button" className="primary-button compact-button" disabled={syncing} onClick={() => void previewPrices()}>
-              {syncing ? t('usage.pricing.syncing') : t('usage.pricing.sync')}
+            <button
+              type="button"
+              className="primary-button compact-button usage-pricing-sync-button"
+              disabled={syncing}
+              title={t('usage.pricing.syncHelp')}
+              onClick={() => void previewPrices()}
+            >
+              <RefreshCw size={14} aria-hidden="true" className={syncing ? 'usage-pricing-sync-spin' : undefined} />
+              {syncing ? t('usage.pricing.syncing') : t('usage.pricing.syncButton')}
             </button>
           </div>
         </div>
@@ -1740,29 +1813,231 @@ function PricingView({
 
       <FloatingNotice key={revision} notice={notice} onDismiss={clearNotice} />
 
+      {unpricedCount > 0 && visibleRows.length > 0 ? (
+        <p className="usage-pricing-hint">{t('usage.pricing.unpriced')}</p>
+      ) : null}
+
+      {visibleRows.length ? (
+        <ul className="usage-pricing-list" aria-label={t('usage.tab.pricing')}>
+          {visibleRows.map((row) => {
+            const status = priceStatus(row.price);
+            return (
+              <li
+                key={row.model}
+                className="usage-pricing-card"
+                data-status={status}
+                tabIndex={0}
+                onClick={() => openEditor(row.model, row.price)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    openEditor(row.model, row.price);
+                  }
+                }}
+              >
+                <div className="usage-pricing-card-main">
+                  <div className="usage-pricing-identity">
+                    <strong className="usage-pricing-model" title={row.model}>{row.model}</strong>
+                    <span className={`usage-pricing-chip is-${status}`}>
+                      {status === 'manual'
+                        ? t('usage.pricing.statusManual')
+                        : status === 'synced'
+                          ? t('usage.pricing.statusSynced')
+                          : t('usage.pricing.statusUnpriced')}
+                    </span>
+                  </div>
+                  <div className="usage-pricing-identity-meta">
+                    <span>{t('usage.pricing.requests')} <b>{compactNumber(row.requests)}</b></span>
+                    <span>{compactNumber(row.totalTokens)} {t('usage.unit.tokens')}</span>
+                    {row.price && realisedUnitPrice(row.estimatedCost, row.totalTokens) ? (
+                      <span className="usage-pricing-unit-price">
+                        {t('usage.pricing.realisedRate', {
+                          rate: realisedUnitPrice(row.estimatedCost, row.totalTokens) as string,
+                        })}
+                      </span>
+                    ) : null}
+                    {status === 'synced' && row.price ? (
+                      <span className="usage-pricing-source" title={row.price.sourceModelId || row.price.source}>
+                        {t('usage.pricing.syncedFrom', { source: row.price.sourceModelId || row.price.source })}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+                {row.price ? (
+                  <dl className="usage-pricing-rates">
+                    {RATE_FIELDS.map(({ key, labelKey, shortKey }) => (
+                      <div key={key} className="usage-pricing-rate" data-empty={row.price![key] <= 0}>
+                        <dt title={t(labelKey)}>
+                          {t(shortKey)}
+                          <small>{t('usage.pricing.perMillion')}</small>
+                        </dt>
+                        <dd>{formatRate(row.price![key])}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                ) : (
+                  <button
+                    type="button"
+                    className="secondary-button compact-button usage-pricing-set-price"
+                    onClick={(event) => { event.stopPropagation(); openEditor(row.model, null); }}
+                  >
+                    {t('usage.pricing.setPrice')}
+                  </button>
+                )}
+                <div className="usage-pricing-card-side">
+                  <div className="usage-pricing-cost" data-empty={!row.price}>
+                    <span>{t('usage.pricing.estimated')}</span>
+                    <strong>{row.price ? formatUsd(row.estimatedCost) : t('usage.pricing.unpriced')}</strong>
+                  </div>
+                  <div className="usage-price-row-actions">
+                    <button
+                      type="button"
+                      className="icon-button quiet"
+                      title={t('common.edit')}
+                      aria-label={`${t('common.edit')}: ${row.model}`}
+                      onClick={(event) => { event.stopPropagation(); openEditor(row.model, row.price); }}
+                    >
+                      <Pencil size={14} aria-hidden="true" />
+                    </button>
+                    {row.price?.source === 'manual' ? (
+                      <button
+                        type="button"
+                        className="icon-button danger"
+                        title={t('common.delete')}
+                        aria-label={`${t('common.delete')}: ${row.model}`}
+                        onClick={(event) => { event.stopPropagation(); void deletePrice(row.model); }}
+                      >
+                        <Trash2 size={14} aria-hidden="true" />
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      ) : keyword ? (
+        <p className="usage-pricing-empty">{t('usage.pricing.noMatch', { keyword: search.trim() })}</p>
+      ) : (
+        <UsageEmpty />
+      )}
+
+      {draft ? (
+        <Dialog
+          className="usage-price-drawer-dialog"
+          backdropClassName="usage-price-drawer-backdrop"
+          labelledBy="usage-price-drawer-title"
+          dismissOnBackdrop
+          initialFocusRef={modelInputRef}
+          onClose={() => { if (!saving) setDraft(null); }}
+          closeDisabled={saving}
+        >
+          <header className="usage-price-drawer-header">
+            <div>
+              <h2 id="usage-price-drawer-title">
+                {creatingPrice ? t('usage.pricing.editorCreate') : t('usage.pricing.editorTitle')}
+              </h2>
+              <p>{t('usage.pricing.editorSubtitle')}</p>
+            </div>
+          </header>
+          <div className="usage-price-drawer-body">
+            <label className="usage-price-field">
+              <span>{t('usage.pricing.editorModel')}</span>
+              <input
+                ref={modelInputRef}
+                value={draft.model}
+                readOnly={!creatingPrice}
+                onChange={(event) => setDraft({ ...draft, model: event.currentTarget.value })}
+                placeholder={t('usage.pricing.editorModelPlaceholder')}
+              />
+            </label>
+            <div className="usage-price-drawer-grid">
+              {RATE_FIELDS.map((field) => (
+                <label key={field.key} className="usage-price-field">
+                  <span>{t(field.labelKey)}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.0001"
+                    inputMode="decimal"
+                    value={draft[field.key]}
+                    onChange={(event) => setDraft({ ...draft, [field.key]: event.currentTarget.value })}
+                    placeholder={field.required ? '0.0000' : t('usage.pricing.optional')}
+                  />
+                  {previousPrice ? (
+                    <small className="usage-price-previous">
+                      {t('usage.pricing.previous', { value: formatRate(previousPrice[field.key]) })}
+                    </small>
+                  ) : null}
+                </label>
+              ))}
+            </div>
+            <div className="usage-price-notes">
+              <p className="usage-price-cost-preview">
+                {t('usage.pricing.rateNote')}
+              </p>
+              <p className="usage-price-tier-note">
+                {t('usage.pricing.tierNote')}
+              </p>
+            </div>
+          </div>
+          <footer className="usage-price-drawer-footer">
+            {previousPrice ? (
+              <button type="button" className="secondary-button compact-button usage-price-drawer-delete" disabled={saving} onClick={() => void deletePrice(draft.model)}>
+                <Trash2 size={14} aria-hidden="true" />
+                {t('usage.pricing.deleteAction')}
+              </button>
+            ) : <span />}
+            <div className="usage-price-drawer-actions">
+              <button type="button" className="secondary-button compact-button" disabled={saving} onClick={() => setDraft(null)}>
+                {t('common.cancel')}
+              </button>
+              <button type="button" className="primary-button compact-button" disabled={saving} onClick={() => void savePrice()}>
+                {saving ? t('usage.pricing.saving') : t('common.save')}
+              </button>
+            </div>
+          </footer>
+        </Dialog>
+      ) : null}
+
       {syncPreview ? <Dialog className="usage-price-sync-dialog" labelledBy="usage-price-sync-title" onClose={() => setSyncPreview(null)} closeDisabled={applyingSync}>
-        <div className="usage-price-sync-header">
+        <header className="usage-price-sync-header">
           <div>
             <h2 id="usage-price-sync-title">{t('usage.pricing.syncPreview')}</h2>
             <a href={syncPreview?.sourceUrl} target="_blank" rel="noreferrer">{syncPreview?.source}</a>
           </div>
+          <div className="usage-price-sync-counts">
+            <span className="usage-price-sync-count is-matched">
+              <b>{syncDrafts.length}</b> {t('usage.pricing.matchedLabel')}
+            </span>
+            <span className="usage-price-sync-count is-unmatched">
+              <b>{syncPreview?.unmatched.length ?? 0}</b> {t('usage.pricing.unmatchedLabel')}
+            </span>
+          </div>
           <button type="button" className="icon-button quiet" aria-label={t('common.close')} disabled={applyingSync} onClick={() => setSyncPreview(null)}><X size={16} /></button>
-        </div>
+        </header>
         <p className="usage-price-sync-note">{t('usage.pricing.syncNote')}</p>
         <div className="usage-price-sync-controls">
-          <span>{t('usage.pricing.syncCounts', { matched: syncDrafts.length, unmatched: syncPreview?.unmatched.length ?? 0 })}</span>
-          <button type="button" className="secondary-button" onClick={() => setSyncDrafts((current) => current.map((item) => ({ ...item, selected: true })))}>{t('usage.pricing.selectAll')}</button>
-          <button type="button" className="secondary-button" onClick={() => setSyncDrafts((current) => current.map((item) => ({ ...item, selected: false })))}>{t('usage.pricing.selectNone')}</button>
+          <label className="usage-price-sync-selectall">
+            <Checkbox
+              checked={allSyncSelected}
+              disabled={applyingSync || syncDrafts.length === 0}
+              onChange={(event) => setAllSyncSelected(event.currentTarget.checked)}
+            />
+            <span>{t('usage.pricing.selectAll')}</span>
+          </label>
+          <button type="button" className="secondary-button compact-button" disabled={applyingSync || syncDrafts.length === 0} onClick={() => setAllSyncSelected(false)}>{t('usage.pricing.selectNone')}</button>
+          <span className="usage-price-sync-selected">{t('usage.pricing.bulkSelected', { selected: selectedSyncCount, matched: syncDrafts.length })}</span>
         </div>
         <div className="usage-price-sync-list">
           {syncDrafts.map((item, index) => (
-            <div className="usage-price-sync-row" key={item.price.model}>
+            <div className="usage-price-sync-row" key={item.price.model} data-selected={item.selected}>
               <label className="usage-price-sync-identity">
                 <Checkbox checked={item.selected} disabled={applyingSync} onChange={(event) => updateSyncDraft(index, { selected: event.currentTarget.checked })} />
-                <span><strong>{item.price.model}</strong><small>{item.price.sourceModelId}</small></span>
+                <span><strong title={item.price.model}>{item.price.model}</strong><small>{item.price.sourceModelId}</small></span>
               </label>
               {(['prompt', 'completion', 'cacheRead', 'cacheCreation'] as const).map((field) => (
-                <label key={field}>
+                <label key={field} className="usage-price-sync-field">
                   <span>{t(`usage.pricing.${field}`)}</span>
                   <input type="number" min="0" step="any" value={item[field]} disabled={applyingSync}
                     onChange={(event) => updateSyncDraft(index, { [field]: event.currentTarget.value })} />
@@ -1779,144 +2054,20 @@ function PricingView({
           </details>
         )}
         {syncError && <Notice tone="error" variant="text">{syncError}</Notice>}
-        <div className="usage-price-sync-footer">
+        <footer className="usage-price-sync-footer">
           <button type="button" className="secondary-button" disabled={applyingSync} onClick={() => setSyncPreview(null)}>{t('common.cancel')}</button>
-          <button type="button" className="primary-button" disabled={applyingSync || !syncDrafts.some((item) => item.selected)} onClick={() => void applySyncPrices()}>
-            {applyingSync ? t('usage.pricing.saving') : t('usage.pricing.applySelected', { count: syncDrafts.filter((item) => item.selected).length })}
+          <button type="button" className="primary-button" disabled={applyingSync || selectedSyncCount === 0} onClick={() => void applySyncPrices()}>
+            {applyingSync ? t('usage.pricing.saving') : t('usage.pricing.applySelected', { count: selectedSyncCount })}
           </button>
-        </div>
+        </footer>
       </Dialog> : null}
-
-      {draft ? (
-        <div className="surface-section usage-price-editor">
-          <label>
-            <span>{t('usage.pricing.model')}</span>
-            <input
-              value={draft.model}
-              onChange={(event) => setDraft({ ...draft, model: event.currentTarget.value })}
-              placeholder="gpt-5.6-terra"
-            />
-          </label>
-          <label>
-            <span>{t('usage.pricing.prompt')}</span>
-            <input
-              type="number"
-              min="0"
-              step="0.0001"
-              value={draft.prompt}
-              onChange={(event) => setDraft({ ...draft, prompt: event.currentTarget.value })}
-            />
-          </label>
-          <label>
-            <span>{t('usage.pricing.completion')}</span>
-            <input
-              type="number"
-              min="0"
-              step="0.0001"
-              value={draft.completion}
-              onChange={(event) => setDraft({ ...draft, completion: event.currentTarget.value })}
-            />
-          </label>
-          <label>
-            <span>{t('usage.pricing.cacheRead')}</span>
-            <input
-              type="number"
-              min="0"
-              step="0.0001"
-              value={draft.cacheRead}
-              onChange={(event) => setDraft({ ...draft, cacheRead: event.currentTarget.value })}
-              placeholder={t('usage.pricing.optional')}
-            />
-          </label>
-          <label>
-            <span>{t('usage.pricing.cacheCreation')}</span>
-            <input
-              type="number"
-              min="0"
-              step="0.0001"
-              value={draft.cacheCreation}
-              onChange={(event) => setDraft({ ...draft, cacheCreation: event.currentTarget.value })}
-              placeholder={t('usage.pricing.optional')}
-            />
-          </label>
-          <div className="usage-price-editor-actions">
-            <button type="button" className="secondary-button compact-button" onClick={() => setDraft(null)}>
-              <X size={14} />
-              {t('common.cancel')}
-            </button>
-            <button type="button" className="primary-button compact-button" disabled={saving} onClick={() => void savePrice()}>
-              {saving ? t('usage.pricing.saving') : t('common.save')}
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {visibleRows.length ? (
-        <div className="usage-table-wrap usage-pricing-table-wrap" tabIndex={0} role="region" aria-label={t('usage.tab.pricing')}>
-          <table className="usage-pricing-table">
-            <thead>
-              <tr>
-                <th>{t('usage.pricing.model')}</th>
-                <th>{t('usage.pricing.calls')}</th>
-                <th>{t('usage.unit.tokens')}</th>
-                <th>{t('usage.pricing.cost')}</th>
-                <th>{t('usage.pricing.prompt')}</th>
-                <th>{t('usage.pricing.completion')}</th>
-                <th>{t('usage.pricing.cacheRead')}</th>
-                <th>{t('usage.pricing.cacheCreation')}</th>
-                <th>{t('usage.pricing.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleRows.map((row) => (
-                <tr key={row.model}>
-                  <td>
-                    <strong title={row.model}>{row.model}</strong>
-                  </td>
-                  <td>{compactNumber(row.requests)}</td>
-                  <td>{compactNumber(row.totalTokens)}</td>
-                  <td>
-                    <strong>{row.price ? formatUsd(row.estimatedCost) : '—'}</strong>
-                  </td>
-                  <td>{row.price ? priceUnit(row.price.prompt) : '—'}</td>
-                  <td>{row.price ? priceUnit(row.price.completion) : '—'}</td>
-                  <td>{row.price ? priceUnit(row.price.cacheRead) : '—'}</td>
-                  <td>{row.price ? priceUnit(row.price.cacheCreation) : '—'}</td>
-                  <td>
-                    <div className="usage-price-row-actions">
-                      <button
-                        type="button"
-                        className="icon-button"
-                        title={t('common.edit')}
-                        aria-label={`${t('common.edit')}: ${row.model}`}
-                        onClick={() => setDraft(priceDraftFor(row.model, row.price))}
-                      >
-                        <Pencil size={14} aria-hidden="true" />
-                      </button>
-                      {row.price?.source === 'manual' ? (
-                        <button
-                          type="button"
-                          className="icon-button danger"
-                          title={t('common.delete')}
-                          aria-label={`${t('common.delete')}: ${row.model}`}
-                          onClick={() => void deletePrice(row.model)}
-                        >
-                          <Trash2 size={14} aria-hidden="true" />
-                        </button>
-                      ) : null}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <UsageEmpty />
-      )}
     </section>
   );
 }
+
+/** The saved price behind the row being edited, so the drawer can show what changes. */
+const draftPreviousPrice = (draft: PriceDraft, rows: UsagePricing['rows']): ModelPrice | null =>
+  (draft.model ? rows.find((row) => row.model === draft.model)?.price ?? null : null);
 
 function UsageEmpty() {
   const { t } = useI18n();

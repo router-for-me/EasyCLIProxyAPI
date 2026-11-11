@@ -14,7 +14,8 @@ export async function downloadReleaseBytes(url, {
     try {
       const response = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
       if (!response.ok) {
-        retryable = [408, 429].includes(response.status) || response.status >= 500;
+        // A newly published release can be visible before all assets finish uploading.
+        retryable = [404, 408, 429].includes(response.status) || response.status >= 500;
         await response.body?.cancel();
         throw new Error(`HTTP ${response.status}`);
       }

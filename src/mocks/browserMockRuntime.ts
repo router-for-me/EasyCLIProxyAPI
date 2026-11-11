@@ -1,11 +1,16 @@
 import { isThemeSelection, type ThemeSelection } from '../themes/types';
 import type { AppUpdateInfo } from '../services/appUpdates';
+import { defaultAutoUpdateSettings, validateAutoUpdateSettings, type AutoUpdateStatus, type AutoUpdateSettings } from '../services/autoUpdate';
 import { applyTemplateChanges, readTemplatePath, sameTemplateValue, type TemplateConfigChange } from '../services/templateConfig';
 import { requestBucketRangeLabel } from '../services/authFileRequests';
 import { createPluginMock, type PluginWebviewMockState } from './pluginMock';
 import { createQuotaMock, createQuotaMockFiles } from './quotaMock';
 import { normalizeAuthFileTags } from '../services/authFiles';
 import { hasDeepSeekArgumentConflict, parseAgentLaunchArguments } from '../services/agentLaunchArguments';
+import type { AcpStatus } from '../services/acp';
+
+
+
 
 export type BrowserMockScenario = 'running' | 'stopped' | 'empty' | 'error';
 export type BrowserMockMode = BrowserMockScenario | 'off';
@@ -497,18 +502,29 @@ function createState(scenario: BrowserMockScenario) {
     sensitiveWords: {
       antigravitySensitiveWords: ['internal-only', 'mock-secret'],
       devinSensitiveWords: ['private-repository'],
+      antigravitySensitiveWordsReplace: { Codex: 'Assistant' } as Record<string, string>,
+      devinSensitiveWordsReplace: {} as Record<string, string>,
     },
     appUpdateInfo: {
       currentVersion: '0.2.97',
       latestVersion: '0.3.0',
+      latestSeriesVersion: '0.3.0',
+      installedSeries: 'stable',
+      comparisonNewer: true,
       updateAvailable: true,
       releaseUrl: 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest',
       releaseNotes: {
         'zh-CN': '## Browser Mock 更新示例\n\n- 新增界面调试模式\n- 改进启动体验',
         en: '## Browser Mock release\n\n- Added UI mock mode',
       },
+      skippedReleaseNotes: [{ version: '0.2.98', releaseNotes: {
+        'zh-CN': '## 修复\n\n- 改进版本检查的稳定性',
+        en: '## Fixed\n\n- Improved update check reliability',
+      } }],
       publishedAt: isoHoursAgo(18),
+      installAvailable: true,
       currentBuildAt: null,
+      latestBuildAt: null,
       autoUpdateSupported: true,
       preserveCoreSupported: true,
       downloadUrl: 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip',
@@ -544,6 +560,8 @@ function createState(scenario: BrowserMockScenario) {
       result: null,
     },
     versionSource: { source: 'github', gitcodeAvailable: true, customMirrors: ['https://gh-proxy.example.com/'] },
+    autoUpdate: { settings: { ...defaultAutoUpdateSettings }, phase: 'disabled',
+      target: null, version: null, error: null } as AutoUpdateStatus,
     // Native groups are authoritative; legacy routes only adapt their own view.
     providerConfig: Object.fromEntries(PROVIDER_SECTIONS.map((section) => [
       section, scenario === 'empty' ? [] : groupProviderRecords(section, legacyProviderConfig[section]),
@@ -981,6 +999,8 @@ const ERROR_SCENARIO_COMMANDS = new Set([
   'get_core_config_settings',
   'get_extended_core_config',
   'check_app_update',
+  'check_app_version_display',
+  'get_app_version_baselines',
   'check_latest_core',
   'management_request',
   'get_usage_overview',
@@ -1245,23 +1265,59 @@ export function createBrowserMockRuntime(
   pluginPages = 0,
   onPluginWebview?: (state: PluginWebviewMockState) => void,
 ): BrowserMockRuntime {
+  const claudePromptEditors = new Map<string, { overridesEnabled?: boolean | null }>();
   const state = createState(scenario);
-  const applyMockUpdateChannel = (channel: string) => {
+  const acp: AcpStatus = {
+    executable: 'C:/Users/demo/AppData/Local/agy/bin/agy.exe', profile: 'C:/ECPA/acp/antigravity',
+    authenticated: false, busy: false, operation: '', models: [], selectedModel: '', error: null, latestProbe: null, upstreamEnabled: false, upstreamUrl: null,
+    accounts: [{ id: 'default', label: 'Default', email: null as string | null, saved: false }], activeAccount: 'default',
+  };
+  const acpAccountModels = new Map<string, string>();
+  let acpCancelled = false;
+  let acpSequence = 0;
+  const mockAcpModels = [{ id: 'gemini-4-argon-medium', name: 'Gemini 4 Argon (Medium)' }, { id: 'gemini-3.8-flash-low', name: 'Gemini 3.8 Flash (Low)' }];
+  const validateAcpLabel = (value: unknown) => {
+    const raw = readString(value); const label = raw.trim();
+    if (!label || [...label].length > 80 || /[\u0000-\u001f\u007f-\u009f]/u.test(raw)) throw new Error('Enter an ACP account label of 1–80 characters without control characters');
+    return label;
+  };
+  const clearMockAcp = () => Object.assign(acp, { authenticated: false, models: [], selectedModel: '', latestProbe: null });
+  const mockAcpOperation = async (operation: string, action: () => void) => {
+    if (acp.busy) throw new Error('An ACP operation is already running');
+    acp.busy = true; acp.operation = operation; acp.error = null; acpCancelled = false;
+    try {
+      await sleep(Math.max(delayMs, 250));
+      if (acpCancelled) throw new Error('ACP request cancelled');
+      action();
+    } catch (cause) { acp.error = cause instanceof Error ? cause.message : String(cause); throw cause; }
+    finally { acp.busy = false; acp.operation = ''; }
+    return clone(acp);
+  };
+  const appBaselines = { stable: state.appUpdateInfo.currentVersion, preview: '20261103-1137', installedSeries: 'stable' as const };
+  const applyMockUpdateChannel = (channel: string, update = state.appUpdateInfo) => {
     const normalized = channel.trim() || 'stable';
-    state.appUpdateInfo.updateChannel = normalized;
+    update.updateChannel = normalized;
     if (normalized.startsWith('preview')) {
       const tag = normalized === 'preview' ? 'preview-20261104-1623' : normalized;
-      state.appUpdateInfo.latestVersion = '0.3.0-preview.202611041623';
-      state.appUpdateInfo.currentBuildAt = isoHoursAgo(42);
-      state.appUpdateInfo.releaseUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/${tag}`;
-      state.appUpdateInfo.downloadFileName = 'EasyCLIProxyAPI-v0.3.0-preview.202611041623-Windows-amd64.zip';
-      state.appUpdateInfo.downloadUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/${tag}/${state.appUpdateInfo.downloadFileName}`;
+      update.currentVersion = appBaselines.preview;
+      update.latestVersion = '0.3.0-preview.20261104-1623';
+      update.latestSeriesVersion = '20261104-1623';
+      update.updateAvailable = false;
+      update.currentBuildAt = '2026-11-03T11:37:00Z';
+      update.latestBuildAt = '2026-11-04T16:23:00Z';
+      update.releaseUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/${tag}`;
+      update.downloadFileName = 'EasyCLIProxyAPI-v0.3.0-preview.20261104-1623-Windows-amd64.zip';
+      update.downloadUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/${tag}/${update.downloadFileName}`;
     } else {
-      state.appUpdateInfo.latestVersion = '0.3.0';
-      state.appUpdateInfo.currentBuildAt = null;
-      state.appUpdateInfo.releaseUrl = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
-      state.appUpdateInfo.downloadFileName = 'EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip';
-      state.appUpdateInfo.downloadUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/${state.appUpdateInfo.downloadFileName}`;
+      update.currentVersion = appBaselines.stable;
+      update.latestVersion = '0.3.0';
+      update.latestSeriesVersion = '0.3.0';
+      update.updateAvailable = true;
+      update.currentBuildAt = null;
+      update.latestBuildAt = null;
+      update.releaseUrl = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
+      update.downloadFileName = 'EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip';
+      update.downloadUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/${update.downloadFileName}`;
     }
   };
   if (typeof window !== 'undefined') {
@@ -1309,8 +1365,14 @@ export function createBrowserMockRuntime(
       case 'plugin:app|identifier': return 'com.cpa.gui.browser-mock';
       case 'plugin:dialog|open': {
         const options = asObject(payload.options);
-        return options.directory
-          ? 'C:\\Users\\Mock\\Projects\\demo'
+        if (options.directory) return 'C:\\Users\\Mock\\Projects\\demo';
+        const filters = Array.isArray(options.filters) ? options.filters : [];
+        const isZip = filters.some((filter) => {
+          const extensions = asObject(filter).extensions;
+          return Array.isArray(extensions) && extensions.includes('zip');
+        });
+        return isZip
+          ? 'C:\\Users\\Mock\\Downloads\\mock-theme.zip'
           : 'C:\\Users\\Mock\\Certificates\\mock.pem';
       }
       case 'plugin:dialog|save': return 'C:\\Users\\Mock\\Downloads\\mock-output.json';
@@ -1318,6 +1380,12 @@ export function createBrowserMockRuntime(
       case 'detect_core_platform': return { os: 'windows', arch: 'x86_64', assetOs: 'windows', assetArch: 'amd64', archiveKind: 'zip' };
       case 'get_linux_system_theme': return 'light';
       case 'detect_window_material': return null;
+      case 'import_custom_theme': {
+        const importPath = String(payload.path ?? '').trim();
+        if (!importPath) throw new Error('not-found');
+        if (!payload.overwrite) return { importedIds: [], existingIds: ['harbor-dark'] };
+        return { importedIds: ['harbor-dark'], existingIds: [] };
+      }
       case 'list_custom_themes': return { files: [
         { folder: 'harbor-dark', content: JSON.stringify(MOCK_CUSTOM_THEME) },
         { folder: 'harbor-image-dark', content: JSON.stringify({
@@ -1350,6 +1418,11 @@ export function createBrowserMockRuntime(
         return null;
       }
 
+      case 'get_cpa_connection': return { remoteActive: false, remoteSelected: false, endpoint: null, needsRepair: false, revision: 0 };
+      case 'test_remote_cpa':
+      case 'select_cpa_connection':
+      case 'get_remote_cpa_keys':
+      case 'save_remote_cpa_keys': throw 'notActive';
       case 'get_core_status': return clone(state.coreStatus);
       case 'main_window_active': return !document.hidden;
       case 'start_core_process': {
@@ -1452,6 +1525,11 @@ export function createBrowserMockRuntime(
       case 'get_software_settings': return clone(state.softwareSettings);
       case 'get_core_tls_settings': return clone(state.tlsSettings);
       case 'get_core_sensitive_words_settings': return clone(state.sensitiveWords);
+      case 'fetch_latest_sensitive_word_rules': return { rules: [
+        { provider: 'antigravity', kind: 'replace', target: 'Codex', replacement: 'Cloud Assistant' },
+        { provider: 'devin', kind: 'replace', target: 'Claude Code', replacement: 'Devin Assistant' },
+        { provider: 'antigravity', kind: 'obfuscate', target: 'cloud-word', replacement: '' },
+      ] };
       case 'save_core_sensitive_words_settings': {
         state.sensitiveWords = clone(asObject(payload.settings)) as typeof state.sensitiveWords;
         emit('config-files-changed', { paths: ['cpa-core/config.yaml'], errors: [] });
@@ -1511,7 +1589,36 @@ export function createBrowserMockRuntime(
         return clone(state.coreConfig);
       }
 
-      case 'check_app_update': return clone(state.appUpdateInfo);
+      case 'get_auto_update_status': return clone(state.autoUpdate);
+      case 'set_auto_update_settings': {
+        const settings = asObject(payload.settings) as AutoUpdateSettings;
+        const invalid = validateAutoUpdateSettings(settings);
+        if (invalid) throw new Error(invalid);
+        if (state.autoUpdate.phase === 'installing') throw new Error('An update is being installed');
+        state.autoUpdate.settings = clone(settings);
+        state.autoUpdate.phase = settings.enabled ? 'waiting-update' : 'disabled';
+        return clone(state.autoUpdate);
+      }
+      case 'retry_auto_update': {
+        if (state.autoUpdate.phase === 'installing') throw new Error('An update is being installed');
+        state.autoUpdate.error = null;
+        state.autoUpdate.phase = 'waiting-update';
+        return clone(state.autoUpdate);
+      }
+      case 'get_app_version_baselines': return clone(appBaselines);
+      case 'check_app_version_display': {
+        if (payload.series !== 'stable' && payload.series !== 'preview') throw new Error('Unsupported application version display series');
+        const display = clone(state.appUpdateInfo);
+        applyMockUpdateChannel(payload.series, display);
+        if (payload.series === 'preview') display.skippedReleaseNotes = [];
+        return display;
+      }
+      case 'check_app_update': return clone({
+        ...state.appUpdateInfo,
+        skippedReleaseNotes: state.appUpdateInfo.updateChannel === 'stable' && state.appUpdateInfo.updateAvailable
+          ? state.appUpdateInfo.skippedReleaseNotes
+          : [],
+      });
       case 'refresh_managed_codex_model_catalog': return false;
       case 'get_app_update_task': return clone(state.appUpdateTask);
       case 'get_update_channel': return state.appUpdateInfo.updateChannel ?? 'stable';
@@ -1528,7 +1635,7 @@ export function createBrowserMockRuntime(
           cancellable: true,
           phase: 'downloading',
           preserveCore: payload.preserveCore === true,
-          targetVersion: state.appUpdateInfo.latestVersion,
+          targetVersion: typeof payload.expectedVersion === 'string' ? payload.expectedVersion : state.appUpdateInfo.latestVersion,
           downloadedBytes: 18 * 1024 * 1024,
           totalBytes: state.appUpdateInfo.downloadSizeBytes,
           percent: 38,
@@ -1623,6 +1730,87 @@ export function createBrowserMockRuntime(
         return { firstTokenLatencyMs: 184, responseLatencyMs: 642 };
       }
 
+      case 'get_acp_status': return clone(acp);
+      case 'set_acp_upstream_enabled': {
+        if (acp.busy) throw new Error('An ACP operation is already running');
+        if (payload.enabled && !acp.authenticated) throw new Error('Connect ACP first');
+        acp.upstreamEnabled = payload.enabled === true;
+        acp.upstreamUrl = acp.upstreamEnabled ? 'http://127.0.0.1:18319/v1' : null;
+        acp.latestProbe = null;
+        return clone(acp);
+      }
+      case 'add_acp_account': {
+        const label = validateAcpLabel(payload.label);
+        if (!acp.executable) throw new Error('Install official Antigravity CLI before adding an account');
+        if (acp.accounts.filter(a => a.saved).length >= 32) throw new Error('Up to 32 ACP accounts can be saved');
+        return mockAcpOperation('login', () => {
+          const id = (++acpSequence).toString(16).padStart(32, '0');
+          acpAccountModels.set(acp.activeAccount, acp.selectedModel);
+          acp.accounts = acp.accounts.filter(a => a.id !== 'default' || a.saved);
+          acp.accounts.push({ id, label, email: 'work.acp@example.test', saved: true });
+          acp.activeAccount = id;
+          Object.assign(acp, { authenticated: true, models: clone(mockAcpModels), selectedModel: mockAcpModels[0].id, latestProbe: null });
+        });
+      }
+      case 'rename_acp_account': {
+        const label = validateAcpLabel(payload.label);
+        return mockAcpOperation('rename', () => {
+          const account = acp.accounts.find(a => a.id === payload.accountId);
+          if (!account) throw new Error('Unknown ACP account');
+          account.label = label;
+        });
+      }
+      case 'remove_acp_account': return mockAcpOperation('remove', () => {
+        const id = readString(payload.accountId);
+        if (!acp.accounts.some(a => a.id === id)) throw new Error('Unknown ACP account');
+        acp.accounts = acp.accounts.filter(a => a.id !== id);
+        acpAccountModels.delete(id);
+        if (!acp.accounts.length) acp.accounts = [{ id: 'default', label: 'Default', email: null, saved: false }];
+        if (acp.activeAccount === id) { acp.activeAccount = acp.accounts[0].id; clearMockAcp(); }
+      });
+      case 'logout_acp_account': return mockAcpOperation('logout', () => {
+        clearMockAcp();
+        const account = acp.accounts.find(a => a.id === acp.activeAccount);
+        if (account) account.email = null;
+      });
+      case 'switch_acp_account': {
+        const id = readString(payload.accountId);
+        if (!acp.accounts.some(account => account.id === id)) throw new Error('Unknown ACP account');
+        return mockAcpOperation('refresh', () => {
+          acpAccountModels.set(acp.activeAccount, acp.selectedModel);
+          acp.activeAccount = id;
+          Object.assign(acp, { authenticated: true, models: clone(mockAcpModels), selectedModel: acpAccountModels.get(id) || mockAcpModels[0].id, latestProbe: null });
+        });
+      }
+      case 'relogin_acp_account':
+      case 'acp_connect': return mockAcpOperation('login', () => {
+        const account = acp.accounts.find(account => account.id === acp.activeAccount);
+        if (account) { account.saved = true; account.email = account.id === 'default' ? 'personal.acp@example.test' : 'work.acp@example.test'; }
+        Object.assign(acp, { authenticated: true, error: null, latestProbe: null, models: clone(mockAcpModels) });
+        if (!acp.models.some(model => model.id === acp.selectedModel)) acp.selectedModel = acp.models[0].id;
+      });
+      case 'select_acp_model': {
+        if (acp.busy) throw new Error('Wait for the current ACP operation to finish');
+        if (!acp.models.some(model => model.id === payload.model)) throw new Error('Refresh available ACP models first');
+        acp.selectedModel = readString(payload.model);
+        acp.latestProbe = null;
+        return clone(acp);
+      }
+      case 'test_acp_connection': {
+        if (acp.busy) throw new Error('An ACP operation is already running');
+        if (!acp.authenticated || !acp.selectedModel) throw new Error('Refresh available ACP models first');
+        acp.busy = true; acp.operation = 'test'; acp.error = null; acp.latestProbe = null; acpCancelled = false;
+        try {
+          await sleep(Math.max(delayMs, 250));
+          if (acpCancelled) throw new Error('ACP request cancelled');
+          acp.latestProbe = { text: 'ACP_OK', model: acp.selectedModel, durationMs: 9214, firstTextMs: 8780, stopReason: 'end_turn' };
+          return clone(acp.latestProbe);
+        } catch (cause) {
+          acp.error = cause instanceof Error ? cause.message : String(cause);
+          throw cause;
+        } finally { acp.busy = false; acp.operation = ''; }
+      }
+      case 'cancel_acp_operation': acpCancelled = true; return null;
       case 'list_oauth_browsers': return [
         { id: 'default', label: 'System default browser' },
         { id: 'chrome', label: 'Google Chrome (Mock)' },
@@ -1848,6 +2036,64 @@ export function createBrowserMockRuntime(
         return clone(state.speedAliases);
       }
 
+      case 'get_agent_system_prompt_editor': {
+        const client = readString(payload.client) || 'zcode';
+        const saved = claudePromptEditors.get(client);
+        if (saved) return clone(saved);
+        const supportsSwitch = client === 'claude-code' || client === 'claude-desktop';
+        const defaultPrompt = `You are ${client}, a coding assistant.`;
+        return {
+          client,
+          defaultPrompt,
+          builtinDefaultPrompt: defaultPrompt,
+          defaultSource: 'template',
+          defaultCustomized: false,
+          ...(supportsSwitch && { overridesEnabled: null }),
+          defaultMode: 'replace',
+          defaultPreserveDynamicContext: true,
+          proxyActive: false,
+          proxyPort: null,
+          models: [
+            { id: 'gpt-5.2-codex', customized: false, prompt: defaultPrompt, defaultPrompt, mode: 'replace', preserveDynamicContext: true },
+            { id: 'claude-sonnet-4-6', customized: false, prompt: defaultPrompt, defaultPrompt, mode: 'replace', preserveDynamicContext: true },
+          ],
+        };
+      }
+      case 'save_agent_system_prompt_editor': {
+        const req = asObject(payload.request);
+        const client = readString(req.client) || 'zcode';
+        const builtinDefaultPrompt = `You are ${client}, a coding assistant.`;
+        const defaultCustomized = Boolean(req.defaultCustomized);
+        const defaultPrompt = defaultCustomized ? readString(req.defaultPrompt) : builtinDefaultPrompt;
+        const models = asArray(req.models).map(asObject).map((m) => ({
+          id: readString(m.id),
+          customized: Boolean(m.customized),
+          prompt: Boolean(m.customized) ? readString(m.prompt) : defaultPrompt,
+          defaultPrompt,
+          mode: readString(m.mode) || 'replace',
+          preserveDynamicContext: m.preserveDynamicContext !== false,
+        }));
+        const supportsSwitch = client === 'claude-code' || client === 'claude-desktop';
+        const overridesEnabled = typeof req.overridesEnabled === 'boolean'
+          ? req.overridesEnabled : claudePromptEditors.get(client)?.overridesEnabled ?? null;
+        const anyActive = (!supportsSwitch || overridesEnabled !== false)
+          && (defaultCustomized || models.some((m) => m.customized));
+        const editor = {
+          client,
+          defaultPrompt,
+          builtinDefaultPrompt,
+          defaultSource: 'template',
+          defaultCustomized,
+          ...(supportsSwitch && { overridesEnabled }),
+          defaultMode: readString(req.defaultMode) || 'replace',
+          defaultPreserveDynamicContext: req.defaultPreserveDynamicContext !== false,
+          proxyActive: anyActive,
+          proxyPort: anyActive ? 18331 : null,
+          models,
+        };
+        if (supportsSwitch) claudePromptEditors.set(client, editor);
+        return clone(editor);
+      }
       case 'get_codex_model_catalog_editor': return clone(state.codexCatalog);
       case 'get_codex_subagent_config': return clone(state.codexSubagents);
       case 'save_codex_subagent_config': {

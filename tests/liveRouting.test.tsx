@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nProvider } from '../src/i18n';
 import { RoutingPanel } from '../src/components/routing/RoutingPanel';
+import { RoutingSnapshot } from '../src/components/routing/RoutingSnapshot';
 import { buildLiveRouting, routingCooldowns, routingCredentials } from '../src/services/usageRouting';
 import type { UsageRecord } from '../src/services/usage';
 
@@ -23,7 +24,7 @@ describe('live routing telemetry', () => {
     const view = buildLiveRouting([first, first, second, canceled,
       request('old', { timestamp: new Date(now - 61_000).toISOString() })], [], now);
     expect(view.metrics).toEqual({ flows: 2, requests: 3, latency: 200, qps: .05, failures: 1, ready: 0, cooling: 0 });
-    expect(view.targets.find(target => target.id === 'auth:main')?.provider).toBe('openai');
+    expect(view.targets.find(target => target.credentialId === 'auth:main')?.provider).toBe('openai');
   });
 
   it('reads configured credentials without inventing ready counts for disabled or unhealthy targets', () => {
@@ -55,21 +56,48 @@ describe('live routing telemetry', () => {
     expect(expired.targets).toHaveLength(0);
   });
 
-  it('keeps all flows in telemetry even when the visual topology is capped', () => {
-    const records = Array.from({ length: 8 }, (_, index) => request(`request-${index}`, { model: `model-${index}`, auth_index: `target-${index}` }));
+  it('keeps every observed route available instead of silently capping credential rows', () => {
+    const records = Array.from({ length: 10 }, (_, index) => request(`request-${index}`, { model: `model-${index}`, auth_index: `target-${index}` }));
     const view = buildLiveRouting(records, [], now);
-    expect(view.models).toHaveLength(6);
-    expect(view.targets).toHaveLength(6);
-    expect(view.metrics.flows).toBe(8);
-    expect(view.hidden).toBe(true);
+    expect(view.agents).toHaveLength(1);
+    expect(view.targets).toHaveLength(10);
+    expect(view.metrics.flows).toBe(10);
+    expect(view.hidden).toBe(false);
     expect(buildLiveRouting([], [], now).metrics.latency).toBeNull();
   });
 
   it('renders telemetry and a useful standby state before the first poll', () => {
     const html = renderToStaticMarkup(<I18nProvider><RoutingPanel /></I18nProvider>);
-    expect(html).toContain('live-routing-map');
-    expect(html).toContain('routing-gateway');
-    expect(html).toContain('node-ghost');
-    expect(html).not.toContain('live-routing-empty');
+    expect(html).toContain('data-testid="routing-empty"');
+    expect(html.match(/Waiting for recorded requests…/g)).toHaveLength(1);
+    expect(html).not.toContain('data-route-gateway');
+    expect(html).not.toContain('routing-record-control');
+    expect(html).not.toContain('routing-request-context');
+    expect(html).not.toContain('<footer');
   });
+});
+
+const renderEmpty = (state: Partial<Pick<Parameters<typeof RoutingSnapshot>[0], 'paused' | 'updated' | 'error' | 'initialFocus'>>) =>
+  renderToStaticMarkup(<I18nProvider><RoutingSnapshot view={buildLiveRouting([], [], now)} packets={[]} now={now} {...state} /></I18nProvider>);
+
+it('does not present a paused or failed empty snapshot as a functioning live feed', () => {
+  const paused = renderEmpty({ paused: true, updated: now });
+  expect(paused).toContain('No requests in the paused snapshot.');
+  expect(paused).toContain('Updated ');
+  expect(paused).not.toContain('Waiting for recorded requests…');
+  expect(paused).not.toContain('Listening for gateway traffic');
+
+  const failed = renderEmpty({ error: 'Unable to read usage' });
+  expect(failed.match(/Unable to read usage/g)).toHaveLength(1);
+  expect(failed).toContain('Unavailable');
+  expect(failed).not.toContain('Waiting for recorded requests…');
+  expect(failed).not.toContain('Listening for gateway traffic');
+});
+
+it('keeps expired pin context and the back-to-latest control in an empty window', () => {
+  const html = renderEmpty({ initialFocus: { mode: 'pinned', recordId: 'past-record' } });
+  expect(html).toContain('Outside window');
+  expect(html).toContain('Back to latest');
+  expect(html).toContain('This record left the 60-second window.');
+  expect(html.match(/Waiting for recorded requests…/g)).toHaveLength(1);
 });

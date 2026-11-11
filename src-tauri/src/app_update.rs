@@ -1,3 +1,7 @@
+use super::app_version_series::{
+    is_preview_package, preview_display_coordinate, preview_stamp, preview_version_stamp,
+    AppVersionBaselines, AppVersionSeries,
+};
 use super::plugins::{plugin_github_token, read_plugin_github_settings};
 use super::*;
 
@@ -146,6 +150,46 @@ where
     Ok(notes)
 }
 
+pub(crate) fn skipped_release_notes(
+    history: &serde_json::Value,
+    current_version: &str,
+    target_version: &str,
+) -> Vec<SkippedReleaseNotes> {
+    let (Ok(current), Ok(target), Some(history)) = (
+        semver::Version::parse(current_version.trim_start_matches('v')),
+        semver::Version::parse(target_version.trim_start_matches('v')),
+        history.as_object(),
+    ) else {
+        return Vec::new();
+    };
+    if !target.pre.is_empty() {
+        return Vec::new();
+    }
+    let mut entries = history
+        .iter()
+        .filter_map(|(version, notes)| {
+            let version = semver::Version::parse(version).ok()?;
+            if !version.pre.is_empty()
+                || !version.build.is_empty()
+                || !version.cmp_precedence(&current).is_gt()
+                || !version.cmp_precedence(&target).is_lt()
+            {
+                return None;
+            }
+            let notes = deserialize_release_notes(notes).ok()?;
+            (!notes.is_empty()).then_some((version, notes))
+        })
+        .collect::<Vec<_>>();
+    entries.sort_unstable_by(|(left, _), (right, _)| right.cmp(left));
+    entries
+        .into_iter()
+        .map(|(version, release_notes)| SkippedReleaseNotes {
+            version: version.to_string(),
+            release_notes,
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub(crate) fn get_version_source_settings(
     gui_config_state: tauri::State<'_, GuiConfigState>,
@@ -249,6 +293,100 @@ pub(crate) fn open_external_url(app: tauri::AppHandle, url: String) -> Result<()
     open_external_url_inner(&app, &url)
 }
 
+pub(crate) fn local_app_version_baselines() -> AppVersionBaselines {
+    let family = option_env!("ECPA_RELEASE_FAMILY");
+    let stable = option_env!("ECPA_STABLE_SERIES_VERSION");
+    let preview = option_env!("ECPA_PREVIEW_SERIES_VERSION");
+    let marker = if family.is_none() {
+        read_local_portable_app_manifest().filter(|manifest| {
+            manifest.schema_version == 1
+                && manifest.application == "EasyCLIProxyAPI"
+                && portable_update_target().is_some_and(|(_, arch)| manifest.arch == arch)
+                && Some(manifest.platform.as_str()) == portable_update_platform_key()
+        })
+    } else {
+        None
+    };
+    AppVersionBaselines::from_local(
+        family,
+        stable,
+        preview,
+        env!("CARGO_PKG_VERSION"),
+        marker.as_ref().map(|manifest| manifest.version.as_str()),
+    )
+}
+
+#[tauri::command]
+pub(crate) fn get_app_version_baselines() -> AppVersionBaselines {
+    local_app_version_baselines()
+}
+
+pub(crate) fn validate_app_release_series(
+    series: AppVersionSeries,
+    requested_preview_tag: Option<&str>,
+    latest_version: &str,
+    release_tag: &str,
+) -> Result<(), String> {
+    let matches_request = match requested_preview_tag {
+        Some(tag) if series == AppVersionSeries::Preview && tag == release_tag => {
+            if let Some(stamp) = tag.strip_prefix("preview-").and_then(preview_stamp) {
+                Some(stamp) == preview_version_stamp(latest_version)
+            } else {
+                is_preview_package(latest_version)
+            }
+        }
+        None if series == AppVersionSeries::Stable => {
+            series.accepts(latest_version)
+                && normalize_version(release_tag) == normalize_version(latest_version)
+        }
+        _ => false,
+    };
+    if matches_request {
+        Ok(())
+    } else {
+        Err(
+            "The release manifest does not match the selected application version series or tag"
+                .into(),
+        )
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct AppUpdateAvailability {
+    pub(crate) comparison_newer: bool,
+    pub(crate) update_available: bool,
+    pub(crate) install_available: bool,
+}
+
+pub(crate) fn app_update_availability(
+    channel: &str,
+    baselines: &AppVersionBaselines,
+    package_version: &str,
+    candidate: &str,
+) -> AppUpdateAvailability {
+    let series = AppVersionSeries::for_channel(channel);
+    let is_pinned = channel.starts_with("preview-");
+    if !series.accepts(candidate) && !(is_pinned && is_preview_package(candidate)) {
+        return AppUpdateAvailability::default();
+    }
+    let comparison_newer = baselines
+        .get(series)
+        .is_some_and(|current| series.newer(current, candidate));
+    let same_family = baselines.installed_series == Some(series);
+    let already_running =
+        same_family && normalize_version(package_version) == normalize_version(candidate);
+    let update_available = same_family && comparison_newer && !already_running && !is_pinned;
+    // A reference is not an installed package. Exact pins and explicit family
+    // changes remain manual even when their comparator says "newer".
+    let switching_family = baselines.installed_series.is_some() && !same_family;
+    let install_available = !already_running && (update_available || switching_family || is_pinned);
+    AppUpdateAvailability {
+        comparison_newer,
+        update_available,
+        install_available,
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn check_app_update(
     state: tauri::State<'_, AppUpdateState>,
@@ -269,7 +407,25 @@ pub(crate) async fn check_app_update(
     Ok(info)
 }
 
-async fn resolve_app_update(
+// A view selection overrides the release lookup on an owned snapshot only.
+pub(crate) fn app_display_config(mut config: GuiConfigFile, series: &str) -> Result<GuiConfigFile, String> {
+    if !matches!(series, "stable" | "preview") {
+        return Err("Unsupported application version display series".into());
+    }
+    config.update_channel = series.to_string();
+    Ok(config)
+}
+
+#[tauri::command]
+pub(crate) async fn check_app_version_display(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+    series: String,
+) -> Result<AppUpdateInfo, String> {
+    let config = app_display_config(gui_config_state.snapshot()?, &series)?;
+    resolve_app_update(&config).await.map(|(info, _)| info)
+}
+
+pub(crate) async fn resolve_app_update(
     config: &GuiConfigFile,
 ) -> Result<(AppUpdateInfo, Option<PendingAppUpdate>), String> {
     let _detection_guard = VERSION_SOURCE_DETECTION_LOCK.lock().await;
@@ -286,7 +442,7 @@ async fn resolve_app_update(
         "Failed to create version check client",
     )?;
     let requested_source = config.selected_download_candidate();
-    let current_version = normalize_version(env!("CARGO_PKG_VERSION"));
+    let package_version = env!("CARGO_PKG_VERSION");
     let update_channel = normalize_update_channel(&config.update_channel);
     let mut channel_tag = update_channel_tag(&update_channel);
     validate_version_download_source(
@@ -313,29 +469,47 @@ async fn resolve_app_update(
             }
         }
     }
-    let is_preview = channel_tag.is_some();
+    let series = AppVersionSeries::for_channel(&update_channel);
     let (manifest, resolved_source) =
         fetch_portable_update_manifest(&client, requested_source.clone(), channel_tag.as_deref())
             .await?;
     let latest_version = normalize_version(&manifest.version);
-    let current_build_at = local_portable_app_built_at();
-    let local_manifest = read_local_portable_app_manifest();
-    let is_test_env = is_test_or_prerelease_version(&current_version)
-        || local_manifest.as_ref().is_some_and(|m| {
-            is_test_or_prerelease_version(&m.version)
-                || normalize_version(&m.version) != current_version
+    let release_tag = manifest
+        .release_url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or_default();
+    validate_app_release_series(series, channel_tag.as_deref(), &latest_version, release_tag)?;
+    let baselines = local_app_version_baselines();
+    let current_version = baselines.get(series).map(str::to_string);
+    let AppUpdateAvailability {
+        comparison_newer,
+        update_available,
+        install_available,
+    } = app_update_availability(
+        &update_channel,
+        &baselines,
+        package_version,
+        &latest_version,
+    );
+    let is_test_env = is_test_or_prerelease_version(package_version)
+        || read_local_portable_app_manifest().is_some_and(|manifest| {
+            normalize_version(&manifest.version) != normalize_version(package_version)
         });
-    let mut update_available = is_app_update_available(&current_version, &latest_version)?;
-    if !update_available && is_test_env {
-        update_available = true;
-    }
-    if !update_available
-        && is_preview
-        && is_timestamped_preview_version(&latest_version)
-        && normalize_version(&latest_version) != current_version
-    {
-        update_available = true;
-    }
+    let is_preview = series == AppVersionSeries::Preview;
+    let format_build_date = |date: chrono::DateTime<chrono::Utc>| date.to_rfc3339();
+    let (current_build_at, latest_build_at) = if is_preview {
+        (
+            current_version
+                .as_deref()
+                .and_then(preview_stamp)
+                .map(format_build_date),
+            preview_version_stamp(&latest_version).map(format_build_date),
+        )
+    } else {
+        (None, None)
+    };
     let target = portable_update_target();
     let asset_catalog = manifest.full_assets.as_ref().unwrap_or(&manifest.assets);
     let asset = target.and_then(|(key, _)| asset_catalog.get(key)).cloned();
@@ -372,7 +546,7 @@ async fn resolve_app_update(
         )
     };
 
-    let pending = if update_available && auto_update_supported {
+    let pending = if install_available && auto_update_supported {
         let (_, arch) = target.expect("portable target checked above");
         Some(PendingAppUpdate {
             version: latest_version.clone(),
@@ -382,14 +556,31 @@ async fn resolve_app_update(
     } else {
         None
     };
+    let skipped_release_notes = current_version
+        .as_deref()
+        .filter(|_| update_available && !is_preview)
+        .map(|current| {
+            skipped_release_notes(&manifest.release_notes_history, current, &latest_version)
+        })
+        .unwrap_or_default();
+    let latest_series_version = match series {
+        AppVersionSeries::Stable => Some(latest_version.clone()),
+        AppVersionSeries::Preview => preview_display_coordinate(&latest_version),
+    };
     let info = AppUpdateInfo {
         current_version,
+        latest_series_version,
         latest_version,
+        installed_series: baselines.installed_series,
+        comparison_newer,
         update_available,
+        install_available,
         release_url: manifest.release_url,
         release_notes: manifest.release_notes,
+        skipped_release_notes,
         published_at: manifest.published_at,
         current_build_at,
+        latest_build_at,
         auto_update_supported,
         preserve_core_supported: cfg!(any(windows, target_os = "macos")),
         download_url,
@@ -701,8 +892,10 @@ fn validate_portable_update_asset_catalog(
     allow_windows_legacy: bool,
     repository: Option<&str>,
 ) -> Result<(), String> {
-    if assets.len() != 2 {
-        return Err(format!("The application update manifest must include both {display_platform} architectures"));
+    if assets.is_empty() {
+        return Err(format!(
+            "The application update manifest has no {display_platform} assets"
+        ));
     }
     let version = manifest.version.trim().trim_start_matches('v');
     let url_tag = manifest
@@ -717,11 +910,12 @@ fn validate_portable_update_asset_catalog(
     } else {
         url_tag
     };
-    for arch in ["amd64", "aarch64"] {
-        let key = format!("{platform}-{arch}");
-        let asset = assets
-            .get(&key)
-            .ok_or_else(|| format!("Application update manifest is missing {key}"))?;
+    for (key, asset) in assets {
+        let arch = key
+            .strip_prefix(platform)
+            .and_then(|suffix| suffix.strip_prefix('-'))
+            .filter(|arch| matches!(*arch, "amd64" | "aarch64"))
+            .ok_or_else(|| format!("Unexpected application update asset key: {key}"))?;
         validate_portable_update_asset(asset)?;
         let full_package_name =
             format!("EasyCLIProxyAPI-v{version}-{display_platform}-{arch}.{suffix}");
@@ -904,24 +1098,14 @@ async fn fetch_preview_tags_from_atom(
     select_latest_preview_tag(&tags)
 }
 
-/// Parses a `preview-<YYYYMMDD>-<HHMM>` tag into a sortable `YYYYMMDDHHMM` number.
-fn preview_stamp_key(tag: &str) -> Option<u64> {
-    let rest = tag.strip_prefix("preview-")?;
-    let (date, time) = rest.split_once('-')?;
-    if date.len() != 8
-        || time.len() != 4
-        || !date.bytes().all(|b| b.is_ascii_digit())
-        || !time.bytes().all(|b| b.is_ascii_digit())
-    {
-        return None;
-    }
-    format!("{date}{time}").parse::<u64>().ok()
-}
-
 /// Picks the newest time-stamped preview tag, ignoring every other tag shape.
 pub(crate) fn select_latest_preview_tag(tags: &[String]) -> Option<String> {
     tags.iter()
-        .filter_map(|tag| preview_stamp_key(tag).map(|key| (key, tag)))
+        .filter_map(|tag| {
+            tag.strip_prefix("preview-")
+                .and_then(preview_stamp)
+                .map(|key| (key, tag))
+        })
         .max_by_key(|(key, _)| *key)
         .map(|(_, tag)| tag.clone())
 }
@@ -989,14 +1173,6 @@ pub(crate) fn read_local_portable_app_manifest() -> Option<PortableAppManifest> 
     serde_json::from_str::<PortableAppManifest>(&contents).ok()
 }
 
-pub(crate) fn local_portable_app_built_at() -> Option<String> {
-    let manifest = read_local_portable_app_manifest()?;
-    manifest
-        .built_at
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty() && chrono::DateTime::parse_from_rfc3339(value).is_ok())
-}
-
 pub(crate) fn is_test_or_prerelease_version(version: &str) -> bool {
     let trimmed = version.trim().trim_start_matches('v');
     let lower = trimmed.to_ascii_lowercase();
@@ -1012,14 +1188,6 @@ pub(crate) fn is_test_or_prerelease_version(version: &str) -> bool {
         || semver::Version::parse(trimmed)
             .map(|v| !v.pre.is_empty())
             .unwrap_or(false)
-}
-
-pub(crate) fn is_timestamped_preview_version(version: &str) -> bool {
-    let trimmed = version.trim().trim_start_matches('v');
-    match trimmed.to_ascii_lowercase().split_once("-preview.") {
-        Some((_, stamp)) => !stamp.is_empty(),
-        None => false,
-    }
 }
 
 pub(crate) fn validate_local_portable_app_manifest(expected_arch: &str) -> Result<bool, String> {
@@ -1047,7 +1215,8 @@ pub(crate) fn validate_local_portable_app_manifest(expected_arch: &str) -> Resul
 
 #[tauri::command]
 pub(crate) fn get_app_update_task(state: tauri::State<'_, AppUpdateState>) -> AppUpdateTask {
-    state.snapshot()
+    let task = state.snapshot();
+    if task.automatic { AppUpdateTask::default() } else { task }
 }
 
 #[tauri::command]
@@ -1065,8 +1234,11 @@ pub(crate) async fn start_app_update(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppUpdateState>,
     preserve_core: Option<bool>,
+    expected_channel: String,
+    expected_version: String,
 ) -> Result<(), String> {
     let preserve_core = preserve_core.unwrap_or(false);
+    let update_operation = app.state::<auto_update::AutoUpdateState>().try_operation()?;
     if preserve_core && !cfg!(any(windows, target_os = "macos")) {
         return Err("Updating without restarting the kernel is not supported on this platform".to_string());
     }
@@ -1080,17 +1252,30 @@ pub(crate) async fn start_app_update(
     let _ = app.emit(APP_UPDATE_PROGRESS_EVENT, task);
     let update_app = app.clone();
     tauri::async_runtime::spawn(async move {
+        let _update_operation = update_operation;
         let outcome = async {
             let state = update_app.state::<AppUpdateState>();
             let gui_config_state = update_app.state::<GuiConfigState>();
             // Pin the source for the whole operation, including manifest refresh
             // and archive download, even if settings change while checking.
             let config = gui_config_state.snapshot()?;
+            // The confirmation names the explicitly displayed target. Never save
+            // that choice as the channel for background updates.
+            let config = if matches!(expected_channel.as_str(), "stable" | "preview") {
+                app_display_config(config, &expected_channel)?
+            } else if normalize_update_channel(&config.update_channel) == expected_channel {
+                config
+            } else {
+                return Err("The selected application update channel changed. Check for updates again".to_string());
+            };
             let pending = refresh_app_update_for_install(state.inner(), &token, async {
                 let (info, pending) =
                     resolve_app_update(&config).await?;
+                if info.latest_version != expected_version {
+                    return Err("The application update target changed. Check for updates again".to_string());
+                }
                 pending.ok_or_else(|| {
-                    if info.update_available {
+                    if info.install_available {
                         info.unsupported_reason
                             .unwrap_or_else(|| "The current version does not support automatic updates".to_string())
                     } else {
@@ -1107,6 +1292,7 @@ pub(crate) async fn start_app_update(
                 &config.proxy_url,
                 config.selected_download_candidate(),
                 preserve_core,
+                None,
             )
             .await
         }
@@ -1152,247 +1338,172 @@ pub(crate) async fn download_and_stage_portable_app_update(
     proxy_url: &str,
     download_source: VersionDownloadCandidate,
     preserve_core: bool,
+    automatic_config: Option<&GuiConfigFile>,
 ) -> Result<(), String> {
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
-        let _ = (app, pending, token, proxy_url, download_source, preserve_core);
+        let _ = (
+            app,
+            pending,
+            token,
+            proxy_url,
+            download_source,
+            preserve_core,
+            automatic_config,
+        );
         Err("The current platform does not support in-app automatic upgrades".to_string())
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     {
         validate_portable_update_asset(&pending.asset)?;
-        let work_dir = env::temp_dir().join(format!(
-            "EasyCLIProxyAPI-update-{}-{}-{}",
-            pending.version,
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&work_dir)
-            .map_err(|error| format!("Failed to create temporary application update directory: {error}"))?;
-        let archive_path = work_dir.join("update.zip");
+        let work = portable_update_work_dir(&pending.version);
+        fs::create_dir_all(&work).map_err(|error| {
+            format!("Failed to create temporary application update directory: {error}")
+        })?;
+        let archive = work.join(match env::consts::OS {
+            "windows" => "update.zip",
+            "macos" => "update.dmg",
+            _ => "update.tar.gz",
+        });
         let result = async {
             download_portable_update_archive(
                 app,
                 pending,
                 token,
-                &archive_path,
+                &archive,
                 proxy_url,
                 &download_source,
             )
             .await?;
-            if token.is_cancelled() {
-                return Err("Application update download canceled".to_string());
-            }
-
             update_app_task(app, |task| {
                 task.cancellable = false;
-                task.phase = "verifying".to_string();
-                task.message = Some("Verifying application update package".to_string());
+                task.phase = "verifying".into();
+                task.message = Some("Verifying application update package".into());
             });
-            let actual_sha256 = sha256_file(&archive_path)?;
-            if actual_sha256 != pending.asset.sha256.trim().to_ascii_lowercase() {
-                return Err("Application update package SHA-256 verification failed".to_string());
-            }
-
+            ensure_portable_update_download(token, &archive, pending)?;
             update_app_task(app, |task| {
-                task.phase = "staging".to_string();
-                task.message = Some("Preparing application update".to_string());
+                task.phase = "staging".into();
+                task.message = Some("Preparing application update".into());
             });
-            let staging_dir = work_dir.join("staging");
-            let package = extract_portable_update_archive(&archive_path, &staging_dir)?;
-            if normalize_version(&package.manifest.version) != normalize_version(&pending.version)
-                || package.manifest.platform != "windows"
-                || package.manifest.arch != pending.arch
-            {
-                return Err("Application update package version or architecture mismatch".to_string());
+            let current_exe = env::current_exe()
+                .map_err(|error| format!("Failed to read current executable path: {error}"))?;
+            let descriptor =
+                stage_portable_update(&work, &archive, pending, current_exe, preserve_core)?;
+            if let Some(config) = automatic_config {
+                return auto_update::cache_application(app, &descriptor, config, token);
             }
-
-            let current_exe =
-                env::current_exe().map_err(|error| format!("Failed to read current executable path: {error}"))?;
-            let app_dir = current_exe
-                .parent()
-                .ok_or_else(|| "Current executable path has no parent directory".to_string())?;
-            preflight_portable_update_directory(app_dir)?;
-            let core_archive_name = match package.core_archive_name {
-                Some(name) => name,
-                None => stage_current_portable_core_payload(app_dir, &staging_dir, &pending.arch)?,
-            };
-            let helper_path = work_dir.join("EasyCLIProxyAPI-updater.exe");
-            fs::copy(&current_exe, &helper_path)
-                .map_err(|error| format!("Failed to prepare application update helper: {error}"))?;
-
-            let descriptor = PortableUpdateDescriptor {
-                parent_pid: std::process::id(),
-                current_exe: current_exe.clone(),
-                staged_exe: staging_dir.join(PORTABLE_APP_BINARY),
-                current_manifest: app_dir.join(PORTABLE_APP_MANIFEST_FILE),
-                staged_manifest: staging_dir.join(PORTABLE_APP_MANIFEST_FILE),
-                backup_exe: app_dir.join(".EasyCLIProxyAPI.exe.update-backup"),
-                backup_manifest: app_dir.join(".portable-app.json.update-backup"),
-                current_core_version: app_dir.join(CORE_VERSION_FILE),
-                staged_core_version: staging_dir.join(CORE_VERSION_FILE),
-                backup_core_version: app_dir.join(".core-version.txt.update-backup"),
-                staged_core_archive: staging_dir.join("cpa-core").join(&core_archive_name),
-                target_core_archive: app_dir.join("cpa-core").join(&core_archive_name),
-                install_core_archive: !app_dir.join("cpa-core").join(&core_archive_name).is_file(),
-                ack_path: work_dir.join("update-started.ack"),
-                work_dir: work_dir.clone(),
-                target_version: pending.version.clone(),
-                preserve_core,
-            };
-            launch_portable_update_helper(app, &helper_path, &work_dir, &descriptor, preserve_core).await
-        }
-        .await;
-
-        if result.is_err() {
-            let _ = fs::remove_dir_all(&work_dir);
-        }
-        result
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        validate_portable_update_asset(&pending.asset)?;
-        let work_dir = portable_update_work_dir(&pending.version);
-        fs::create_dir_all(&work_dir)
-            .map_err(|error| format!("Failed to create temporary application update directory: {error}"))?;
-        let archive_path = work_dir.join("update.tar.gz");
-        let result = async {
-            download_portable_update_archive(
-                app,
-                pending,
-                token,
-                &archive_path,
-                proxy_url,
-                &download_source,
-            )
-            .await?;
-            ensure_portable_update_download(token, &archive_path, pending)?;
-            update_app_task(app, |task| {
-                task.cancellable = false;
-                task.phase = "staging".to_string();
-                task.message = Some("Preparing application update".to_string());
-            });
-
-            let staging_dir = work_dir.join("staging");
-            let package = extract_portable_update_tar_gz(&archive_path, &staging_dir)?;
-            if normalize_version(&package.manifest.version) != normalize_version(&pending.version)
-                || package.manifest.platform != "linux"
-                || package.manifest.arch != pending.arch
-            {
-                return Err("Application update package version or architecture mismatch".to_string());
-            }
-            let core_archive_name = package
-                .core_archive_name
-                .ok_or_else(|| "Linux application update package is missing the bundled kernel".to_string())?;
-            let current_exe =
-                env::current_exe().map_err(|error| format!("Failed to read current executable path: {error}"))?;
-            let app_dir = current_exe
-                .parent()
-                .ok_or_else(|| "Current executable path has no parent directory".to_string())?;
-            preflight_portable_update_directory(app_dir)?;
-            let helper_path = work_dir.join("EasyCLIProxyAPI-updater");
-            fs::copy(&current_exe, &helper_path)
-                .map_err(|error| format!("Failed to prepare application update helper: {error}"))?;
-
-            let descriptor = PortableUpdateDescriptor {
-                parent_pid: std::process::id(),
-                current_exe: current_exe.clone(),
-                staged_exe: staging_dir.join(PORTABLE_APP_BINARY),
-                current_manifest: app_dir.join(PORTABLE_APP_MANIFEST_FILE),
-                staged_manifest: staging_dir.join(PORTABLE_APP_MANIFEST_FILE),
-                backup_exe: app_dir.join(".EasyCLIProxyAPI.update-backup"),
-                backup_manifest: app_dir.join(".portable-app.json.update-backup"),
-                current_core_version: app_dir.join(CORE_VERSION_FILE),
-                staged_core_version: staging_dir.join(CORE_VERSION_FILE),
-                backup_core_version: app_dir.join(".core-version.txt.update-backup"),
-                staged_core_archive: staging_dir.join("cpa-core").join(&core_archive_name),
-                target_core_archive: app_dir.join("cpa-core").join(&core_archive_name),
-                install_core_archive: !app_dir.join("cpa-core").join(&core_archive_name).is_file(),
-                ack_path: work_dir.join("update-started.ack"),
-                work_dir: work_dir.clone(),
-                target_version: pending.version.clone(),
-                preserve_core,
-            };
-            launch_portable_update_helper(app, &helper_path, &work_dir, &descriptor, preserve_core).await
+            launch_prepared_portable_update(app, &descriptor).await
         }
         .await;
         if result.is_err() {
-            let _ = fs::remove_dir_all(&work_dir);
-        }
-        result
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        validate_portable_update_asset(&pending.asset)?;
-        let work_dir = portable_update_work_dir(&pending.version);
-        fs::create_dir_all(&work_dir)
-            .map_err(|error| format!("Failed to create temporary application update directory: {error}"))?;
-        let archive_path = work_dir.join("update.dmg");
-        let result = async {
-            download_portable_update_archive(
-                app,
-                pending,
-                token,
-                &archive_path,
-                proxy_url,
-                &download_source,
-            )
-            .await?;
-            ensure_portable_update_download(token, &archive_path, pending)?;
-            update_app_task(app, |task| {
-                task.cancellable = false;
-                task.phase = "staging".to_string();
-                task.message = Some("Preparing application update".to_string());
-            });
-
-            let staged_app = work_dir.join("staging").join("EasyCLIProxyAPI.app");
-            stage_macos_application_from_dmg(&archive_path, &work_dir, &staged_app)?;
-            validate_macos_staged_application(&staged_app, pending)?;
-            let current_exe =
-                env::current_exe().map_err(|error| format!("Failed to read current executable path: {error}"))?;
-            let current_app = macos_application_bundle_from_executable(&current_exe)?;
-            preflight_macos_update_directory(&current_app)?;
-            let executable_relative_path = current_exe
-                .strip_prefix(&current_app)
-                .map_err(|_| "Invalid macOS application path".to_string())?
-                .to_path_buf();
-            let backup_app = current_app
-                .parent()
-                .ok_or_else(|| "macOS application path has no parent directory".to_string())?
-                .join(".EasyCLIProxyAPI.app.update-backup");
-            let descriptor = MacosUpdateDescriptor {
-                parent_pid: std::process::id(),
-                current_app,
-                staged_app,
-                backup_app,
-                executable_relative_path,
-                ack_path: work_dir.join("update-started.ack"),
-                work_dir: work_dir.clone(),
-                target_version: pending.version.clone(),
-                preserve_core,
-            };
-            let helper_path = macos_update_helper_path(&current_exe);
-            launch_portable_update_helper(app, &helper_path, &work_dir, &descriptor, preserve_core).await
-        }
-        .await;
-        // A busy DMG may still be mounted here. Never recursively clean its mount point.
-        if result.is_err() {
-            cleanup_macos_update_dmg(&work_dir);
-            if !work_dir.join("mount").exists() {
-                let _ = fs::remove_dir_all(&work_dir);
+            #[cfg(target_os = "macos")]
+            cleanup_macos_update_dmg(&work);
+            if !cfg!(target_os = "macos") || !work.join("mount").exists() {
+                let _ = fs::remove_dir_all(&work);
             }
         }
         result
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(windows, target_os = "linux"))]
+pub(crate) type UpdateDescriptor = PortableUpdateDescriptor;
+#[cfg(target_os = "macos")]
+pub(crate) type UpdateDescriptor = MacosUpdateDescriptor;
+
+#[cfg(any(windows, target_os = "linux"))]
+pub(super) fn stage_portable_update(
+    work: &Path,
+    archive: &Path,
+    pending: &PendingAppUpdate,
+    current_exe: PathBuf,
+    preserve_core: bool,
+) -> Result<UpdateDescriptor, String> {
+    let staging = work.join("staging");
+    #[cfg(windows)]
+    let package = extract_portable_update_archive(archive, &staging)?;
+    #[cfg(target_os = "linux")]
+    let package = extract_portable_update_tar_gz(archive, &staging)?;
+    if normalize_version(&package.manifest.version) != normalize_version(&pending.version)
+        || package.manifest.platform != env::consts::OS
+        || package.manifest.arch != pending.arch
+    {
+        return Err("Application update package version or architecture mismatch".into());
+    }
+    let app_dir = current_exe
+        .parent()
+        .ok_or("Current executable path has no parent directory")?;
+    preflight_portable_update_directory(app_dir)?;
+    let core_archive = match package.core_archive_name {
+        Some(name) => name,
+        #[cfg(windows)]
+        None => stage_current_portable_core_payload(app_dir, &staging, &pending.arch)?,
+        #[cfg(target_os = "linux")]
+        None => {
+            return Err("Linux application update package is missing the bundled kernel".into())
+        }
+    };
+    let target_core_archive = app_dir.join("cpa-core").join(&core_archive);
+    let descriptor = UpdateDescriptor {
+        parent_pid: std::process::id(),
+        staged_exe: staging.join(PORTABLE_APP_BINARY),
+        current_manifest: app_dir.join(PORTABLE_APP_MANIFEST_FILE),
+        staged_manifest: staging.join(PORTABLE_APP_MANIFEST_FILE),
+        backup_exe: app_dir.join(portable_update_backup_executable_name()),
+        backup_manifest: app_dir.join(".portable-app.json.update-backup"),
+        current_core_version: app_dir.join(CORE_VERSION_FILE),
+        staged_core_version: staging.join(CORE_VERSION_FILE),
+        backup_core_version: app_dir.join(".core-version.txt.update-backup"),
+        staged_core_archive: staging.join("cpa-core").join(core_archive),
+        install_core_archive: !target_core_archive.is_file(),
+        target_core_archive,
+        ack_path: work.join("update-started.ack"),
+        work_dir: work.into(),
+        target_version: pending.version.clone(),
+        current_exe,
+        preserve_core,
+    };
+    fs::copy(&descriptor.current_exe, descriptor.helper_path())
+        .map_err(|error| format!("Failed to prepare application update helper: {error}"))?;
+    Ok(descriptor)
+}
+
+#[cfg(target_os = "macos")]
+fn stage_portable_update(
+    work: &Path,
+    archive: &Path,
+    pending: &PendingAppUpdate,
+    current_exe: PathBuf,
+    preserve_core: bool,
+) -> Result<UpdateDescriptor, String> {
+    let staged_app = work.join("staging/EasyCLIProxyAPI.app");
+    stage_macos_application_from_dmg(archive, work, &staged_app)?;
+    validate_macos_staged_application(&staged_app, pending)?;
+    let current_app = macos_application_bundle_from_executable(&current_exe)?;
+    preflight_macos_update_directory(&current_app)?;
+    let executable_relative_path = current_exe
+        .strip_prefix(&current_app)
+        .map_err(|_| "Invalid macOS application path")?
+        .to_path_buf();
+    let backup_app = current_app
+        .parent()
+        .ok_or("macOS application path has no parent directory")?
+        .join(".EasyCLIProxyAPI.app.update-backup");
+    Ok(UpdateDescriptor {
+        parent_pid: std::process::id(),
+        current_app,
+        staged_app,
+        backup_app,
+        executable_relative_path,
+        ack_path: work.join("update-started.ack"),
+        work_dir: work.into(),
+        target_version: pending.version.clone(),
+        preserve_core,
+    })
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn portable_update_work_dir(version: &str) -> PathBuf {
     env::temp_dir().join(format!(
         "EasyCLIProxyAPI-update-{}-{}-{}",
@@ -1405,7 +1516,7 @@ fn portable_update_work_dir(version: &str) -> PathBuf {
     ))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn ensure_portable_update_download(
     token: &CancellationToken,
     archive_path: &Path,
@@ -1427,23 +1538,21 @@ pub(crate) fn macos_update_helper_path(current_exe: &Path) -> PathBuf {
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-async fn launch_portable_update_helper<T: Serialize>(
+pub(crate) async fn launch_prepared_portable_update(
     app: &tauri::AppHandle,
-    helper_path: &Path,
-    work_dir: &Path,
-    descriptor: &T,
-    preserve_core: bool,
+    descriptor: &UpdateDescriptor,
 ) -> Result<(), String> {
+    let work_dir = &descriptor.work_dir;
     let descriptor_path = work_dir.join("update-descriptor.json");
-    fs::write(
+    write_bytes_atomically(
         &descriptor_path,
-        serde_json::to_vec_pretty(descriptor)
-            .map_err(|error| format!("Failed to serialize application update descriptor: {error}"))?,
-    )
-    .map_err(|error| format!("Failed to write application update descriptor: {error}"))?;
+        &serde_json::to_vec(descriptor).map_err(|error| {
+            format!("Failed to serialize application update descriptor: {error}")
+        })?,
+    )?;
     let helper_ack_path = portable_update_helper_ack_path(work_dir);
     let _ = fs::remove_file(&helper_ack_path);
-    let mut command = portable_update_helper_command(helper_path, &descriptor_path);
+    let mut command = portable_update_helper_command(&descriptor.helper_path(), &descriptor_path);
     let mut child = command
         .spawn()
         .map_err(|error| format!("Failed to start application update helper: {error}"))?;
@@ -1458,8 +1567,9 @@ async fn launch_portable_update_helper<T: Serialize>(
         task.phase = "restarting".to_string();
         task.message = Some("Update is ready. The application will restart shortly".to_string());
     });
-    if preserve_core {
-        if let Err(error) = prepare_core_for_app_update(app.state::<CoreProcessState>().inner()) {
+    if descriptor.preserve_core {
+        let process_state = app.state::<CoreProcessState>();
+        if let Err(error) = prepare_core_for_app_update(process_state.inner()) {
             let _ = child.kill();
             let _ = child.wait();
             return Err(error);
@@ -1485,6 +1595,98 @@ pub(crate) fn portable_update_helper_command(helper_path: &Path, descriptor_path
     }
     configure_background_command(&mut command);
     command
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+impl UpdateDescriptor {
+    fn helper_path(&self) -> PathBuf {
+        #[cfg(any(windows, target_os = "linux"))]
+        return self.work_dir.join(if cfg!(windows) {
+            "EasyCLIProxyAPI-updater.exe"
+        } else {
+            "EasyCLIProxyAPI-updater"
+        });
+        #[cfg(target_os = "macos")]
+        return macos_update_helper_path(&self.current_app.join(&self.executable_relative_path));
+    }
+
+    pub(crate) fn protected_files(&self) -> Vec<PathBuf> {
+        #[cfg(any(windows, target_os = "linux"))]
+        return vec![
+            self.helper_path(),
+            self.staged_exe.clone(),
+            self.staged_manifest.clone(),
+            self.staged_core_version.clone(),
+            self.staged_core_archive.clone(),
+        ];
+        #[cfg(target_os = "macos")]
+        return vec![
+            self.helper_path(),
+            self.staged_app.join(&self.executable_relative_path),
+            self.staged_app.join("Contents/Info.plist"),
+        ];
+    }
+
+    pub(crate) fn refresh(&mut self) {
+        self.parent_pid = std::process::id();
+        #[cfg(any(windows, target_os = "linux"))]
+        {
+            self.install_core_archive = !self.target_core_archive.is_file();
+        }
+    }
+
+    pub(crate) fn validate_cached(&self, executable: &Path) -> Result<(), String> {
+        let work = validated_update_work_dir(&self.work_dir)?;
+        #[cfg(any(windows, target_os = "linux"))]
+        let target = &self.current_exe;
+        #[cfg(target_os = "macos")]
+        let target = &self.helper_path();
+        if fs::canonicalize(target).map_err(|error| error.to_string())?
+            != fs::canonicalize(executable).map_err(|error| error.to_string())?
+        {
+            return Err("Prepared application target changed".into());
+        }
+        let mut descriptor = self.clone();
+        descriptor.refresh();
+        #[cfg(any(windows, target_os = "linux"))]
+        {
+            let helper = self.helper_path();
+            if fs::canonicalize(&helper).map_err(|error| error.to_string())?
+                != work.join(helper.file_name().unwrap())
+            {
+                return Err("Prepared application helper is out of bounds".into());
+            }
+            validate_portable_update_payload(&descriptor, &work)
+        }
+        #[cfg(target_os = "macos")]
+        validate_macos_update_payload(&descriptor, &work)
+    }
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+fn validated_update_work_dir(work_dir: &Path) -> Result<PathBuf, String> {
+    let work = fs::canonicalize(work_dir)
+        .map_err(|error| format!("Failed to read application update temporary directory: {error}"))?;
+    let temp = fs::canonicalize(env::temp_dir()).map_err(|error| error.to_string())?;
+    if !work.starts_with(temp)
+        || !work
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("EasyCLIProxyAPI-update-"))
+    {
+        return Err("Invalid application update working directory".into());
+    }
+    Ok(work)
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+fn validate_descriptor_location(path: &Path, work: &Path) -> Result<(), String> {
+    if fs::canonicalize(path).map_err(|error| error.to_string())?
+        != work.join("update-descriptor.json")
+    {
+        return Err("Application update descriptor path is out of bounds".into());
+    }
+    Ok(())
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -1675,7 +1877,9 @@ where
 {
     let state = app.state::<AppUpdateState>();
     let task = state.update_task(update);
-    let _ = app.emit(APP_UPDATE_PROGRESS_EVENT, task);
+    if !task.automatic {
+        let _ = app.emit(APP_UPDATE_PROGRESS_EVENT, task);
+    }
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -2145,6 +2349,16 @@ pub(crate) fn validate_portable_update_descriptor(
     descriptor_path: &Path,
     descriptor: &PortableUpdateDescriptor,
 ) -> Result<(), String> {
+    let work = validated_update_work_dir(&descriptor.work_dir)?;
+    validate_descriptor_location(descriptor_path, &work)?;
+    validate_portable_update_payload(descriptor, &work)
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn validate_portable_update_payload(
+    descriptor: &PortableUpdateDescriptor,
+    work: &Path,
+) -> Result<(), String> {
     if descriptor.parent_pid == 0
         || semver::Version::parse(descriptor.target_version.trim().trim_start_matches('v')).is_err()
     {
@@ -2179,28 +2393,8 @@ pub(crate) fn validate_portable_update_descriptor(
     {
         return Err("Invalid application update bundled kernel target path".to_string());
     }
-    let canonical_work_dir = fs::canonicalize(&descriptor.work_dir)
-        .map_err(|error| format!("Failed to read application update temporary directory: {error}"))?;
-    let canonical_temp_dir = fs::canonicalize(env::temp_dir())
-        .map_err(|error| format!("Failed to read system temporary directory: {error}"))?;
-    if !canonical_work_dir.starts_with(&canonical_temp_dir)
-        || !canonical_work_dir
-            .file_name()
-            .and_then(|value| value.to_str())
-            .is_some_and(|value| value.starts_with("EasyCLIProxyAPI-update-"))
-    {
-        return Err("Invalid application update working directory".to_string());
-    }
-    let canonical_descriptor = fs::canonicalize(descriptor_path)
-        .map_err(|error| format!("Failed to read application update descriptor path: {error}"))?;
-    if canonical_descriptor.parent() != Some(canonical_work_dir.as_path())
-        || canonical_descriptor
-            .file_name()
-            .and_then(|value| value.to_str())
-            != Some("update-descriptor.json")
-        || descriptor.ack_path != descriptor.work_dir.join("update-started.ack")
-    {
-        return Err("Application update descriptor path is out of bounds".to_string());
+    if descriptor.ack_path != descriptor.work_dir.join("update-started.ack") {
+        return Err("Application update acknowledgement path is out of bounds".into());
     }
     for staged in [
         &descriptor.staged_exe,
@@ -2210,7 +2404,7 @@ pub(crate) fn validate_portable_update_descriptor(
     ] {
         let canonical = fs::canonicalize(staged)
             .map_err(|error| format!("Failed to read application update staging file: {error}"))?;
-        if !canonical.starts_with(&canonical_work_dir) {
+        if !canonical.starts_with(work) {
             return Err("Application update staging path is out of bounds".to_string());
         }
     }
@@ -2863,6 +3057,13 @@ pub(crate) fn validate_macos_update_descriptor(
     descriptor_path: &Path,
     descriptor: &MacosUpdateDescriptor,
 ) -> Result<(), String> {
+    let work = validated_update_work_dir(&descriptor.work_dir)?;
+    validate_descriptor_location(descriptor_path, &work)?;
+    validate_macos_update_payload(descriptor, &work)
+}
+
+#[cfg(target_os = "macos")]
+fn validate_macos_update_payload(descriptor: &MacosUpdateDescriptor, work: &Path) -> Result<(), String> {
     if descriptor.parent_pid == 0
         || semver::Version::parse(descriptor.target_version.trim().trim_start_matches('v')).is_err()
         || !descriptor.current_app.is_absolute()
@@ -2890,33 +3091,14 @@ pub(crate) fn validate_macos_update_descriptor(
     {
         return Err("Invalid macOS application update target path".to_string());
     }
-    let canonical_work_dir = fs::canonicalize(&descriptor.work_dir)
-        .map_err(|error| format!("Failed to read application update temporary directory: {error}"))?;
-    let canonical_temp_dir = fs::canonicalize(env::temp_dir())
-        .map_err(|error| format!("Failed to read system temporary directory: {error}"))?;
-    if !canonical_work_dir.starts_with(&canonical_temp_dir)
-        || !canonical_work_dir
-            .file_name()
-            .and_then(|value| value.to_str())
-            .is_some_and(|value| value.starts_with("EasyCLIProxyAPI-update-"))
-    {
-        return Err("Invalid application update working directory".to_string());
-    }
-    let canonical_descriptor = fs::canonicalize(descriptor_path)
-        .map_err(|error| format!("Failed to read application update descriptor path: {error}"))?;
     let canonical_staged_app = fs::canonicalize(&descriptor.staged_app)
         .map_err(|error| format!("Failed to read new macOS application path: {error}"))?;
-    if canonical_descriptor.parent() != Some(canonical_work_dir.as_path())
-        || canonical_descriptor
-            .file_name()
-            .and_then(|value| value.to_str())
-            != Some("update-descriptor.json")
-        || descriptor.staged_app
+    if descriptor.staged_app
             != descriptor
                 .work_dir
                 .join("staging")
                 .join("EasyCLIProxyAPI.app")
-        || !canonical_staged_app.starts_with(&canonical_work_dir)
+        || !canonical_staged_app.starts_with(work)
         || descriptor.ack_path != descriptor.work_dir.join("update-started.ack")
     {
         return Err("macOS application update staging path is out of bounds".to_string());

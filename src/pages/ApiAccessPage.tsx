@@ -1906,6 +1906,7 @@ function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: Prov
   const checkedCount = resultValues.filter((result) => result.status !== 'checking').length;
   const healthyCount = resultValues.filter((result) => result.status === 'healthy').length;
   const failedCount = resultValues.filter((result) => result.status === 'failed').length;
+  const exhaustedCount = resultValues.filter((result) => result.status === 'budget-exhausted').length;
   const hasCheckingModel = resultValues.some((result) => result.status === 'checking');
 
   const saveResult = (result: ProviderModelHealthResult) => {
@@ -1942,6 +1943,7 @@ function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: Prov
   const statusLabel = (state: ProviderModelHealthState | undefined) => {
     if (!state) return t('apiAccess.health.notChecked');
     if (state.status === 'checking') return t('apiAccess.health.checking');
+    if (state.status === 'budget-exhausted') return t('apiAccess.health.budgetExhausted');
     return state.status === 'healthy'
       ? t('apiAccess.health.healthy')
       : t('apiAccess.health.failed');
@@ -1972,7 +1974,7 @@ function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: Prov
           total: models.length,
           healthy: healthyCount,
           failed: failedCount,
-        })}</span>
+        })}{exhaustedCount ? ` · ${t('apiAccess.health.budgetSummary', { count: exhaustedCount })}` : ''}</span>
         {modelError ? (
           <MessageNotice message={t('apiAccess.health.modelLoadFailed', { error: modelError })} onDismiss={() => setModelError('')} />
         ) : modelLoading ? (
@@ -2034,8 +2036,8 @@ function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: Prov
                 </label>
               ) : null}
               <span
-                className={`state-pill provider-health-pill provider-health-model-pill ${state?.status === 'checking' ? 'checking' : checked?.status === 'healthy' ? 'success' : checked?.status === 'failed' ? 'error' : ''}`}
-                title={latencyTitle}
+                className={`state-pill provider-health-pill provider-health-model-pill ${state?.status === 'checking' ? 'checking' : checked?.status === 'healthy' ? 'success' : checked?.status === 'failed' ? 'error' : checked?.status === 'budget-exhausted' ? 'warning' : ''}`}
+                title={checked?.status === 'budget-exhausted' ? t('apiAccess.health.budgetExhaustedDetail') : latencyTitle}
               >
                 {statusLabel(state)}
                 {latencyInline ? ` · ${latencyInline}` : ''}
@@ -2097,7 +2099,8 @@ export function ApiProviderDialog({
   const [modelLoading, setModelLoading] = useState(false);
   const [modelError, setModelError] = useState('');
   const [formError, setFormError] = useState('');
-  const [discoveredModels, setDiscoveredModels] = useState<ModelOption[]>([]);
+  // null means there has not been a successful listing for this connection.
+  const [discoveredModels, setDiscoveredModels] = useState<ModelOption[] | null>(null);
   const [modelDiscoveryOpen, setModelDiscoveryOpen] = useState(false);
   const [thinkingLevelInput, setThinkingLevelInput] = useState('');
   const [selectedModelNames, setSelectedModelNames] = useState<Set<string>>(
@@ -2115,10 +2118,20 @@ export function ApiProviderDialog({
 
   useEffect(() => () => { discoveryRequestRef.current += 1; }, []);
 
+  const invalidateModelDiscovery = () => {
+    discoveryRequestRef.current += 1;
+    setModelLoading(false);
+    setModelError('');
+    setDiscoveredModels(null);
+  };
+
   const modelOptions = useMemo(
-    () => mergeModelOptions(discoveredModels, draft.models),
+    () => mergeModelOptions(discoveredModels ?? [], draft.models),
     [discoveredModels, draft.models],
   );
+  const upstreamModelNames = useMemo(() => discoveredModels && new Set(
+    discoveredModels.map((model) => model.name.toLowerCase()),
+  ), [discoveredModels]);
 
   const configuredModels = useMemo(
     () => draft.models.filter((model) => model.name.trim()),
@@ -2137,10 +2150,8 @@ export function ApiProviderDialog({
     value: string,
   ) => {
     setFormError('');
-    if (field === 'apiKey' || field === 'baseUrl' || field === 'headersText') {
-      discoveryRequestRef.current += 1;
-      setModelLoading(false);
-      setModelError('');
+    if (field === 'apiKey' || field === 'baseUrl' || field === 'headersText' || field === 'proxyUrl') {
+      invalidateModelDiscovery();
     }
     setDraft((current) => ({
       ...current,
@@ -2238,10 +2249,10 @@ export function ApiProviderDialog({
         connection ? readString(connection, 'proxy-url') : draft.proxyUrl,
       );
       if (requestId !== discoveryRequestRef.current) return;
-      const models = applyProviderPreset(
+      const models = mergeModelOptions(applyProviderPreset(
         activeCategory,
         { ...draft, models: fetchedModels },
-      ).models;
+      ).models);
       const initialized = discoverySelectionInitializedRef.current;
       setDiscoveredModels(models);
       setSelectedModelNames((current) =>
@@ -2249,7 +2260,6 @@ export function ApiProviderDialog({
           ? reconcileModelSelection(models, draft.models, current, 'refresh')
           : modelSelectionForDiscovery(draft.models, models, draft.excludedModelsText ?? ''));
       discoverySelectionInitializedRef.current = true;
-      if (!models.length) setModelError(t('apiAccess.error.noAvailableModels'));
     } catch (requestError) {
       if (requestId === discoveryRequestRef.current) setModelError(requestErrorMessage(requestError));
     } finally {
@@ -2265,7 +2275,7 @@ export function ApiProviderDialog({
       return;
     }
     discoverySelectionInitializedRef.current = false;
-    setSelectedModelNames(modelSelectionForDiscovery(draft.models, discoveredModels, draft.excludedModelsText ?? ''));
+    setSelectedModelNames(modelSelectionForDiscovery(draft.models, discoveredModels ?? [], draft.excludedModelsText ?? ''));
     setModelDiscoveryOpen(true);
     void discoverModels();
   };
@@ -2288,11 +2298,13 @@ export function ApiProviderDialog({
     setDraft((current) => ({
       ...current,
       models: selectedModels.flatMap((selected) => {
-        const existing = current.models.filter((model) => model.name.toLowerCase() === selected.name.toLowerCase());
+        const existing = current.models.filter((model) => model.name.trim().toLowerCase() === selected.name.toLowerCase());
         return existing.length ? existing : [selected];
       }),
-      modelSelectionCatalog: activeSection === 'openai-compatibility' ? undefined : discoveredModels,
-      excludedModelsText: activeSection === 'openai-compatibility'
+      modelSelectionCatalog: activeSection === 'openai-compatibility'
+        ? undefined
+        : discoveredModels ?? current.modelSelectionCatalog,
+      excludedModelsText: activeSection === 'openai-compatibility' || discoveredModels === null
         ? current.excludedModelsText
         : exclusionsForModelSelection(
             current.excludedModelsText ?? '',
@@ -2371,7 +2383,8 @@ export function ApiProviderDialog({
           </button>
         </div> : null}
         {draft.groupKeys ? <ProviderGroupKeysEditor keys={draft.groupKeys} disabled={busy} onChange={(groupKeys) => {
-            discoveryRequestRef.current += 1; setModelLoading(false); setModelError(''); setFormError('');
+            invalidateModelDiscovery();
+            setFormError('');
             setDraft((current) => ({ ...current, groupKeys }));
           }} /> : null}
         </section>
@@ -2383,7 +2396,7 @@ export function ApiProviderDialog({
             </button>
           </div>
           {(draft.groupKeys?.length ?? 0) > 1 ? <label><span>{t('apiAccess.entries.discoveryKey')}</span><Select value={draft.groupKeys!.some((key) => key.id === discoveryKeyId) ? discoveryKeyId : draft.groupKeys![0].id}
-            onChange={(event) => { discoveryRequestRef.current += 1; setModelLoading(false); setDiscoveryKeyId(event.currentTarget.value); }}>
+            onChange={(event) => { invalidateModelDiscovery(); setDiscoveryKeyId(event.currentTarget.value); }}>
             {draft.groupKeys!.map((key, index) => <option value={key.id} key={key.id}>{t('apiAccess.entries.keyNumber', { number: index + 1 })} · {maskSecret(readString(key.value, 'api-key'))}</option>)}
           </Select></label> : null}
           <div className={`model-config-summary surface-dashed ${configuredModels.length || hasModelExclusions ? 'has-models' : ''}`}>
@@ -2553,7 +2566,7 @@ export function ApiProviderDialog({
           </div>
 
           <div className="model-transfer-summary">
-            <span role="status">{t('apiAccess.modelDialog.summary', { found: modelOptions.length, selected: selectedModels.length })}</span>
+            <span role="status">{t('apiAccess.modelDialog.summary', { found: upstreamModelNames?.size ?? 0, selected: selectedModels.length })}</span>
             <button type="button" className="secondary-button compact-button" onClick={() => void discoverModels()} disabled={modelLoading}>
               <RefreshCw size={15} className={modelLoading ? 'spin' : ''} />{t('common.refresh')}
             </button>
@@ -2561,11 +2574,13 @@ export function ApiProviderDialog({
 
           {modelError ? (
             <MessageNotice source="apiAccess.modelDialog.fetchFailed" message={modelError} onDismiss={() => setModelError('')} />
+          ) : !modelLoading && discoveredModels?.length === 0 ? (
+            <MessageNotice tone="info" message={{ key: 'apiAccess.error.noAvailableModels' }} />
           ) : null}
 
           <div className="model-transfer-panels">
-            <ModelSelectionPanel models={unselectedModels} selected={false} loading={modelLoading} onMove={moveModels} />
-            <ModelSelectionPanel models={selectedModels} selected loading={modelLoading} onMove={moveModels} />
+            <ModelSelectionPanel models={unselectedModels} selected={false} loading={modelLoading} upstreamModelNames={upstreamModelNames} onMove={moveModels} />
+            <ModelSelectionPanel models={selectedModels} selected loading={modelLoading} upstreamModelNames={upstreamModelNames} onMove={moveModels} />
           </div>
 
           <div className="model-discovery-actions model-transfer-actions">

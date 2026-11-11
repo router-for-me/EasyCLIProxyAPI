@@ -139,13 +139,21 @@ export const modelEndpointCandidates = (provider: ModelProvider, baseUrl: string
   return [/\/v1$/i.test(base) ? `${base}/models` : `${base}/v1/models`];
 };
 
-const normalizeModelList = (payload: unknown, preserveExistingAlias = false, preserveConfiguration = false): ModelOption[] => {
-  const parsed = typeof payload === 'string' ? (() => {
-    try { return JSON.parse(payload) as unknown; } catch { return payload; }
-  })() : payload;
-  const source = isRecord(parsed)
-    ? (Array.isArray(parsed.data) ? parsed.data : Array.isArray(parsed.models) ? parsed.models : Array.isArray(parsed.publisherModels) ? parsed.publisherModels : [])
-    : Array.isArray(parsed) ? parsed : [];
+const parseModelPayload = (payload: unknown): unknown => {
+  if (typeof payload !== 'string') return payload;
+  try { return JSON.parse(payload) as unknown; } catch { return null; }
+};
+
+const modelListFromPayload = (payload: unknown): unknown[] | null => {
+  if (Array.isArray(payload)) return payload;
+  if (!isRecord(payload)) return null;
+  for (const field of ['data', 'models', 'publisherModels']) {
+    if (Array.isArray(payload[field])) return payload[field];
+  }
+  return null;
+};
+
+const normalizeModelList = (source: unknown[], preserveExistingAlias = false, preserveConfiguration = false): ModelOption[] => {
   const seen = new Set<string>();
   return source.map((item): ModelOption | null => {
     const name = typeof item === 'string' ? item : isRecord(item) ? readString(item, 'id', 'name', 'model', 'value') : '';
@@ -174,7 +182,7 @@ export function modelsFromRecord(value: unknown, preserveConfiguration = false):
 }
 
 export function modelsFromDiscoveredPayload(payload: unknown): ModelOption[] {
-  return normalizeModelList(payload);
+  return normalizeModelList(modelListFromPayload(parseModelPayload(payload)) ?? []);
 }
 
 export async function fetchModels(
@@ -211,83 +219,65 @@ export async function fetchModels(
     headers.Authorization = 'Bearer $TOKEN$';
   }
 
-  let lastError = '';
+  const paginated = ['gemini', 'interactions', 'vertex'].includes(provider);
+  const listModels = async (url: string, authenticated: boolean): Promise<ModelOption[]> => {
+    const collected: ModelOption[] = [];
+    const seen = new Set<string>();
+    let pageToken = '';
+    for (let page = 0; page < (paginated ? 20 : 1); page += 1) {
+      const pageUrl = new URL(url);
+      if (pageToken) pageUrl.searchParams.set('pageToken', pageToken);
+      const response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
+        authIndex: authenticated ? authIndex?.trim() || undefined : undefined,
+        proxy_url: proxyUrl?.trim() || undefined,
+        method: 'GET',
+        url: pageUrl.toString(),
+        header: authenticated && Object.keys(headers).length ? headers : undefined,
+      }, { timeoutMs });
+      const status = Number(response.status_code ?? response.statusCode ?? 0);
+      if (!(status >= 200 && status < 300)) throw new Error(apiCallErrorMessage(response));
+
+      const payload = parseModelPayload(response.body ?? response.bodyText);
+      const source = modelListFromPayload(payload);
+      if (!source) throw new Error(modelText('model.error.noResponse'));
+      const models = normalizeModelList(source);
+      if (source.length > 0 && models.length === 0) {
+        throw new Error(modelText('model.error.noResponse'));
+      }
+      models.forEach((model) => {
+        const name = (paginated ? model.name.replace(/^(?:publishers\/google\/)?models\//i, '') : model.name).trim();
+        const dedupeKey = modelKey(name);
+        if (!name || seen.has(dedupeKey)) return;
+        seen.add(dedupeKey);
+        collected.push(
+          name === model.name
+            ? model
+            : { ...model, name, alias: model.alias === model.name ? undefined : model.alias },
+        );
+      });
+      pageToken = paginated && isRecord(payload) ? readString(payload, 'nextPageToken') : '';
+      // An empty but complete list is valid; a failed or truncated list is not.
+      if (!pageToken) return collected;
+    }
+    throw new Error(modelText('model.error.noResponse'));
+  };
+
+  let lastError: unknown;
   for (const url of candidates) {
     try {
-      const collected: ModelOption[] = [];
-      const seen = new Set<string>();
-      let pageToken = '';
-
-      for (let page = 0; page < (['gemini', 'interactions', 'vertex'].includes(provider) ? 20 : 1); page += 1) {
-        const pageUrl = new URL(url);
-        if (pageToken) pageUrl.searchParams.set('pageToken', pageToken);
-        const response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
-          authIndex: authIndex?.trim() || undefined,
-          proxy_url: proxyUrl?.trim() || undefined,
-          method: 'GET',
-          url: pageUrl.toString(),
-          header: Object.keys(headers).length ? headers : undefined,
-        }, { timeoutMs });
-        const status = Number(response.status_code ?? response.statusCode ?? 0);
-        if (status < 200 || status >= 300) {
-          lastError = apiCallErrorMessage(response);
-          break;
-        }
-
-        const payload = response.body ?? response.bodyText;
-        modelsFromDiscoveredPayload(payload).forEach((model) => {
-          const name = ['gemini', 'interactions', 'vertex'].includes(provider) ? model.name.replace(/^(?:publishers\/google\/)?models\//i, '') : model.name;
-          const dedupeKey = name.toLowerCase();
-          if (!name || seen.has(dedupeKey)) return;
-          seen.add(dedupeKey);
-          collected.push(
-            name === model.name
-              ? model
-              : { ...model, name, alias: model.alias === model.name ? undefined : model.alias },
-          );
-        });
-
-        const parsedPayload = typeof payload === 'string'
-          ? (() => {
-              try { return JSON.parse(payload) as unknown; } catch { return null; }
-            })()
-          : payload;
-        pageToken = isRecord(parsedPayload) ? readString(parsedPayload, 'nextPageToken') : '';
-        if (!pageToken) break;
-      }
-
-      if (collected.length) return collected;
-
-      if (provider === 'openai' && Object.keys(headers).length > 0) {
-        const response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
-          proxy_url: proxyUrl?.trim() || undefined,
-          method: 'GET',
-          url,
-        }, { timeoutMs });
-        const status = Number(response.status_code ?? response.statusCode ?? 0);
-        if (status >= 200 && status < 300) {
-          const models = modelsFromDiscoveredPayload(response.body ?? response.bodyText);
-          if (models.length) return models;
-        }
-      }
+      return await listModels(url, true);
     } catch (error) {
-      lastError = String(error);
+      lastError = error;
       if (provider === 'openai' && Object.keys(headers).length > 0) {
         try {
-          const response = await managementApi.post<Record<string, unknown>>('/requests/api-call', {
-            proxy_url: proxyUrl?.trim() || undefined,
-            method: 'GET',
-            url,
-          }, { timeoutMs });
-          const status = Number(response.status_code ?? response.statusCode ?? 0);
-          if (status >= 200 && status < 300) {
-            const models = modelsFromDiscoveredPayload(response.body ?? response.bodyText);
-            if (models.length) return models;
-          }
+          const models = await listModels(url, false);
+          // An empty public list cannot confirm omissions for a failed authenticated request.
+          if (models.length) return models;
         } catch {
+          // Report the error from the original request if the fallback also fails.
         }
       }
     }
   }
-  throw new Error(lastError || modelText('model.error.noResponse'));
+  throw lastError instanceof Error ? lastError : new Error(String(lastError ?? modelText('model.error.noResponse')));
 }

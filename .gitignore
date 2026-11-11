@@ -1,7 +1,7 @@
-node_modules/
+node_modules
 dist/
 src-tauri/gen/
-src-tauri/target/
+src-tauri/target
 bin-work/
 cpa-core/
 /portable-app.json

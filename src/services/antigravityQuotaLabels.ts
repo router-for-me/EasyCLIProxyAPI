@@ -33,9 +33,7 @@ export const antigravityGroupLabel = (label: string): string => {
 export const antigravityDescription = (label: string, description: string): string => {
   const match = description.trim().match(/^models within this group:\s*(.+)$/i);
   if (!match) return description;
+  if (normalize(label) === 'gemini models') return text('quota.service.antigravity.gemini');
   const models = match[1].split(',').map(model => model.trim()).filter(Boolean);
-  if (normalize(label) === 'gemini models' && !models.some(model => normalize(model) === 'gemini argon')) {
-    models.push('Gemini Argon');
-  }
   return text('quota.service.antigravity.models', { models: models.join(', ') });
 };

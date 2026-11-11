@@ -101,6 +101,20 @@ fn gui_field_edit_preserves_comments_and_unknown_configuration() {
 }
 
 #[test]
+fn app_update_channel_round_trips_through_gui_config_writes() {
+    let home = agent_test_home("app-version-channel");
+    let path = home.join("config.toml");
+    let mut config = GuiConfigFile::default();
+    for channel in ["stable", "preview", "preview-20261103-1929", "stable"] {
+        config.update_channel = channel.to_string();
+        write_gui_config_to_path(&config, &path).unwrap();
+        let loaded: GuiConfigFile = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(loaded.update_channel, channel);
+    }
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn software_write_hash_suppresses_only_the_matching_file_content() {
     let home = agent_test_home("write-hash");
     let path = home.join("config.toml");

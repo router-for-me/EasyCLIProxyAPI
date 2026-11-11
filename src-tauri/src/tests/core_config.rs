@@ -1247,8 +1247,7 @@ fn independent_network_modules_only_patch_their_own_fields() {
 #[test]
 fn core_config_controls_preserve_comments_and_unrelated_values() {
     let input = "# Client authentication\napi-keys:\n  - old-key\n\n# Plugin runtime\nplugins:\n  enabled: false # global switch\n  dir: plugins\n\n# Credential routing\nrouting:\n  strategy: round-robin # current strategy\n  session-affinity: true\n\ndebug: true # untouched\n";
-    let mut document = yaml_serde_edit::YamlValue::parse(input).unwrap();
-    let mut updated = document.get().clone();
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(input).unwrap();
 
     set_core_api_keys(
         &mut updated,
@@ -1262,9 +1261,8 @@ fn core_config_controls_preserve_comments_and_unrelated_values() {
         "fill-first".to_string(),
     )
     .unwrap();
-    document.set(updated);
-
-    let rendered = document.get_string();
+    let rendered = render_updated_core_yaml(input, updated).unwrap();
+    let document = serde_norway::from_str::<serde_norway::Value>(&rendered).unwrap();
     assert!(rendered.contains("# Client authentication"));
     assert!(rendered.contains("# Plugin runtime"));
     assert!(rendered.contains("# global switch"));
@@ -1272,12 +1270,106 @@ fn core_config_controls_preserve_comments_and_unrelated_values() {
     assert!(rendered.contains("# current strategy"));
     assert!(rendered.contains("debug: true # untouched"));
 
-    let settings = core_config_settings_from_value(document.get()).unwrap();
+    let settings = core_config_settings_from_value(&document).unwrap();
     assert_eq!(settings.api_keys, vec!["old-key", "new-key"]);
     assert!(settings.plugins_enabled);
     assert_eq!(settings.routing_strategy, "fill-first");
-    assert_eq!(document.get()["plugins"]["dir"], "plugins");
-    assert_eq!(document.get()["routing"]["session-affinity"], true);
+    assert_eq!(document["plugins"]["dir"], "plugins");
+    assert_eq!(document["routing"]["session-affinity"], true);
+}
+
+fn serialized_v8_yaml_with_multi_word_keys() -> String {
+    let flow_style = r#"config-version: 8
+oauth:
+  providers:
+    antigravity:
+      sensitive-words-replace: {"first: key": "val 1", "second key": "val 2", "third key": "val 3"}
+      antigravity-credits: true
+api-keys:
+  codex:
+    - name: test-upstream
+      models: [{name: model-one}]
+      keys: [{api-key: upstream-test}]
+server:
+  port: 8317
+"#;
+    let document: serde_norway::Value = serde_norway::from_str(flow_style).unwrap();
+    let serialized = serde_norway::to_string(&document).unwrap();
+    assert!(serialized.contains("second key: val 2"));
+    assert!(serialized.contains("third key: val 3"));
+    serialized
+}
+
+#[test]
+fn render_updated_core_yaml_preserves_serialized_v8_multi_word_keys() {
+    let input = serialized_v8_yaml_with_multi_word_keys();
+    let mut expected: serde_norway::Value = serde_norway::from_str(&input).unwrap();
+    set_core_yaml_path_value(&mut expected, &["server", "port"], 9527.into()).unwrap();
+
+    let rendered = render_updated_core_yaml(&input, expected.clone()).unwrap();
+
+    assert_eq!(
+        serde_norway::from_str::<serde_norway::Value>(&rendered).unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn desktop_alias_sync_preserves_serialized_v8_multi_word_keys() {
+    let mut input =
+        management_v8_yaml_to_legacy_view(&serialized_v8_yaml_with_multi_word_keys()).unwrap();
+    assert!(input.contains("second key: val 2"));
+    let original: serde_norway::Value = serde_norway::from_str(&input).unwrap();
+    let alias = "claude-sonnet-5-cc";
+    let mut expected = original.clone();
+    expected["codex-api-key"][0]["models"].as_sequence_mut().unwrap().push(
+        serde_norway::from_str(&format!(
+            "name: model-one\nalias: {alias}\ndisplay-name: EasyCLIProxyAPI managed Claude Desktop mapping\n"
+        )).unwrap(),
+    );
+    for (alias, expected) in [(alias, expected), ("", original)] {
+        let mappings = ClaudeDesktopModelMappings {
+            desktop_models: Some(vec![ClaudeDesktopModelMapping {
+                model: "model-one".into(),
+                alias: alias.into(),
+                context_1m: false,
+            }]),
+            ..ClaudeDesktopModelMappings::all("model-one")
+        };
+        let rendered =
+            ensure_claude_desktop_model_aliases_with_oauth_definitions_and_routes_in_yaml(
+                &input,
+                &mappings,
+                &[],
+                &[],
+                [
+                    CLAUDE_DESKTOP_OPUS_MODEL_ID,
+                    CLAUDE_DESKTOP_SONNET_MODEL_ID,
+                    CLAUDE_DESKTOP_HAIKU_MODEL_ID,
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            serde_norway::from_str::<serde_norway::Value>(&rendered).unwrap(),
+            expected
+        );
+        input = rendered;
+    }
+}
+
+#[test]
+fn render_updated_core_yaml_rejects_lossy_edits() {
+    let input = "server: {port: 8317}\n";
+    let expected =
+        serde_norway::from_str("server: {port: 8317}\ncustom: !example value\n").unwrap();
+
+    let error = render_updated_core_yaml(input, expected).unwrap_err();
+
+    assert!(
+        error.contains("does not match the expected value"),
+        "{error}"
+    );
+    assert!(error.contains("write rejected"), "{error}");
 }
 
 #[test]
@@ -1884,6 +1976,7 @@ fn sensitive_words_patch_preserves_other_config_and_clears_each_provider_indepen
     let settings = normalize_core_sensitive_words_settings(CoreSensitiveWordsSettings {
         antigravity_sensitive_words: vec!["  Hermes  ".into(), "".into(), "Nous Research".into()],
         devin_sensitive_words: Vec::new(),
+        ..Default::default()
     });
     let patched = patch_core_sensitive_words_yaml(input, &settings)
         .unwrap()
@@ -1920,6 +2013,7 @@ fn sensitive_words_patch_adds_missing_sections_without_touching_unrelated_fields
     let settings = CoreSensitiveWordsSettings {
         antigravity_sensitive_words: vec!["proxy".into()],
         devin_sensitive_words: vec!["Claude Code".into()],
+        ..Default::default()
     };
     let patched = patch_core_sensitive_words_yaml(input, &settings)
         .unwrap()
@@ -1955,6 +2049,7 @@ fn sensitive_words_patch_adds_missing_sections_without_touching_unrelated_fields
     let only_devin = CoreSensitiveWordsSettings {
         antigravity_sensitive_words: Vec::new(),
         devin_sensitive_words: vec!["another phrase".into()],
+        ..Default::default()
     };
     let patched =
         patch_core_sensitive_words_yaml("antigravity:\n  sensitive-words:\ndevin:\n", &only_devin)
@@ -1985,6 +2080,57 @@ fn enabled_tls_requires_both_paths() {
     let disabled = normalize_core_tls_settings(disabled).unwrap();
     assert_eq!(disabled.cert, "server.crt");
     assert!(disabled.key.is_empty());
+}
+
+#[test]
+fn sensitive_words_replacements_round_trip_rename_clear_and_preserve_values() {
+    let input = "# preserve comment\nconfig-version: 8\noauth:\n  providers:\n    antigravity:\n      sensitive-words: [keep]\n      sensitive-words-replace: {Old: stale, Remove: unused}\n      signature-cache-enabled: true\n    devin:\n      sensitive-words-replace: {OldDevin: stale}\ncustom: {keep: true}\n";
+    let mut settings = core_sensitive_words_settings_from_value(
+        &serde_norway::from_str(input).unwrap(),
+    ).unwrap();
+    settings.antigravity_sensitive_words_replace = [
+        ("  New: target  ".into(), "  replacement\nnext line  ".into()),
+        ("Delete".into(), String::new()),
+        ("   ".into(), "ignored".into()),
+    ].into();
+    settings.devin_sensitive_words_replace.clear();
+    let settings = normalize_core_sensitive_words_settings(settings);
+    assert_eq!(settings.antigravity_sensitive_words_replace.len(), 2);
+    let patched = patch_core_sensitive_words_yaml(input, &settings).unwrap().unwrap();
+    let parsed: serde_norway::Value = serde_norway::from_str(&patched).unwrap();
+    assert!(patched.contains("# preserve comment"));
+    assert_eq!(parsed["custom"]["keep"], true);
+    assert_eq!(parsed["oauth"]["providers"]["antigravity"]["signature-cache-enabled"], true);
+    assert_eq!(core_sensitive_words_settings_from_value(&parsed).unwrap(), settings);
+    assert!(parsed["oauth"]["providers"]["antigravity"]["sensitive-words-replace"]["Old"].is_null());
+    assert!(patch_core_sensitive_words_yaml(&patched, &settings).unwrap().is_none());
+    let cleared = patch_core_sensitive_words_yaml(&patched, &CoreSensitiveWordsSettings::default()).unwrap().unwrap();
+    assert_eq!(core_sensitive_words_settings_from_value(&serde_norway::from_str(&cleared).unwrap()).unwrap(), CoreSensitiveWordsSettings::default());
+}
+
+#[test]
+fn sensitive_words_replacements_validate_and_support_missing_null_and_legacy_sections() {
+    let settings = CoreSensitiveWordsSettings {
+        antigravity_sensitive_words_replace: [("Codex".into(), String::new())].into(),
+        devin_sensitive_words_replace: [("Claude".into(), "Assistant".into())].into(),
+        ..Default::default()
+    };
+    for input in ["config-version: 8\n", "config-version: 8\noauth:\n  providers:\n    antigravity: null\n    devin:\n      sensitive-words-replace: null\n", "antigravity: null\ndevin:\n  sensitive-words-replace: null\n"] {
+        let patched = patch_core_sensitive_words_yaml(input, &settings).unwrap().unwrap();
+        assert_eq!(core_sensitive_words_settings_from_value(&serde_norway::from_str(&patched).unwrap()).unwrap(), settings);
+    }
+    for value in ["[]", "{target: 123}", "{123: replacement}", "{target: null}"] {
+        let input = format!("config-version: 8\noauth:\n  providers:\n    devin:\n      sensitive-words-replace: {value}\n");
+        assert!(core_sensitive_words_settings_from_value(&serde_norway::from_str(&input).unwrap()).is_err());
+    }
+    let input = "config-version: 8\nantigravity:\n  sensitive-words-replace: {Codex: Old}\noauth:\n  providers:\n    devin:\n      sensitive-words-replace: {Claude: Current}\n";
+    let parsed = serde_norway::from_str(input).unwrap();
+    let loaded = core_sensitive_words_settings_from_value(&parsed).unwrap();
+    assert_eq!(loaded.antigravity_sensitive_words_replace["Codex"], "Old");
+    assert_eq!(loaded.devin_sensitive_words_replace["Claude"], "Current");
+    let patched = patch_core_sensitive_words_yaml(input, &CoreSensitiveWordsSettings::default()).unwrap().unwrap();
+    let parsed: serde_norway::Value = serde_norway::from_str(&patched).unwrap();
+    assert!(parsed["antigravity"]["sensitive-words-replace"].as_mapping().unwrap().is_empty());
 }
 
 #[test]
@@ -2128,6 +2274,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
         transient_error_cooldown_seconds: 30,
         streaming_bootstrap_retries: 1,
         reverse_proxy: None,
+        auto_update: crate::auto_update::AutoUpdateSettings::default(),
     };
     let merged = merge_core_config_yaml(template, Some(current), &config).unwrap();
     let current_document = serde_norway::from_str::<serde_norway::Value>(current).unwrap();
@@ -2384,4 +2531,49 @@ fn explicitly_selected_auth_directory_is_not_moved_on_restart() {
     assert_eq!(restored.auth_dir, "oauth");
     assert!(selected.join("account.json").exists());
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn render_updated_core_yaml_tolerates_content_after_the_document() {
+    let content = "port: 8317\ncodex-api-key:\n  - name: provider\n    models: [deepseek-v4-flash, {name: deepseek-v4.1-flash, alias: deepseek-flash-fl}]\n[";
+    let document = "port: 8317\ncodex-api-key:\n  - name: provider\n    models: [deepseek-v4-flash, {name: deepseek-v4.1-flash, alias: deepseek-flash-fl}]\n";
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(document).unwrap();
+    remove_config_model_alias(
+        updated.as_mapping_mut().unwrap(),
+        "codex-api-key",
+        "deepseek-flash-fl",
+    )
+    .unwrap();
+    let rendered = render_updated_core_yaml(content, updated.clone()).unwrap();
+    let head = rendered.strip_suffix('[').expect("trailing text is preserved verbatim");
+    let saved = serde_norway::from_str::<serde_norway::Value>(head).unwrap();
+    assert_eq!(saved, updated);
+}
+
+#[test]
+fn render_updated_core_yaml_keeps_comments_and_indentation_of_stray_trailer() {
+    let trailer = "\n# keep me exactly\n  [draft, note]\n";
+    let content = format!("port: 8317\nopenai-compatibility:\n  - name: provider\n    models: [a, {{name: b, alias: old}}]\n{trailer}");
+    let document = content.strip_suffix(trailer).unwrap();
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(document).unwrap();
+    remove_config_model_alias(
+        updated.as_mapping_mut().unwrap(),
+        "openai-compatibility",
+        "old",
+    )
+    .unwrap();
+    let rendered = render_updated_core_yaml(&content, updated.clone()).unwrap();
+    assert!(rendered.ends_with(trailer), "{rendered:?}");
+    let saved = serde_norway::from_str::<serde_norway::Value>(
+        rendered.strip_suffix(trailer).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved, updated);
+}
+
+#[test]
+fn render_updated_core_yaml_does_not_swallow_stray_content_for_the_wrong_document() {
+    let content = "port: 8317\nmodels: [a\n";
+    let updated = serde_norway::from_str::<serde_norway::Value>("port: 8317\n").unwrap();
+    assert!(render_updated_core_yaml(content, updated).is_err());
 }

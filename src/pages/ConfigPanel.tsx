@@ -23,6 +23,8 @@ import {
   saveSessionRoutingSettings as saveSessionRoutingSettingsCommand,
   saveSoftwareSettings as saveSoftwareSettingsCommand,
 } from '../services/coreSettings';
+import { managementApi } from '../services/managementApi';
+import { selectedRemoteEndpoint } from '../services/remoteCpa';
 import type { CoreConfigSettings, CoreApiKey, SoftwareSettings, CloseBehavior, CoreTlsSettings } from '../services/coreSettings';
 import {
   getReverseProxyState,
@@ -156,6 +158,8 @@ type ReverseProxyFieldError = Partial<Record<'listenPort' | 'targetPort' | 'cert
 
 export function ConfigPanelPage() {
   const { t, locale } = useI18n();
+  const external = Boolean(selectedRemoteEndpoint());
+  const [serverLogs, setServerLogs] = useState<string[] | null>(null);
   const { askConfirmation, confirmationDialog } = useConfirmation();
   const { status: coreStatus, publishStatus, refreshStatus } = useCoreRuntime();
   const [settings, setSettings] = useState<CoreConfigSettings | null>(null);
@@ -446,7 +450,7 @@ export function ConfigPanelPage() {
   };
 
   useEffect(() => {
-    if (activeSubpage !== 'proxy' || proxyAction !== null || proxyInitialLoading) return;
+    if (external || activeSubpage !== 'proxy' || proxyAction !== null || proxyInitialLoading) return;
     let disposed = false;
     const stopPolling = pollWhileActive(() => {
       void getReverseProxyState().then(state => {
@@ -459,7 +463,7 @@ export function ConfigPanelPage() {
       disposed = true;
       stopPolling();
     };
-  }, [activeSubpage, proxyAction, proxyInitialLoading]);
+  }, [external, activeSubpage, proxyAction, proxyInitialLoading]);
 
   useEffect(() => {
     let disposed = false;
@@ -467,7 +471,7 @@ export function ConfigPanelPage() {
     void loadSettings();
     void loadSoftwareSettings();
     void loadTlsSettings();
-    void loadReverseProxy();
+    if (!external) void loadReverseProxy();
     void onConfigFilesChanged(() => {
       if (!disposed) {
         void loadSettings('preserve');
@@ -802,6 +806,7 @@ export function ConfigPanelPage() {
     setLoggingError('');
     try {
       const result = await saveCoreLoggingSettingsCommand({
+        expected: settings,
         settings: {
           debug: debugDraft,
           commercialMode: commercialModeDraft,
@@ -814,7 +819,7 @@ export function ConfigPanelPage() {
       });
       loggingDraftDirtyRef.current = false;
       applySettings(result, 'preserve');
-      if (commercialModeChanged && coreStatus?.running) {
+      if (commercialModeChanged && !selectedRemoteEndpoint() && coreStatus?.running) {
         const status = await restartCoreProcess();
         publishStatus(status);
         loggingFeedback.showNotice({ key: 'config.diagnostics.notice.savedAndRestarted' }, 'success');
@@ -835,7 +840,11 @@ export function ConfigPanelPage() {
     if (busyAction !== null) return;
     setBusyAction('open-logs');
     try {
-      await openCoreLogsDirectory();
+      if (external) {
+        const result = await managementApi.get<{ lines: string[] }>('/observability/logs', { limit: 200 });
+        if (!Array.isArray(result?.lines) || !result.lines.every(line => typeof line === 'string')) throw new Error(t('remote.error.invalidResponse'));
+        setServerLogs(result.lines);
+      } else await openCoreLogsDirectory();
     } catch (error) {
       loggingFeedback.showNotice({ key: 'config.diagnostics.error.openLogs', variables: { error: String(error) } }, 'error');
     } finally {
@@ -910,13 +919,14 @@ export function ConfigPanelPage() {
     setTlsSavedStatusVisible(false);
     try {
       const result = await saveCoreTlsSettings({
+        expected: tlsSettings,
         settings: { enabled: tlsEnabledDraft, cert, key },
       });
       setTlsSettings(result);
       setTlsEnabledDraft(result.enabled);
       setTlsCertDraft(result.cert);
       setTlsKeyDraft(result.key);
-      if (coreStatus?.running) {
+      if (!selectedRemoteEndpoint() && coreStatus?.running) {
         const status = await restartCoreProcess();
         publishStatus(status);
         tlsFeedback.showNotice({ key: 'config.tls.notice.savedAndRestarted' }, 'success');
@@ -934,7 +944,7 @@ export function ConfigPanelPage() {
   };
 
   const selectTlsFile = async (target: 'cert' | 'key') => {
-    if (tlsSettings === null || busyAction !== null || tlsFileSelecting !== null) return;
+    if (selectedRemoteEndpoint() || tlsSettings === null || busyAction !== null || tlsFileSelecting !== null) return;
     setTlsFileSelecting(target);
     setTlsError('');
     try {
@@ -967,7 +977,7 @@ export function ConfigPanelPage() {
     }
     await runMutation(
       'routing',
-      () => setCoreRoutingStrategy({ strategy }),
+      () => setCoreRoutingStrategy({ strategy, expected: { routingStrategy: settings?.routingStrategy } }),
       t('config.notice.routingUpdated'),
     );
   };
@@ -1001,8 +1011,9 @@ export function ConfigPanelPage() {
     setBusyAction('network');
     try {
       const result = await saveNetworkEndpointSettingsCommand({
+        expected: settings,
         settings: networkDraftDirtyRef.current.proxyUrl || networkDraftDirtyRef.current.proxyOverride
-          ? { host, port, proxyUrl, proxyOverride: proxyOverrideDraft }
+          ? { host, port, proxyUrl: selectedRemoteEndpoint() && !proxyOverrideDraft ? '' : proxyUrl, proxyOverride: proxyOverrideDraft }
           : { host, port },
       });
       clearDraftDirty('host');
@@ -1012,7 +1023,7 @@ export function ConfigPanelPage() {
       applySettings(result, 'preserve');
       setLoadError('');
 
-      if (networkChanged && coreStatus?.running) {
+      if (networkChanged && !selectedRemoteEndpoint() && coreStatus?.running) {
         try {
           const status = await restartCoreProcess();
           publishStatus(status);
@@ -1057,6 +1068,7 @@ export function ConfigPanelPage() {
     setBusyAction('retry');
     try {
       const result = await saveRetrySettingsCommand({
+        expected: settings,
         settings: {
           disableCooling: disableCoolingDraft,
           requestRetry,
@@ -1094,6 +1106,7 @@ export function ConfigPanelPage() {
     setBusyAction('routing');
     try {
       const result = await saveSessionRoutingSettingsCommand({
+        expected: settings,
         settings: {
           routingSessionAffinity: sessionAffinityDraft,
           routingSessionAffinityTtl,
@@ -1328,7 +1341,7 @@ export function ConfigPanelPage() {
   const activateConfigSubpage = (subpage: ConfigSubpage) => {
     setSettingsSearch('');
     setActiveSubpage(subpage);
-    if (subpage === 'requests') {
+    if (subpage === 'sensitiveWords') {
       setSensitiveWordsVisited(true);
     }
     if (subpage === 'aliases') setAliasesVisited(true);
@@ -1357,14 +1370,15 @@ export function ConfigPanelPage() {
     { category: 'diagnostics', target: 'config-native-logging', title: t('config.diagnostics.title'), context: '', keywords: [t('config.diagnostics.debug.title'), t('config.diagnostics.commercial.title'), t('config.diagnostics.fileLogging.title'), t('config.diagnostics.usage.title'), t('config.diagnostics.maxSize.title'), t('config.diagnostics.errorFiles.title'), t('config.diagnostics.redisRetention.title'), 'debug commercial-mode logging logs usage statistics redis retention 日志 调试 商业模式 用量 统计 留存 文件 容量'].join(' ') },
     { category: 'software', target: 'config-native-software', title: t('config.software.title'), context: '', keywords: [t('config.software.autostart'), t('config.software.startCoreOnLaunch'), t('config.software.silentStart'), t('config.software.closeBehavior'), t('config.software.defaultTerminal'), 'startup autostart silent tray close terminal 软件 自启动 启动 静默 托盘 关闭 终端'].join(' ') },
     { category: 'aliases', target: 'config-native-aliases', title: t('app.nav.thinkingAliases'), context: '', keywords: 'thinking reasoning speed aliases effort 思考 推理 速度 别名 模型' },
-    { category: 'requests', target: 'config-native-sensitive-words', title: t('config.sensitiveWords.title'), context: '', keywords: 'sensitive words filters antigravity devin 敏感词 内容 过滤' },
+    { category: 'sensitiveWords', target: 'config-native-sensitive-words', title: t('config.sensitiveWords.title'), context: t('config.sensitiveWords.replacements'), keywords: 'sensitive words replacements filters antigravity devin 敏感词 内容 过滤 替换' },
   ];
   const nativeCategoryDirty: Record<ConfigSubpage, boolean> = {
     general: nativeDirty.management || networkSettingsDirty || tlsSettingsDirty,
     proxy: proxyDirty,
     aliases: false,
     routing: sessionRoutingDirty || retrySettingsDirty,
-    requests: sensitiveWordsDirty,
+    requests: false,
+    sensitiveWords: sensitiveWordsDirty,
     diagnostics: loggingSettingsDirty,
     oauth: false,
     software: softwareSettingsDirty,
@@ -1715,7 +1729,7 @@ export function ConfigPanelPage() {
             </div>
 
           {settings && (hostDraft.trim() !== settings.host || portDraft !== String(settings.port)) ? (
-            <Notice tone="warn" icon={<AlertCircle size={16} />}>{st('restart')}</Notice>
+            <Notice tone="warn" icon={<AlertCircle size={16} />}>{st(external ? 'externalRestart' : 'restart')}</Notice>
           ) : null}
 
           <div className="config-settings-save-row"><button
@@ -1796,8 +1810,8 @@ export function ConfigPanelPage() {
                     <button
                       type="button"
                       className="secondary-button compact-button config-tls-browse-button"
-                      disabled={tlsControlsDisabled || tlsFileSelecting !== null}
-                      title={t('config.tls.selectCertTitle')}
+                      disabled={Boolean(selectedRemoteEndpoint()) || tlsControlsDisabled || tlsFileSelecting !== null}
+                      title={t(selectedRemoteEndpoint() ? 'remote.serverFilePath' : 'config.tls.selectCertTitle')}
                       onClick={() => void selectTlsFile('cert')}
                     >
                       <FolderOpen size={16} aria-hidden="true" />
@@ -1825,8 +1839,8 @@ export function ConfigPanelPage() {
                     <button
                       type="button"
                       className="secondary-button compact-button config-tls-browse-button"
-                      disabled={tlsControlsDisabled || tlsFileSelecting !== null}
-                      title={t('config.tls.selectKeyTitle')}
+                      disabled={Boolean(selectedRemoteEndpoint()) || tlsControlsDisabled || tlsFileSelecting !== null}
+                      title={t(selectedRemoteEndpoint() ? 'remote.serverFilePath' : 'config.tls.selectKeyTitle')}
                       onClick={() => void selectTlsFile('key')}
                     >
                       <FolderOpen size={16} aria-hidden="true" />
@@ -1844,7 +1858,7 @@ export function ConfigPanelPage() {
           </div>
 
           {tlsSettingsDirty ? (
-            <Notice tone="warn" icon={<AlertCircle size={16} />}>{st('restart')}</Notice>
+            <Notice tone="warn" icon={<AlertCircle size={16} />}>{st(external ? 'externalRestart' : 'restart')}</Notice>
           ) : null}
 
           <div className="config-settings-save-row"><button
@@ -1887,7 +1901,7 @@ export function ConfigPanelPage() {
             </div>
           </div>
 
-          {proxyInitialLoading ? (
+          {external ? <Notice tone="info">{st('externalUnsupported')}</Notice> : proxyInitialLoading ? (
             <div className="config-tls-content" aria-busy="true">
               <div className="config-key-row skeleton" aria-hidden="true">
                 <span />
@@ -2176,7 +2190,7 @@ export function ConfigPanelPage() {
             </div>
           )}
 
-          <div className="config-settings-save-row">
+          {!external && <div className="config-settings-save-row">
             <button
               type="button"
               className="secondary-button compact-button"
@@ -2194,7 +2208,7 @@ export function ConfigPanelPage() {
               <Check size={16} aria-hidden="true" />
               {proxyAction === 'save' ? t('common.saving') : t('common.save')}
             </button>
-          </div>
+          </div>}
         </section>
 <section id="config-native-routing" tabIndex={-1} hidden={searching || activeSubpage !== 'routing'}
             className="surface-card config-network-section"
@@ -2537,7 +2551,7 @@ export function ConfigPanelPage() {
           </div>
 
           {settings && commercialModeDraft !== settings.commercialMode ? (
-            <Notice tone="warn" icon={<AlertCircle size={16} />}>{st('restart')}</Notice>
+            <Notice tone="warn" icon={<AlertCircle size={16} />}>{st(external ? 'externalRestart' : 'restart')}</Notice>
           ) : null}
 
           <div className="config-diagnostics-footer">
@@ -2548,11 +2562,12 @@ export function ConfigPanelPage() {
               <button
                 type="button"
                 className="secondary-button compact-button"
-                disabled={diagnosticsControlsDisabled}
+                disabled={diagnosticsControlsDisabled || (external && !settings?.loggingToFile)}
+                title={external && !settings?.loggingToFile ? st('enableFileLogs') : undefined}
                 onClick={() => void handleOpenCoreLogsDirectory()}
               >
                 <FolderOpen size={16} aria-hidden="true" />
-                {t('config.diagnostics.openLogs')}
+                {external ? st('readLogs') : t('config.diagnostics.openLogs')}
               </button>
               <button
                 type="button"
@@ -2616,10 +2631,10 @@ export function ConfigPanelPage() {
                       <Power size={18} />
                     </span>
                     <div>
-                      <strong>{t('config.software.startCoreOnLaunch')}</strong>
+                      <strong>{t('config.software.startCoreOnLaunch')}</strong>{external && <small>{st('externalUnsupported')}</small>}
                     </div>
                   </div>
-                  <Switch title={t('config.software.startCoreOnLaunch')} aria-label={t('config.software.startCoreOnLaunch')} checked={softwareStartCoreDraft} disabled={softwareControlsDisabled} onChange={(event) => {
+                  <Switch title={t('config.software.startCoreOnLaunch')} aria-label={t('config.software.startCoreOnLaunch')} checked={softwareStartCoreDraft} disabled={external || softwareControlsDisabled} onChange={(event) => {
                         setSoftwareSavedStatusVisible(false);
                         setSoftwareStartCoreDraft(event.currentTarget.checked);
                       }} />
@@ -2716,10 +2731,13 @@ export function ConfigPanelPage() {
           </div>
           <div id="config-template-panel" hidden={searching || templateGroups.length === 0}><TemplateConfigSection groups={allSettingsTemplateGroups} visibleGroups={templateGroups.map(group => group.id)} onDirtyGroupsChange={setDirtyTemplateGroups} /></div>
           <div className="surface-card" id="config-native-aliases" tabIndex={-1} role="region" aria-label={t('app.nav.thinkingAliases')} hidden={searching || activeSubpage !== 'aliases'}>{aliasesVisited ? <ThinkingAliasesPage embedded /> : null}</div>
-          <div className="surface-card" id="config-native-sensitive-words" tabIndex={-1} role="region" aria-label={t('config.sensitiveWords.title')} hidden={searching || activeSubpage !== 'requests'}>{sensitiveWordsVisited ? <SensitiveWordsPage onDirtyChange={setSensitiveWordsDirty} /> : null}</div>
+          <div className="surface-card" id="config-native-sensitive-words" tabIndex={-1} role="region" aria-label={t('config.sensitiveWords.title')} hidden={searching || activeSubpage !== 'sensitiveWords'}>{sensitiveWordsVisited ? <SensitiveWordsPage active={!searching && activeSubpage === 'sensitiveWords'} onDirtyChange={setSensitiveWordsDirty} /> : null}</div>
         </div>
       </div>
 
+      {external && serverLogs !== null && <Dialog title={st('readLogs')} onClose={() => setServerLogs(null)}>
+        <pre style={{ maxHeight: '60vh', overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{serverLogs.join('\n') || st('emptyLogs')}</pre>
+      </Dialog>}
       {addDialogOpen ? (
         <Dialog
           as="form"

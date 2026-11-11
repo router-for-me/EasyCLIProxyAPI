@@ -1,4 +1,10 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke as nativeInvoke } from '@tauri-apps/api/core';
+import { remoteTargetRevision } from './remoteCpa';
+
+function invoke<Result>(command: string, args?: Record<string, unknown>): Promise<Result> {
+  const targetRevision = remoteTargetRevision();
+  return nativeInvoke(command, targetRevision === undefined ? args : { ...args, targetRevision });
+}
 
 export type ThinkingAliasEntry = {
   position: ModelAliasPosition;

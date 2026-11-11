@@ -12,6 +12,7 @@ export interface ZCodeModelConfig {
   reasoningLevels: string[];
   reasoningMap?: string;
   isManual: boolean;
+  systemPrompt: string;
 }
 
 export interface ZCodeCatalogEditorModel {
@@ -39,4 +40,4 @@ export const getZCodeModelCatalogEditor = (): Promise<ZCodeCatalogEditorSnapshot
 export const saveZCodeModelCatalogEditor = (
   request: ZCodeCatalogEditorSaveRequest
 ): Promise<ZCodeCatalogEditorSnapshot> =>
-  invoke<ZCodeCatalogEditorSnapshot>("save_zcode_model_catalog_editor", { request });
+  invoke<ZCodeCatalogEditorSnapshot>("save_zcode_model_catalog_editor", { request, preserveSystemPrompts: true });

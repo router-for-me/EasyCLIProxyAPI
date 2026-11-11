@@ -31,6 +31,7 @@ const ROUTING_KEYS: &[&str] = &[
     "chatgpt_base_url",
     "forced_login_method",
     "profile",
+    "cli_auth_credentials_store",
 ];
 
 #[derive(Default, Serialize, Deserialize)]
@@ -226,18 +227,20 @@ pub(crate) fn codex_native_oauth_enabled(home: &Path) -> Result<bool, String> {
     Ok(native_selected(&document, &state))
 }
 
-pub(crate) fn ensure_codex_cpa_mode(home: &Path) -> Result<(), String> {
-    if codex_native_oauth_enabled(home)? {
-        return Err("Click “Update Configuration” or “One-Click Setup” to restore the CPA configuration".into());
-    }
-    Ok(())
-}
-
 // Save only the settings changed by this switch. Other user edits survive both directions.
 fn routing_settings(document: &toml_edit::Document) -> toml_edit::Document {
     let mut saved = toml_edit::Document::new();
     for key in ROUTING_KEYS {
         restore_codex_table_item(saved.as_table_mut(), Some(document.as_table()), key);
+    }
+    if let Some(settings) = codex_selected_profile_settings(document) {
+        for (key, _) in settings.iter() {
+            restore_codex_table_item(saved.as_table_mut(), Some(document.as_table()), key);
+        }
+        if let Some(name) = document.get("profile").and_then(toml_edit::Item::as_str) {
+            ensure_toml_child_table(saved.as_table_mut(), "profiles")
+                .insert(name, document["profiles"][name].clone());
+        }
     }
     if let Some(openai) = document
         .get("model_providers")
@@ -262,23 +265,21 @@ fn remove_openai_override(document: &mut toml_edit::Document) {
     }
 }
 
+pub(crate) fn codex_has_oauth_tokens(tokens: Option<&serde_json::Value>) -> bool {
+    tokens.and_then(serde_json::Value::as_object).is_some_and(|tokens| {
+        ["access_token", "refresh_token"].iter().any(|key| {
+            tokens.get(*key).and_then(serde_json::Value::as_str)
+                .is_some_and(|token| !token.trim().is_empty())
+        })
+    })
+}
+
 fn oauth_auth(content: Option<&str>) -> Result<Option<String>, String> {
     let Some(content) = content else {
         return Ok(None);
     };
     let mut root = parse_agent_json_object(Some(content), "Codex auth.json")?;
-    let has_tokens = root
-        .get("tokens")
-        .and_then(serde_json::Value::as_object)
-        .is_some_and(|tokens| {
-            ["access_token", "refresh_token"].iter().any(|key| {
-                tokens
-                    .get(*key)
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|token| !token.trim().is_empty())
-            })
-        });
-    if !has_tokens {
+    if !codex_has_oauth_tokens(root.get("tokens")) {
         return Ok(None);
     }
     if root.get("auth_mode").and_then(serde_json::Value::as_str) == Some("chatgpt")
@@ -377,7 +378,7 @@ pub(crate) fn close_codex_configuration(home: &Path) -> Result<AgentConfigAction
     if let Some(original) = original {
         let saved = parse_codex_document(Some(original), "Codex saved settings")?;
         for key in ROUTING_KEYS {
-            if state.restore_full_routing || *key == "forced_login_method" {
+            if state.restore_full_routing || matches!(*key, "forced_login_method" | "profile" | "cli_auth_credentials_store") {
                 restore_codex_table_item(document.as_table_mut(), Some(saved.as_table()), key);
             }
         }
@@ -570,6 +571,18 @@ pub(crate) fn apply_codex_cpa_configuration(
     model: &str,
     options: AgentConfigurationOptions<'_>,
 ) -> Result<AgentConfigActionResult, String> {
+    let (before, after) = prepare_codex_cpa_configuration(home, port, api_key, model, options)?;
+    let paths = before.iter().map(|(path, _)| path.clone()).collect::<Vec<_>>();
+    commit_config("codex", &paths, &before, &after, "update", Some(model.to_string()))
+}
+
+pub(crate) fn prepare_codex_cpa_configuration(
+    home: &Path,
+    port: u16,
+    api_key: &str,
+    model: &str,
+    options: AgentConfigurationOptions<'_>,
+) -> Result<(Images, Images), String> {
     let (native_before, mut native_after) = prepare_native_oauth_switch(home, false)?;
     let mut state = parse_state(native_after[0].1.as_deref())?;
     let current_document =
@@ -586,14 +599,24 @@ pub(crate) fn apply_codex_cpa_configuration(
         );
         state.original_settings = Some(routing_settings(&current_document).to_string());
         state.original_auth = auth.map(str::to_string);
+    } else if state.original_settings.is_none() {
+        let mut saved = if codex_selected_profile_settings(&current_document).is_some() {
+            routing_settings(&current_document)
+        } else {
+            toml_edit::Document::new()
+        };
+        for key in ["profile", "cli_auth_credentials_store"] {
+            restore_codex_table_item(saved.as_table_mut(), Some(current_document.as_table()), key);
+        }
+        if !saved.as_table().is_empty() {
+            state.original_settings = Some(saved.to_string());
+        }
     }
     if let Some(auth) = oauth_auth(auth)? {
         state.native_auth = Some(auth);
     } else if !auth_uses_api_key(auth)? {
         state.native_auth = None;
     }
-    native_after[0].1 =
-        Some(serde_json::to_vec_pretty(&state).map_err(|_| "Failed to save Codex switch record")?);
     let config_paths = config_paths("codex", home)?;
     let current = config_images(&config_paths)?;
     for image in &current {
@@ -607,14 +630,10 @@ pub(crate) fn apply_codex_cpa_configuration(
     let mut restored_config = native_after[2].clone();
     let mut restored_document =
         parse_codex_document(text(restored_config.1.as_deref())?, "Codex CPA configuration")?;
-    if restored_document.contains_key("forced_login_method") {
-        restored_document["forced_login_method"] =
-            toml_edit::value(if options.oauth_configuration {
-                "chatgpt"
-            } else {
-                "api"
-            });
-    }
+    restore_cpa_provider_identity(&mut restored_document, &mut state)?;
+    state.enabled = false;
+    native_after[0].1 =
+        Some(serde_json::to_vec_pretty(&state).map_err(|_| "Failed to save Codex switch record")?);
     restored_config.1 = Some(restored_document.to_string().into_bytes());
     let mut baseline = current.clone();
     baseline
@@ -649,18 +668,7 @@ pub(crate) fn apply_codex_cpa_configuration(
         before.push(current[index].clone());
         after.push(updated[index].clone());
     }
-    let paths = before
-        .iter()
-        .map(|(path, _)| path.clone())
-        .collect::<Vec<_>>();
-    commit_config(
-        "codex",
-        &paths,
-        &before,
-        &after,
-        "update",
-        Some(model.to_string()),
-    )
+    Ok((before, after))
 }
 
 #[tauri::command]

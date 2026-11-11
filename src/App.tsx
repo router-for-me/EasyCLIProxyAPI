@@ -61,14 +61,17 @@ import {
   type PluginNavOverride,
 } from './services/pluginNavigation';
 import { languageOptions, useI18n } from './i18n';
-import { getUpdateChannel, setUpdateChannel } from './services/appUpdates';
+import type { AppVersionSeries } from './services/appUpdates';
 import { AppUpdateDialog, AppUpdateProvider, useAppUpdate } from './appUpdate';
 import { appUpdateIndicatorState } from './appUpdateModel';
+import { forgetUpdatedPlugins, pluginUpdateIndicatorState } from './pluginUpdateModel';
 import { canOpenAppPage, requestAppNavigation } from './navigation';
 import { useThemePreference } from './theme';
 import { usePrivacyMode } from './privacy';
 import { Dialog } from './components/Dialog';
 import { EmptyState } from './components/EmptyState';
+import { CpaConnectionDialog, CpaWorkspaceTarget } from './pages/RemoteCpaPage';
+import { getCpaConnection, type CpaConnection } from './services/remoteCpa';
 
 const QQ_CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
 const DISCORD_SERVER_URL = 'https://discord.gg/PxvX4D9kgs';
@@ -132,7 +135,7 @@ const pages = [
     id: 'versions',
     labelKey: 'app.nav.versions',
     icon: PackageOpen,
-    component: VersionManagementPageWrapper,
+    component: VersionManagementPage,
   },
   {
     id: 'plugins',
@@ -161,50 +164,54 @@ function HomePage() {
   return <KernelPage view="home" />;
 }
 
-function VersionManagementPageWrapper() {
-  return <VersionManagementPage />;
-}
+function App({ initialConnection }: { initialConnection?: CpaConnection }) {
+  const { t } = useI18n();
+  const [connection, setConnection] = useState(initialConnection);
+  const [connectionDraft, setConnectionDraft] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (initialConnection) return;
+    let cancelled = false;
+    void getCpaConnection().then(next => { if (!cancelled) setConnection(next); })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [attempt, initialConnection]);
+  const openConnection = (endpoint = '') => setConnectionDraft(endpoint);
+  const closeConnection = () => setConnectionDraft(null);
 
-function App() {
   return (
-    <AppUpdateProvider>
-      <CoreRuntimeProvider>
-        <CoreUpdateProvider>
-          <WindowFrame><AppContent /></WindowFrame>
-        </CoreUpdateProvider>
-      </CoreRuntimeProvider>
-    </AppUpdateProvider>
+    <WindowFrame>
+      {!connection ? (
+        <main className="cpa-remote-workspace">
+          <p role={failed ? 'alert' : 'status'}>{t(failed ? 'remote.error.unknown' : 'remote.loading')}</p>
+          {failed ? <button type="button" className="secondary-button" onClick={() => { setFailed(false); setAttempt(value => value + 1); }}>{t('remote.retry')}</button> : null}
+        </main>
+      ) : (
+        <AppUpdateProvider enabled={!connection.remoteActive}>
+          <CoreRuntimeProvider targetRevision={connection.remoteActive ? connection.revision : undefined}>
+            <CoreUpdateProvider enabled={!connection.remoteActive}>
+              <CpaWorkspaceTarget connection={connection} openConnection={openConnection} onChange={setConnection}>
+                {switcher => <AppContent connection={connection} switcher={switcher} />}
+              </CpaWorkspaceTarget>
+            </CoreUpdateProvider>
+          </CoreRuntimeProvider>
+        </AppUpdateProvider>
+      )}
+      {connection && !connection.remoteActive ? <LocalWindowClose /> : null}
+      {connection && connectionDraft !== null ? (
+        <CpaConnectionDialog initialEndpoint={connectionDraft} connection={connection} close={closeConnection} onChange={setConnection} />
+      ) : null}
+    </WindowFrame>
   );
 }
 
-function AppContent() {
+function AppContent({ connection, switcher }: { connection: CpaConnection; switcher: React.ReactNode }) {
+  const remote = connection.remoteActive;
   const { locale, setLocale, t } = useI18n();
-  const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing, check: appUpdateCheck } = useAppUpdate();
-  const logoTapRef = useRef<{ count: number; timer: number | null }>({ count: 0, timer: null });
-  const handleLogoTap = useCallback(() => {
-    const tap = logoTapRef.current;
-    tap.count += 1;
-    if (tap.timer !== null) window.clearTimeout(tap.timer);
-    tap.timer = window.setTimeout(() => {
-      tap.count = 0;
-      tap.timer = null;
-    }, 3000);
-    if (tap.count >= 5) {
-      tap.count = 0;
-      if (tap.timer !== null) {
-        window.clearTimeout(tap.timer);
-        tap.timer = null;
-      }
-      void (async () => {
-        const current = await getUpdateChannel().catch(() => 'stable');
-        const next = current === 'preview' ? 'stable' : 'preview';
-        const applied = await setUpdateChannel(next as 'stable' | 'preview').catch(() => null);
-        if (applied && typeof appUpdateCheck === 'function') {
-          await appUpdateCheck();
-        }
-      })();
-    }
-  }, [appUpdateCheck]);
+  const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing } = useAppUpdate();
+  const [appVersionDisplay, setAppVersionDisplay] = useState<AppVersionSeries>('stable');
+  const logoLabel = t(appVersionDisplay === 'stable' ? 'appUpdate.logoShowPreview' : 'appUpdate.logoShowStable');
   const { latest: coreLatest, hasUpdate: coreHasUpdate } = useCoreUpdate();
   const [active, setActive] = useState<AppPageId>('home');
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -216,13 +223,12 @@ function AppContent() {
   const [theme, setTheme] = useThemePreference();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [privacyMode, setPrivacyMode] = usePrivacyMode();
-  const [windowsClosePrompt, setWindowsClosePrompt] = useState<WindowsClosePrompt | null>(null);
   const languageMenuRef = useRef<HTMLDivElement>(null);
   const languageButtonRef = useRef<HTMLButtonElement>(null);
   const { status } = useCoreRuntime();
-  const coreReady = Boolean(status?.ready);
+  const coreReady = remote || Boolean(status?.ready);
   const [navElement, setNavElement] = useState<HTMLElement | null>(null);
-  const { entries: pluginEntries, fetched: pluginEntriesFetched } = usePluginNavEntries(coreReady);
+  const { entries: pluginEntries, plugins: installedPluginList, fetched: pluginEntriesFetched, pluginUpdates } = usePluginNavEntries(coreReady, remote ? connection.revision : undefined);
   const pluginEntry = findPluginNavEntry(pluginEntries, active);
   const navPages = pages.filter((page) => page.id !== 'easy');
   const { layout: autoPluginLayout, compact: navCompact } = usePluginNavLayout(navElement, navPages.length, pluginEntries.length);
@@ -261,7 +267,7 @@ function AppContent() {
     if (!canOpenAppPage(active, coreReady)) {
       setActive('home');
     }
-  }, [active, coreReady]);
+  }, [active, coreReady, remote]);
 
   useEffect(() => {
     if (status !== null && !status.ready) void closePluginWebview().catch(() => undefined);
@@ -293,50 +299,6 @@ function AppContent() {
     };
   }, [languageMenuOpen]);
 
-  useEffect(() => {
-    let disposed = false;
-    let stopListening: (() => void) | undefined;
-
-    const handleWindowsCloseRequest = async () => {
-      try {
-        const settings = await getGuiSettings();
-        if (settings.closeBehavior !== 'ask') {
-          await resolveWindowsCloseRequest(settings.closeBehavior, false);
-          return;
-        }
-      } catch (error) {
-        console.error('Failed to read close behavior settings', error);
-      }
-
-      setWindowsClosePrompt((current) =>
-        current ?? {
-          resolvingAction: null,
-          rememberChoice: false,
-          error: null,
-        },
-      );
-    };
-
-    void onWindowsCloseRequested(() => {
-      void handleWindowsCloseRequest();
-    })
-      .then((stop) => {
-        if (disposed) {
-          stop();
-        } else {
-          stopListening = stop;
-        }
-      })
-      .catch((error) => {
-        console.error('Failed to listen for Windows close confirmation events', error);
-      });
-
-    return () => {
-      disposed = true;
-      stopListening?.();
-    };
-  }, []);
-
   const handleLanguageListKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
     const options = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]'));
@@ -359,7 +321,7 @@ function AppContent() {
     }
     if (pageId !== active) requestAppNavigation(() => setActive(pageId));
     else if (isPluginRoute(pageId)) setPluginReload((value) => value + 1);
-  }, [active, coreReady]);
+  }, [active, coreReady, remote]);
 
   useEffect(() => {
     const handleNavigate = (event: Event) => {
@@ -382,52 +344,23 @@ function AppContent() {
     }
   };
 
-  const resolveWindowsCloseRequest = async (
-    action: WindowsCloseAction,
-    remember = windowsClosePrompt?.rememberChoice ?? false,
-  ) => {
-    setWindowsClosePrompt((current) =>
-      current
-        ? {
-            ...current,
-            resolvingAction: action,
-            error: null,
-          }
-        : current,
-    );
-
-    try {
-      await resolveWindowsCloseRequestCommand({ action, remember });
-      setWindowsClosePrompt(null);
-    } catch (error) {
-      setWindowsClosePrompt((current) =>
-        current
-          ? {
-              ...current,
-              resolvingAction: null,
-              error: error instanceof Error ? error.message : String(error),
-            }
-          : {
-              resolvingAction: null,
-              rememberChoice: false,
-              error: error instanceof Error ? error.message : String(error),
-            },
-      );
-    }
-  };
-
   return (
     <>
       <div className={`app-shell${active === "easy" ? " app-shell-easy-mode" : ""}`}>
         {active !== "easy" ? (
           <aside className="sidebar">
             <div className="sidebar-brand" title={t('app.desktopConsole')}>
-              <img src={appLogo} alt="" className="brand-mark brand-logo" onClick={handleLogoTap} />
+              <button type="button" className="brand-logo-button" aria-label={logoLabel} title={logoLabel}
+                onClick={() => setAppVersionDisplay(current => current === 'stable' ? 'preview' : 'stable')}>
+                <img src={appLogo} alt="" className="brand-mark brand-logo" />
+              </button>
               <div className="sidebar-brand-text">
                 <strong>EasyCLIProxyAPI</strong>
                 <span>{t('app.desktopConsole')}</span>
               </div>
             </div>
+
+            {switcher}
 
             <nav
               ref={setNavElement}
@@ -443,7 +376,14 @@ function AppContent() {
                 const locked = !canOpenAppPage(page.id, coreReady);
                 const updateIndicator = page.id === 'versions'
                   ? appUpdateIndicatorState(hasUpdate, coreHasUpdate, appUpdateProcessing)
-                  : null;
+                  : page.id === 'plugins'
+                    ? pluginUpdateIndicatorState(pluginUpdates)
+                    : null;
+                const updateIndicatorLabel = page.id === 'plugins'
+                  ? Object.keys(pluginUpdates).length > 0
+                    ? `${t('plugins.updateAvailable')} (${Object.keys(pluginUpdates).length})`
+                    : ''
+                  : availableUpdateLabel;
                 const row = (
                   <button
                     key={page.id}
@@ -468,10 +408,10 @@ function AppContent() {
                         className={`nav-update-indicator ${updateIndicator}`}
                         title={updateIndicator === 'processing'
                           ? t('appUpdate.progressTitle')
-                          : availableUpdateLabel}
+                          : updateIndicatorLabel}
                         aria-label={updateIndicator === 'processing'
                           ? t('appUpdate.progressTitle')
-                          : availableUpdateLabel}
+                          : updateIndicatorLabel}
                       />
                     ) : null}
                   </button>
@@ -608,8 +548,8 @@ function AppContent() {
         ) : null}
 
         <div className="workspace" ref={workspaceRef}>
-          <main className="content">
-            {!canOpenAppPage(active, coreReady) ? (
+          <main className="content" key={`${connection.remoteActive}:${connection.revision}`}>
+            {connection.needsRepair ? <p role="alert">{t('remote.error.profileInvalid')}</p> : !canOpenAppPage(active, coreReady) ? (
               <CoreLockedPage />
             ) : pluginEntry ? (
               <PluginResourcePage key={pluginEntry.route} entry={pluginEntry} reloadToken={pluginReload} />
@@ -622,6 +562,14 @@ function AppContent() {
                   locale={locale}
                   setLocale={setLocale}
                 />
+              ) : active === 'versions' ? (
+                <VersionManagementPage displaySeries={appVersionDisplay} />
+              ) : ActivePage === PluginsPage ? (
+                <PluginsPage
+                  discoveredPlugins={installedPluginList}
+                  discoveredUpdates={pluginUpdates}
+                  onPluginUpdatesResolved={forgetUpdatedPlugins}
+                />
               ) : (
                 <ActivePage />
               )
@@ -630,6 +578,94 @@ function AppContent() {
         </div>
       </div>
 
+      <AppUpdateDialog />
+    </>
+  );
+}
+
+function LocalWindowClose() {
+  const { t } = useI18n();
+  const [windowsClosePrompt, setWindowsClosePrompt] = useState<WindowsClosePrompt | null>(null);
+  useEffect(() => {
+    let disposed = false;
+    let stopListening: (() => void) | undefined;
+
+    const handleWindowsCloseRequest = async () => {
+      try {
+        const settings = await getGuiSettings();
+        if (settings.closeBehavior !== 'ask') {
+          await resolveWindowsCloseRequest(settings.closeBehavior, false);
+          return;
+        }
+      } catch (error) {
+        console.error('Failed to read close behavior settings', error);
+      }
+
+      setWindowsClosePrompt((current) =>
+        current ?? {
+          resolvingAction: null,
+          rememberChoice: false,
+          error: null,
+        },
+      );
+    };
+
+    void onWindowsCloseRequested(() => {
+      void handleWindowsCloseRequest();
+    })
+      .then((stop) => {
+        if (disposed) {
+          stop();
+        } else {
+          stopListening = stop;
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to listen for Windows close confirmation events', error);
+      });
+
+    return () => {
+      disposed = true;
+      stopListening?.();
+    };
+  }, []);
+
+  const resolveWindowsCloseRequest = async (
+    action: WindowsCloseAction,
+    remember = windowsClosePrompt?.rememberChoice ?? false,
+  ) => {
+    setWindowsClosePrompt((current) =>
+      current
+        ? {
+            ...current,
+            resolvingAction: action,
+            error: null,
+          }
+        : current,
+    );
+
+    try {
+      await resolveWindowsCloseRequestCommand({ action, remember });
+      setWindowsClosePrompt(null);
+    } catch (error) {
+      setWindowsClosePrompt((current) =>
+        current
+          ? {
+              ...current,
+              resolvingAction: null,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          : {
+              resolvingAction: null,
+              rememberChoice: false,
+              error: error instanceof Error ? error.message : String(error),
+            },
+      );
+    }
+  };
+
+  return (
+    <>
       {windowsClosePrompt ? (
         <Dialog
           alert
@@ -697,8 +733,6 @@ function AppContent() {
           </div>
         </Dialog>
       ) : null}
-
-      <AppUpdateDialog />
     </>
   );
 }

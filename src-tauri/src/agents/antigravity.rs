@@ -191,7 +191,7 @@ pub(crate) fn inspect_antigravity_config(
     api_key: &str,
 ) -> Result<(bool, Option<String>), String> {
     let settings = parse(&paths[0], read_optional_text(&paths[0])?.as_deref())?;
-    let origin = managed_core_loopback_origin(port);
+    let origin = agent_effective_loopback_origin("antigravity-cli", port);
     let path = paths.get(1).ok_or("Antigravity CLI configuration path is missing")?;
     let connection = parse(path, read_optional_text(path)?.as_deref())?;
     let model = connection

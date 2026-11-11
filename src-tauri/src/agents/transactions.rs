@@ -842,7 +842,7 @@ fn preserve_model_extensions(client: &str, path: &Path, before: &Value, after: &
     fn merge_entry(client: &str, before: &Value, after: &mut Value) {
         let mut extensions = before.clone();
         let owned: &[&str] = match client {
-            "claude-desktop" => &["name", "labelOverride", "anthropicFamilyTier", "isFamilyDefault", "behavesAs", "contextWindow", "supports1m", "prefer1m"],
+            "claude-desktop" => &["name", "labelOverride", "anthropicFamilyTier", "isFamilyDefault", "contextWindow", "supports1m", "prefer1m"],
             "opencode" => &["name"],
             "openclaw" => &["id", "name", "alias"],
             "deepseek-harness" => &["id", "name", "contextWindow", "input", "maxTokens", "reasoningEfforts", "compat"],
@@ -864,6 +864,9 @@ fn preserve_model_extensions(client: &str, path: &Path, before: &Value, after: &
             _ => &[],
         };
         if let Some(object) = extensions.as_object_mut() {
+            if client == "claude-desktop" {
+                object.remove("behavesAs");
+            }
             if client == "codex" {
                 object.retain(|key, _| !codex_catalog::is_managed_model_field(key));
             }
@@ -1023,7 +1026,14 @@ fn validate_unmanaged_preserved(
         let mut value = value.clone();
         if client == "codex" && path.file_name().and_then(|v| v.to_str()) == Some("config.toml") {
             let rendered = render(path, &value)?;
-            if codex_uses_openai_proxy(&parse_codex_document(Some(&rendered), "Codex configuration")?) {
+            let document = parse_codex_document(Some(&rendered), "Codex configuration")?;
+            if let Some(settings) = codex_selected_profile_settings(&document) {
+                let settings = parse(path, Some(&settings.to_string()))?;
+                if let (Some(root), Some(selected)) = (value.as_object_mut(), settings.as_object()) {
+                    root.extend(selected.clone());
+                }
+            }
+            if codex_uses_openai_proxy(&document) {
                 if let Some(root) = value.as_object_mut() { root.remove("openai_base_url"); }
             }
         }

@@ -7,7 +7,7 @@ import { batchAddCredentialTag, batchRemoveCredentialTag, renameCredentialTag } 
 import { loadAuthFileSettings, saveAuthFileSettings } from '../src/services/authFileSettings';
 import {
   CREDENTIAL_TAGS_STORAGE_KEY, getCredentialTags, mergeCredentialTags,
-  resolveCredentialTags, setCredentialTags,
+  resolveCredentialTags, selectCredentialTagStore, setCredentialTags,
   parseCredentialTagInput, replaceCredentialTag,
 } from '../src/services/credentialTags';
 
@@ -26,11 +26,22 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  selectCredentialTagStore(null);
   if (storageDescriptor) Object.defineProperty(globalThis, 'localStorage', storageDescriptor);
   else Reflect.deleteProperty(globalThis, 'localStorage');
 });
 
 describe('credential tag persistence', () => {
+  it('isolates identical credential names across local and remote servers', () => {
+    setCredentialTags('one.json', ['local']);
+    selectCredentialTagStore('https://example.test/team-a/');
+    expect(getCredentialTags('one.json')).toEqual([]);
+    setCredentialTags('one.json', ['remote']);
+    selectCredentialTagStore('https://example.test/team-b/');
+    expect(getCredentialTags('one.json')).toEqual([]);
+    selectCredentialTagStore(null);
+    expect(getCredentialTags('one.json')).toEqual(['local']);
+  });
   it('normalizes and persists independent filename mappings, including special property names', () => {
     setCredentialTags('one.json', [' team ', 'team', '', 3, null, '日本語']);
     setCredentialTags('__proto__', ['special']);

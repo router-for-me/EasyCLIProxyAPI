@@ -159,10 +159,11 @@ async fn read_plugin_release(response: reqwest::Response) -> Result<String, Stri
 
 #[tauri::command]
 pub(crate) async fn get_plugin_support(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<bool, String> {
-    let config = gui_config_state.snapshot()?;
-    let response = request_plugins(&config).await?;
+    let response = crate::management_api::target_request(&remote, target_revision, &gui_config_state, reqwest::Method::GET, "plugins").await?.send().await.map_err(|error| error.to_string())?;
     read_plugin_support(response).await
 }
 

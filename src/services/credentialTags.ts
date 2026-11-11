@@ -1,4 +1,9 @@
 export const CREDENTIAL_TAGS_STORAGE_KEY = 'easy-cli-proxy-api.credential-tags';
+let storageKey = CREDENTIAL_TAGS_STORAGE_KEY;
+
+export function selectCredentialTagStore(endpoint: string | null) {
+  storageKey = endpoint ? `${CREDENTIAL_TAGS_STORAGE_KEY}:${endpoint}` : CREDENTIAL_TAGS_STORAGE_KEY;
+}
 
 export const normalizeAuthFileTags = (value: unknown): string[] =>
   Array.isArray(value)
@@ -13,7 +18,7 @@ export const replaceCredentialTag = (tags: unknown, source: string, target: stri
 
 const readTags = (): Map<string, string[]> => {
   try {
-    const payload: unknown = JSON.parse(localStorage.getItem(CREDENTIAL_TAGS_STORAGE_KEY) ?? '{}');
+    const payload: unknown = JSON.parse(localStorage.getItem(storageKey) ?? '{}');
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return new Map();
     return new Map(Object.entries(payload).flatMap(([name, tags]) =>
       Array.isArray(tags) ? [[name, normalizeAuthFileTags(tags)] as const] : []));
@@ -29,7 +34,7 @@ export const setCredentialTags = (name: string, tags: unknown): string[] => {
   if (typeof localStorage === 'undefined') return normalized;
   const stored = readTags();
   stored.set(name, normalized);
-  localStorage.setItem(CREDENTIAL_TAGS_STORAGE_KEY, JSON.stringify(Object.fromEntries(stored)));
+  localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(stored)));
   return normalized;
 };
 

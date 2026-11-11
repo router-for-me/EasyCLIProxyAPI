@@ -3,7 +3,8 @@ import { readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readAppVersion, validateAppVersion } from './version.mjs';
-import { validateReleaseNotes } from './release-notes.mjs';
+import { isPreviewVersion } from './release-matrix.mjs';
+import { resolveReleaseNotesHistory, validateReleaseNotes } from './release-notes.mjs';
 
 export function portableUpdateManifestName(platform) {
   const normalizedPlatform = String(platform).trim().toLowerCase();
@@ -34,6 +35,7 @@ export async function generatePortableUpdateManifest({
   version: requestedVersion,
   publishedAt = new Date().toISOString(),
   releaseNotes,
+  releaseNotesHistory,
 }) {
   const resolvedDirectory = resolve(directory ?? 'artifacts');
   const platformSpecs = {
@@ -80,8 +82,12 @@ export async function generatePortableUpdateManifest({
   }
   if (releaseNotes !== undefined) validateReleaseNotes(releaseNotes);
 
+  const isPreview = isPreviewChannel || isPreviewVersion(version);
+  if (isPreview && normalizedPlatform !== 'windows') {
+    throw new Error('Preview update manifests support Windows x64 only');
+  }
   const assets = {};
-  for (const arch of ['amd64', 'aarch64']) {
+  for (const arch of (isPreview ? ['amd64'] : ['amd64', 'aarch64'])) {
     const filename = `EasyCLIProxyAPI-${packageTag}-${platformSpec.display}-${arch}.${platformSpec.suffix}`;
     const path = join(resolvedDirectory, filename);
     const [contents, metadata] = await Promise.all([readFile(path), stat(path)]);
@@ -109,6 +115,7 @@ export async function generatePortableUpdateManifest({
     publishedAt,
     releaseUrl: `https://github.com/${resolvedRepository}/releases/tag/${tag}`,
     ...(releaseNotes === undefined ? {} : { releaseNotes }),
+    ...(releaseNotesHistory && Object.keys(releaseNotesHistory).length ? { releaseNotesHistory } : {}),
     assets,
   };
 
@@ -137,6 +144,9 @@ async function main() {
   const releaseNotes = args.has('--release-notes')
     ? JSON.parse(await readFile(resolve(args.get('--release-notes')), 'utf8'))
     : undefined;
+  const releaseNotesHistory = releaseNotes === undefined
+    ? undefined
+    : await resolveReleaseNotesHistory({ tag: args.get('--tag') });
   let manifest;
   for (const output of outputs) {
     manifest = await generatePortableUpdateManifest({
@@ -149,6 +159,7 @@ async function main() {
       version: args.get('--version'),
       publishedAt,
       releaseNotes,
+      releaseNotesHistory,
     });
   }
   console.log(

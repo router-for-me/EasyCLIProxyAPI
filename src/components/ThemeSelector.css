@@ -84,6 +84,12 @@
 .theme-selector-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .theme-selector-file-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-inline-start: auto; }
 .theme-selector-actions button { min-width: 0; }
+.theme-selector-import { position: relative; }
+.theme-selector-import-menu { position: absolute; inset-inline-start: 0; bottom: calc(100% + 6px); z-index: 20; display: grid; gap: 2px; min-width: max-content; padding: 4px; border: var(--border-width) solid var(--color-border-default); border-radius: var(--radius-md); background: var(--color-surface); box-shadow: var(--shadow-popover); }
+.theme-selector-import-option { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 6px 10px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--color-text-primary); font: inherit; font-size: var(--font-size-meta); white-space: nowrap; text-align: start; cursor: pointer; }
+.theme-selector-import-option:hover { background: var(--color-surface-hover); }
+.theme-selector-import-option:focus-visible { outline: 2px solid var(--ui-focus-ring); outline-offset: -2px; }
+.theme-selector-import-option > svg { flex: none; color: var(--color-text-secondary); }
 .theme-diy-guide { display: flex; flex-direction: column; gap: 16px; width: min(520px, 100%); max-height: calc(100dvh - 40px); padding: 24px; box-sizing: border-box; overflow: hidden; color: var(--color-text-primary); }
 .theme-diy-guide > .config-dialog-heading { flex: none; }
 .theme-diy-content { display: grid; gap: 16px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; line-height: 1.7; overflow-wrap: anywhere; }

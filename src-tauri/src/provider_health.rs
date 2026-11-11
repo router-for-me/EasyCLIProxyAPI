@@ -20,29 +20,30 @@ mod tests;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProviderHealthProbeRequest {
-    url: String,
-    header: HashMap<String, String>,
-    data: String,
-    protocol: String,
+    pub(crate) url: String,
+    pub(crate) header: HashMap<String, String>,
+    pub(crate) data: String,
+    pub(crate) protocol: String,
     #[serde(default)]
-    source_provider: Option<String>,
+    pub(crate) source_provider: Option<String>,
     #[serde(default)]
-    proxy_url: Option<String>,
-    timeout_ms: Option<u64>,
+    pub(crate) proxy_url: Option<String>,
+    pub(crate) timeout_ms: Option<u64>,
     #[serde(default)]
-    model: String,
+    pub(crate) model: String,
     #[serde(default)]
-    source: String,
+    pub(crate) source: String,
     #[serde(default)]
-    auth_index: String,
+    pub(crate) auth_index: String,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProviderHealthProbeResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
-    first_token_latency_ms: Option<u64>,
-    response_latency_ms: u64,
+    pub(crate) first_token_latency_ms: Option<u64>,
+    pub(crate) response_latency_ms: u64,
+    pub(crate) budget_exhausted: bool,
 }
 
 #[derive(Default)]
@@ -135,13 +136,19 @@ fn provider_health_json_has_text(protocol: &str, value: &serde_json::Value) -> b
                 })
             }),
         "interactions" => {
-            let event = value.get("event_type").or_else(|| value.get("type")).and_then(serde_json::Value::as_str);
-            (event == Some("content.delta")
-                && value.pointer("/delta/type").and_then(serde_json::Value::as_str) == Some("text")
+            let event = value
+                .get("event_type")
+                .or_else(|| value.get("type"))
+                .and_then(serde_json::Value::as_str);
+            (matches!(event, Some("step.delta" | "content.delta"))
+                && value
+                    .pointer("/delta/type")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("text")
                 && provider_health_value_has_text(value.pointer("/delta/text")))
-                || (event == Some("interaction.complete")
-                    && value.pointer("/interaction/status").and_then(serde_json::Value::as_str) == Some("completed")
-                    && provider_health_value_has_text(value.pointer("/interaction/outputs")))
+                || (provider_health_json_has_terminal_success(protocol, value)
+                    && (provider_health_value_has_text(value.pointer("/interaction/steps"))
+                        || provider_health_value_has_text(value.pointer("/interaction/outputs"))))
         }
         _ => false,
     }
@@ -163,13 +170,26 @@ pub(crate) fn provider_health_stream_has_text(protocol: &str, bytes: &[u8]) -> b
 
 fn provider_health_json_has_terminal_success(protocol: &str, value: &serde_json::Value) -> bool {
     if protocol == "interactions" {
-        let event = value.get("event_type").or_else(|| value.get("type")).and_then(serde_json::Value::as_str);
-        return event == Some("interaction.complete")
-            && value.pointer("/interaction/status").and_then(serde_json::Value::as_str) == Some("completed");
+        let event = value
+            .get("event_type")
+            .or_else(|| value.get("type"))
+            .and_then(serde_json::Value::as_str);
+        return matches!(
+            event,
+            Some("interaction.completed" | "interaction.complete")
+        ) && match value.pointer("/interaction/status") {
+            None => true,
+            Some(status) => matches!(status.as_str(), Some("completed" | "succeeded")),
+        };
+    }
+    false
+}
+
+fn provider_health_json_has_budget_exhausted(protocol: &str, value: &serde_json::Value) -> bool {
+    if value.get("error").is_some_and(|error| !error.is_null()) {
+        return false;
     }
     if protocol == "openai-chat" {
-        // CPA translates Gemini's exhausted thinking budget into OpenAI chunks.
-        // A confirmed reasoning-only generation is usable, but has no text TTFT.
         let exhausted_thinking_budget = value
             .get("choices")
             .and_then(serde_json::Value::as_array)
@@ -180,8 +200,8 @@ fn provider_health_json_has_terminal_success(protocol: &str, value: &serde_json:
         let thoughts = value.pointer("/usage/completion_tokens_details/reasoning_tokens")
             .and_then(serde_json::Value::as_u64).unwrap_or_default();
         let output = value.pointer("/usage/completion_tokens")
-            .and_then(serde_json::Value::as_u64).unwrap_or_default();
-        return exhausted_thinking_budget && thoughts > 0 && output >= thoughts;
+            .and_then(serde_json::Value::as_u64);
+        return exhausted_thinking_budget && thoughts > 0 && output.is_some();
     }
     if protocol != "gemini" {
         return false;
@@ -219,6 +239,33 @@ pub(crate) fn provider_health_stream_has_terminal_success(protocol: &str, bytes:
         serde_json::from_str::<serde_json::Value>(data)
             .ok()
             .is_some_and(|value| provider_health_json_has_terminal_success(protocol, &value))
+    })
+}
+
+pub(crate) fn provider_health_stream_has_budget_exhausted(protocol: &str, bytes: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(bytes);
+    text.lines().any(|line| {
+        let line = line.trim();
+        let data = line.strip_prefix("data:").map(str::trim).unwrap_or(line);
+        serde_json::from_str::<serde_json::Value>(data)
+            .ok()
+            .is_some_and(|value| provider_health_json_has_budget_exhausted(protocol, &value))
+    })
+}
+
+fn provider_health_stream_error(bytes: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(bytes);
+    text.lines().find_map(|line| {
+        let line = line.trim();
+        let data = line.strip_prefix("data:").map(str::trim).unwrap_or(line);
+        let value = serde_json::from_str::<serde_json::Value>(data).ok()?;
+        if value.get("error").is_some_and(|error| !error.is_null())
+            || value.get("type").and_then(serde_json::Value::as_str) == Some("error")
+        {
+            Some(format!("Upstream returned a health check error: {value}"))
+        } else {
+            None
+        }
     })
 }
 
@@ -327,10 +374,14 @@ pub(crate) fn provider_health_content_type_is_streaming(content_type: &str) -> b
 
 #[tauri::command]
 pub(crate) async fn get_core_models(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<Vec<CoreHealthModel>, String> {
+    remote.agent_operation(target_revision, None, async move {
     let config = gui_config_state.snapshot()?;
     fetch_core_models(config.port, effective_agent_api_key(&config)).await
+    }).await
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -385,12 +436,16 @@ fn parse_core_models(payload: &serde_json::Value) -> Result<Vec<CoreHealthModel>
 
 #[tauri::command]
 pub(crate) async fn core_health_probe(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     model: String,
     timeout_ms: Option<u64>,
 ) -> Result<ProviderHealthProbeResponse, String> {
+    remote.agent_operation(target_revision, None, async move {
     let config = gui_config_state.snapshot()?;
     probe_core_model(&config, &model, timeout_ms).await
+    }).await
 }
 
 async fn probe_core_model(
@@ -402,7 +457,7 @@ async fn probe_core_model(
     if config.port == 0 {
         return Err("Invalid kernel port".to_string());
     }
-    let tls_enabled = managed_core_tls_enabled();
+    let tls_enabled = crate::remote_cpa::AGENT_ORIGIN.try_with(|_| ()).is_err() && managed_core_tls_enabled();
     let client = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -421,7 +476,7 @@ async fn probe_core_model(
         data: serde_json::json!({
             "model": model,
             "messages": [{ "role": "user", "content": "Reply with OK." }],
-            "max_tokens": 16,
+            "max_tokens": 256,
             "stream": true,
         }).to_string(),
         protocol: "openai-chat".to_string(),
@@ -469,7 +524,7 @@ fn provider_health_proxy_url<'a>(url: &reqwest::Url, requested: Option<&'a str>,
     if proxy.eq_ignore_ascii_case("direct") { "" } else { proxy }
 }
 
-async fn execute_health_probe(
+pub(crate) async fn execute_health_probe(
     usage_app: Option<&tauri::AppHandle>,
     client: reqwest::Client,
     request: ProviderHealthProbeRequest,
@@ -545,6 +600,9 @@ async fn execute_health_probe(
             return Err("Health check did not receive the model's first token within the limit".to_string());
         }
         received.extend_from_slice(&chunk);
+        if let Some(error) = provider_health_stream_error(&received) {
+            return Err(error);
+        }
         let elapsed_ms = started_at.elapsed().as_millis().max(1) as u64;
         if provider_health_stream_has_text(&request.protocol, &received) {
             if let Some(app) = usage_app {
@@ -560,6 +618,7 @@ async fn execute_health_probe(
             return Ok(ProviderHealthProbeResponse {
                 first_token_latency_ms: Some(elapsed_ms),
                 response_latency_ms: elapsed_ms,
+                budget_exhausted: false,
             });
         }
         if provider_health_stream_has_terminal_success(&request.protocol, &received) {
@@ -569,8 +628,20 @@ async fn execute_health_probe(
             return Ok(ProviderHealthProbeResponse {
                 first_token_latency_ms: None,
                 response_latency_ms: elapsed_ms,
+                budget_exhausted: false,
             });
         }
+    }
+    if provider_health_stream_has_budget_exhausted(&request.protocol, &received) {
+        let elapsed_ms = started_at.elapsed().as_millis().max(1) as u64;
+        if let Some(app) = usage_app {
+            persist_provider_health_success(app, &request, &endpoint, elapsed_ms, None, &received);
+        }
+        return Ok(ProviderHealthProbeResponse {
+            first_token_latency_ms: None,
+            response_latency_ms: elapsed_ms,
+            budget_exhausted: true,
+        });
     }
     Err("Health check did not receive the model's first token".to_string())
 }

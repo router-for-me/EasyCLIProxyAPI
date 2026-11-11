@@ -378,6 +378,8 @@ const FIELD_GROUPS: &[(&str, &str, &str)] = &[
     ("oauth/providers/claude/header-defaults", "bool", "stabilize-device-profile"),
     ("oauth/providers/antigravity", "bool", "antigravity-credits signature-cache-enabled signature-bypass-strict"),
     ("oauth/providers/antigravity", "strings", "sensitive-words"),
+    ("oauth/providers/antigravity", "string", "tos-pause-window"),
+    ("oauth/providers/antigravity", "sensitive-patterns", "sensitive-patterns-replace"),
     ("oauth/providers/antigravity/connection-pool", "bool", "enabled"),
     ("oauth/providers/antigravity/connection-pool", "string", "idle-conn-timeout"),
     ("oauth/providers/antigravity/connection-pool", "uint", "max-idle-conns-per-host"),
@@ -550,6 +552,29 @@ fn validate_string(path: &[String], value: &str) -> bool {
     }
     let key = path.join("/");
     let leaf = path.last().map(String::as_str).unwrap_or_default();
+    if leaf == "tos-pause-window" {
+        // Same contract as the core: the disable spellings are case-insensitive,
+        // while a duration must parse exactly as typed. A zero or negative window
+        // is valid input that leaves the pause off, so it is not rejected here.
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return true;
+        }
+        if matches!(
+            trimmed.to_ascii_lowercase().as_str(),
+            "0" | "off" | "false" | "none" | "disabled"
+        ) {
+            return true;
+        }
+        // The core parses with time.ParseDuration, which rejects a value that
+        // overflows int64 nanoseconds; accept only what that parser would.
+        let nanos = match duration_nanos(trimmed) {
+            Some(nanos) => nanos,
+            None => return false,
+        };
+        let magnitude = (nanos as i128).abs();
+        return magnitude < i64::MAX as i128 || magnitude == 0;
+    }
     if leaf == "stream-bootstrap-timeout" {
         let normalized = value.trim().to_ascii_lowercase();
         if matches!(
@@ -724,7 +749,7 @@ fn validate_value(path: &[String], value: &Json, before: &Json) -> Result<(), St
         }
         Some("bool") if value.is_boolean() => {}
         Some("rebind-on") => {
-            if !matches!(value.as_str(), Some("any" | "quota")) {
+            if !matches!(value.as_str(), Some("any" | "quota" | "never")) {
                 return Err(error());
             }
         }
@@ -769,6 +794,32 @@ fn validate_value(path: &[String], value: &Json, before: &Json) -> Result<(), St
             }) => {}
         Some("image-mode")
             if value.is_boolean() || matches!(value.as_str(), Some("chat" | "passthrough")) => {}
+        Some("sensitive-patterns") => {
+            for rule in value.as_array().ok_or_else(error)? {
+                let object = rule.as_object().ok_or_else(error)?;
+                let pattern = object
+                    .get("pattern")
+                    .and_then(Json::as_str)
+                    .filter(|pattern| !pattern.trim().is_empty())
+                    .ok_or_else(error)?;
+                if pattern.chars().any(char::is_control) {
+                    return Err(error());
+                }
+                if object.get("replacement").is_some_and(|replacement| {
+                    replacement
+                        .as_str()
+                        .is_none_or(|text| text.chars().any(char::is_control))
+                }) {
+                    return Err(error());
+                }
+                if object
+                    .keys()
+                    .any(|key| !matches!(key.as_str(), "pattern" | "replacement"))
+                {
+                    return Err(error());
+                }
+            }
+        }
         Some("ice") => {
             for server in value.as_array().ok_or_else(error)? {
                 let object = server.as_object().ok_or_else(error)?;
@@ -893,7 +944,7 @@ fn render_patch(
     render_yaml_value_changes(&prepared, &before, updated)
 }
 
-fn prepare_patch(
+pub(crate) fn prepare_extended_patch(
     content: &str,
     changes: &[ExtendedConfigChange],
 ) -> Result<(String, ExtendedConfigResult), String> {
@@ -1151,7 +1202,7 @@ pub(crate) fn save_extended_core_config(
     let path = core_install_dir()?.join(CORE_CONFIG_FILE);
     let content = fs::read_to_string(&path)
         .map_err(|error| format!("Cannot read kernel configuration: {error}"))?;
-    let (updated, result) = prepare_patch(&content, &changes)?;
+    let (updated, result) = prepare_extended_patch(&content, &changes)?;
     let mut config_guard = gui_config_state
         .inner
         .lock()
@@ -1251,7 +1302,7 @@ mod tests {
         ] {
             for (value, remove) in [(json!(false), false), (json!(true), false), (json!("chat"), false), (json!("passthrough"), false), (Json::Null, true)] {
                 let edits = vec![change(initial, "multimedia/disable-image-generation", value.clone(), remove)];
-                let (saved, _) = prepare_patch(initial, &edits).unwrap();
+                let (saved, _) = prepare_extended_patch(initial, &edits).unwrap();
                 let mut config = GuiConfigFile::default();
                 assert!(record_image_generation_preference(&mut config, &edits));
                 assert!(!record_image_generation_preference(&mut config, &edits));
@@ -1333,7 +1384,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
             ),
             change(content, "management/allow-remote", json!(true), false),
         ];
-        let (rendered, result) = prepare_patch(content, &changes).unwrap();
+        let (rendered, result) = prepare_extended_patch(content, &changes).unwrap();
         assert!(rendered.contains("# keep heading"));
         assert!(rendered.contains("# preserve hint"));
         assert_eq!(
@@ -1353,10 +1404,10 @@ client: {codex: {optimize-multi-agent-v2: false}}
         let content = "config-version: 8\nplugins: {enabled: false}\n";
         let valid = change(content, "plugins/enabled", json!(true), false);
         let invalid = change(content, "server/port", json!(2), false);
-        assert!(prepare_patch(content, &[valid.clone(), invalid]).is_err());
+        assert!(prepare_extended_patch(content, &[valid.clone(), invalid]).is_err());
         let mut stale = valid.clone();
         stale.expected = json!(true);
-        assert!(prepare_patch(content, &[stale])
+        assert!(prepare_extended_patch(content, &[stale])
             .unwrap_err()
             .contains("changed externally"));
         for (path, value) in [
@@ -1367,11 +1418,11 @@ client: {codex: {optimize-multi-agent-v2: false}}
             ("oauth/model-alias/plugin-x", json!("bad")),
         ] {
             assert!(
-                prepare_patch(content, &[change(content, path, value, false)]).is_err(),
+                prepare_extended_patch(content, &[change(content, path, value, false)]).is_err(),
                 "{path}"
             );
         }
-        assert!(prepare_patch("bad: [yaml", &[valid]).is_err());
+        assert!(prepare_extended_patch("bad: [yaml", &[valid]).is_err());
     }
 
     #[test]
@@ -1384,19 +1435,19 @@ client: {codex: {optimize-multi-agent-v2: false}}
             false,
         );
         assert_eq!(
-            prepare_patch(content, &[good]).unwrap().1.config["credentials"]["concurrency"]
+            prepare_extended_patch(content, &[good]).unwrap().1.config["credentials"]["concurrency"]
                 ["lifecycle-config-revision"],
             7
         );
         let remove = change(content, "credentials/concurrency", Json::Null, true);
-        assert!(prepare_patch(content, &[remove]).is_err());
+        assert!(prepare_extended_patch(content, &[remove]).is_err());
         let bad = change(
             content,
             "credentials/concurrency",
             json!({"lifecycle-config-revision":8,"max-limit":20}),
             false,
         );
-        assert!(prepare_patch(content, &[bad]).is_err());
+        assert!(prepare_extended_patch(content, &[bad]).is_err());
     }
 
     #[test]
@@ -1408,7 +1459,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
             json!({"claude":{"header-defaults":{"user-agent":"new"}}}),
             false,
         );
-        let (rendered, result) = prepare_patch(content, &[change]).unwrap();
+        let (rendered, result) = prepare_extended_patch(content, &[change]).unwrap();
         let document: serde_norway::Value = serde_norway::from_str(&rendered).unwrap();
         assert_eq!(document["codex"]["optimize-multi-agent-v2"], true);
         assert!(document["codex"].get("response-steering").is_none());
@@ -1422,7 +1473,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
     #[test]
     fn extended_mixed_remove_does_not_resurrect_legacy_fallback() {
         let content = "config-version: 8\ncodex: {response-steering: true, live-media-relay: {enabled: true}}\noauth: {providers: {codex: {response-steering: false, live-media-relay: {enabled: false}}}}\n";
-        let (rendered, result) = prepare_patch(
+        let (rendered, result) = prepare_extended_patch(
             content,
             &[change(content, "oauth/providers/codex", Json::Null, true)],
         )
@@ -1436,7 +1487,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
         let original = "config-version: 8\nplugins: {configs: {example: {enabled: true}}}\n";
         let empty = change(original, "plugins/configs", json!({}), false);
         let disk = format!("{original}custom-extension: {{untouched: true}}\n");
-        let (_, result) = prepare_patch(&disk, &[empty]).unwrap();
+        let (_, result) = prepare_extended_patch(&disk, &[empty]).unwrap();
         assert_eq!(result.config["plugins"]["configs"], json!({}));
         assert_eq!(result.config["custom-extension"]["untouched"], true);
     }
@@ -1464,7 +1515,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
                 false,
             ),
         ];
-        let (_, result) = prepare_patch(content, &changes).unwrap();
+        let (_, result) = prepare_extended_patch(content, &changes).unwrap();
         assert_eq!(
             result.config["oauth"]["model-alias"]["plugin-example"][0]["fork"],
             false
@@ -1475,7 +1526,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
             json!({"max-sessions":2,"udp-port-min":10000,"udp-port-max":10002}),
             false,
         );
-        assert!(prepare_patch(content, &[bad]).is_err());
+        assert!(prepare_extended_patch(content, &[bad]).is_err());
     }
     #[test]
     fn extended_validates_network_duration_payload_and_alias_values() {
@@ -1532,10 +1583,11 @@ client: {codex: {optimize-multi-agent-v2: false}}
         ];
         for (path, value) in rejected {
             assert!(
-                prepare_patch(content, &[change(content, path, value, false)]).is_err(),
+                prepare_extended_patch(content, &[change(content, path, value, false)]).is_err(),
                 "{path}"
             );
         }
+
         let accepted = [
             ("observability/pprof/addr", json!("[::1]:8316")),
             (
@@ -1570,15 +1622,119 @@ client: {codex: {optimize-multi-agent-v2: false}}
             ),
         ];
         for (path, value) in accepted {
-            prepare_patch(content, &[change(content, path, value, false)])
+            prepare_extended_patch(content, &[change(content, path, value, false)])
                 .unwrap_or_else(|error| panic!("{path}: {error}"));
         }
     }
 
     #[test]
+    fn extended_tos_pause_window_accepts_durations_and_disable_spellings() {
+        let path = parts("oauth/providers/antigravity/tos-pause-window");
+        for value in ["", "0", "off", "OFF", "false", "none", "disabled", "6h", "30m", "1h30m"] {
+            assert!(validate_string(&path, value), "{value}");
+        }
+        for value in ["-1h", "0s", "0m", "1us", "1ns", "300ms", "+1h", "2562047h"] {
+            assert!(validate_string(&path, value), "{value}");
+        }
+        for value in [
+            "abc", "6x", "6H", "6S", "1d", "15", "6h 30m", "tomorrow", "1e300s",
+            "999999999999999h", "2562048h",
+        ] {
+            assert!(!validate_string(&path, value), "{value}");
+        }
+        let content = "config-version: 8\n";
+        let (_, result) = prepare_extended_patch(
+            content,
+            &[change(content, &path.join("/"), json!("6h"), false)],
+        )
+        .unwrap();
+        assert_eq!(result.config["oauth"]["providers"]["antigravity"]["tos-pause-window"], "6h");
+        assert!(
+            prepare_extended_patch(
+                content,
+                &[change(content, &path.join("/"), json!("abc"), false)]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn extended_sensitive_patterns_replace_requires_ordered_pattern_rules() {
+        let path = "oauth/providers/antigravity/sensitive-patterns-replace";
+        let content = "config-version: 8\n";
+        let rules = json!([
+            {"pattern": "(?m)^RFC 2119[^\\n]*\\n?", "replacement": ""},
+            {"pattern": "internal-only", "replacement": "Assistant"}
+        ]);
+        let (_, result) = prepare_extended_patch(content, &[change(content, path, rules, false)]).unwrap();
+        let saved = result.config["oauth"]["providers"]["antigravity"]["sensitive-patterns-replace"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(saved.len(), 2);
+        assert_eq!(saved[0]["replacement"], "");
+        assert_eq!(saved[1]["replacement"], "Assistant");
+        for rejected in [
+            json!("not-a-list"),
+            json!([{"replacement": "x"}]),
+            json!([{"pattern": "   "}]),
+            json!([{"pattern": "bad\u{0007}"}]),
+            json!([{"pattern": "ok", "replacement": 1}]),
+            json!([{"pattern": "ok", "unexpected": true}]),
+        ] {
+            assert!(
+                prepare_extended_patch(content, &[change(content, path, rejected.clone(), false)]).is_err(),
+                "{rejected}"
+            );
+        }
+        assert!(
+            prepare_extended_patch(
+                content,
+                &[change(
+                    content,
+                    &format!("{path}/0/pattern"),
+                    json!("only-pattern"),
+                    false
+                )]
+            )
+            .is_err(),
+            "rules are stored as whole ordered lists, not per-row leaves"
+        );
+    }
+
+    #[test]
+    fn extended_session_affinity_rebind_accepts_never() {
+        let content = "config-version: 8\n";
+        for value in ["any", "quota", "never"] {
+            prepare_extended_patch(
+                content,
+                &[change(
+                    content,
+                    "routing/session-affinity-rebind-on",
+                    json!(value),
+                    false,
+                )],
+            )
+            .unwrap_or_else(|error| panic!("{value}: {error}"));
+        }
+        assert!(
+            prepare_extended_patch(
+                content,
+                &[change(
+                    content,
+                    "routing/session-affinity-rebind-on",
+                    json!("sometimes"),
+                    false
+                )]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn extended_deleting_empty_native_object_removes_hidden_legacy_fallback() {
         let content = "config-version: 8\ncodex: {response-steering: true, optimize-multi-agent-v2: true}\noauth: {providers: {codex: {}}}\n";
-        let (_, result) = prepare_patch(
+        let (_, result) = prepare_extended_patch(
             content,
             &[change(content, "oauth/providers/codex", Json::Null, true)],
         )
@@ -1593,7 +1749,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
     #[test]
     fn extended_auth_directory_edit_marks_restart_and_removes_legacy_value() {
         let content = "config-version: 8\nauth-dir: old\noauth: {auth-dir: current}\n";
-        let (rendered, result) = prepare_patch(
+        let (rendered, result) = prepare_extended_patch(
             content,
             &[change(
                 content,
@@ -1612,7 +1768,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
     #[test]
     fn extended_github_token_is_writable_in_native_and_legacy_layouts() {
         let native = "config-version: 8\nserver: {port: 8317}\n";
-        let (rendered, result) = prepare_patch(
+        let (rendered, result) = prepare_extended_patch(
             native,
             &[change(
                 native,
@@ -1629,7 +1785,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
 
         let configured =
             "config-version: 8\nserver: {github-token: kept-secret}\nplugins: {enabled: false}\n";
-        let (rendered, _) = prepare_patch(
+        let (rendered, _) = prepare_extended_patch(
             configured,
             &[change(configured, "plugins/enabled", json!(true), false)],
         )
@@ -1640,7 +1796,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
         let legacy = "port: 8317\ngithub-token: old-secret\n";
         let view = extended_config_view(&serde_norway::from_str(legacy).unwrap()).unwrap();
         assert_eq!(view["server"]["github-token"], "old-secret");
-        let (rendered, _) = prepare_patch(
+        let (rendered, _) = prepare_extended_patch(
             legacy,
             &[change(
                 legacy,
@@ -1654,7 +1810,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
         assert_eq!(document["github-token"], "new-secret");
         assert!(document.get("server").is_none());
 
-        let (rendered, _) = prepare_patch(
+        let (rendered, _) = prepare_extended_patch(
             legacy,
             &[change(legacy, "server/github-token", Json::Null, true)],
         )
@@ -1677,7 +1833,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
             ("server/github-token", json!("github-secret")),
         ] {
             let (_, result) =
-                prepare_patch(content, &[change(content, path, value, false)]).unwrap();
+                prepare_extended_patch(content, &[change(content, path, value, false)]).unwrap();
             assert!(!result.restart_required, "{path} supports live updates");
         }
         for (path, value) in [
@@ -1685,11 +1841,11 @@ client: {codex: {optimize-multi-agent-v2: false}}
             ("oauth/auth-dir", json!("~/selected-oauth")),
         ] {
             let (_, result) =
-                prepare_patch(content, &[change(content, path, value, false)]).unwrap();
+                prepare_extended_patch(content, &[change(content, path, value, false)]).unwrap();
             assert!(result.restart_required, "{path} requires a restart");
         }
         let unchanged = "config-version: 8\nmanagement: {allow-remote: false}\n";
-        let (_, result) = prepare_patch(
+        let (_, result) = prepare_extended_patch(
             unchanged,
             &[change(
                 unchanged,

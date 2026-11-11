@@ -270,6 +270,7 @@ pub(crate) fn managed_core_tls_enabled() -> bool {
 }
 
 pub(crate) fn managed_core_loopback_origin(port: u16) -> String {
+    if let Ok(origin) = crate::remote_cpa::AGENT_ORIGIN.try_with(Clone::clone) { return origin; }
     #[cfg(test)]
     {
         core_loopback_origin(port, false)
@@ -1883,14 +1884,14 @@ pub(crate) fn restore_window_position_for_monitor(
     saved_position: tauri::PhysicalPosition<i32>,
     window_size: tauri::PhysicalSize<u32>,
     work_area: &tauri::PhysicalRect<i32, u32>,
-    scale_factor: f64,
+    _scale_factor: f64,
 ) -> (tauri::PhysicalPosition<i32>, tauri::Position) {
     let fitted_physical = fit_window_position_to_work_area(saved_position, window_size, work_area);
     #[cfg(target_os = "macos")]
-    let target_position = if scale_factor.is_finite() && scale_factor > 0.0 {
+    let target_position = if _scale_factor.is_finite() && _scale_factor > 0.0 {
         tauri::Position::Logical(tauri::LogicalPosition::new(
-            f64::from(fitted_physical.x) / scale_factor,
-            f64::from(fitted_physical.y) / scale_factor,
+            f64::from(fitted_physical.x) / _scale_factor,
+            f64::from(fitted_physical.y) / _scale_factor,
         ))
     } else {
         tauri::Position::Physical(fitted_physical)
@@ -2156,6 +2157,14 @@ pub(crate) fn sanitize_gui_config_at(
 ) -> Result<bool, String> {
     let mut changed = false;
     let normalized_locale = normalize_app_locale(&config.locale);
+    if let Some(disarmed) = config.auto_update.without_unreachable_target() {
+        // Narrow the record to the part that is coherent rather than rewriting
+        // the whole section. The loader persists this sanitized config, so a
+        // wholesale reset would silently turn the feature off after a
+        // half-finished hand edit and leave nothing to explain the change.
+        config.auto_update = disarmed;
+        changed = true;
+    }
     if config.locale != normalized_locale {
         config.locale = normalized_locale.to_string();
         changed = true;
@@ -2304,6 +2313,7 @@ pub(crate) fn write_gui_config_to_path(
         .and_then(|content| content.parse::<Document>().ok())
         .unwrap_or_default();
     let root = document.as_table_mut();
+    crate::auto_update::write_settings(root, &config.auto_update)?;
     if config.usage_statistics_disabled == Some(true) {
         set_codex_table_item(root, "usage_statistics_disabled", value(true));
     } else {
@@ -2355,6 +2365,7 @@ pub(crate) fn write_gui_config_to_path(
         ("proxy-url", value(config.proxy_url.as_str())),
         ("proxy-override", value(config.proxy_override)),
         ("download-source", value(config.download_source.as_str())),
+        ("update-channel", value(config.update_channel.as_str())),
         (
             "prefer-gitcode-downloads",
             value(config.prefer_gitcode_downloads),
@@ -2530,6 +2541,7 @@ pub(crate) fn validate_gui_config(config: &GuiConfigFile) -> Result<(), String> 
         validate_strong_management_secret_key(&config.management_secret_key)?;
     }
     validate_routing_strategy(config.routing_strategy.trim())?;
+    config.auto_update.validate()?;
     if config.proxy_override {
         network_proxy::normalize_optional_proxy_url(&config.proxy_url)?;
     } else if config.proxy_url.chars().any(char::is_control) {

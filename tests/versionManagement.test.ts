@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'bun:test';
+import { translate } from '../src/i18n';
+import { createBrowserMockRuntime } from '../src/mocks/browserMockRuntime';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import {
@@ -9,7 +11,9 @@ import {
   displayAppVersion,
   getAppReleaseUrl,
   resolveAppDownloadUrl,
+  selectAppVersionComparison,
 } from '../src/pages/VersionManagementPage';
+import type { AppUpdateInfo } from '../src/services/appUpdates';
 import { coreUpdateAvailable } from '../src/coreUpdate';
 import { appUpdateIndicatorState } from '../src/appUpdateModel';
 import { createVersionManagementVisitTracker } from '../src/services/versionManagementVisits';
@@ -67,7 +71,7 @@ describe('VersionManagement update triggers', () => {
   };
 
   for (const name of ['checkAppUpdate', 'checkLatest']) {
-    it(`calls ${name} only from the visit effect and its manual check button`, () => {
+    it(`calls ${name} only from its effect and its manual check button`, () => {
       const calls = findCalls(name);
       expect(calls).toHaveLength(2);
       const triggers = calls.map((call) => {
@@ -195,5 +199,65 @@ describe('VersionManagement helper functions', () => {
     expect(coreUpdateAvailable('1.0.0', '1.01.0')).toBe(false);
     expect(coreUpdateAvailable('1.0', '1.0.1')).toBe(false);
     expect(coreUpdateAvailable('1.0.0.0', '1.0.1')).toBe(false);
+  });
+});
+
+
+describe('VersionManagement app version series', () => {
+  it('switches stable → preview → stable without reusing another series or pinned result', () => {
+    const baselines = { stable: '1.2.10', preview: '20261103-1929', installedSeries: 'stable' as const };
+    const stable = { updateChannel: 'stable', currentVersion: baselines.stable, latestVersion: '1.2.11' } as AppUpdateInfo;
+    const preview = { updateChannel: 'preview', currentVersion: baselines.preview, latestVersion: '0.3.6-preview.20261104-1120' } as AppUpdateInfo;
+    expect(selectAppVersionComparison('stable', baselines, stable)).toEqual({ preview: false, installed: true, current: baselines.stable, comparison: stable });
+    expect(selectAppVersionComparison('preview', baselines, stable)).toEqual({ preview: true, installed: false, current: baselines.preview, comparison: null });
+    expect(selectAppVersionComparison('preview', baselines, preview)).toEqual({ preview: true, installed: false, current: baselines.preview, comparison: preview });
+    expect(selectAppVersionComparison('preview-20261103-1929', baselines, preview)).toEqual({ preview: true, installed: false, current: baselines.preview, comparison: null });
+    expect(selectAppVersionComparison('stable', baselines, preview)).toEqual({ preview: false, installed: true, current: baselines.stable, comparison: null });
+    expect(selectAppVersionComparison('stable', baselines, stable)).toEqual({ preview: false, installed: true, current: baselines.stable, comparison: stable });
+  });
+
+  it('keeps unknown local baselines absent even when the latest version is known', () => {
+    const stable = { updateChannel: 'stable', currentVersion: null, latestVersion: '1.2.11' } as AppUpdateInfo;
+    expect(selectAppVersionComparison('stable', { stable: null, preview: '20261103-1929', installedSeries: 'preview' }, stable).current).toBeNull();
+    expect(selectAppVersionComparison('stable', { stable: '1.2.9', preview: null, installedSeries: null }, stable).current).toBeNull();
+  });
+});
+
+
+describe('VersionManagement logo display', () => {
+  it('uses the same two version labels and has no in-card mode, channel or preview picker', () => {
+    const source = readFileSync(new URL('../src/pages/VersionManagementPage.tsx', import.meta.url), 'utf8');
+    const card = source.slice(source.indexOf('app-module-card surface-panel'), source.indexOf('core-module-card surface-panel'));
+    expect(card.match(/className="version-metric-label"/g)).toHaveLength(2);
+    expect(card).toContain("t('appUpdate.current')");
+    expect(card).toContain("t('appUpdate.latest')");
+    expect(card).not.toMatch(/SelectMenu|ModeControl|PreviewVersionPicker|channelHint|Switch channel|version-metric-sub|localReference/);
+    expect(translate('zh-CN', 'appUpdate.current')).toBe('当前版本');
+    expect(translate('zh-CN', 'appUpdate.latest')).toBe('最新版本');
+    const shell = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+    expect(shell).toMatch(/<button type="button" className="brand-logo-button" aria-label=\{logoLabel\}[\s\S]*?setAppVersionDisplay[\s\S]*?<img src=\{appLogo\}/);
+    expect(shell).toContain('<VersionManagementPage displaySeries={appVersionDisplay}');
+    expect(shell).not.toMatch(/setUpdateChannel|handleLogoTap/);
+  });
+
+  it('reads Stable → Preview → Stable without mutating any saved channel or the manual update task', async () => {
+    const runtime = createBrowserMockRuntime('stopped');
+    await runtime.invoke('set_update_channel', { channel: 'preview-20261104-1623' });
+    const before = await runtime.invoke('get_app_update_task');
+    const saved = await runtime.invoke('get_update_channel');
+    const baselines = await runtime.invoke('get_app_version_baselines') as Parameters<typeof selectAppVersionComparison>[1];
+    let previous = null;
+    for (const series of ['stable', 'preview', 'stable'] as const) {
+      expect(selectAppVersionComparison(series, baselines, previous).comparison).toBeNull();
+      const result = await runtime.invoke('check_app_version_display', { series }) as AppUpdateInfo;
+      expect(result.updateChannel).toBe(series);
+      expect(result.currentVersion).toBe(baselines![series]);
+      expect(selectAppVersionComparison(series, baselines, result).comparison).toBe(result);
+      expect(resolveAppDownloadUrl(result, series)).toContain(series === 'preview' ? '/preview-' : '/v0.3.0/');
+      expect(await runtime.invoke('get_update_channel')).toBe(saved);
+      expect(await runtime.invoke('get_app_update_task')).toEqual(before);
+      previous = result;
+    }
+    await expect(runtime.invoke('check_app_version_display', { series: 'preview-20261104-1623' })).rejects.toThrow();
   });
 });

@@ -3004,6 +3004,12 @@
 .agent-save-feedback { display: grid; gap: 6px; min-width: 0; }
 .agent-save-bar .agent-save-feedback { flex: 1; }
 .agent-save-feedback small { color: var(--color-text-muted); font-size: var(--font-size-meta); line-height: var(--line-height-body); overflow-wrap: anywhere; }
+.agent-connect-block { min-width: 0; }
+.agent-connect-block-slot { flex: 1 1 100%; min-height: 0; }
+.agent-connect-block .notice-body { display: grid; gap: 2px; }
+.agent-connect-block-models { color: var(--color-text-muted); font-size: var(--font-size-meta); }
+.agent-connect-block-actions { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.agent-connect-block + .agent-management-sections { margin-top: 8px; }
 .agent-save-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-left: auto; min-width: 0; }
 .agent-save-actions button { min-width: 128px; }
 .agent-shared-feedback { min-width: 0; }

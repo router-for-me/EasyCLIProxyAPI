@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { localCpaConnection, useConnectionTarget } from '../src/services/remoteCpa';
 import { clientApiProfiles, webUiManagementUrl } from '../src/services/clientAccess';
 
 describe('客户端 API 接入信息', () => {
@@ -22,6 +23,13 @@ describe('客户端 API 接入信息', () => {
 
     expect(profiles[0].baseUrl).toBe('https://127.0.0.1:9527/v1');
     expect(profiles[1].baseUrl).toBe('https://127.0.0.1:9527');
+  });
+
+  it('preserves external proxy prefixes even when the remote server listens on loopback', () => {
+    try {
+      useConnectionTarget({ ...localCpaConnection, remoteActive: true, remoteSelected: true, endpoint: 'https://example.test/team/cpa/', revision: 1 });
+      expect(webUiManagementUrl(8317)).toBe('https://example.test/team/cpa/management.html#/login');
+    } finally { useConnectionTarget(localCpaConnection); }
   });
 
   it('使用当前内核端口生成 WebUI 登录地址', () => {

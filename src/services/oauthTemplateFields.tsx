@@ -40,6 +40,50 @@ export const iceServersShape: ConfigShape = { type: 'array', item: { type: 'obje
   credential: { ...textShape(T('TURN 密钥', 'TURN credential', 'TURN 認証情報')), secret: true },
 } } };
 
+const controlChars = /[\u0000-\u001f\u007f-\u009f]/;
+export const sensitivePatternsShape: ConfigShape = { type: 'array', item: { type: 'object', fields: {
+  pattern: { ...nonemptyText, label: T('正则表达式 (RE2)', 'Regular expression (RE2)', '正規表現 (RE2)'),
+    validate: value => typeof value === 'string' && Boolean(value.trim()) && !controlChars.test(value) ? null
+      : T('请输入不含控制字符的非空表达式', 'Enter a non-empty pattern without control characters', '制御文字を含まない、空でない式を入力してください') },
+  replacement: { ...textShape(T('替换文本', 'Replacement', '置換テキスト')),
+    validate: value => typeof value === 'string' && !controlChars.test(value) ? null
+      : T('替换文本不能包含控制字符', 'Replacement must not contain control characters', '置換テキストに制御文字は使用できません'),
+    hint: T('留空表示删除匹配内容。', 'Leave empty to delete matches.', '空欄にすると一致部分を削除します。') },
+} } };
+
+// Mirrors the core's duration parser: it accepts the ns/us/ms/s/m/h units in any
+// order with an optional sign, while a non-positive window simply means disabled.
+const tosPauseParts = /([+-]?)([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h)/g;
+const tosPauseScale: Record<string, number> = { ns: 1e-6, us: 1e-3, 'µs': 1e-3, 'μs': 1e-3, ms: 1, s: 1e3, m: 6e4, h: 3.6e6 };
+// The core stores durations as int64 nanoseconds, so a value past that bound is
+// not a duration it can represent; reject it here instead of saving a value the
+// core would silently read as "disabled".
+const tosPauseMaxMillis = Number(9223372036854775807n) / 1e6;
+const tosPauseMillis = (value: string): number | null => {
+  const body = value.replace(/^[+-]/, '');
+  if (!body) return null;
+  let end = 0;
+  let total = 0;
+  for (const part of body.matchAll(tosPauseParts)) {
+    if (part.index !== end) return null;
+    total += Number(part[2]) * tosPauseScale[part[3]];
+    if (!Number.isFinite(total) || total > tosPauseMaxMillis) return null;
+    end = part.index + part[0].length;
+  }
+  return end === body.length && end > 0 ? total : null;
+};
+const tosPauseValidate = (value: unknown): TemplateText | null => {
+  if (typeof value !== 'string') return T('请输入时长或留空关闭。', 'Enter a duration, or leave empty to disable.', '期間を入力するか、空欄で無効にします。');
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+  if (controlChars.test(trimmed)) return T('时长不能包含控制字符。', 'The duration must not contain control characters.', '期間に制御文字は使用できません。');
+  if (/^(?:0|off|false|none|disabled)$/i.test(trimmed)) return null;
+  // Any parseable duration is saved as typed: a zero or negative value simply
+  // means the pause stays off, so the UI must not reject what the core accepts.
+  return tosPauseMillis(trimmed) !== null ? null
+    : T('留空表示关闭；也可填 6h、30m、1us 等内核支持的时长，或 0 / off / false / none / disabled。', 'Leave empty to disable, or enter a core duration such as 6h, 30m or 1us, or 0 / off / false / none / disabled.', '空欄で無効。6h、30m、1us などコアが対応する期間、または 0 / off / false / none / disabled を入力してください。');
+};
+
 export const oauthTemplateGroups: TemplateConfigGroup[] = [
   { id: 'oauth-common', title: T('OAuth 通用设置', 'OAuth settings', 'OAuth 設定'), fields: [
     { path: ['oauth', 'auth-dir'], type: 'string', directory: true, restart: true, defaultValue: '~/.cli-proxy-api',
@@ -121,6 +165,11 @@ export const oauthTemplateGroups: TemplateConfigGroup[] = [
     flag('antigravity', 'connection-pool.enabled', T('启用 Antigravity 连接池', 'Enable Antigravity connection pooling', 'Antigravity 接続プールを有効化')),
     { ...text('antigravity', 'connection-pool.idle-conn-timeout', T('空闲连接超时（上限 210s）', 'Idle connection timeout (maximum 210s)', 'アイドル接続のタイムアウト（最大 210s）'), '30s'), validate: value => typeof value === 'string' && /^(?:\d+(?:\.\d+)?(?:ms|s|m))+$/.test(value) ? null : T('请输入有效时长', 'Enter a valid duration', '有効な時間を入力してください') },
     number('antigravity', 'connection-pool.max-idle-conns-per-host', T('每个主机的最大空闲连接', 'Maximum idle connections per host', 'ホストごとの最大アイドル接続数'), 2),
+    { ...text('antigravity', 'tos-pause-window', T('TOS 保护暂停时长', 'Protective TOS pause window', 'TOS 保護一時停止の期間'), '6h'),
+      validate: tosPauseValidate,
+      description: T('内核 8.0.72 起支持；默认关闭，仅当内核返回 403 TOS_VIOLATION 时触发，瞬时 429 不会触发。设置后首次触发会暂停整组 Antigravity 凭据，例如 6h。', 'Supported since core 8.0.72 and off by default. It triggers only on an upstream 403 TOS_VIOLATION, never on transient 429s. When set, the first such response pauses the whole Antigravity pool, for example 6h.', 'コア 8.0.72 以降で対応。既定では無効で、上流の 403 TOS_VIOLATION でのみ作動し、一時的な 429 では作動しません。設定すると最初の検出時に Antigravity プール全体を 6h など停止します。') },
+    structuredField(providerPath('antigravity', 'sensitive-patterns-replace'), T('敏感词正则替换', 'Sensitive-pattern replacements', '敏感語の正規表現置換'), sensitivePatternsShape,
+      T('按顺序执行的 Go RE2 正则替换，用于改写系统提示中的可识别内容；替换文本留空即删除匹配内容。', 'Ordered Go RE2 replacement rules applied to system prompts; an empty replacement deletes the matched text.', 'システムプロンプトに順番に適用する Go RE2 置換ルールです。置換テキストが空の場合は一致部分を削除します。')),
   ] },
   { id: 'oauth-filters', title: T('上游敏感词过滤', 'Provider sensitive-word filters', 'プロバイダーの敏感語フィルター'), fields: [
     { path: providerPath('antigravity', 'sensitive-words'), type: 'string-list', label: T('Antigravity 敏感词', 'Antigravity sensitive words', 'Antigravity の敏感語'),

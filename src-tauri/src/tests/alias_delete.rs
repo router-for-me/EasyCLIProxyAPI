@@ -220,3 +220,16 @@ fn raw_cleanup_removes_every_supported_effort_key_with_wildcard_protocols() {
         }
     }
 }
+
+/// Editing one alias must not depend on whether any other setting is present.
+/// An OpenAI-compatible provider block leaves this config legacy-shaped.
+#[test]
+fn deletion_succeeds_with_an_api_key_provider_and_trailing_comment_block() {
+    let original = "port: 8317\nopenai-compatibility:\n  - name: provider\n    base-url: https://example.test/v1\n    models: [deepseek-v4-flash, {name: deepseek-v4.1-flash, alias: deepseek-flash-fl}]\n\n# region: keep [draft] comments verbatim\n";
+    let deleted = remove_thinking_alias_from_yaml(original, "deepseek-flash-fl").unwrap();
+    assert_eq!(
+        json(&deleted)["openai-compatibility"][0]["models"],
+        serde_json::json!(["deepseek-v4-flash"])
+    );
+    assert!(deleted.contains("# region: keep [draft] comments verbatim"), "{deleted}");
+}

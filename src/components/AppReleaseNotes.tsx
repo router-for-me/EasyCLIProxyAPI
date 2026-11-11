@@ -5,7 +5,7 @@ import type { AppUpdateInfo } from '../appUpdate';
 import { useI18n } from '../i18n';
 
 type Props = {
-  info: Pick<AppUpdateInfo, 'latestVersion' | 'releaseNotes' | 'publishedAt'> | null;
+  info: Pick<AppUpdateInfo, 'latestVersion' | 'releaseNotes' | 'skippedReleaseNotes' | 'publishedAt'> | null;
   checking: boolean;
   failed: boolean;
   onOpenUrl: (url?: string) => void | Promise<void>;
@@ -37,6 +37,26 @@ export function AppReleaseNotes({ info, checking, failed, onOpenUrl }: Props) {
       : failed
         ? t('appUpdate.notes.failed')
         : t('appUpdate.notes.notChecked');
+  const renderMarkdown = (text: string) => (
+    <div className="app-release-notes-markdown" lang={locale}>
+      <Markdown
+        skipHtml
+        disallowedElements={['img']}
+        urlTransform={releaseNotesUrl}
+        components={{
+          h1: ({ children }) => <h3 className="release-notes-subtitle">{children}</h3>,
+          h2: ({ children }) => <h3 className="release-notes-category">{children}</h3>,
+          a: ({ href, children }) => href ? (
+            <a href={href} onClick={(event) => { event.preventDefault(); void onOpenUrl(href); }}>
+              {children}
+            </a>
+          ) : <span>{children}</span>,
+        }}
+      >
+        {text}
+      </Markdown>
+    </div>
+  );
 
   return (
     <section className="app-release-notes surface-panel" aria-labelledby={headingId}>
@@ -80,28 +100,18 @@ export function AppReleaseNotes({ info, checking, failed, onOpenUrl }: Props) {
               ) : null}
             </div>
           ) : null}
-          {notes ? (
-            <div className="app-release-notes-markdown" lang={locale}>
-              <Markdown
-                skipHtml
-                disallowedElements={['img']}
-                urlTransform={releaseNotesUrl}
-                components={{
-                  h1: ({ children }) => <h3 className="release-notes-subtitle">{children}</h3>,
-                  h2: ({ children }) => <h3 className="release-notes-category">{children}</h3>,
-                  a: ({ href, children }) => href ? (
-                    <a href={href} onClick={(event) => { event.preventDefault(); void onOpenUrl(href); }}>
-                      {children}
-                    </a>
-                  ) : <span>{children}</span>,
-                }}
-              >
-                {notes}
-              </Markdown>
-            </div>
-          ) : (
+          {notes ? renderMarkdown(notes) : (
             <p className="app-release-notes-empty" role="status">{emptyMessage}</p>
           )}
+          {info?.skippedReleaseNotes?.map(({ version, releaseNotes }) => {
+            const text = releaseNotes[locale]?.trim();
+            return text ? (
+              <div className="app-release-notes-previous" key={version}>
+                <div className="app-release-notes-meta"><strong>{`v${version}`}</strong></div>
+                {renderMarkdown(text)}
+              </div>
+            ) : null;
+          })}
         </div>
         <footer className="app-release-notes-footer">
           <button type="button" className="link-button muted app-release-notes-toggle" onClick={() => void onOpenUrl()}>

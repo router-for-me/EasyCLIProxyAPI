@@ -46,6 +46,39 @@ describe('provider request proxy routing', () => {
     });
   }
 
+  it('accepts an explicit empty authenticated catalog without falling back to a public catalog', async () => {
+    let calls = 0;
+    mockIPC(() => {
+      calls += 1;
+      return { status_code: 200, body: JSON.stringify({ data: [] }) };
+    });
+    expect(await fetchModels('openai', 'https://provider.invalid/v1', 'test-key')).toEqual([]);
+    expect(calls).toBe(1);
+  });
+
+  it('does not turn a failed authenticated request into a successful empty catalog', async () => {
+    let calls = 0;
+    mockIPC(() => ++calls === 1
+      ? { status_code: 401, body: 'unauthorized' }
+      : { status_code: 200, body: { data: [] } });
+    await expect(fetchModels('openai', 'https://provider.invalid/v1', 'test-key')).rejects.toThrow('unauthorized');
+    expect(calls).toBe(2);
+  });
+
+  it('rejects an unrecognized success body rather than assuming an empty catalog', async () => {
+    mockIPC(() => ({ status_code: 200, body: { message: 'not a model list' } }));
+    await expect(fetchModels('codex', 'https://provider.invalid/v1', 'test-key')).rejects.toThrow();
+  });
+
+  it('rejects an incomplete catalog when a later page fails', async () => {
+    let calls = 0;
+    mockIPC(() => ++calls === 1
+      ? { status_code: 200, body: { models: [{ name: 'models/model-1' }], nextPageToken: 'next' } }
+      : { status_code: 503, body: 'listing failed' });
+    await expect(fetchModels('gemini', '', 'test-key')).rejects.toThrow('listing failed');
+    expect(calls).toBe(2);
+  });
+
   it('sends proxy overrides on every Gemini model page and uses SSE for health checks', async () => {
     const requests: Record<string, any>[] = [];
     mockIPC((command, args) => {

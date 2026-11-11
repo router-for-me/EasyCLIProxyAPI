@@ -5,6 +5,7 @@ import { I18nProvider } from '../src/i18n';
 import { AuthFileHealthStatus } from '../src/components/AuthFileHealthStatus';
 import { dedupeAuthFiles } from '../src/services/authFiles';
 import {
+  authFileAppeal,
   authFileHealth,
   cooldownReasonKey,
   normalizeAuthFileCooldowns,
@@ -20,6 +21,74 @@ const normalize = (value: unknown) => normalizeAuthFileCooldowns(value, received
 const render = (file: Record<string, unknown>, received = receivedAtMs) => renderToStaticMarkup(
   createElement(I18nProvider, { children: createElement(AuthFileHealthStatus, { file, receivedAtMs: received }) }),
 );
+
+describe('upstream TOS suspension', () => {
+  it('labels a TOS-deactivated credential separately from a plain disable', () => {
+    const suspended = authFileHealth({ status: 'disabled', status_message: 'tos_violation', tos_appeal_url: 'https://example.com/appeal', tos_appeal_url_text: 'Appeal now' });
+    expect(suspended).toMatchObject({ disabled: true, suspension: 'tos', label: 'authFiles.health.reason.tosViolation', tone: 'warning', message: '' });
+    const plain = authFileHealth({ status: 'disabled' });
+    expect(plain).toMatchObject({ disabled: true, label: 'authFiles.status.disabled', tone: 'neutral' });
+    expect(plain.suspension).toBeUndefined();
+    expect(authFileHealth({ disabled: true, status_message: 'ok' }).label).toBe('authFiles.status.disabled');
+  });
+
+  it('publishes only HTTPS appeal links', () => {
+    expect(authFileAppeal({ tos_appeal_url: 'https://example.com/appeal', tos_appeal_url_text: 'Appeal now' }))
+      .toEqual({ url: 'https://example.com/appeal', text: 'Appeal now' });
+    expect(authFileAppeal({ tos_appeal_url: 'https://example.com/appeal' })).toEqual({ url: 'https://example.com/appeal' });
+    for (const value of ['javascript:alert(1)', 'http://example.com/appeal', 'example.com/appeal', '', 42]) {
+      expect(authFileAppeal({ tos_appeal_url: value })).toBeUndefined();
+    }
+  });
+
+  it('reports a link-only record as historical instead of a current suspension', () => {
+    // Re-enabling a credential keeps the appeal metadata on disk, so a link with no
+    // live status marker cannot distinguish "reloaded suspension" from "manually
+    // disabled afterwards". It is reported as a past suspension, in a neutral tone.
+    const linkOnly = authFileHealth({ status: 'disabled', disabled: true, tos_appeal_url: 'https://example.com/appeal' });
+    expect(linkOnly).toMatchObject({
+      disabled: true, label: 'authFiles.health.reason.tosViolationHistorical',
+      tone: 'neutral', suspension: 'tos', suspensionHistorical: true,
+    });
+    // A status reason still wins over the leftover link.
+    const quota = authFileHealth({ status: 'disabled', disabled: true, status_message: 'quota exhausted', tos_appeal_url: 'https://example.com/appeal' });
+    expect(quota.label).toBe('authFiles.status.disabled');
+    expect(quota.suspension).toBeUndefined();
+    // An active credential with a leftover link stays healthy.
+    expect(authFileHealth({ status: 'active', tos_appeal_url: 'https://example.com/appeal' }).label).toBe('authFiles.health.active');
+  });
+
+  it('keeps a restart-reloaded suspension visible after the marker is gone', () => {
+    // The core keeps the marker in memory, so a reloaded credential carries the
+    // appeal link but no status message. It must not degrade to a plain disable,
+    // and it must not claim the live state the running core cannot report.
+    const reloaded = authFileHealth({ status: 'disabled', tos_appeal_url: 'https://example.com/appeal' });
+    expect(reloaded).toMatchObject({
+      disabled: true, suspension: 'tos', suspensionHistorical: true,
+      label: 'authFiles.health.reason.tosViolationHistorical', tone: 'neutral', message: '',
+    });
+    expect(render({ status: 'disabled', tos_appeal_url: 'https://example.com/appeal' }))
+      .toContain('Previously suspended for a terms-of-service violation');
+  });
+
+  it('renders the TOS reason with an appeal link and leaves other disables neutral', () => {
+    const suspended = render({ status: 'disabled', status_message: 'tos_violation', tos_appeal_url: 'https://example.com/appeal', tos_appeal_url_text: 'Appeal now' });
+    expect(suspended).toContain('Suspended by upstream terms-of-service violation');
+    expect(suspended).toContain('Appeal now');
+    const plain = render({ status: 'disabled' });
+    expect(plain).toContain('Disabled');
+    expect(plain).not.toContain('<details');
+    expect(plain).not.toContain('Appeal');
+    expect(suspended).toContain('Appeal now');
+    expect(suspended).not.toContain('tos_violation');
+    const unsafe = render({ status: 'disabled', status_message: 'tos_violation', tos_appeal_url: 'javascript:alert(1)' });
+    expect(unsafe).toContain('Suspended by upstream terms-of-service violation');
+    expect(unsafe).not.toContain('javascript:');
+    expect(unsafe).not.toContain('Open appeal page');
+    expect(render({ status: 'disabled', status_message: 'tos_violation', tos_appeal_url: 'https://example.com/appeal' }))
+      .toContain('Open appeal page');
+  });
+});
 
 describe('credential health and cooldowns', () => {
   it('distinguishes old cores, unknown snapshots and known-empty restrictions', () => {

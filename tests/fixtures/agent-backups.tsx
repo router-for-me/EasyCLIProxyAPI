@@ -1,12 +1,14 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { mockIPC } from '@tauri-apps/api/mocks';
+import type { AgentSystemPromptEditorSnapshot } from '../../src/services/agentSystemPrompts';
 import { AgentsPage } from '../../src/pages/AgentsPage';
 import { createBrowserMockRuntime } from '../../src/mocks/browserMockRuntime';
 import { I18nProvider } from '../../src/i18n';
 import '../../src/styles/index.css';
 const params = new URLSearchParams(location.search);
 const launchRuntime = createBrowserMockRuntime('running');
+const savedPrompts = new Map<string, AgentSystemPromptEditorSnapshot>();
 if(params.has('reset-selections'))localStorage.removeItem('cpa-gui.agent-model-selections.v1');
 localStorage.setItem('easy-cli-proxy-api.locale',params.get('locale') || 'zh-CN');
 document.documentElement.dataset.theme = params.get('theme') || 'light';
@@ -161,6 +163,26 @@ mockIPC(async (cmd,args:any) => {
    harnessProvider=args.request.provider;
    for(const m of args.request.models)harnessConfigurations[m.id]=m.configuration;
    harnessRevision++;return harnessSnapshot();
+ }
+ if(params.has('system-prompt-fixture')) {
+   if(cmd==='get_agent_system_prompt_editor') {
+     const snapshot=savedPrompts.get(args.client)??await launchRuntime.invoke(cmd,args);
+     return {...snapshot,coreTlsEnabled:params.has('tls')};
+   }
+   if(cmd==='save_agent_system_prompt_editor') {
+     if((window as any).fixtureFailPromptSave) throw new Error('Prompt save failed (fixture)');
+     const snapshot=await launchRuntime.invoke(cmd,args) as AgentSystemPromptEditorSnapshot;
+     savedPrompts.set(snapshot.client,snapshot);
+     return snapshot;
+   }
+   if(cmd==='get_codex_model_catalog_editor'||cmd==='save_codex_model_catalog_editor') return launchRuntime.invoke(cmd,args);
+   if(cmd==='get_zcode_subagent_config') return {defaultSubagentModel:null,defaultThoughtLevel:null,subagents:[{
+     name:'reviewer',description:'Reviews changes',filePath:'/home/fixture/reviewer.md',model:null,thoughtLevel:null,tools:[],systemPrompt:'Review the patch.'
+   }]};
+   if(cmd==='get_zcode_model_catalog_editor'||cmd==='save_zcode_model_catalog_editor') {
+     const defaults={supportsImage:false,supportsPdf:false,supportsVideo:false,supportsJsonSchemaOutput:false,supportsNativeWebSearch:false,supportsMidConversationSystem:false,reasoningLevels:['low'],isManual:false,systemPrompt:'Agent default'};
+     return {models:[{id:'gpt-one',enabled:true,defaults,configuration:{...defaults,contextWindow:10000,isManual:true,systemPrompt:'Keep this override'}}],modelOrder:['gpt-one'],configured:true};
+   }
  }
  if(cmd==='get_codex_model_catalog_editor') return {models:[],hiddenModels:[],customizations:{}};
  if(cmd==='check_codex_oauth_login') {

@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { releaseNotesBody, resolveReleaseNotes, validateReleaseNotes } from '../scripts/release-notes.mjs';
+import { releaseNotesBody, resolveReleaseNotes, resolveReleaseNotesHistory, validateReleaseNotes } from '../scripts/release-notes.mjs';
 
 async function withNotesRoot(run: (root: string, directory: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), 'easycli-release-notes-'));
@@ -18,6 +18,31 @@ async function withNotesRoot(run: (root: string, directory: string) => Promise<v
 }
 
 describe('localized release notes publication', () => {
+  test('keeps only nine skipped releases, newest by version rather than directory name', () => withNotesRoot(async (root) => {
+    for (const patch of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+      const directory = join(root, 'docs', 'release-notes', `v1.2.${patch}`);
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, 'en.md'), `Notes for 1.2.${patch}`);
+    }
+    const history = await resolveReleaseNotesHistory({ root, tag: 'v1.2.12' });
+    expect(Object.keys(history)).toEqual([
+      '1.2.11', '1.2.10', '1.2.9', '1.2.8', '1.2.7', '1.2.6', '1.2.5', '1.2.4', '1.2.3',
+    ]);
+  }));
+
+  test('caps the serialized UTF-8 history without truncating Markdown or skipping over the cutoff', () => withNotesRoot(async (root) => {
+    const latestText = '新'.repeat(30_000);
+    for (const [version, text] of [['1.2.3', 'old'], ['1.2.4', '旧'.repeat(15_000)], ['1.2.5', latestText]]) {
+      const directory = join(root, 'docs', 'release-notes', `v${version}`);
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, 'zh-CN.md'), text);
+    }
+    const history = await resolveReleaseNotesHistory({ root, tag: 'v1.2.6' });
+    expect(history).toEqual({ '1.2.5': { 'zh-CN': `${latestText}\n` } });
+    expect(Buffer.byteLength(JSON.stringify({ releaseNotesHistory: history }, null, 2))).toBeLessThanOrEqual(128 * 1024);
+    expect(await resolveReleaseNotesHistory({ root, tag: 'preview-20261119-1200' })).toEqual({});
+  }));
+
   test('keeps each authored translation under its exact locale', () => withNotesRoot(async (root, directory) => {
     const translations = {
       'zh-CN': '## 新增\n\n- 更新说明。\n',

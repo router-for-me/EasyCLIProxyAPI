@@ -229,10 +229,11 @@ fn local_api_remark(
 }
 
 async fn fetch_json(config: &GuiConfigFile, path: &str) -> Option<Value> {
-    management_http_client()
-        .ok()?
-        .get(management_endpoint(config, path).ok()?)
-        .header("Authorization", management_authorization(config).ok()?)
+    let request = match super::usage_target() {
+        Some(target) => target.request(reqwest::Method::GET, path).ok()?,
+        None => management_http_client().ok()?.get(management_endpoint(config, path).ok()?).header("Authorization", management_authorization(config).ok()?),
+    };
+    request
         .timeout(Duration::from_secs(3))
         .send()
         .await
