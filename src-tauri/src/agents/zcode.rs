@@ -123,6 +123,21 @@ pub(crate) const ZCODE_MANUAL_MAX_OUTPUT_TOKENS_FALLBACK: u64 = 128_000;
 /// rule valid with this fallback instead of persisting a non-positive value.
 pub(crate) const ZCODE_MANUAL_CONTEXT_WINDOW_FALLBACK: u64 = 200_000;
 
+/// ZCode rejects `reasoningLevel.values` when the list is empty or repeats a
+/// level, so trim, drop blanks and deduplicate before rendering a rule.
+pub(crate) fn sanitize_reasoning_levels(levels: &[String]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut sanitized = Vec::with_capacity(levels.len());
+    for level in levels {
+        let level = level.trim();
+        if level.is_empty() || !seen.insert(level.to_string()) {
+            continue;
+        }
+        sanitized.push(level.to_string());
+    }
+    sanitized
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ZCodeModelConfig {
@@ -265,14 +280,19 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
     } else {
         option_specs.remove("maxOutputTokens");
     }
-    let mut rl = option_specs.get("reasoningLevel").and_then(Value::as_object).cloned().unwrap_or_default();
-    rl.insert("values".into(), serde_json::json!(config.reasoning_levels));
-    if let Some(ref m) = config.reasoning_map {
-        rl.insert("map".into(), serde_json::json!(m));
+    let reasoning_levels = sanitize_reasoning_levels(&config.reasoning_levels);
+    if reasoning_levels.is_empty() {
+        option_specs.remove("reasoningLevel");
     } else {
-        rl.insert("map".into(), serde_json::json!(ZCODE_CPA_REASONING_MAP));
+        let mut rl = option_specs.get("reasoningLevel").and_then(Value::as_object).cloned().unwrap_or_default();
+        rl.insert("values".into(), serde_json::json!(reasoning_levels));
+        if let Some(ref m) = config.reasoning_map {
+            rl.insert("map".into(), serde_json::json!(m));
+        } else {
+            rl.insert("map".into(), serde_json::json!(ZCODE_CPA_REASONING_MAP));
+        }
+        option_specs.insert("reasoningLevel".into(), Value::Object(rl));
     }
-    option_specs.insert("reasoningLevel".into(), Value::Object(rl));
 
     cfg.insert("properties".into(), Value::Object(properties));
     if !option_specs.is_empty() {
@@ -546,12 +566,9 @@ pub(crate) fn save_zcode_editor(
 
     let requested_ids = request.models.iter().map(|model| model.id.as_str())
         .collect::<std::collections::HashSet<_>>();
-    let mut enabled_ids: Vec<Value> = request.models.iter().filter(|m| m.enabled).map(|m| serde_json::json!(m.id)).collect();
-    if let Some(existing_ids) = provider_cfg.get("personalModelIds").and_then(Value::as_array) {
-        enabled_ids.extend(existing_ids.iter().filter(|id| {
-            id.as_str().map(|id| !requested_ids.contains(id)).unwrap_or(false)
-        }).cloned());
-    }
+    // The request carries the complete current catalog, so ids that are absent
+    // from it are disabled or deleted models and must not be kept alive.
+    let enabled_ids: Vec<Value> = request.models.iter().filter(|m| m.enabled).map(|m| serde_json::json!(m.id)).collect();
     provider_cfg.insert("personalModelIds".into(), Value::Array(enabled_ids));
     let order_ids: Vec<Value> = request.model_order.iter().map(|id| serde_json::json!(id)).collect();
     provider_cfg.insert("modelOrder".into(), Value::Array(order_ids));

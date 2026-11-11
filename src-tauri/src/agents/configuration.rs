@@ -3998,8 +3998,31 @@ pub(crate) fn build_zcode_agent_config(
     api.insert("baseUrl".to_string(), serde_json::json!(base_url));
     let ordered = ordered_agent_models(available_models, model);
     let model_names = ordered.iter().map(|option| option.name.as_str()).collect::<Vec<_>>();
-    provider_config.entry("personalModelIds").or_insert_with(|| serde_json::json!(model_names));
-    provider_config.entry("modelOrder").or_insert_with(|| serde_json::json!(model_names));
+    if !model_names.is_empty() {
+        // Models removed or disabled in the gateway disappear from /v1/models,
+        // but the previous lists kept their ids forever and ZCode kept showing
+        // these dead entries. Prune to the live catalog, drop duplicates and
+        // preserve the user's order. Never append: a model the user removed
+        // from the list must stay removed while it still exists upstream.
+        let available = model_names.iter().copied().collect::<std::collections::HashSet<_>>();
+        let prune = |entries: &[serde_json::Value]| -> Vec<String> {
+            let mut seen = std::collections::HashSet::new();
+            entries.iter().filter_map(serde_json::Value::as_str)
+                .filter(|name| available.contains(*name))
+                .filter(|name| seen.insert((*name).to_string()))
+                .map(String::from).collect()
+        };
+        let personal_model_ids = match provider_config.get("personalModelIds").and_then(serde_json::Value::as_array) {
+            Some(entries) => prune(entries),
+            None => model_names.iter().map(|name| (*name).to_string()).collect(),
+        };
+        let model_order = match provider_config.get("modelOrder").and_then(serde_json::Value::as_array) {
+            Some(entries) => prune(entries),
+            None => model_names.iter().map(|name| (*name).to_string()).collect(),
+        };
+        provider_config.insert("personalModelIds".to_string(), serde_json::json!(personal_model_ids));
+        provider_config.insert("modelOrder".to_string(), serde_json::json!(model_order));
+    }
     rules.retain(|rule| {
         rule.get("providerId").and_then(serde_json::Value::as_str)
             != Some(MANAGED_AGENT_PROVIDER_ID)
@@ -4145,14 +4168,22 @@ pub(crate) fn build_zcode_agent_config(
             provider_order.push(serde_json::json!(MANAGED_AGENT_PROVIDER_ID));
         }
     }
+    // Keep the previous default model only while it still exists; otherwise
+    // fall back to the first available model instead of pointing at a model
+    // that was disabled or deleted in the gateway.
+    let selection_model = if model_names.is_empty() || model_names.contains(&model) {
+        model
+    } else {
+        model_names[0]
+    };
     let mut selection = serde_json::json!({
         "providerId": MANAGED_AGENT_PROVIDER_ID,
-        "modelId": model,
+        "modelId": selection_model,
     });
     if let Some(previous) = config.get("defaultModelSelection") {
         if previous.get("providerId").and_then(serde_json::Value::as_str)
             == Some(MANAGED_AGENT_PROVIDER_ID)
-            && previous.get("modelId").and_then(serde_json::Value::as_str) == Some(model)
+            && previous.get("modelId").and_then(serde_json::Value::as_str) == Some(selection_model)
         {
             if let Some(options) = previous.get("options") {
                 selection["options"] = options.clone();
