@@ -1539,6 +1539,69 @@ fn zcode_agent_config_backfills_manual_rule_max_output_tokens() {
 }
 
 #[test]
+fn zcode_agent_config_omits_non_positive_context_and_max_output_tokens() {
+    // ZCode validates contextWindow and optionSpecs.maxOutputTokens.max as positive
+    // integers. A single non-positive value makes ZCode reject the whole personal
+    // provider config and fall back to an empty in-memory config, so every custom
+    // provider disappears from the model picker. Models such as image generators
+    // report no limits, which must be omitted instead of written as 0.
+    let home = agent_test_home("zcode-non-positive-limits");
+    let path = home.join(".zcode/v2/provider_config.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut models = test_agent_models(&["gpt-image-test"]);
+    models[0].context_window = Some(0);
+    let rendered = build_zcode_agent_config(
+        None,
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "gpt-image-test",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let rules = value["config"]["modelConfigRules"]["providerModelRules"].as_array().unwrap();
+    let rule = rules.iter().find(|rule| rule["modelId"] == "gpt-image-test").unwrap();
+    assert!(
+        rule["config"]["properties"].get("contextWindow").is_none(),
+        "non-positive contextWindow must be omitted: {:?}",
+        rule
+    );
+    assert!(
+        rule["config"]
+            .get("optionSpecs")
+            .and_then(|specs| specs.get("maxOutputTokens"))
+            .is_none(),
+        "unknown maxOutputTokens must be omitted for provider rules: {:?}",
+        rule
+    );
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn zcode_agent_config_repairs_zero_manual_token_limits() {
+    // A manual rule that already carries max: 0 / contextWindow: 0 (for example,
+    // persisted by an earlier sync) must be repaired to positive values; otherwise
+    // ZCode discards the whole provider config on the next load.
+    let models = test_agent_models(&["custom-image-model"]);
+    let existing = r#"{"schemaVersion":1,"config":{"providerConfigRules":{"providerRules":[{"providerId":"cpa-gui","providerName":"EasyCLIProxyAPI","enabled":true,"config":{"group":"standard-personal","access":{"type":"api-key","apiKey":"old"},"api":{"type":"anthropic-messages","baseUrl":"http://127.0.0.1:8317/v1"},"personalModelIds":["custom-image-model"],"modelOrder":["custom-image-model"]}}]},"modelConfigRules":{"providerModelRules":[],"manualProviderModelRules":[{"providerId":"cpa-gui","modelId":"custom-image-model","config":{"enabled":true,"optionSpecs":{"maxOutputTokens":{"max":0},"reasoningLevel":{"values":["low"],"map":"reasoningLevel == \"none\" ? {} : {}"}},"properties":{"contextWindow":0}}}]}}}"#;
+    let rendered = build_zcode_agent_config(
+        Some(existing),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "custom-image-model",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let rules = value["config"]["modelConfigRules"]["manualProviderModelRules"].as_array().unwrap();
+    let rule = rules.iter().find(|rule| rule["modelId"] == "custom-image-model").unwrap();
+    let max = rule["config"]["optionSpecs"]["maxOutputTokens"]["max"].as_u64().unwrap();
+    assert!(max > 0, "manual maxOutputTokens.max must be positive, got {max}");
+    let context_window = rule["config"]["properties"]["contextWindow"].as_u64().unwrap();
+    assert!(context_window > 0, "manual contextWindow must be positive, got {context_window}");
+}
+
+#[test]
 fn zcode_desktop_and_cli_share_the_provider_configuration() {
     let home = agent_test_home("zcode-shared-provider-config");
     let paths = agent_config_paths(AgentClient::ZCode, &home);

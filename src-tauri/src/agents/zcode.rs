@@ -101,8 +101,11 @@ pub(crate) fn infer_zcode_model_knowledge_with_catalog(
 ) -> (Option<u64>, Option<u64>, bool, bool, Vec<String>) {
     let (mut cw, mut mot, img, pdf, rl) = infer_zcode_model_knowledge(model_id);
     if let Some(capabilities) = crate::usage::find_model_capabilities(catalog, model_id) {
-        cw = cw.or(capabilities.context_window);
-        mot = mot.or(capabilities.max_output_tokens);
+        // A context/output limit of 0 means "unknown". Never propagate a
+        // non-positive value: ZCode validates both fields as positive integers and
+        // discards the whole personal provider config when one rule is invalid.
+        cw = cw.or(capabilities.context_window.filter(|value| *value > 0));
+        mot = mot.or(capabilities.max_output_tokens.filter(|value| *value > 0));
     }
     (cw, mot, img, pdf, rl)
 }
@@ -114,6 +117,11 @@ pub(crate) const ZCODE_CPA_REASONING_MAP: &str = "reasoningLevel == \"none\" || 
 /// field: an omitted `maxOutputTokens` fails Zod validation of the whole
 /// provider config and makes ZCode discard every custom provider in memory.
 pub(crate) const ZCODE_MANUAL_MAX_OUTPUT_TOKENS_FALLBACK: u64 = 128_000;
+
+/// Manual model rules also require a positive `properties.contextWindow`. When the
+/// upstream catalog reports no limit (0 or unknown) the writer keeps the manual
+/// rule valid with this fallback instead of persisting a non-positive value.
+pub(crate) const ZCODE_MANUAL_CONTEXT_WINDOW_FALLBACK: u64 = 200_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -223,8 +231,14 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
     entry.insert("modelId".into(), serde_json::json!(model_id));
     let cfg = ensure_json_object_entry(entry, "config");
     let mut properties = cfg.get("properties").and_then(Value::as_object).cloned().unwrap_or_default();
-    if let Some(cw) = config.context_window {
+    if let Some(cw) = config.context_window.filter(|value| *value > 0) {
         properties.insert("contextWindow".into(), serde_json::json!(cw));
+    } else if config.is_manual {
+        // Manual rules require a positive contextWindow in ZCode's schema.
+        properties.insert(
+            "contextWindow".into(),
+            serde_json::json!(ZCODE_MANUAL_CONTEXT_WINDOW_FALLBACK),
+        );
     } else {
         properties.remove("contextWindow");
     }
@@ -239,7 +253,7 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
     properties.insert("supportsMidConversationSystem".into(), serde_json::json!(config.supports_mid_conversation_system));
 
     let mut option_specs = cfg.get("optionSpecs").and_then(Value::as_object).cloned().unwrap_or_default();
-    if let Some(mot) = config.max_output_tokens {
+    if let Some(mot) = config.max_output_tokens.filter(|value| *value > 0) {
         let mot_obj = ensure_json_object_entry(&mut option_specs, "maxOutputTokens");
         mot_obj.insert("max".into(), serde_json::json!(mot));
         mot_obj.remove("map");
