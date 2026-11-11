@@ -7,6 +7,7 @@ export interface ZCodeSubagentItem {
   model: string | null;
   thoughtLevel: string | null;
   tools: string[];
+  systemPrompt?: string | null;
 }
 
 export interface ZCodeSubagentConfigSnapshot {

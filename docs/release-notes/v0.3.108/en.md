@@ -1,0 +1,7 @@
+If you have any questions or suggestions about the software, please report them via the [QQ group](https://qm.qq.com/q/3queDaIG) or [GitHub Issues](https://github.com/router-for-me/EasyCLIProxyAPI/issues), and we will handle them as soon as possible.
+
+## Fixed
+
+- **Plugin-provided models can now be used as mapping sources**: model mapping only looked for the original model's source among the built-in OAuth channels, so models contributed by a plugin provider (for example Doubao) never matched and the card reported that no valid access source could be found. Mapping now also consults active credentials and the providers declared by enabled plugins, so plugin models resolve correctly.
+- **Credential card actions are no longer clipped**: when the action row was wider than the card, buttons such as Delete were cut off by the card edge. Both button groups now wrap within the available card width, including in the expanded state and in narrow column layouts.
+- **Antigravity session model names are recovered**: Antigravity records do not contain a model field, so those sessions appeared as an unknown model in usage statistics. The real model is now restored from the session's settings-change text, falling back to the session transcript when a chunk file does not carry it.

@@ -164,12 +164,13 @@ function TagPickerPanel({
                 role="checkbox"
                 aria-checked={active}
                 className={`ecpa-tag-picker-option${active ? ' selected' : ''}`}
+                title={tag}
                 onClick={() => onToggle(tag)}
               >
                 <span className="ecpa-tag-picker-check" aria-hidden="true">
                   {active ? <Check size={12} /> : null}
                 </span>
-                <span>{tag}</span>
+                <span className="ecpa-tag-picker-label">{tag}</span>
               </button>
             );
           })}
@@ -235,7 +236,6 @@ export function TagFilterRow({
     const rest = allTags.filter((tag) => !picked.includes(tag));
     return [...picked, ...rest].slice(0, TAG_ROW_LIMIT);
   }, [allTags, selectedTags]);
-  const hiddenTagCount = allTags.length - visibleTags.length;
 
   return (
     <div className="ecpa-tag-bar" role="group" aria-label={label}>
@@ -247,36 +247,38 @@ export function TagFilterRow({
       >
         {allLabel}
       </button>
-      {visibleTags.map((tag) => {
-        const active = selectedTags.includes(tag);
-        return (
-          <button
-            key={tag}
-            type="button"
-            className={`filter-chip ecpa-tag-chip${active ? ' active' : ''}`}
-            aria-pressed={active}
-            onClick={() => onToggle(tag)}
-          >
-            {active ? <Check size={12} aria-hidden="true" /> : null}
-            {tag}
-          </button>
-        );
-      })}
+      <div className="ecpa-tag-shortcuts">
+        {visibleTags.map((tag) => {
+          const active = selectedTags.includes(tag);
+          return (
+            <button
+              key={tag}
+              type="button"
+              className={`filter-chip ecpa-tag-chip${active ? ' active' : ''}`}
+              aria-pressed={active}
+              onClick={() => onToggle(tag)}
+            >
+              {active ? <Check size={12} aria-hidden="true" /> : null}
+              {tag}
+            </button>
+          );
+        })}
+      </div>
       {allTags.length > 0 ? (
         <div className={`ecpa-tag-picker${open ? ' open' : ''}`}>
           <button
             ref={buttonRef}
             type="button"
-            className={`filter-chip ecpa-tag-chip ecpa-tag-picker-trigger${selectedTags.length > 0 ? ' has-selection' : ''}`}
-            aria-haspopup="true"
+            className="filter-chip ecpa-tag-picker-trigger"
+            aria-haspopup="dialog"
             aria-expanded={open}
             aria-label={pickerLabel}
             title={pickerLabel}
             onClick={() => setOpen((value) => !value)}
           >
+            <span>{pickerLabel}</span>
+            {selectedTags.length > 0 ? <span className="ecpa-tag-picker-count">{selectedTags.length}</span> : null}
             <ChevronDown size={13} aria-hidden="true" />
-            {hiddenTagCount > 0 ? <span className="ecpa-tag-picker-count">{hiddenTagCount}</span> : null}
-            {selectedTags.length > 0 ? <span className="ecpa-tag-picker-badge">{selectedTags.length}</span> : null}
           </button>
           {open ? createPortal(
             <TagPickerPanel

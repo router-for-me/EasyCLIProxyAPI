@@ -221,6 +221,7 @@ export function ZCodeModelCatalogDialog({
             {t("agents.zcode.catalog.title") || "ZCode 模型列表与规则设置"}
           </h2>
           <p>{t("agents.zcode.catalog.subtitle") || "管理注入到 ZCode 的可用模型、显示与隐藏、上下文窗口及参数规则。"}</p>
+          <p>{t("agents.systemPrompt.zcodeCatalogHint")}</p>
         </div>
         <button
           type="button"
@@ -427,6 +428,7 @@ export function ZCodeModelCatalogDialog({
                   </label>
                 </div>
               </fieldset>
+
             </div>
           ) : (
             <div className="codex-catalog-state">{t("agents.catalog.empty")}</div>

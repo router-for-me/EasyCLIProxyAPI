@@ -324,7 +324,13 @@ pub(crate) async fn start_oauth_login(
 ) -> Result<OAuthStartResult, String> {
     super::network_proxy::prepare_oauth(&app).await;
     let config = gui_config_state.snapshot()?;
-    let provider_key = normalize_oauth_request_provider(&provider, plugin_provider.unwrap_or(false))?;
+    let plugin_request = plugin_provider.unwrap_or(false);
+    let provider_key = normalize_oauth_request_provider(&provider, plugin_request)?;
+    let browser_preference = browser
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("default");
     let client = management_http_client()?;
     let mut request = client
         .get(management_endpoint(&config, "oauth/auth-url")?)
@@ -333,15 +339,29 @@ pub(crate) async fn start_oauth_login(
     if management_oauth_uses_webui_callback(&provider_key) {
         request = request.query(&[("is_webui", "true")]);
     }
+    if plugin_request {
+        request = request.query(&[("browser", browser_preference)]);
+        if browser_preference == "none" {
+            request = request.query(&[("auto_open", "false")]);
+        }
+    }
     let response = request
         .send()
         .await
         .map_err(|err| format_management_request_error("Failed to request OAuth login URL", &err))?;
     let payload = read_management_json::<OAuthStartApiResponse>(response).await?;
     let mut result = normalize_oauth_start_response(payload)?;
-    match open_oauth_url_inner(&app, &result.url, browser.as_deref()) {
-        Ok(()) => result.opened = true,
-        Err(error) => result.open_error = Some(error),
+    // A plugin that owns the login page already opened the selected browser; the
+    // returned resource URL must not be opened a second time.
+    let plugin_owns_flow = plugin_request
+        && result.url.contains("/v0/resource/plugins/");
+    if plugin_owns_flow {
+        result.opened = true;
+    } else {
+        match open_oauth_url_inner(&app, &result.url, browser.as_deref()) {
+            Ok(()) => result.opened = true,
+            Err(error) => result.open_error = Some(error),
+        }
     }
     Ok(result)
 }
@@ -516,7 +536,7 @@ pub(crate) fn management_endpoint(config: &GuiConfigFile, path: &str) -> Result<
     Ok(format!("{origin}/v8/management/{path}"))
 }
 
-fn normalize_oauth_request_provider(provider: &str, plugin_provider: bool) -> Result<String, String> {
+pub(crate) fn normalize_oauth_request_provider(provider: &str, plugin_provider: bool) -> Result<String, String> {
     if !plugin_provider {
         return normalize_management_oauth_provider(provider);
     }

@@ -106,11 +106,12 @@ async fn core_health_probe_uses_local_inference_key_and_waits_for_model_text() {
     let body: serde_json::Value = serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
     assert_eq!(body["model"], "custom/model-alias");
     assert_eq!(body["stream"], true);
-    assert_eq!(body["max_tokens"], 16);
+    assert_eq!(body["max_tokens"], 256);
     assert_eq!(body["messages"][0]["role"], "user");
     let payload = serde_json::to_value(result).unwrap();
     assert!(payload["firstTokenLatencyMs"].as_u64().is_some());
     assert!(payload["responseLatencyMs"].as_u64().is_some());
+    assert_eq!(payload["budgetExhausted"], false);
 }
 
 #[tokio::test]
@@ -119,6 +120,9 @@ async fn core_health_probe_rejects_http_errors_redirects_and_empty_streams() {
         ("401 Unauthorized", "application/json", "access denied", "HTTP 401"),
         ("200 OK", "application/json", "{\"choices\":[]}", "streaming response"),
         ("200 OK", "text/event-stream", "data: [DONE]\n\n", "first token"),
+        ("429 Too Many Requests", "application/json", r#"{"error":{"message":"quota exceeded"}}"#, "HTTP 429"),
+        ("200 OK", "text/event-stream", "data: {\"error\":{\"message\":\"upstream unavailable\"}}\n\n", "upstream unavailable"),
+        ("200 OK", "text/event-stream", "data: {\"usage\":{\"completion_tokens\":3,\"completion_tokens_details\":{\"reasoning_tokens\":13}}}\n\n", "first token"),
         ("302 Found\r\nLocation: http://127.0.0.1:1/v1/chat/completions", "text/plain", "", "HTTP 302"),
     ] {
         let (port, server) = mock_core_response(status, content_type, body, "").await;
@@ -182,29 +186,63 @@ fn core_model_parser_keeps_public_ids_without_agent_alias_rewrites() {
 }
 
 #[tokio::test]
-async fn core_health_accepts_confirmed_reasoning_only_budget_exhaustion_without_ttft() {
+async fn core_health_probe_reports_recorded_16_token_budget_exhaustion_without_ttft() {
+    let initial = "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":";
+    let terminal = "[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}],\"usage\":{\"completion_tokens\":3,\"completion_tokens_details\":{\"reasoning_tokens\":13},\"total_tokens\":51}}\n\ndata: [DONE]\n\n";
+    let (port, server) = mock_core_response("200 OK", "text/event-stream", initial, terminal).await;
+    let result = probe_core_model(&probe_config(port), "aistudio/gemini-4-hydrogen", Some(2_000)).await.unwrap();
+    assert!(result.budget_exhausted);
+    assert!(result.first_token_latency_ms.is_none());
+    assert!(result.response_latency_ms >= 50);
+    let wire = server.await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(wire.split_once("\r\n\r\n").unwrap().1).unwrap();
+    assert_eq!(body["model"], "aistudio/gemini-4-hydrogen");
+    assert_eq!(body["max_tokens"], 256);
+    assert_eq!(body["stream"], true);
+    let payload = serde_json::to_value(result).unwrap();
+    assert_eq!(payload["budgetExhausted"], true);
+    assert!(payload.get("firstTokenLatencyMs").is_none());
+}
+
+#[tokio::test]
+async fn core_health_probe_accepts_recorded_256_token_text_response() {
+    let initial = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n";
+    let terminal = "data: {\"choices\":[{\"delta\":{\"content\":\"OK.\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+    let (port, server) = mock_core_response("200 OK", "text/event-stream", initial, terminal).await;
+    let result = probe_core_model(&probe_config(port), "aistudio/gemini-4-hydrogen", Some(2_000)).await.unwrap();
+    assert!(!result.budget_exhausted);
+    assert!(result.first_token_latency_ms.unwrap() >= 50);
+    let wire = server.await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(wire.split_once("\r\n\r\n").unwrap().1).unwrap();
+    assert_eq!(body["max_tokens"], 256);
+}
+
+#[tokio::test]
+async fn core_health_probe_classifies_both_completion_usage_shapes_as_budget_exhausted() {
     for finish_reason in ["max_tokens", "length"] {
-        let body = format!("data: {}\n\ndata: [DONE]\n\n", serde_json::json!({
-            "choices": [{ "delta": {}, "finish_reason": finish_reason }],
-            "usage": { "completion_tokens": 16, "completion_tokens_details": { "reasoning_tokens": 16 } },
-        }));
-        let (port, server) = mock_core_response("200 OK", "text/event-stream", &body, "").await;
-        let result = probe_core_model(&probe_config(port), "gemini-thinking", Some(2_000)).await.unwrap();
-        assert!(result.first_token_latency_ms.is_none());
-        assert!(result.response_latency_ms > 0);
-        server.await.unwrap();
+        for completion_tokens in [3, 13, 16] {
+            let body = format!("data: {}\n\ndata: [DONE]\n\n", serde_json::json!({
+                "choices": [{ "delta": {}, "finish_reason": finish_reason }],
+                "usage": { "completion_tokens": completion_tokens, "completion_tokens_details": { "reasoning_tokens": 13 } },
+            }));
+            let (port, server) = mock_core_response("200 OK", "text/event-stream", &body, "").await;
+            let result = probe_core_model(&probe_config(port), "gemini-thinking", Some(2_000)).await.unwrap();
+            assert!(result.budget_exhausted);
+            assert!(result.first_token_latency_ms.is_none());
+            server.await.unwrap();
+        }
     }
 }
 
 #[test]
-fn openai_terminal_success_requires_both_exhausted_budget_and_valid_reasoning_usage() {
+fn openai_budget_exhaustion_requires_terminal_choices_and_valid_reasoning_usage() {
     for value in [
         serde_json::json!({ "choices": [{ "delta": {}, "finish_reason": "max_tokens" }] }),
         serde_json::json!({ "choices": [{ "finish_reason": "max_tokens" }], "usage": {
             "completion_tokens": 16, "completion_tokens_details": { "reasoning_tokens": 0 },
         } }),
         serde_json::json!({ "choices": [{ "finish_reason": "max_tokens" }], "usage": {
-            "completion_tokens": 4, "completion_tokens_details": { "reasoning_tokens": 16 },
+            "completion_tokens": -1, "completion_tokens_details": { "reasoning_tokens": 16 },
         } }),
         serde_json::json!({ "choices": [{ "finish_reason": "content_filter" }], "usage": {
             "completion_tokens": 16, "completion_tokens_details": { "reasoning_tokens": 16 },
@@ -214,6 +252,25 @@ fn openai_terminal_success_requires_both_exhausted_budget_and_valid_reasoning_us
         } }),
     ] {
         let body = format!("data: {value}\n\ndata: [DONE]\n\n");
-        assert!(!provider_health_stream_has_terminal_success("openai-chat", body.as_bytes()));
+        assert!(!provider_health_stream_has_budget_exhausted("openai-chat", body.as_bytes()));
     }
+}
+
+#[tokio::test]
+async fn core_health_probe_does_not_hide_errors_after_budget_exhaustion() {
+    let initial = "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}],\"usage\":{\"completion_tokens\":3,\"completion_tokens_details\":{\"reasoning_tokens\":13}}}\n\n";
+    let (port, server) = mock_core_response("200 OK", "text/event-stream", initial,
+        "data: {\"error\":{\"message\":\"upstream failed\"}}\n\n").await;
+    let error = probe_core_model(&probe_config(port), "test-model", Some(2_000)).await.err().unwrap();
+    assert!(error.contains("upstream failed"));
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn core_health_probe_rejects_connection_failure() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let error = probe_core_model(&probe_config(port), "test-model", Some(2_000)).await.err().unwrap();
+    assert!(error.contains("Health check request failed"));
 }

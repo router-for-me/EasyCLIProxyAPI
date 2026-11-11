@@ -214,7 +214,7 @@ fn workbuddy_models(value: &Value) -> &[Value] {
         .unwrap_or_default()
 }
 
-fn workbuddy_managed_model(value: &Value) -> bool {
+pub(crate) fn workbuddy_managed_model(value: &Value) -> bool {
     value.get("vendor").and_then(Value::as_str) == Some(MANAGED_AGENT_PROVIDER_ID)
 }
 
@@ -383,7 +383,7 @@ pub(crate) fn inspect_workbuddy_agent_config(
                 || a.iter()
                     .any(|v| v.as_str().map(workbuddy_request_model) == model)
         });
-    let expected_url = format!("{}/v1/chat/completions", managed_core_loopback_origin(port));
+    let expected_url = format!("{}/v1/chat/completions", agent_effective_loopback_origin("workbuddy", port));
     let configured = visible
         && managed.iter().all(|entry| {
             entry.get("url").and_then(Value::as_str) == Some(&expected_url)

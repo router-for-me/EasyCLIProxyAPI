@@ -3,7 +3,7 @@ use super::*;
 
 mod alias_edit;
 mod alias_save;
-mod aliases;
+pub(crate) mod aliases;
 mod commands;
 mod extended;
 mod provider_groups;

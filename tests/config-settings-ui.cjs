@@ -2,7 +2,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const categories = ['general', 'aliases', 'routing', 'requests', 'oauth', 'diagnostics', 'software'];
+const categories = ['general', 'proxy', 'aliases', 'routing', 'requests', 'sensitiveWords', 'oauth', 'diagnostics', 'software'];
 const viewports = [{ width: 1920, height: 1080 }, { width: 2560, height: 1440 }, { width: 640, height: 600 }, { width: 964, height: 700 }, { width: 1280, height: 800 }, { width: 1600, height: 1000 }];
 const scalarFields = '.template-config-field:is([data-field-type="string"], [data-field-type="number"], [data-field-type="select"]), :is(#config-native-retry, #config-native-routing) .config-network-field:has(input[type="text"], input[type="number"], select)';
 
@@ -256,7 +256,7 @@ const scalarFields = '.template-config-field:is([data-field-type="string"], [dat
         };
 
         assert.equal(await page.getByRole('heading', { level: 1, name: locale === 'en' ? 'Advanced settings' : '高级设置', exact: true }).count(), 0);
-        assert.equal(await page.locator('.config-page [role="tabpanel"]').count(), 1);
+        assert.equal(await page.locator('.config-page #config-subpage-panel[role="tabpanel"]').count(), 1);
         assert.equal(await page.locator('.config-settings-header p').count(), 0,
           `${label}: settings header must not repeat layout explanations`);
         assert.equal(await page.locator('.config-nav-save-hint, .config-category-heading, .config-section-index').count(), 0,
@@ -298,7 +298,7 @@ const scalarFields = '.template-config-field:is([data-field-type="string"], [dat
           };
         });
         assert.equal(navigationLayout.aboveContent, true, `${label}: category navigation belongs above settings content`);
-        assert.equal(navigationLayout.singleRow, true, `${label}: all seven categories must stay in a single horizontal row`);
+        assert.equal(navigationLayout.singleRow, true, `${label}: all categories must stay in a single horizontal row`);
         assert.equal(navigationLayout.labelsFit, true, `${label}: complete category labels must fit their own buttons`);
         if (viewport.width === 640) {
           assert.equal(navigationLayout.overflowing, true, `${label}: narrow navigation keeps readable labels through scrolling`);
@@ -502,8 +502,8 @@ const scalarFields = '.template-config-field:is([data-field-type="string"], [dat
           await dialog.waitFor({ state: 'detached' });
         }
         await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
-        await tab('requests');
-        await page.locator('.config-sensitive-words-row input').first().waitFor();
+        await tab('sensitiveWords');
+        await page.locator('.sw-inline-row').first().waitFor();
         await noOverflow('sensitive words');
 
         await tab('oauth');
@@ -536,8 +536,8 @@ const scalarFields = '.template-config-field:is([data-field-type="string"], [dat
         await search.fill(locale === 'en' ? 'Sensitive Words' : '敏感词');
         await results.getByRole('button').first().waitFor();
         await results.getByRole('button').first().click();
-        assert.equal(await page.locator('#config-subpage-tab-requests').getAttribute('aria-selected'), 'true');
-        assert.equal(await page.locator('.config-sensitive-words-row input').first().isVisible(), true);
+        assert.equal(await page.locator('#config-subpage-tab-sensitiveWords').getAttribute('aria-selected'), 'true');
+        assert.equal(await page.locator('.sw-library').isVisible(), true);
         await page.waitForFunction(() => document.querySelector('#config-native-sensitive-words')?.contains(document.activeElement));
         await search.fill(locale === 'en' ? 'thinking aliases' : '思考');
         await results.getByRole('button').first().waitFor();
@@ -654,12 +654,12 @@ const scalarFields = '.template-config-field:is([data-field-type="string"], [dat
           assert.equal(await remoteManagement.isChecked(), false);
           assert.equal(await hasDirtyMarker('general'), false, `${label}: discarding clears the category marker`);
 
-          await tab('requests');
-          const sensitiveWord = page.locator('.config-sensitive-words-row input').first();
+          await tab('sensitiveWords');
+          const sensitiveWord = page.locator('.sw-inline-row textarea').first();
           await sensitiveWord.fill('settings-navigation-draft');
           await tab('software');
-          assert.equal(await hasDirtyMarker('requests'), true, `${label}: sensitive-word drafts mark their category`);
-          await tab('requests');
+          assert.equal(await hasDirtyMarker('sensitiveWords'), true, `${label}: unsaved rules mark their category`);
+          await tab('sensitiveWords');
           assert.equal(await sensitiveWord.inputValue(), 'settings-navigation-draft', `${label}: sensitive-word drafts survive category changes`);
         }
         await page.close();

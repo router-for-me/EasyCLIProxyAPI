@@ -1,9 +1,11 @@
 use super::support::*;
 use super::*;
+use crate::core_config::aliases::normalize_oauth_model_provider;
+use crate::management_api::normalize_oauth_request_provider;
 
 fn test_oauth_definition_set(channel: &str, models: &[&str]) -> OAuthModelDefinitions {
     OAuthModelDefinitions {
-        channel: oauth_alias_channel(channel).unwrap(),
+        channel: channel.to_string(),
         models: models
             .iter()
             .map(|model| CodexModelDefinition {
@@ -31,10 +33,344 @@ fn test_oauth_thinking_source(channel: &str, model: &str) -> ResolvedThinkingAli
             reasoning_levels: vec!["low".to_string(), "high".to_string()],
         },
         location: ThinkingAliasSourceLocation::Oauth {
-            channel: channel.key,
+            channel: channel.key.to_string(),
             force_mapping: channel.force_mapping,
         },
     }
+}
+
+struct OAuthProviderTestServer {
+    config: GuiConfigFile,
+    paths: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl OAuthProviderTestServer {
+    async fn new(
+        credentials: serde_json::Value,
+        plugins: serde_json::Value,
+        models: serde_json::Value,
+    ) -> Self {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let requests = paths.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 2048];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let count = socket.read(&mut buffer).await.unwrap();
+                    assert!(count > 0);
+                    request.extend_from_slice(&buffer[..count]);
+                }
+                let request = String::from_utf8(request).unwrap();
+                assert!(request.to_ascii_lowercase()
+                    .contains("authorization: bearer oauth-provider-test-key\r\n"));
+                let path = request.split_whitespace().nth(1).unwrap();
+                requests.lock().unwrap().push(path.to_string());
+                let payload = match path {
+                    "/v8/management/credentials" => Some(&credentials),
+                    "/v8/management/plugins" => Some(&plugins),
+                    _ => path.strip_prefix("/v8/management/routing/model-definitions/")
+                        .and_then(|provider| models.get(provider)),
+                }.filter(|payload| !payload.is_null());
+                let (status, body) = if path == "/v8/management/config.yaml" {
+                    ("200 OK", "config-version: 8\n".to_string())
+                } else if let Some(payload) = payload {
+                    ("200 OK", payload.to_string())
+                } else {
+                    ("404 Not Found", "{}".to_string())
+                };
+                socket.write_all(format!(
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len(),
+                ).as_bytes()).await.unwrap();
+            }
+        });
+        Self {
+            config: GuiConfigFile {
+                port,
+                management_secret_key: "oauth-provider-test-key".to_string(),
+                ..GuiConfigFile::default()
+            },
+            paths,
+            task,
+        }
+    }
+}
+
+impl Drop for OAuthProviderTestServer {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+#[tokio::test]
+async fn oauth_plugin_providers_from_credentials_and_plugins_reach_definitions() {
+    let server = OAuthProviderTestServer::new(
+        serde_json::json!({"files": [{"provider": " DouBao ", "type": " DOLA "}]}),
+        serde_json::json!({"plugins_enabled": true, "plugins": [{
+            "id": "doujie-oauth", "enabled": true, "effective_enabled": true,
+            "supports_oauth": true, "oauth_provider": " SINGLE ",
+            "oauth_providers": ["DOUBAO", "dola", "doubao"],
+            "oauth_provider_entries": [{"identifier": " ENTRIES "}]
+        }]}),
+        serde_json::json!({
+            "doubao": {"models": [{"id": "doubao-pro"}, {"id": "doubao"}]},
+            "dola": {"models": [{"id": "dola-model"}]},
+            "single": {"models": [{"id": "single-model"}]},
+            "entries": {"models": [{"id": "entries-model"}]}
+        }),
+    ).await;
+    let definitions = fetch_oauth_model_definitions(&server.config).await;
+    assert_eq!(definitions, vec![
+        test_oauth_definition_set("dola", &["dola-model"]),
+        test_oauth_definition_set("doubao", &["doubao-pro", "doubao"]),
+        test_oauth_definition_set("entries", &["entries-model"]),
+        test_oauth_definition_set("single", &["single-model"]),
+    ]);
+    assert_eq!(server.paths.lock().unwrap().iter()
+        .filter(|path| path.ends_with("/model-definitions/doubao")).count(), 1);
+}
+
+#[tokio::test]
+async fn oauth_builtin_only_definitions_and_alias_yaml_remain_identical() {
+    let credentials = serde_json::json!({"files": OAUTH_ALIAS_CHANNELS.iter()
+        .map(|channel| serde_json::json!({"provider": channel.key})).collect::<Vec<_>>()});
+    let models = OAUTH_ALIAS_CHANNELS.iter().map(|channel| (
+        channel.key.to_string(),
+        serde_json::json!({"models": [{"id": format!("{}-model", channel.key)}]}),
+    )).collect::<serde_json::Map<_, _>>();
+    let server = OAuthProviderTestServer::new(
+        credentials, serde_json::json!({"plugins": []}), serde_json::Value::Object(models),
+    ).await;
+    let expected = OAUTH_ALIAS_CHANNELS.iter().map(|channel| {
+        test_oauth_definition_set(channel.key, &[&format!("{}-model", channel.key)])
+    }).collect::<Vec<_>>();
+    let definitions = fetch_oauth_model_definitions(&server.config).await;
+    assert_eq!(definitions, expected);
+    for definition in &expected {
+        let mappings = ClaudeDesktopModelMappings::all(&definition.models[0].id);
+        let available = test_agent_models(&[&definition.models[0].id]);
+        assert_eq!(
+            ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml(
+                "config-version: 8\n", &mappings, &available, &definitions).unwrap(),
+            ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml(
+                "config-version: 8\n", &mappings, &available, &expected).unwrap(),
+        );
+    }
+}
+
+#[tokio::test]
+async fn oauth_builtin_active_filter_and_discovery_failure_fallback_are_preserved() {
+    for credentials in [
+        serde_json::json!({"files": [{"provider": "anthropic"}, {"type": "anti-gravity"}]}),
+        serde_json::Value::Null,
+    ] {
+        let unavailable = credentials.is_null();
+        let server = OAuthProviderTestServer::new(credentials, serde_json::Value::Null,
+            serde_json::json!({"claude": {"models": [{"id": "claude-model"}]},
+                "antigravity": {"models": [{"id": "antigravity-model"}]}}),
+        ).await;
+        assert_eq!(fetch_oauth_model_definitions(&server.config).await, vec![
+            test_oauth_definition_set("antigravity", &["antigravity-model"]),
+            test_oauth_definition_set("claude", &["claude-model"]),
+        ]);
+        let paths = server.paths.lock().unwrap();
+        assert_eq!(paths.iter().filter(|path| path.contains("/model-definitions/")).count(),
+            if unavailable { OAUTH_ALIAS_CHANNELS.len() } else { 2 });
+    }
+}
+
+#[tokio::test]
+async fn oauth_unknown_provider_404_is_skipped_without_error() {
+    let server = OAuthProviderTestServer::new(
+        serde_json::json!({"files": [{"provider": "missing"}, {"provider": "doubao"}]}),
+        serde_json::json!({"plugins": []}),
+        serde_json::json!({"doubao": {"models": [{"id": "doubao-pro"}]}}),
+    ).await;
+    assert_eq!(fetch_oauth_model_definitions(&server.config).await,
+        vec![test_oauth_definition_set("doubao", &["doubao-pro"])]);
+    assert!(server.paths.lock().unwrap().iter()
+        .any(|path| path.ends_with("/model-definitions/missing")));
+}
+
+#[tokio::test]
+async fn oauth_disabled_unavailable_credentials_and_inactive_plugins_are_excluded() {
+    let server = OAuthProviderTestServer::new(
+        serde_json::json!({"files": [
+            {"provider": "disabled", "disabled": true},
+            {"type": "unavailable", "unavailable": true},
+            {"provider": "", "type": " Active "},
+            {"provider": "../unsafe"}, {"provider": "not safe"}
+        ]}),
+        serde_json::json!({"plugins": [
+            {"enabled": false, "supports_oauth": true, "oauth_providers": ["disabled-plugin"]},
+            {"enabled": true, "effective_enabled": false, "oauth_provider": "inactive-plugin"},
+            {"enabled": true, "supports_oauth": false, "oauth_provider": "non-oauth"},
+            {"enabled": true, "oauth_providers": ["", "../unsafe", "not safe", "bad?query", "bad#fragment"]}
+        ]}),
+        serde_json::json!({"active": {"models": [{"id": "active-model"}]}}),
+    ).await;
+    assert_eq!(fetch_oauth_model_definitions(&server.config).await,
+        vec![test_oauth_definition_set("active", &["active-model"])]);
+    assert_eq!(*server.paths.lock().unwrap(), [
+        "/v8/management/credentials", "/v8/management/plugins",
+        "/v8/management/routing/model-definitions/active",
+    ]);
+}
+
+#[tokio::test]
+async fn oauth_plugin_provider_resolves_claude_desktop_mapping_preparation() {
+    let server = OAuthProviderTestServer::new(
+        serde_json::json!({"files": [{"provider": "doubao"}]}),
+        serde_json::json!({"plugins": [{"enabled": true, "supports_oauth": true,
+            "oauth_providers": ["doubao", "dola"]}]}),
+        serde_json::json!({"doubao": {"models": [{"id": "doubao-pro"}, {"id": "doubao"}]}}),
+    ).await;
+    let mut mappings = ClaudeDesktopModelMappings::all("doubao-pro");
+    mappings.desktop_models = Some(vec![
+        ClaudeDesktopModelMapping {
+            model: "doubao-pro".to_string(), alias: "claude-sonnet-5-5".to_string(), context_1m: true,
+        },
+        ClaudeDesktopModelMapping {
+            model: "doubao".to_string(), alias: "claude-haiku-5-5".to_string(), context_1m: false,
+        },
+    ]);
+    let available = test_agent_models(&["doubao-pro", "doubao"]);
+    let (_, after) = prepare_desktop_core_update(&server.config, &mut mappings, &available).await.unwrap();
+    let document: serde_norway::Value = serde_norway::from_str(&after).unwrap();
+    let aliases = document["oauth-model-alias"]["doubao"].as_sequence().unwrap();
+    for (model, alias) in [("doubao-pro", "claude-sonnet-5-5"), ("doubao", "claude-haiku-5-5")] {
+        assert!(aliases.iter().any(|entry| entry["name"].as_str() == Some(model)
+            && entry["alias"].as_str() == Some(alias) && entry["fork"].as_bool() == Some(true)));
+    }
+    assert!(mappings.desktop_models.as_ref().unwrap()[0].context_1m);
+    assert!(!mappings.desktop_models.as_ref().unwrap()[1].context_1m);
+    assert_eq!(resolve_available_agent_model(&available, "doubao-pro").unwrap(), "doubao-pro");
+}
+
+#[test]
+fn oauth_plugin_alias_sources_and_editing_keep_runtime_channels_and_force_mapping() {
+    let definitions = [test_oauth_definition_set("doubao", &["doubao-pro"])];
+    let available = test_agent_models(&["doubao-pro"]);
+    for force_mapping in [false, true] {
+        let input = format!("oauth-model-alias:\n  doubao:\n    - name: other\n      alias: existing\n      force-mapping: {force_mapping}\n");
+        let sources = resolved_oauth_alias_sources(&input, &definitions, &available, AliasSourceCapability::Base).unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].location, ThinkingAliasSourceLocation::Oauth {
+            channel: "doubao".to_string(), force_mapping,
+        });
+        assert!(resolved_oauth_alias_sources(&input, &definitions, &available,
+            AliasSourceCapability::Fast).unwrap().is_empty());
+        let rendered = add_model_alias_to_yaml(&input, &sources[0], "plugin-alias", "", false).unwrap();
+        let entries = thinking_aliases_from_yaml(&rendered).unwrap();
+        let entry = entries.iter().find(|entry| entry.alias == "plugin-alias").unwrap();
+        for selected in [None, Some(entry)] {
+            let source = resolve_model_alias_edit_source_for_mapping(
+                &rendered, "plugin-alias", &definitions, selected).unwrap();
+            assert_eq!(source.location, sources[0].location);
+        }
+        let edited = edit_model_alias_in_yaml(&rendered, "plugin-alias", &sources[0], "renamed-plugin-alias", "", false).unwrap();
+        let document: serde_norway::Value = serde_norway::from_str(&edited).unwrap();
+        let alias = document["oauth-model-alias"]["doubao"].as_sequence().unwrap().iter()
+            .find(|entry| entry["alias"].as_str() == Some("renamed-plugin-alias")).unwrap();
+        assert_eq!(alias["force-mapping"].as_bool().unwrap_or(false), force_mapping);
+        let mappings = ClaudeDesktopModelMappings::all("doubao-pro");
+        let desktop = ensure_claude_desktop_model_aliases_with_oauth_definitions_in_yaml(
+            &input, &mappings, &available, &definitions).unwrap();
+        let document: serde_norway::Value = serde_norway::from_str(&desktop).unwrap();
+        assert!(document["oauth-model-alias"]["doubao"].as_sequence().unwrap().iter()
+            .filter(|entry| entry["name"].as_str() == Some("doubao-pro"))
+            .all(|entry| entry["force-mapping"].as_bool().unwrap_or(false) == force_mapping));
+    }
+}
+
+#[test]
+fn oauth_discovered_provider_ids_match_the_oauth_submission_contract() {
+    // Discovery and OAuth submission must agree on what a legal provider id is.
+    // Submission accepts lowercase letters, digits and hyphen only, so discovery
+    // must reject the same shapes instead of silently keeping an unusable id.
+    for provider in ["doubao", "custom-sso", "plugin2", "a"] {
+        assert_eq!(
+            normalize_oauth_model_provider(provider).as_deref(),
+            Some(provider),
+            "{provider} should be a legal provider id"
+        );
+    }
+    assert_eq!(
+        normalize_oauth_model_provider(" Custom-SSO ").as_deref(),
+        Some("custom-sso")
+    );
+    for provider in ["", "   ", "custom_sso", "custom.sso", "custom sso", "custom/sso"] {
+        assert_eq!(
+            normalize_oauth_model_provider(provider),
+            None,
+            "{provider:?} must not be discovered because submission would reject it"
+        );
+    }
+    // Anything discovery accepts must also be accepted by the submission path.
+    for provider in ["doubao", "custom-sso", "plugin2"] {
+        assert_eq!(
+            normalize_oauth_request_provider(provider, true).unwrap(),
+            normalize_oauth_model_provider(provider).unwrap()
+        );
+    }
+}
+
+#[test]
+fn oauth_plugin_alias_force_mapping_is_channel_level_and_built_ins_use_the_table() {
+    // Plugin channels have no static definition, so the flag comes from the
+    // kernel config and applies to the channel as a whole.
+    let plugin_root: serde_norway::Mapping = serde_norway::from_str(
+        "oauth-model-alias:\n  doubao:\n    - name: other\n      alias: existing\n      force-mapping: true\n",
+    )
+    .unwrap();
+    assert!(oauth_alias_force_mapping(&plugin_root, "doubao"));
+    assert!(!oauth_alias_force_mapping(&plugin_root, "dola"));
+
+    // A built-in channel keeps its static table value even when the config says
+    // otherwise, which is what preserves the existing built-in behaviour.
+    let builtin_root: serde_norway::Mapping = serde_norway::from_str(
+        "oauth-model-alias:\n  antigravity:\n    - name: other\n      alias: existing\n      force-mapping: false\n",
+    )
+    .unwrap();
+    let table = oauth_alias_channel("antigravity").unwrap().force_mapping;
+    assert_eq!(oauth_alias_force_mapping(&builtin_root, "antigravity"), table);
+}
+
+#[test]
+fn oauth_credential_plugin_provider_field_is_discovered() {
+    // Plugin-managed credentials may populate only oauth_provider.
+    let files = serde_json::json!({"files": [
+        {"oauth_provider": "doubao"},
+        {"provider": "dola"},
+        {"type": "codex"},
+        {"provider": "claude", "oauth_provider": "doubao"},
+        {"provider": "ignored", "disabled": true},
+    ]});
+    let mut discovered = std::collections::BTreeSet::new();
+    for file in files["files"].as_array().unwrap() {
+        if file.get("disabled").and_then(serde_json::Value::as_bool) == Some(true) {
+            continue;
+        }
+        for value in ["provider", "oauth_provider", "type"]
+            .into_iter()
+            .filter_map(|key| file.get(key).and_then(serde_json::Value::as_str))
+            .filter_map(normalize_oauth_model_provider)
+        {
+            discovered.insert(value);
+        }
+    }
+    assert!(discovered.contains("doubao"));
+    assert!(discovered.contains("dola"));
+    assert!(discovered.contains("codex"));
+    assert!(discovered.contains("claude"));
+    assert!(!discovered.contains("ignored"));
 }
 
 #[test]
@@ -456,7 +792,7 @@ fn fast_is_only_available_for_supported_model_sources() {
             reasoning_levels: vec!["low".to_string(), "high".to_string()],
         },
         location: ThinkingAliasSourceLocation::Oauth {
-            channel: "antigravity",
+            channel: "antigravity".to_string(),
             force_mapping: true,
         },
     };

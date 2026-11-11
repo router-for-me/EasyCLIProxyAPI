@@ -626,8 +626,13 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
               const health = authFileHealth(file);
               const cooldownSnapshot = normalizeAuthFileCooldowns(file.cooldowns, receivedAtMs, observedAt);
               const hasCooldown = Boolean(cooldownSnapshot?.records?.length);
-              const showCooldown = hasCooldown || cooldownSnapshot?.records === null;
-              const statusLabel = hasCooldown && !health.disabled ? t('authFiles.list.cooling') : t(health.label === 'authFiles.health.active' ? 'authFiles.list.available' : health.label);
+              // A suspension is terminal, so it keeps its own strip even without
+              // cooldown data; its long prose belongs on that line, not in the badge.
+              const suspended = health.suspension !== undefined;
+              const showCooldown = hasCooldown || cooldownSnapshot?.records === null || suspended;
+              const statusLabel = hasCooldown && !health.disabled ? t('authFiles.list.cooling')
+                : health.label === 'authFiles.health.active' ? t('authFiles.list.available')
+                  : suspended ? t('authFiles.status.disabled') : t(health.label);
               const expanded = expandedFiles.has(key);
               const detailsId = `auth-file-details-${encodeURIComponent(key)}`;
               const cooldownResetIndex = authFileCooldownResetIndex(file);

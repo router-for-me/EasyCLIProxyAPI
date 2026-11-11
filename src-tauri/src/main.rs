@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agents;
+mod acp;
 mod agent_skills;
 mod agent_usage;
 mod agent_usage_store;
@@ -11,6 +12,7 @@ mod codex_catalog;
 mod codex_sessions;
 mod configuration_watcher;
 mod core_config;
+mod sensitive_words;
 mod core_runtime;
 mod core_recovery;
 mod desktop_theme;
@@ -33,6 +35,7 @@ mod privacy_mode;
 mod progress;
 mod provider_health;
 mod reverse_proxy;
+mod auto_update;
 #[cfg(any(
     target_os = "linux",
     target_os = "macos",
@@ -212,11 +215,11 @@ const PI_AGENT_MODELS_CACHE_FILE: &str = "cliproxyapi-models.json";
 const CODEX_MODEL_CATALOG_FILE: &str = "cpa-gui-model-catalog.json";
 const CODEX_OAUTH_LOGIN_REQUIRED_ERROR: &str = "CODEX_OAUTH_LOGIN_REQUIRED";
 const CLAUDE_DESKTOP_PROFILE_ID: &str = "00000000-0000-4000-8000-000000831700";
-const CLAUDE_DESKTOP_OPUS_MODEL_ID: &str = "claude-opus-5-cpa";
-const CLAUDE_DESKTOP_SONNET_MODEL_ID: &str = "claude-sonnet-5-cpa";
-const CLAUDE_DESKTOP_HAIKU_MODEL_ID: &str = "claude-haiku-4-5-cpa";
+const CLAUDE_DESKTOP_OPUS_MODEL_ID: &str = "claude-opus-5";
+const CLAUDE_DESKTOP_SONNET_MODEL_ID: &str = "claude-sonnet-5";
+const CLAUDE_DESKTOP_HAIKU_MODEL_ID: &str = "claude-haiku-4-5";
 const LEGACY_CLAUDE_DESKTOP_MODEL_IDS: [&str; 3] =
-    ["claude-opus-5", "claude-sonnet-4-6", "claude-haiku-4-5"];
+    ["claude-opus-5-cpa", "claude-sonnet-5-cpa", "claude-haiku-4-5-cpa"];
 const MANAGED_CLAUDE_OPUS_ALIAS_DISPLAY_NAME: &str = "EasyCLIProxyAPI managed Claude Opus mapping";
 const MANAGED_CLAUDE_SONNET_ALIAS_DISPLAY_NAME: &str =
     "EasyCLIProxyAPI managed Claude Sonnet mapping";
@@ -299,6 +302,7 @@ fn normalize_app_locale(locale: &str) -> &'static str {
 #[derive(Default)]
 struct CoreDownloadState {
     inner: Mutex<CoreDownloadInner>,
+    silent: bool,
 }
 
 #[derive(Default)]
@@ -422,7 +426,7 @@ impl AgentConfigStatusCache {
         Ok(())
     }
 
-    fn clear(&self) -> Result<(), String> {
+    pub(crate) fn clear(&self) -> Result<(), String> {
         let mut current = self
             .entry
             .lock()
@@ -482,6 +486,7 @@ struct AppUpdateInfo {
     update_available: bool,
     release_url: String,
     release_notes: HashMap<String, String>,
+    skipped_release_notes: Vec<SkippedReleaseNotes>,
     published_at: String,
     current_build_at: Option<String>,
     auto_update_supported: bool,
@@ -493,6 +498,13 @@ struct AppUpdateInfo {
     update_channel: String,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkippedReleaseNotes {
+    version: String,
+    release_notes: HashMap<String, String>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PortableUpdateManifest {
@@ -502,6 +514,8 @@ struct PortableUpdateManifest {
     release_url: String,
     #[serde(default, deserialize_with = "deserialize_release_notes")]
     release_notes: HashMap<String, String>,
+    #[serde(default)]
+    release_notes_history: serde_json::Value,
     assets: std::collections::HashMap<String, PortableUpdateAsset>,
     #[serde(default)]
     full_assets: Option<std::collections::HashMap<String, PortableUpdateAsset>>,
@@ -548,6 +562,8 @@ struct PendingAppUpdate {
 #[serde(rename_all = "camelCase")]
 struct AppUpdateTask {
     running: bool,
+    #[serde(skip)]
+    automatic: bool,
     preserve_core: bool,
     cancellable: bool,
     phase: String,
@@ -565,6 +581,7 @@ impl Default for AppUpdateTask {
             cancellable: false,
             phase: "idle".to_string(),
             preserve_core: false,
+            automatic: false,
             target_version: None,
             downloaded_bytes: 0,
             total_bytes: None,
@@ -581,7 +598,7 @@ struct PortablePackagePayload {
 }
 
 #[cfg(any(windows, target_os = "linux"))]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PortableUpdateDescriptor {
     parent_pid: u32,
@@ -605,7 +622,7 @@ struct PortableUpdateDescriptor {
 }
 
 #[cfg(target_os = "macos")]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MacosUpdateDescriptor {
     parent_pid: u32,
@@ -677,6 +694,7 @@ struct GuiConfigFile {
     #[serde(default = "default_update_channel")]
     update_channel: String,
     commercial_mode: bool,
+    auto_update: auto_update::AutoUpdateSettings,
     logging_to_file: bool,
     logs_max_total_size_mb: u32,
     error_logs_max_files: u32,
@@ -982,6 +1000,7 @@ impl Default for GuiConfigFile {
             management_secret_key: LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string(),
             debug: false,
             update_channel: default_update_channel(),
+            auto_update: auto_update::AutoUpdateSettings::default(),
             commercial_mode: false,
             logging_to_file: false,
             logs_max_total_size_mb: DEFAULT_LOGS_MAX_TOTAL_SIZE_MB,
@@ -1384,7 +1403,7 @@ struct ThinkingAliasSource {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ThinkingAliasSourceLocation {
     Oauth {
-        channel: &'static str,
+        channel: String,
         force_mapping: bool,
     },
     ConfigModel {
@@ -1666,6 +1685,10 @@ struct CoreTlsSettings {
 struct CoreSensitiveWordsSettings {
     antigravity_sensitive_words: Vec<String>,
     devin_sensitive_words: Vec<String>,
+    #[serde(default)]
+    antigravity_sensitive_words_replace: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    devin_sensitive_words_replace: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -1786,6 +1809,9 @@ struct DownloadedArchive {
 }
 
 impl CoreDownloadState {
+    fn silent() -> Self {
+        Self { silent: true, ..Self::default() }
+    }
     fn start(&self, token: CancellationToken, version: Option<String>) -> Result<(), String> {
         let mut inner = self
             .inner
@@ -1837,6 +1863,9 @@ impl CoreDownloadState {
         total: Option<u64>,
         cancellable: bool,
     ) {
+        if self.silent {
+            return;
+        }
         let percent = total
             .filter(|total| *total > 0)
             .map(|total| downloaded as f64 * 100.0 / total as f64);
@@ -1950,6 +1979,7 @@ impl AppUpdateState {
             cancellable: true,
             phase: "downloading".to_string(),
             preserve_core: inner.task.preserve_core,
+            automatic: inner.task.automatic,
             target_version: Some(pending.version.clone()),
             downloaded_bytes: 0,
             total_bytes: Some(pending.asset.size_bytes),
@@ -2536,6 +2566,11 @@ struct GithubAsset {
 
 fn main() {
     let helper_args = env::args_os().collect::<Vec<_>>();
+    if helper_args.get(1).is_some_and(|arg| arg == "--cpa-acp-tools") {
+        let result = acp::run_mcp_helper();
+        if let Err(error) = result { eprintln!("{error}"); std::process::exit(1); }
+        return;
+    }
     if helper_args.get(1).is_some_and(|a| a == "--cpa-copilot-cli") {
         let code = run_copilot_helper(&helper_args).unwrap_or_else(|error| { eprintln!("{error}"); 1 });
         std::process::exit(code);
@@ -2625,7 +2660,9 @@ fn main() {
                 .build(),
         )
         .manage(CoreDownloadState::default())
+        .manage(acp::AcpState::default())
         .manage(AppUpdateState::default())
+        .manage(auto_update::AutoUpdateState::default())
         .manage(window_activity::WindowActivity::default())
         .manage(CoreProcessState::new(should_start_core_on_launch(
             &gui_config,
@@ -2746,6 +2783,10 @@ fn main() {
             if let Err(error) = load_codex_model_customizations(app.handle()) {
                 eprintln!("Failed to load Codex custom model configuration: {error}");
             }
+            if let Err(error) = load_agent_system_prompts(app.handle()) {
+                eprintln!("Failed to load agent system prompt configuration: {error}");
+            }
+            restore_agent_prompt_proxies(app.handle().clone());
             if let Err(error) = restore_main_window_geometry(app.handle()) {
                 eprintln!("{error}");
             }
@@ -2872,7 +2913,23 @@ fn main() {
                             .collect::<Vec<_>>()
                             .join(", ")
                     );
-                } else if should_start_core_on_launch(&config) {
+                }
+                // Adopt a preserved core before a cached update can replace it.
+                // Release the lifecycle lock: installation takes it itself.
+                drop(_guard);
+                if runtime_update_ack.is_none()
+                    && tauri::async_runtime::block_on(auto_update::startup(&core_app))
+                {
+                    return;
+                }
+                let Ok(_guard) = CORE_OPERATION_LOCK.lock() else {
+                    return;
+                };
+                let Ok(config) = gui_config_state.snapshot() else {
+                    process_state.set_starting(false);
+                    return;
+                };
+                if process_state.managed_pid().is_none() && should_start_core_on_launch(&config) {
                     let start_result = retry_core_operation(3, Duration::from_millis(400), || {
                         process_state.ensure_active()?;
                         start_core_process_inner(process_state.inner(), &config)
@@ -2889,6 +2946,9 @@ fn main() {
                 }
 
                 process_state.set_starting(false);
+
+                let acp_app = core_app.clone();
+                tauri::async_runtime::spawn(acp::restore(acp_app));
 
                 let proxy_app = core_app.clone();
                 tauri::async_runtime::spawn(async move {
@@ -2913,17 +2973,34 @@ fn main() {
                         core_expected,
                     ) {
                         eprintln!("Application update runtime acceptance failed: {error}");
+                        return;
                     }
                 }
+                tauri::async_runtime::spawn(auto_update::run(core_app.clone()));
             });
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            acp::get_acp_status,
+            acp::acp_connect,
+            acp::switch_acp_account,
+            acp::add_acp_account,
+            acp::add_acp_account_manual,
+            acp::submit_acp_account_authorization,
+            acp::relogin_acp_account,
+            acp::rename_acp_account,
+            acp::remove_acp_account,
+            acp::logout_acp_account,
+            acp::cancel_acp_operation,
+            acp::select_acp_model,
+            acp::test_acp_connection,
+            acp::set_acp_upstream_enabled,
             window_activity::main_window_active,
             desktop_theme::get_linux_system_theme,
             desktop_theme::list_custom_themes,
             desktop_theme::open_custom_themes_directory,
+            desktop_theme::import_custom_theme,
             desktop_theme::get_theme_selection,
             desktop_theme::save_theme_selection,
             window_material::detect_window_material,
@@ -3001,6 +3078,8 @@ fn main() {
             save_codex_subagent_config,
             get_zcode_subagent_config,
             save_zcode_subagent_config,
+            get_agent_system_prompt_editor,
+            save_agent_system_prompt_editor,
             close_codex_config_modification,
             set_agent_config_enabled,
             update_agent_config,
@@ -3023,6 +3102,7 @@ fn main() {
             save_core_tls_settings,
             get_core_sensitive_words_settings,
             save_core_sensitive_words_settings,
+            sensitive_words::fetch_latest_sensitive_word_rules,
             get_core_config_settings,
             get_extended_core_config,
             save_extended_core_config,
@@ -3073,6 +3153,9 @@ fn main() {
             get_app_update_task,
             start_app_update,
             cancel_app_update,
+            auto_update::get_auto_update_status,
+            auto_update::set_auto_update_settings,
+            auto_update::retry_auto_update,
             check_latest_core,
             core_runtime::list_core_versions,
             detect_bundled_core,
@@ -3131,10 +3214,12 @@ fn main() {
                 return;
             }
             process_state.recovery.cancel();
+            app_handle.state::<acp::AcpState>().shutdown();
             if let Err(error) = persist_main_window_geometry(app_handle) {
                 eprintln!("Failed to save main window geometry: {error}");
             }
             app_handle.state::<CoreDownloadState>().cancel();
+            app_handle.state::<auto_update::AutoUpdateState>().shutdown();
             let app_handle = app_handle.clone();
             tauri::async_runtime::spawn_blocking(move || {
                 let _guard = CORE_OPERATION_LOCK
@@ -3150,6 +3235,7 @@ fn main() {
             });
         }
         tauri::RunEvent::Exit => {
+            app_handle.state::<acp::AcpState>().shutdown();
             #[cfg(windows)]
             webview_recovery::stop(app_handle);
             usage::stop_usage_collector(app_handle);

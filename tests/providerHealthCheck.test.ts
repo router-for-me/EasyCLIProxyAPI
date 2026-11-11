@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import {
   buildProviderHealthProbe,
+  checkProviderModelHealth,
   mergeProviderHealthModels,
   primaryProviderHealthCredential,
   runProviderModelHealthChecks,
@@ -8,6 +10,29 @@ import {
 import { modelEndpointCandidates } from '../src/services/modelService';
 
 describe('API 接入健康检测', () => {
+  describe('probe terminal states', () => {
+    let originalWindow: PropertyDescriptor | undefined;
+    beforeEach(() => {
+      originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+      Object.defineProperty(globalThis, 'window', { value: {}, writable: true, configurable: true });
+    });
+    afterEach(() => {
+      clearMocks();
+      if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+      else Reflect.deleteProperty(globalThis, 'window');
+    });
+
+    it('keeps budget exhaustion distinct from healthy and failed results', async () => {
+      mockIPC(() => ({ budgetExhausted: true, responseLatencyMs: 2300 }));
+      expect(await checkProviderModelHealth({
+        provider: 'openai', baseUrl: 'http://127.0.0.1:8317/v1', apiKeys: ['test-key'],
+      }, 'aistudio/gemini-4-hydrogen')).toEqual({
+        model: 'aistudio/gemini-4-hydrogen', status: 'budget-exhausted', success: false,
+        budgetExhausted: true, responseLatencyMs: 2300,
+      });
+    });
+  });
+
   it('取消后不派发剩余模型，也不更新已关闭的界面', async () => {
     const controller = new AbortController();
     const requested: string[] = [];

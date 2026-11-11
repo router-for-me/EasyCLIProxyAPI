@@ -9,6 +9,7 @@
 @import './sidebar.css' layer(components);
 @import './responsive-providers.css' layer(components);
 @import './responsive-agents.css' layer(components);
+@import './agent-system-prompt.css' layer(components);
 @import './responsive-settings.css' layer(components);
 @import './config-settings.css' layer(components);
 @import './subpage-navigation.css' layer(components);

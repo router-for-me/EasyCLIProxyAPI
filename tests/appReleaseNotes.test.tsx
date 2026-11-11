@@ -35,6 +35,33 @@ function renderNotes(overrides: Partial<Parameters<typeof AppReleaseNotes>[0]> =
 }
 
 describe('localized release notes display', () => {
+  test('renders skipped releases below the target in the current locale only', () => {
+    const html = renderNotes({ info: {
+      ...info,
+      skippedReleaseNotes: [
+        { version: '0.2.97', releaseNotes: { en: 'Newest skipped release' } },
+        { version: '0.2.96', releaseNotes: { en: 'Older skipped release' } },
+        { version: '0.2.95', releaseNotes: { ja: '他の言語' } },
+      ],
+    } }, 'en');
+
+    expect(html).toContain('v0.2.97');
+    expect(html).toContain('v0.2.96');
+    expect(html).not.toContain('v0.2.95');
+    expect(html).not.toContain('他の言語');
+    // The target version renders first, then skipped releases newest to oldest.
+    const targetIndex = html.indexOf('v0.2.98');
+    const newestIndex = html.indexOf('Newest skipped release');
+    const olderIndex = html.indexOf('Older skipped release');
+    expect(targetIndex).toBeGreaterThan(-1);
+    expect(newestIndex).toBeGreaterThan(-1);
+    expect(olderIndex).toBeGreaterThan(-1);
+    expect(targetIndex).toBeLessThan(newestIndex);
+    expect(newestIndex).toBeLessThan(olderIndex);
+    // Each skipped release shows its own version label before its notes.
+    expect(html.indexOf('v0.2.97')).toBeLessThan(newestIndex);
+  });
+
   test('renders versioned Markdown with date and release link without requiring an available update', () => {
     const html = renderNotes();
     expect(html).toContain('v0.2.98');

@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { validateAppVersion } from './version.mjs';
@@ -35,6 +35,47 @@ export async function resolveReleaseNotes({ root = process.cwd(), tag }) {
     }
   }
   return notes;
+}
+
+const stableVersionPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+const maxSkippedReleaseNotes = 9;
+const maxReleaseNotesHistoryBytes = 128 * 1024;
+
+function compareVersionParts(left, right) {
+  const difference = left.findIndex((part, index) => part !== right[index]);
+  return difference < 0 ? 0 : left[difference] > right[difference] ? 1 : -1;
+}
+
+export async function resolveReleaseNotesHistory({ root = process.cwd(), tag }) {
+  const target = String(tag ?? '').trim().replace(/^v/, '');
+  if (!stableVersionPattern.test(target)) return {};
+  const targetParts = target.split('.').map(BigInt);
+  const entries = await readdir(join(root, 'docs', 'release-notes'), { withFileTypes: true })
+    .catch((error) => {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    });
+  const olderReleases = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('v')) continue;
+    const version = entry.name.slice(1);
+    if (!stableVersionPattern.test(version)) continue;
+    const parts = version.split('.').map(BigInt);
+    if (compareVersionParts(parts, targetParts) < 0) olderReleases.push({ version, parts });
+  }
+  olderReleases.sort((left, right) => compareVersionParts(right.parts, left.parts));
+
+  let history = {};
+  for (const { version } of olderReleases) {
+    if (Object.keys(history).length >= maxSkippedReleaseNotes) break;
+    const notes = await resolveReleaseNotes({ root, tag: `v${version}` });
+    if (!Object.keys(notes).length) continue;
+    const nextHistory = { ...history, [version]: notes };
+    const bytes = Buffer.byteLength(JSON.stringify({ releaseNotesHistory: nextHistory }, null, 2));
+    if (bytes > maxReleaseNotesHistoryBytes) break;
+    history = nextHistory;
+  }
+  return history;
 }
 
 export function validateReleaseNotes(notes) {

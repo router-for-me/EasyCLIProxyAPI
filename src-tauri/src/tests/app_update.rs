@@ -447,6 +447,7 @@ fn portable_update_test_manifest(version: &str) -> PortableUpdateManifest {
         version: version.to_string(),
         published_at: "2026-07-24T00:00:00.000Z".to_string(),
         release_notes: HashMap::new(),
+        release_notes_history: serde_json::Value::Null,
         release_url: format!(
             "https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/v{version}"
         ),
@@ -464,6 +465,43 @@ fn portable_update_test_manifest(version: &str) -> PortableUpdateManifest {
         .collect(),
         full_assets: None,
     }
+}
+
+#[test]
+fn skipped_release_notes_exclude_endpoints_and_sort_stable_versions() {
+    let history = serde_json::json!({
+        "1.1.0": { "en": "Already installed" },
+        "1.2.0": { "en": "Earlier release" },
+        "1.2.1-preview.1": { "en": "Preview" },
+        "1.2.9": { "en": "Before 1.2.10" },
+        "1.2.10": { "ja": "更新内容", "en": " " },
+        "1.2.11": "Unlocalized",
+        "1.3.0": { "en": "Target" },
+        "1.4.0": { "en": "Later release" },
+        "invalid": { "en": "Invalid version" },
+    });
+    let manifest: PortableUpdateManifest = serde_json::from_value(serde_json::json!({
+        "schemaVersion": 1,
+        "version": "1.3.0",
+        "publishedAt": "2026-07-24T00:00:00.000Z",
+        "releaseUrl": "https://example.com/release",
+        "assets": {},
+        "releaseNotesHistory": history,
+    }))
+    .unwrap();
+    let entries = skipped_release_notes(&manifest.release_notes_history, "v1.1.0", "v1.3.0");
+    let versions: Vec<_> = entries.iter().map(|entry| entry.version.as_str()).collect();
+    assert_eq!(versions, ["1.2.10", "1.2.9", "1.2.0"]);
+    assert_eq!(entries[0].release_notes.len(), 1);
+    assert_eq!(entries[0].release_notes["ja"], "更新内容");
+    for (current, target) in [
+        ("1.3.0", "1.3.0"),
+        ("1.2.11", "1.3.0"),
+        ("1.1.0", "1.3.0-preview"),
+    ] {
+        assert!(skipped_release_notes(&history, current, target).is_empty());
+    }
+    assert!(skipped_release_notes(&serde_json::Value::Null, "1.1.0", "1.3.0").is_empty());
 }
 
 #[cfg(target_os = "linux")]
@@ -1328,6 +1366,23 @@ fn portable_update_zip_accepts_the_complete_release_package() {
         extracted.core_archive_name,
         Some("CLIProxyAPI_7.2.109_windows_amd64.zip".to_string())
     );
+    let app_dir = root.join("app");
+    fs::create_dir_all(app_dir.join("cpa-core")).unwrap();
+    fs::write(app_dir.join(CORE_VERSION_FILE), b"7.2.100\n").unwrap();
+    let executable = app_dir.join(PORTABLE_APP_BINARY);
+    fs::write(&executable, b"old executable").unwrap();
+    let work = root.join("EasyCLIProxyAPI-update-test");
+    let pending = PendingAppUpdate {
+        version: "1.2.3".into(),
+        asset: portable_update_test_asset("1.2.3", "amd64"),
+        arch: "amd64".into(),
+    };
+    let staged = crate::app_update::stage_portable_update(
+        &work, &valid_zip, &pending, executable.clone(), true,
+    ).unwrap();
+    staged.validate_cached(&executable).unwrap();
+    assert_eq!(fs::read(staged.staged_exe).unwrap(), b"new executable");
+    assert!(staged.preserve_core);
 
     let legacy_zip = root.join("legacy.zip");
     write_portable_update_zip(

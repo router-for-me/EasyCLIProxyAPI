@@ -2,7 +2,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 
 (async () => {
-  const browser = await chromium.launch({ channel: 'msedge', headless: true }).catch(() => chromium.launch({ headless: true }));
+  const browser = process.env.PLAYWRIGHT_EXECUTABLE
+    ? await chromium.launch({ executablePath: process.env.PLAYWRIGHT_EXECUTABLE, headless: true })
+    : await chromium.launch({ channel: 'msedge', headless: true }).catch(() => chromium.launch({ headless: true }));
   const page = await browser.newPage();
   await page.route('**/*', route => route.request().url().startsWith('http://127.0.0.1:1421/') ? route.continue() : route.abort());
   const errors = [];
@@ -64,7 +66,7 @@ const assert = require('node:assert/strict');
     await openDialog();
     assert.deepEqual(await readOrder(), before);
 
-    await dialog().screenshot({ path: '/tmp/ecpa_codex-order-ui_dialog.png' });
+    if (process.env.CODEX_ORDER_SCREENSHOT) await dialog().screenshot({ path: process.env.CODEX_ORDER_SCREENSHOT });
     await closeDialog();
 
     assert.deepEqual(errors, []);

@@ -1,9 +1,10 @@
 import { SegmentedControl } from './SegmentedControl';
 import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
-import { Check, FolderOpen, ImagePlus, Monitor, Moon, Palette, RefreshCw, Search, Sun, SunMoon, Trash2 } from 'lucide-react';
+import { Check, FileArchive, FolderInput, FolderOpen, ImagePlus, Monitor, Moon, Palette, RefreshCw, Search, Sun, SunMoon, Trash2, Upload } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { open as openFileDialog } from '../services/platform';
 import {
-  getAnimeBackdropInfo, openCustomThemesDirectory, reloadCustomThemes, retryThemeSave,
+  getAnimeBackdropInfo, importCustomTheme, openCustomThemesDirectory, reloadCustomThemes, retryThemeSave,
   setAnimeBackdropPreset, setCustomAnimeBackdropImage, setSystemTheme, useAnimeBackdropState,
   useCustomThemeStatus, useResolvedThemeId, useSystemThemes, useThemePreferenceIssue, useThemeRegistry,
 } from '../theme';
@@ -12,6 +13,7 @@ import { builtinThemes, themePreview, type ThemeRegistry } from '../themes/regis
 import { localizeThemeLabel, type ThemeAppearance, type ThemeDefinition, type ThemeIssueCode } from '../themes/types';
 import type { CustomThemeSkipReason } from '../themes/customThemes';
 import type { MessageKey } from '../i18n/resources';
+import { useConfirmation } from './ConfirmationDialog';
 import { Dialog } from './Dialog';
 import { EmptyState } from './EmptyState';
 import { Notice } from './Notice';
@@ -31,6 +33,15 @@ const issueKeys: Record<ThemeIssueCode, MessageKey> = {
   'invalid-token': 'app.theme.custom.issue.invalidToken',
   'invalid-icon': 'app.theme.custom.issue.invalidIcon',
   'invalid-asset': 'app.theme.custom.issue.invalidAsset',
+};
+const importErrorKeys: Record<string, MessageKey> = {
+  'not-found': 'app.theme.custom.importError.notFound',
+  'unsupported-format': 'app.theme.custom.importError.unsupportedFormat',
+  'no-theme-found': 'app.theme.custom.importError.noThemeFound',
+  'invalid-theme': 'app.theme.custom.importError.invalidTheme',
+  'duplicate-id': 'app.theme.custom.importError.duplicateId',
+  'too-large': 'app.theme.custom.importError.tooLarge',
+  'unsafe-archive': 'app.theme.custom.importError.unsafeArchive',
 };
 
 function ThemeThumbnail({ theme }: { theme: ThemeDefinition }) {
@@ -69,8 +80,14 @@ export function ThemeSelector({ value, onChange, open, onOpenChange, registry: o
   const [openFailed, setOpenFailed] = useState(false);
   const [uploadFailed, setUploadFailed] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [importMenuOpen, setImportMenuOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importFeedback, setImportFeedback] = useState<{ tone: 'success' | 'warn' | 'error'; text: string } | null>(null);
+  const { askConfirmation, confirmationDialog } = useConfirmation();
   const search = useRef<HTMLInputElement>(null);
   const backdropInput = useRef<HTMLInputElement>(null);
+  const importMenuRef = useRef<HTMLDivElement>(null);
+  const importButtonRef = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState('');
   const [source, setSource] = useState<Source>('all');
   const fixed = value === 'system' ? undefined : registry.get(value);
@@ -107,13 +124,31 @@ export function ThemeSelector({ value, onChange, open, onOpenChange, registry: o
     })),
   ];
   const openDirectory = () => {
+    setImportMenuOpen(false);
     setOpenFailed(false);
     openCustomThemesDirectory().catch(() => setOpenFailed(true));
   };
 
   useEffect(() => {
-    if (!open) { setQuery(''); setSource('all'); setUploadFailed(false); setGuideOpen(false); }
+    if (!open) {
+      setQuery('');
+      setSource('all');
+      setUploadFailed(false);
+      setGuideOpen(false);
+      setImportMenuOpen(false);
+      setImportFeedback(null);
+    }
   }, [open]);
+
+  useEffect(() => {
+    if (!importMenuOpen) return undefined;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (importMenuRef.current?.contains(event.target as Node)) return;
+      setImportMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [importMenuOpen]);
 
   const chooseMode = (next: Mode) => {
     if (fixed) setSystemTheme(fixed.id);
@@ -122,6 +157,63 @@ export function ThemeSelector({ value, onChange, open, onOpenChange, registry: o
   const chooseTheme = (theme: ThemeDefinition) => {
     setSystemTheme(theme.id);
     if (mode !== 'system') onChange(theme.id);
+  };
+  const handleImport = async (kind: 'zip' | 'folder') => {
+    setImportMenuOpen(false);
+    setOpenFailed(false);
+    setImportFeedback(null);
+    let selectedPath: string | null;
+    try {
+      selectedPath = await openFileDialog(kind === 'zip'
+        ? {
+            directory: false,
+            multiple: false,
+            title: t('app.theme.custom.importZipTitle'),
+            filters: [{ name: 'ZIP', extensions: ['zip'] }],
+          }
+        : {
+            directory: true,
+            multiple: false,
+            title: t('app.theme.custom.importFolderTitle'),
+          });
+    } catch {
+      setImportFeedback({ tone: 'error', text: t('app.theme.custom.importFailed') });
+      return;
+    }
+    if (!selectedPath) return;
+    setImporting(true);
+    try {
+      let result = await importCustomTheme(selectedPath);
+      if (result.existingIds.length) {
+        const confirmed = await askConfirmation({
+          title: t('app.theme.custom.importOverwriteTitle'),
+          message: t('app.theme.custom.importOverwriteMessage', { names: result.existingIds.join(', ') }),
+          confirmText: t('app.theme.custom.importOverwriteConfirm'),
+          variant: 'danger',
+        });
+        if (!confirmed) return;
+        result = await importCustomTheme(selectedPath, true);
+      }
+      const { importedIds, loadedThemes } = result;
+      if (loadedThemes.length) {
+        if (query) setQuery('');
+        if (source === 'builtin') setSource('all');
+        if (loadedThemes.length === 1) {
+          chooseTheme(loadedThemes[0]);
+          setImportFeedback({ tone: 'success', text: t('app.theme.custom.importSuccessOne', { name: themeName(loadedThemes[0]) }) });
+        } else {
+          setImportFeedback({ tone: 'success', text: t('app.theme.custom.importSuccessMany', { count: loadedThemes.length }) });
+        }
+      } else if (importedIds.length) {
+        setImportFeedback({ tone: 'warn', text: t('app.theme.custom.importSkipped') });
+      }
+    } catch (error) {
+      const code = typeof error === 'string' ? error : error instanceof Error ? error.message : '';
+      const errorKey = importErrorKeys[code] ?? 'app.theme.custom.importFailed';
+      setImportFeedback({ tone: 'error', text: t(errorKey) });
+    } finally {
+      setImporting(false);
+    }
   };
   const handleBackdropUpload = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -187,7 +279,15 @@ export function ThemeSelector({ value, onChange, open, onOpenChange, registry: o
         {issueText ? <i className="theme-selector-warning" aria-hidden="true" /> : null}
       </button>
       {open ? <Dialog className="theme-selector-menu surface-panel" title={t('app.theme.catalog.title')}
-        onClose={() => onOpenChange(false)} dismissOnBackdrop initialFocusRef={search}>
+        onClose={() => {
+          if (importMenuOpen) {
+            setImportMenuOpen(false);
+            importButtonRef.current?.focus();
+          } else {
+            onOpenChange(false);
+          }
+        }}
+        onBackdropClose={() => onOpenChange(false)} dismissOnBackdrop initialFocusRef={search}>
         {issueText ? <Notice className="theme-selector-notice" tone="warn" variant="text"
           action={issue === 'save' ? <button type="button" className="link-button"
             onClick={() => { search.current?.focus(); retryThemeSave(); }}>{t('app.theme.retrySave')}</button> : undefined}>
@@ -306,6 +406,9 @@ export function ThemeSelector({ value, onChange, open, onOpenChange, registry: o
             </button>} />}
         </div>
         <div className="theme-selector-footer">
+          {importFeedback ? <Notice className="theme-selector-import-notice" tone={importFeedback.tone} variant="text">
+            {importFeedback.text}
+          </Notice> : null}
           {customText ? <Notice className="theme-selector-custom-notice" tone={custom.failed || openFailed ? 'error' : 'warn'} variant="text">
             {customText}
           </Notice> : null}
@@ -316,18 +419,55 @@ export function ThemeSelector({ value, onChange, open, onOpenChange, registry: o
               <Palette size={15} aria-hidden="true" />{t('app.theme.diy.title')}
             </button>
             <div className="theme-selector-file-actions">
-            <button type="button" className="secondary-button compact-button" data-action="open-themes" onClick={openDirectory}>
-              <FolderOpen size={15} aria-hidden="true" />{t('app.theme.custom.openFolder')}
-            </button>
-            <button type="button" className="secondary-button compact-button" data-action="reload-themes" disabled={custom.loading}
-              onClick={() => { setOpenFailed(false); void reloadCustomThemes(); }}>
-              <RefreshCw size={15} aria-hidden="true" />{t('app.theme.custom.reload')}
-            </button>
+              <div className="theme-selector-import" ref={importMenuRef}>
+                <button
+                  ref={importButtonRef}
+                  type="button"
+                  className="secondary-button compact-button"
+                  data-action="import-theme"
+                  aria-expanded={importMenuOpen}
+                  disabled={importing || custom.loading}
+                  onClick={() => setImportMenuOpen(currentOpen => !currentOpen)}
+                >
+                  <Upload size={15} aria-hidden="true" />
+                  {importing ? t('app.theme.custom.importing') : t('app.theme.custom.import')}
+                </button>
+                {importMenuOpen ? (
+                  <div className="theme-selector-import-menu">
+                    <button
+                      type="button"
+                      className="theme-selector-import-option"
+                      data-action="import-theme-zip"
+                      onClick={() => void handleImport('zip')}
+                    >
+                      <FileArchive size={15} aria-hidden="true" />
+                      <span>{t('app.theme.custom.importZip')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="theme-selector-import-option"
+                      data-action="import-theme-folder"
+                      onClick={() => void handleImport('folder')}
+                    >
+                      <FolderInput size={15} aria-hidden="true" />
+                      <span>{t('app.theme.custom.importFolder')}</span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              <button type="button" className="secondary-button compact-button" data-action="open-themes" onClick={openDirectory}>
+                <FolderOpen size={15} aria-hidden="true" />{t('app.theme.custom.openFolder')}
+              </button>
+              <button type="button" className="secondary-button compact-button" data-action="reload-themes" disabled={importing || custom.loading}
+                onClick={() => { setOpenFailed(false); setImportFeedback(null); void reloadCustomThemes(); }}>
+                <RefreshCw size={15} aria-hidden="true" />{t('app.theme.custom.reload')}
+              </button>
             </div>
           </div>
         </div>
       </Dialog> : null}
       {open && guideOpen ? <ThemeDiyGuide onClose={() => setGuideOpen(false)} /> : null}
+      {confirmationDialog}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { EmptyState } from '../components/EmptyState';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Activity, Check, ChevronRight, Circle, LoaderCircle, Play, RefreshCw, Search, Square, X } from 'lucide-react';
+import { Activity, Check, ChevronRight, Circle, LoaderCircle, Play, RefreshCw, Search, Square, TriangleAlert, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { Dialog } from '../components/Dialog';
 import {
@@ -103,11 +103,13 @@ export function CoreHealthPanel({
     return models.filter((model) => `${model.name} ${model.displayName ?? ''}`.toLocaleLowerCase().includes(query));
   }, [models, search]);
   const healthy = Object.values(results).filter((result) => result.success).length;
-  const failed = Object.values(results).filter((result) => !result.success).length;
+  const failed = Object.values(results).filter((result) => result.status === 'failed').length;
+  const exhausted = Object.values(results).filter((result) => result.status === 'budget-exhausted').length;
   const time = (value: number) => formatDate(value, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const latency = (value?: number) => value === undefined ? '—' : `${formatNumber(value)} ms`;
 
-  const summary = t('home.health.summary', { healthy, failed, unchecked: Math.max(0, models.length - healthy - failed) });
+  const summary = t('home.health.summary', { healthy, failed, unchecked: Math.max(0, models.length - healthy - failed - exhausted) })
+    + (exhausted ? ` · ${t('apiAccess.health.budgetSummary', { count: exhausted })}` : '');
   const dialog = (
     <Dialog id={dialogId} className="core-health-panel core-health-dialog" backdropClassName="core-health-backdrop" labelledBy={`${dialogId}-title`} describedBy={`${dialogId}-description`} tabIndex={-1} onClose={close} dismissOnBackdrop>
       <button type="button" className="icon-button quiet small-button core-health-close" onClick={close} aria-label={t('common.close')} title={t('common.close')}><X size={18} aria-hidden="true" /></button>
@@ -150,12 +152,12 @@ export function CoreHealthPanel({
                     const checking = active.has(model.name);
                     const queued = pending.has(model.name) && !checking;
                     const status = checking ? 'checking' : queued ? 'queued' : result?.status ?? 'idle';
-                    const statusText = checking ? t('apiAccess.health.checking') : queued ? t('home.health.queued') : !result ? t('apiAccess.health.notChecked') : t(result.success ? 'apiAccess.health.healthy' : 'apiAccess.health.failed');
-                    const error = !checking && !queued && result && !result.success ? (result.timedOut ? t('apiAccess.health.timeout') : result.error) : '';
+                    const statusText = checking ? t('apiAccess.health.checking') : queued ? t('home.health.queued') : !result ? t('apiAccess.health.notChecked') : t(result.status === 'budget-exhausted' ? 'apiAccess.health.budgetExhausted' : result.success ? 'apiAccess.health.healthy' : 'apiAccess.health.failed');
+                    const error = !checking && !queued && result?.status === 'failed' ? (result.timedOut ? t('apiAccess.health.timeout') : result.error) : '';
                     return <tr key={model.name}>
                       <td><strong className="core-health-model-name" title={model.name}>{model.name}</strong>{error && <details className="core-health-model-error"><summary>{t('apiAccess.health.failed')}</summary><p>{error}</p></details>}</td>
-                      <td><span className={`core-health-status ${status}`}>{checking ? <LoaderCircle size={12} className="spin" aria-hidden="true" /> : result?.success && !queued ? <Check size={12} aria-hidden="true" /> : result && !queued ? <X size={12} aria-hidden="true" /> : <Circle size={8} aria-hidden="true" />}{statusText}</span></td>
-                      <td className="core-health-latency">{result?.success && !pending.has(model.name) ? <>{latency(result.firstTokenLatencyMs)}<span> / {latency(result.responseLatencyMs)}</span></> : '—'}</td>
+                      <td><span className={`core-health-status ${status}`} title={status === 'budget-exhausted' ? t('apiAccess.health.budgetExhaustedDetail') : undefined}>{checking ? <LoaderCircle size={12} className="spin" aria-hidden="true" /> : status === 'budget-exhausted' ? <TriangleAlert size={12} aria-hidden="true" /> : result?.success && !queued ? <Check size={12} aria-hidden="true" /> : result && !queued ? <X size={12} aria-hidden="true" /> : <Circle size={8} aria-hidden="true" />}{statusText}</span></td>
+                      <td className="core-health-latency">{result && result.status !== 'failed' && !pending.has(model.name) ? <>{latency(result.firstTokenLatencyMs)}<span> / {latency(result.responseLatencyMs)}</span></> : '—'}</td>
                       <td className="core-health-time">{result ? <time dateTime={new Date(result.checkedAt).toISOString()} title={formatDate(result.checkedAt)}>{time(result.checkedAt)}</time> : '—'}</td>
                       <td><button className="icon-button quiet small-button" disabled={!canCheck || running} onClick={() => { void runChecks([model]); }} title={t('home.health.checkOne', { model: model.name })} aria-label={t('home.health.checkOne', { model: model.name })}><Play size={13} aria-hidden="true" /></button></td>
                     </tr>;
@@ -172,7 +174,7 @@ export function CoreHealthPanel({
         <button type="button" className="secondary-button small-button core-health-open" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-expanded={open} aria-controls={dialogId} aria-describedby={`${dialogId}-entry-status`} title={summary}>
           <Activity size={16} aria-hidden="true" /><span>{t('home.health.title')}</span>{!compact && <ChevronRight size={14} aria-hidden="true" />}
         </button>
-        <span id={`${dialogId}-entry-status`} className="core-health-entry-status" aria-live="polite">{!coreReady ? t('home.health.offline') : healthy + failed > 0 ? summary : t('home.health.idle')}</span>
+        <span id={`${dialogId}-entry-status`} className="core-health-entry-status" aria-live="polite">{!coreReady ? t('home.health.offline') : healthy + failed + exhausted > 0 ? summary : t('home.health.idle')}</span>
       </div>
       {open ? dialog : null}
     </>

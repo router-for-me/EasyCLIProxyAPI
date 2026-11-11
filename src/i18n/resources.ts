@@ -1,6 +1,7 @@
 import { routingZhTW } from './locales/routing';
 import { createTraditionalMessages } from './traditional';
 import { themeDiyZhTW } from './themeDiy';
+import { agentSystemPromptsZhTW } from './agentSystemPrompts';
 import { authFileTagsZhTW } from './authFileList';
 import { jaOverrides } from './ja';
 import { en } from './locales/en';
@@ -13,6 +14,15 @@ export type MessageVariables = Record<string, string | number>;
 
 export const zhTW: Record<MessageKey, string> = {
   ...createTraditionalMessages(zhCN),
+  'apiAccess.health.budgetExhausted': '探測預算耗盡',
+  'apiAccess.health.budgetExhaustedDetail': '已收到回應，但生成預算已耗盡，無法測量首個正文 Token 的延遲。',
+  'apiAccess.health.budgetSummary': '{count} 個探測預算耗盡',
+  'config.sensitiveWords.replacements': '敏感詞替換',
+  'config.sensitiveWords.replacementsHint': '僅處理系統提示詞；按字面比對，不區分大小寫。替換內容留空可刪除符合的文字，內容中的空格和換行會保留。',
+  'config.sensitiveWords.target': '原文',
+  'config.sensitiveWords.replacement': '替換內容',
+  'config.sensitiveWords.replacementPlaceholder': '留空以刪除符合的文字',
+  'config.sensitiveWords.invalidReplacements': '請填寫每條規則的原文；同一供應商的原文不能重複（不區分大小寫）。',
   'home.catalog.refresh': "重新整理模型目錄",
   'home.catalog.refreshing': "正在同步目錄…",
   'home.catalog.hint': "立即同步遠端模型目錄和能力定義，無需重新啟動核心",
@@ -24,6 +34,7 @@ export const zhTW: Record<MessageKey, string> = {
   'home.catalog.codexSyncFailed': '核心模型目錄已重新整理，但 Codex 模型目錄同步失敗：{error}',
   ...routingZhTW,
   ...themeDiyZhTW,
+  ...agentSystemPromptsZhTW,
   ...authFileTagsZhTW,
   'app.nav.mcpSkills': 'MCP 與技能',
   'quota.service.cloud.label': '雲端工作階段額度',
@@ -50,6 +61,26 @@ export const zhTW: Record<MessageKey, string> = {
   "app.theme.lightGroup": "淺色主題",
   "app.theme.darkGroup": "深色主題",
   'app.theme.triggerLabel': '外觀',
+  'app.theme.custom.import': '匯入主題',
+  'app.theme.custom.importing': '正在匯入...',
+  'app.theme.custom.importZip': '選擇 ZIP 壓縮檔',
+  'app.theme.custom.importFolder': '選擇主題資料夾',
+  'app.theme.custom.importZipTitle': '選擇主題 ZIP 壓縮檔',
+  'app.theme.custom.importFolderTitle': '選擇主題資料夾',
+  'app.theme.custom.importSuccessOne': '已匯入主題「{name}」。',
+  'app.theme.custom.importSuccessMany': '已匯入 {count} 個主題。',
+  'app.theme.custom.importSkipped': '主題檔案已匯入，但未載入，請檢查上方略過提示。',
+  'app.theme.custom.importFailed': '無法匯入主題。',
+  'app.theme.custom.importError.notFound': '所選檔案或資料夾不存在。',
+  'app.theme.custom.importError.unsupportedFormat': '僅支援 ZIP 壓縮檔或主題資料夾。',
+  'app.theme.custom.importError.noThemeFound': '未在所選內容中找到 theme.json。',
+  'app.theme.custom.importOverwriteTitle': '取代既有主題資料夾',
+  'app.theme.custom.importOverwriteMessage': '主題資料夾「{names}」已存在，是否整體取代？',
+  'app.theme.custom.importOverwriteConfirm': '整體取代',
+  'app.theme.custom.importError.invalidTheme': 'theme.json 格式無效或缺少必要欄位。',
+  'app.theme.custom.importError.duplicateId': '主題 id 與內建主題重複，無法匯入。',
+  'app.theme.custom.importError.tooLarge': '主題體積或檔案數量超出匯入限制。',
+  'app.theme.custom.importError.unsafeArchive': '壓縮檔包含不安全的路徑或符號連結，已拒絕匯入。',
   'app.theme.custom.openFolder': '開啟主題資料夾',
   'app.theme.custom.openFailed': '無法開啟主題資料夾。',
   'app.theme.custom.loadFailed': '無法讀取自訂主題，已保留目前的主題列表。',

@@ -355,7 +355,9 @@ pub(crate) async fn install_bundled_core(
     app: tauri::AppHandle,
     window: tauri::Window,
 ) -> Result<CoreInstallResult, String> {
+    let update_operation = app.state::<auto_update::AutoUpdateState>().try_operation()?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _update_operation = update_operation;
         let _guard = lock_core_operation(app.state::<CoreProcessState>().inner())?;
         let state = app.state::<CoreDownloadState>();
         let process_state = app.state::<CoreProcessState>();
@@ -507,10 +509,11 @@ pub(crate) async fn install_core_version(
     window: tauri::Window,
     version: Option<String>,
 ) -> Result<CoreInstallResult, String> {
+    let update_operation = app.state::<auto_update::AutoUpdateState>().try_operation()?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _update_operation = update_operation;
         let _guard = lock_core_operation(app.state::<CoreProcessState>().inner())?;
         let state = app.state::<CoreDownloadState>();
-        let process_state = app.state::<CoreProcessState>();
         let gui_config_state = app.state::<GuiConfigState>();
         let config = gui_config_state.snapshot()?;
         let proxy_url = config.proxy_url.clone();
@@ -530,63 +533,7 @@ pub(crate) async fn install_core_version(
             config.custom_download_mirrors.clone(),
         ));
 
-        let result = staged_result.and_then(|staged| {
-            let was_running = pause_core_for_install(&app, process_state.inner(), &config)?;
-            let swap_and_restore = apply_staged_core_with_rollback(
-                &staged.install_dir,
-                &staged.staging_dir,
-                &rollback_dir,
-                || {
-                    if should_restore_core_after_install(
-                        was_running,
-                        &config,
-                        process_state.is_shutting_down(),
-                    ) {
-                        start_core_process_inner(process_state.inner(), &config)?;
-                        if let Err(error) = gui_config_state.set_run_on_startup(true) {
-                            let _ = stop_core_process_inner(process_state.inner());
-                            return Err(error);
-                        }
-                        Ok(())
-                    } else {
-                        Ok(())
-                    }
-                },
-            );
-            let swap_and_restore = match swap_and_restore {
-                Err(error)
-                    if should_restore_core_after_install(
-                        was_running,
-                        &config,
-                        process_state.is_shutting_down(),
-                    ) => {
-                    match start_core_process_inner(process_state.inner(), &config) {
-                        Ok(()) => combine_install_and_restart_results(
-                            Err(error),
-                            gui_config_state.set_run_on_startup(true).map(|_| ()),
-                        ),
-                        Err(resume_error) => Err(format!(
-                            "{error}; failed to start the previous kernel again: {resume_error}"
-                        )),
-                    }
-                }
-                other => other,
-            };
-            emit_current_core_status(&app, process_state.inner(), config.port);
-            swap_and_restore.and_then(|()| {
-                if let Ok(Some(bundled)) = detect_bundled_core() {
-                    mark_bundled_core_version_handled(&staged.install_dir, &bundled.version)?;
-                }
-                Ok(CoreInstallResult {
-                    version: staged.version,
-                    asset_name: staged.asset_name,
-                    install_dir: path_to_string(&staged.install_dir),
-                    binary_path: Some(path_to_string(
-                        &staged.install_dir.join(&staged.binary_relative_path),
-                    )),
-                })
-            })
-        });
+        let result = staged_result.and_then(|staged| install_staged_core(&app, staged, &config));
 
         if result.is_err() {
             let _ = cleanup_core_work_dirs();
@@ -597,6 +544,119 @@ pub(crate) async fn install_core_version(
     })
     .await
     .map_err(|error| format!("Kernel installation background task failed: {error}"))?
+}
+
+pub(crate) fn install_staged_core(
+    app: &tauri::AppHandle,
+    staged: StagedCoreInstall,
+    config: &GuiConfigFile,
+) -> Result<CoreInstallResult, String> {
+    let process_state = app.state::<CoreProcessState>();
+    let gui_config_state = app.state::<GuiConfigState>();
+    let rollback_dir = core_base_dir()?.join("cpa-core.rollback");
+    // Staging may have waited for the next maintenance window. Refresh the
+    // installed configuration before pausing so edits made meanwhile survive.
+    migrate_core_config_for_update(&staged.install_dir, &staged.staging_dir)?;
+    preserve_bundled_core_assets(&staged.install_dir, &staged.staging_dir)?;
+    let was_running = pause_core_for_install(app, process_state.inner(), config)?;
+    let swap_and_restore = apply_staged_core_with_rollback(
+        &staged.install_dir,
+        &staged.staging_dir,
+        &rollback_dir,
+        || {
+            if should_restore_core_after_install(
+                was_running,
+                config,
+                process_state.is_shutting_down(),
+            ) {
+                start_core_process_inner(process_state.inner(), config)?;
+                if let Err(error) = gui_config_state.set_run_on_startup(true) {
+                    let _ = stop_core_process_inner(process_state.inner());
+                    return Err(error);
+                }
+                Ok(())
+            } else {
+                Ok(())
+            }
+        },
+    );
+    let swap_and_restore = match swap_and_restore {
+        Err(error)
+            if should_restore_core_after_install(
+                was_running,
+                config,
+                process_state.is_shutting_down(),
+            ) =>
+        {
+            match start_core_process_inner(process_state.inner(), config) {
+                Ok(()) => combine_install_and_restart_results(
+                    Err(error),
+                    gui_config_state.set_run_on_startup(true).map(|_| ()),
+                ),
+                Err(resume_error) => Err(format!(
+                    "{error}; failed to start the previous kernel again: {resume_error}"
+                )),
+            }
+        }
+        other => other,
+    };
+    emit_current_core_status(app, process_state.inner(), config.port);
+    swap_and_restore.and_then(|()| {
+        if let Ok(Some(bundled)) = detect_bundled_core() {
+            mark_bundled_core_version_handled(&staged.install_dir, &bundled.version)?;
+        }
+        Ok(CoreInstallResult {
+            version: staged.version,
+            asset_name: staged.asset_name,
+            install_dir: path_to_string(&staged.install_dir),
+            binary_path: Some(path_to_string(
+                &staged.install_dir.join(&staged.binary_relative_path),
+            )),
+        })
+    })
+}
+
+pub(crate) async fn prepare_core_automatically(
+    app: tauri::AppHandle,
+    client: reqwest::Client,
+    release: GithubRelease,
+    source: VersionDownloadCandidate,
+    token: CancellationToken,
+) -> Result<StagedCoreInstall, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = CoreDownloadState::silent();
+        let window = main_window(&app).ok_or("Main window is unavailable")?;
+        tauri::async_runtime::block_on(stage_core_release(
+            &window, &state, &client, &release, &source, &token,
+        ))
+    })
+    .await
+    .map_err(|error| format!("Automatic core preparation failed: {error}"))?
+}
+
+pub(crate) async fn install_prepared_core(
+    app: tauri::AppHandle,
+    staged: StagedCoreInstall,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = CORE_OPERATION_LOCK
+            .lock()
+            .map_err(|_| "Kernel operation lock is poisoned")?;
+        if app.state::<CoreProcessState>().is_shutting_down() {
+            return Err("Automatic update canceled".into());
+        }
+        let current = read_core_metadata(&staged.install_dir)
+            .map(|metadata| metadata.version)
+            .ok_or("The installed core version is unknown")?;
+        if !auto_update::newer(&current, &staged.version) {
+            return Err("The prepared core update is no longer newer".into());
+        }
+        archive_previous_core_rollback(&core_base_dir()?.join("cpa-core.rollback"))?;
+        let config = app.state::<GuiConfigState>().snapshot()?;
+        install_staged_core(&app, staged, &config).map(|_| ())
+    })
+    .await
+    .map_err(|error| format!("Automatic core installation failed: {error}"))?
 }
 
 fn install_core_with_runtime_restore<F>(
@@ -777,16 +837,27 @@ pub(crate) async fn stage_core_version_inner(
     download_source: VersionDownloadCandidate,
     custom_mirrors: Vec<String>,
 ) -> Result<StagedCoreInstall, String> {
-    let platform = current_core_platform()?;
     let client = http_client(proxy_url, &custom_mirrors)?;
     state.progress(window, "Check version", 0, None, true);
     let (release, resolved_source) =
         fetch_release_cancelable(&client, version.as_deref(), &token, download_source).await?;
-    let asset = select_release_asset(&release, &platform)?;
+    stage_core_release(window, state, &client, &release, &resolved_source, &token).await
+}
+
+async fn stage_core_release(
+    window: &tauri::Window,
+    state: &CoreDownloadState,
+    client: &reqwest::Client,
+    release: &GithubRelease,
+    source: &VersionDownloadCandidate,
+    token: &CancellationToken,
+) -> Result<StagedCoreInstall, String> {
+    let platform = current_core_platform()?;
+    let asset = select_release_asset(release, &platform)?;
     let download_url = core_download_url(
         &release.tag_name,
         asset,
-        &resolved_source,
+        source,
         configured_gitcode_core_repository(),
     )?;
 
@@ -805,18 +876,18 @@ pub(crate) async fn stage_core_version_inner(
     let archive_path = download_dir.join(archive_file_name);
 
     let downloaded = download_asset(
-        &client,
+        client,
         asset,
         &download_url,
         &archive_path,
         window,
         state,
-        &token,
+        token,
     )
     .await?;
     validate_downloaded_asset(asset, &downloaded)?;
 
-    ensure_not_cancelled(&token, Some(&archive_path))?;
+    ensure_not_cancelled(token, Some(&archive_path))?;
     state.progress(
         window,
         "Extracting",
@@ -829,7 +900,7 @@ pub(crate) async fn stage_core_version_inner(
         "zip" => extract_zip(&archive_path, &staging_dir)?,
         other => return Err(format!("Unsupported archive type: {other}")),
     }
-    ensure_not_cancelled(&token, Some(&archive_path))?;
+    ensure_not_cancelled(token, Some(&archive_path))?;
 
     let binary_path = find_core_binary(&staging_dir)
         .ok_or_else(|| "CPA kernel binary was not found after extraction".to_string())?;
@@ -843,8 +914,6 @@ pub(crate) async fn stage_core_version_inner(
         .strip_prefix(&staging_dir)
         .map_err(|err| format!("Failed to calculate relative path of kernel binary: {err}"))?
         .to_path_buf();
-    migrate_core_config_for_update(&install_dir, &staging_dir)?;
-    preserve_bundled_core_assets(&install_dir, &staging_dir)?;
     write_core_metadata(
         &staging_dir,
         &CoreMetadata {
@@ -2723,11 +2792,16 @@ pub(crate) fn adopt_existing_core_processes(
 
 pub(crate) fn prepare_core_for_app_update(process_state: &CoreProcessState) -> Result<(), String> {
     let _guard = lock_core_operation(process_state)?;
-    let mut child = process_state.child.lock().map_err(|error| error.to_string())?;
+    let mut child = process_state
+        .child
+        .lock()
+        .map_err(|error| error.to_string())?;
     if let Some(child) = child.as_mut() {
         child.detach_for_update()?;
     }
-    process_state.preserve_on_exit.store(true, Ordering::Release);
+    process_state
+        .preserve_on_exit
+        .store(true, Ordering::Release);
     Ok(())
 }
 
@@ -3308,9 +3382,9 @@ pub(crate) fn copy_core_file_replace(source_path: &Path, target_path: &Path) -> 
 
     let replace_result = (|| -> io::Result<()> {
         fs::copy(source_path, &temporary_path)?;
-        let temporary_file = File::options().write(true).open(&temporary_path)?;
-        temporary_file.sync_all()?;
-        drop(temporary_file);
+        #[cfg(unix)]
+        restore_owner_write_for_replacement(&temporary_path)?;
+        sync_copied_file(&temporary_path)?;
         replace_file_atomically(&temporary_path, target_path)
     })();
 
@@ -3323,6 +3397,29 @@ pub(crate) fn copy_core_file_replace(source_path: &Path, target_path: &Path) -> 
     }
 
     Ok(())
+}
+
+/// `fs::copy` reproduces the source permission bits, so copying a read-only kernel
+/// binary yields a read-only temporary file. Replacements must stay writable or the
+/// next update is denied, so keep the owner write bit and preserve every other bit.
+#[cfg(unix)]
+fn restore_owner_write_for_replacement(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let permissions = fs::metadata(path)?.permissions();
+    fs::set_permissions(path, fs::Permissions::from_mode(permissions.mode() | 0o600))
+}
+
+/// Flush the copied bytes without needing write access; only Windows requires a
+/// write-opened handle because `FlushFileBuffers` rejects a read-only one.
+#[cfg(not(windows))]
+fn sync_copied_file(path: &Path) -> io::Result<()> {
+    File::open(path)?.sync_all()
+}
+
+#[cfg(windows)]
+fn sync_copied_file(path: &Path) -> io::Result<()> {
+    File::options().write(true).open(path)?.sync_all()
 }
 
 #[cfg(any(target_os = "macos", test))]

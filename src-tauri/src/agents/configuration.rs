@@ -156,7 +156,7 @@ pub(crate) fn build_agent_updates_with_oauth(
         claude_desktop_model_mappings,
     } = options;
     let paths = agent_config_paths(client, home);
-    let root_base = managed_core_loopback_origin(port);
+    let root_base = agent_effective_loopback_origin(client.id(), port);
     let openai_base = format!("{root_base}/v1");
     match client {
         AgentClient::ClaudeCode => {
@@ -419,9 +419,7 @@ where
         .filter(|content| !content.is_empty())
         .map(|_| existing.unwrap_or_default())
         .unwrap_or("{}\n");
-    let mut document = yaml_serde_edit::YamlValue::parse(source)
-        .map_err(|error| format!("Invalid {label} YAML format: {error}"))?;
-    render_updated_core_yaml(&mut document, updated)
+    render_updated_core_yaml(source, updated)
         .map_err(|error| format!("Failed to update {label}: {error}"))
 }
 
@@ -495,12 +493,27 @@ where
         .filter(|content| !content.is_empty())
         .map(|_| existing.unwrap_or_default())
         .unwrap_or("[]\n");
-    if let Ok(mut document) = yaml_serde_edit::YamlValue::parse(source) {
-        document.set(updated.clone());
-        let rendered = document.get_string();
-        if let Ok(validated) = serde_norway::from_str::<serde_norway::Value>(&rendered) {
-            if validated == updated {
-                return Ok(rendered);
+    if let (Ok(file), serde_norway::Value::Sequence(values)) = (source.parse::<yaml_edit::YamlFile>(), &updated) {
+        if let Some(sequence) = file.document().and_then(|document| document.as_sequence()) {
+            if let Ok(nodes) = values.iter().map(yaml_edit_node_from_value).collect::<Result<Vec<_>, _>>() {
+                for (index, node) in nodes.into_iter().enumerate() {
+                    if index < sequence.len() {
+                        if original[index] != values[index] {
+                            sequence.set(index, node);
+                        }
+                    } else {
+                        sequence.push(node);
+                    }
+                }
+                for index in (values.len()..sequence.len()).rev() {
+                    sequence.remove(index);
+                }
+                let rendered = file.to_string();
+                if let Ok(validated) = serde_norway::from_str::<serde_norway::Value>(&rendered) {
+                    if validated == updated {
+                        return Ok(rendered);
+                    }
+                }
             }
         }
     }
@@ -1402,55 +1415,12 @@ pub(crate) fn claude_desktop_inference_model(
     if let Some(tier) = claude_desktop_family_tier(route_model) {
         entry.insert("anthropicFamilyTier".to_string(), serde_json::json!(tier));
         entry.insert("isFamilyDefault".to_string(), serde_json::json!(true));
-        let listed = if use_source { source_model } else { route_model };
-        if !is_recognized_claude_model_id(listed) {
-            if let Some(behaves_as) = claude_desktop_behaves_as(tier) {
-                entry.insert("behavesAs".to_string(), serde_json::json!(behaves_as));
-            }
-        }
     }
     if enable_1m {
         entry.insert("supports1m".to_string(), serde_json::json!(true));
         entry.insert("prefer1m".to_string(), serde_json::json!(true));
     }
     serde_json::Value::Object(entry)
-}
-
-// Claude Desktop resolves a listed model's effort levels by looking the
-// behavesAs id up in its own table (eyn in its app.asar), keyed on the
-// lowercased id with a date suffix and an "anthropic." prefix removed.
-// These are that table's keys: opus 5, sonnet 5 and fable 5.1 report the
-// full low/medium/high/xhigh/max ladder, while haiku 4.5 reports thinking
-// modes and no effort ladder at all. An id the table has no entry for gets
-// no effort picker, so a "newer" sounding name such as claude-opus-5-5 is
-// worse than useless here. A route that is already a real Claude model
-// needs no mapping, and older Desktop builds ignore the key.
-pub(crate) fn claude_desktop_behaves_as(tier: &str) -> Option<&'static str> {
-    match tier {
-        "opus" => Some("claude-opus-5"),
-        "sonnet" => Some("claude-sonnet-5"),
-        "haiku" => Some("claude-haiku-4-5"),
-        "fable" => Some("claude-fable-5-1"),
-        _ => None,
-    }
-}
-
-// A Claude model id Desktop and Claude Code both recognize:
-// claude-<tier>-<digits>(-<digits>)*. Our generated route ids carry a
-// trailing word (`claude-opus-5-cpa`), which is not recognized.
-fn is_recognized_claude_model_id(name: &str) -> bool {
-    let lowered = name.trim().to_ascii_lowercase();
-    let Some(rest) = lowered.strip_prefix("claude-") else { return false };
-    let mut parts = rest.split('-');
-    let Some(tier) = parts.next() else { return false };
-    if !matches!(tier, "opus" | "sonnet" | "haiku" | "fable" | "mythos") {
-        return false;
-    }
-    let Some(version) = parts.next() else { return false };
-    if version.is_empty() || !version.chars().all(|c| c.is_ascii_digit()) {
-        return false;
-    }
-    parts.all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
 }
 
 pub(crate) fn claude_desktop_family_tier(route_model: &str) -> Option<&'static str> {
@@ -2136,9 +2106,8 @@ pub(crate) fn prepare_hermes_managed_removal(paths: &[PathBuf]) -> Result<Images
     }
     let content = fs::read_to_string(path)
         .map_err(|error| format!("Failed to read Hermes configuration {}: {error}", path_to_string(path)))?;
-    let mut document = yaml_serde_edit::YamlValue::parse(&content)
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(&content)
         .map_err(|error| format!("Failed to parse Hermes configuration: {error}"))?;
-    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or_else(|| "Hermes configuration root must be a mapping".to_string())?;
@@ -2186,7 +2155,7 @@ pub(crate) fn prepare_hermes_managed_removal(paths: &[PathBuf]) -> Result<Images
     let bytes = if root.is_empty() {
         None
     } else {
-        Some(render_updated_core_yaml(&mut document, updated)?.into_bytes())
+        Some(render_updated_core_yaml(&content, updated)?.into_bytes())
     };
     Ok(vec![(path.clone(), bytes)])
 }
@@ -2198,7 +2167,7 @@ pub(crate) fn prepare_agent_managed_removal(
 ) -> Result<Images, String> {
     match client {
         AgentClient::ClaudeCode => {
-            prepare_claude_code_managed_removal(paths, &managed_core_loopback_origin(port))
+            prepare_claude_code_managed_removal(paths, &agent_effective_loopback_origin("claude-code", port))
         }
         AgentClient::ClaudeDesktop => prepare_claude_desktop_managed_removal(paths),
         AgentClient::Codex => prepare_codex_managed_removal(paths),
@@ -3106,9 +3075,8 @@ pub(crate) fn build_restored_hermes_config(
     current: &str,
     original: Option<&str>,
 ) -> Result<Option<String>, String> {
-    let mut document = yaml_serde_edit::YamlValue::parse(current)
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(current)
         .map_err(|error| format!("Invalid current Hermes configuration format: {error}"))?;
-    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or_else(|| "Current Hermes configuration root must be a mapping".to_string())?;
@@ -3189,7 +3157,7 @@ pub(crate) fn build_restored_hermes_config(
     if root.is_empty() && original.is_none() {
         return Ok(None);
     }
-    render_updated_core_yaml(&mut document, updated).map(Some)
+    render_updated_core_yaml(current, updated).map(Some)
 }
 
 pub(crate) fn restore_deepseek_harness_provider(
@@ -3515,19 +3483,23 @@ pub(crate) fn build_codex_agent_config_with_oauth(
             .map_err(|error| format!("Invalid Codex config.toml format: {error}"))?,
         None => Document::new(),
     };
-    let provider_id = if codex_uses_openai_proxy(&document) { "openai" } else { MANAGED_AGENT_PROVIDER_ID };
-    if provider_id == "openai" {
-        let previous_oauth = codex_provider_table(&document)
-            .and_then(|p| p.get("requires_openai_auth")).and_then(Item::as_bool) == Some(true);
-        if previous_oauth != oauth_configuration {
-            return Err("Turn off the openai provider identity before changing the sign-in method".into());
+    if let Some(settings) = codex_selected_profile_settings(&document) {
+        for (key, item) in settings.iter() {
+            set_codex_table_item(document.as_table_mut(), key, item.clone());
         }
-        set_codex_table_item(document.as_table_mut(), "openai_base_url", value(base_url));
+    }
+    if document.contains_key("forced_login_method") {
+        set_codex_table_item(document.as_table_mut(), "forced_login_method",
+            value(if oauth_configuration { "chatgpt" } else { "api" }));
+    }
+    document.remove("profile");
+    if document.contains_key("cli_auth_credentials_store") {
+        set_codex_table_item(document.as_table_mut(), "cli_auth_credentials_store", value("file"));
     }
     set_codex_table_item(
         document.as_table_mut(),
         "model_provider",
-        value(provider_id),
+        value(MANAGED_AGENT_PROVIDER_ID),
     );
     set_codex_table_item(document.as_table_mut(), "model", value(model));
     set_codex_table_item(
@@ -3561,6 +3533,8 @@ pub(crate) fn build_codex_agent_config_with_oauth(
     set_codex_table_item(provider, "base_url", value(base_url));
     set_codex_table_item(provider, "wire_api", value("responses"));
     set_codex_table_item(provider, "experimental_bearer_token", value(api_key));
+    provider.remove("env_key");
+    provider.remove("env_key_instructions");
     if oauth_configuration {
         set_codex_table_item(provider, "requires_openai_auth", value(true));
     } else {
@@ -3589,12 +3563,7 @@ pub(crate) fn build_codex_auth_update(
 ) -> Result<AgentFileUpdate, String> {
     let path = codex_configuration_directory(home).join("auth.json");
     let after = if oauth_configuration {
-        if validate_codex_oauth_login_at(&path).is_ok() {
-            read_optional_text(&path)?
-                .ok_or_else(|| "Codex OAuth login credentials were deleted before the application configuration was applied. Sign in again".to_string())?
-        } else {
-            available_codex_oauth_auth(home)?
-        }
+        available_codex_oauth_auth(home)?
     } else {
         let path_text = read_optional_text(&path)?;
         let mut root = parse_agent_json_object(path_text.as_deref(), "Codex auth.json")?;
@@ -3606,13 +3575,15 @@ pub(crate) fn build_codex_auth_update(
     Ok(AgentFileUpdate { path, after })
 }
 
-const CODEX_MANAGED_ROOT_KEYS: [&str; 3] = ["model_provider", "model", "model_catalog_json"];
-const CODEX_MANAGED_PROVIDER_KEYS: [&str; 5] = [
+const CODEX_MANAGED_ROOT_KEYS: [&str; 6] = ["model_provider", "model", "model_catalog_json", "forced_login_method", "profile", "cli_auth_credentials_store"];
+const CODEX_MANAGED_PROVIDER_KEYS: [&str; 7] = [
     "name",
     "base_url",
     "wire_api",
     "experimental_bearer_token",
     "requires_openai_auth",
+    "env_key",
+    "env_key_instructions",
 ];
 
 pub(crate) fn set_codex_table_item(
@@ -3714,6 +3685,25 @@ pub(crate) fn merge_missing_codex_table_items(
     }
 }
 
+pub(crate) fn codex_selected_profile_settings(
+    document: &toml_edit::Document,
+) -> Option<toml_edit::Document> {
+    let name = document.get("profile")?.as_str()?;
+    let profile = document.get("profiles")?.as_table()?.get(name)?.as_table()?;
+    let mut settings = toml_edit::Document::new();
+    for (key, item) in profile.iter() {
+        let mut item = item.clone();
+        if let (Some(selected), Some(root)) = (
+            item.as_table_mut(),
+            document.get(key).and_then(toml_edit::Item::as_table),
+        ) {
+            merge_missing_codex_table_items(selected, root);
+        }
+        settings.as_table_mut().insert(key, item);
+    }
+    Some(settings)
+}
+
 pub(crate) fn build_restored_codex_agent_config(
     current: Option<&str>,
     original: Option<&str>,
@@ -3732,6 +3722,23 @@ pub(crate) fn build_restored_codex_agent_config_with_policy(
     let original_document = original
         .map(|content| parse_codex_document(Some(content), "Original Codex config.toml"))
         .transpose()?;
+    if let Some(original) = original_document.as_ref() {
+        if let Some(settings) = codex_selected_profile_settings(original) {
+            let selected: toml::Value = toml::from_str(&settings.to_string())
+                .map_err(|error| format!("Invalid Codex profile settings: {error}"))?;
+            let current: toml::Value = toml::from_str(&current_document.to_string())
+                .map_err(|error| format!("Invalid current Codex configuration: {error}"))?;
+            for (key, _) in settings.iter() {
+                if !CODEX_MANAGED_ROOT_KEYS.contains(&key) && current.get(key) == selected.get(key) {
+                    restore_codex_table_item(
+                        current_document.as_table_mut(),
+                        Some(original.as_table()),
+                        key,
+                    );
+                }
+            }
+        }
+    }
     if let Some(original_document) = original_document.as_ref() {
         merge_missing_codex_table_items(
             current_document.as_table_mut(),
@@ -3997,14 +4004,14 @@ pub(crate) fn build_zcode_agent_config(
     api.insert("type".to_string(), serde_json::json!("anthropic-messages"));
     api.insert("baseUrl".to_string(), serde_json::json!(base_url));
     let ordered = ordered_agent_models(available_models, model);
-    let model_names = ordered.iter().map(|option| option.name.as_str()).collect::<Vec<_>>();
+    let model_names = ordered.iter().map(|option| option.name.clone()).collect::<Vec<String>>();
     if !model_names.is_empty() {
         // Models removed or disabled in the gateway disappear from /v1/models,
         // but the previous lists kept their ids forever and ZCode kept showing
         // these dead entries. Prune to the live catalog, drop duplicates and
         // preserve the user's order. Never append: a model the user removed
         // from the list must stay removed while it still exists upstream.
-        let available = model_names.iter().copied().collect::<std::collections::HashSet<_>>();
+        let available = model_names.iter().map(String::as_str).collect::<std::collections::HashSet<_>>();
         let prune = |entries: &[serde_json::Value]| -> Vec<String> {
             let mut seen = std::collections::HashSet::new();
             entries.iter().filter_map(serde_json::Value::as_str)
@@ -4014,11 +4021,11 @@ pub(crate) fn build_zcode_agent_config(
         };
         let personal_model_ids = match provider_config.get("personalModelIds").and_then(serde_json::Value::as_array) {
             Some(entries) => prune(entries),
-            None => model_names.iter().map(|name| (*name).to_string()).collect(),
+            None => model_names.clone(),
         };
         let model_order = match provider_config.get("modelOrder").and_then(serde_json::Value::as_array) {
             Some(entries) => prune(entries),
-            None => model_names.iter().map(|name| (*name).to_string()).collect(),
+            None => model_names.clone(),
         };
         provider_config.insert("personalModelIds".to_string(), serde_json::json!(personal_model_ids));
         provider_config.insert("modelOrder".to_string(), serde_json::json!(model_order));
@@ -4177,10 +4184,10 @@ pub(crate) fn build_zcode_agent_config(
     // Keep the previous default model only while it still exists; otherwise
     // fall back to the first available model instead of pointing at a model
     // that was disabled or deleted in the gateway.
-    let selection_model = if model_names.is_empty() || model_names.contains(&model) {
+    let selection_model = if model_names.is_empty() || model_names.iter().any(|name| name.as_str() == model) {
         model
     } else {
-        model_names[0]
+        model_names[0].as_str()
     };
     let mut selection = serde_json::json!({
         "providerId": MANAGED_AGENT_PROVIDER_ID,

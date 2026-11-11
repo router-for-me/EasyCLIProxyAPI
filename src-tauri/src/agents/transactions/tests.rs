@@ -1,6 +1,31 @@
 use super::*;
 
 #[test]
+fn codex_profile_normalization_still_rejects_unrelated_behavior_changes() {
+    let path = PathBuf::from("config.toml");
+    let before = serde_json::json!({
+        "profile": "work",
+        "approval_policy": "never",
+        "sandbox_mode": "read-only",
+        "profiles": {"work": {
+            "model_provider": "third-party",
+            "approval_policy": "on-request",
+            "sandbox_mode": "workspace-write"
+        }}
+    });
+    let mut after = before.clone();
+    after.as_object_mut().unwrap().remove("profile");
+    after["approval_policy"] = serde_json::json!("on-request");
+    after["sandbox_mode"] = serde_json::json!("workspace-write");
+    validate_unmanaged_preserved("codex", &[path.clone()], &path, &before, &after).unwrap();
+    for key in ["approval_policy", "sandbox_mode"] {
+        let mut changed = after.clone();
+        changed[key] = before[key].clone();
+        assert!(validate_unmanaged_preserved("codex", &[path.clone()], &path, &before, &changed).is_err());
+    }
+}
+
+#[test]
 fn codex_model_merge_does_not_resurrect_removed_schema_fields() {
     let before = serde_json::json!({"models": [{
         "slug": "third-party-model",

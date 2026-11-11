@@ -6,6 +6,63 @@ import { mcpSkillsText } from '../src/i18n/mcpSkills';
 import { pluginConfigText } from '../src/i18n/pluginConfig';
 
 describe('i18n', () => {
+  it('localizes agent system prompt editor controls in every locale', () => {
+    for (const locale of supportedLocales) {
+      for (const key of [
+        'agents.systemPrompt.button',
+        'agents.systemPrompt.title',
+        'agents.systemPrompt.subtitle',
+        'agents.systemPrompt.subtitle.uncaptured',
+        'agents.systemPrompt.source.uncaptured',
+        'agents.systemPrompt.overrideInactive',
+        'agents.systemPrompt.inheritedOverride',
+        'agents.systemPrompt.fieldHintUncaptured',
+        'agents.systemPrompt.overridesEnabled',
+        'agents.systemPrompt.overridesEnabledHint',
+        'agents.systemPrompt.pendingPause',
+        'agents.systemPrompt.pendingEnable',
+        'agents.systemPrompt.overridesPaused',
+        'agents.systemPrompt.claudeTlsNotice',
+        'agents.systemPrompt.edit',
+        'agents.systemPrompt.codexEntry',
+        'agents.systemPrompt.codexFieldHint',
+        'agents.systemPrompt.scope',
+        'agents.systemPrompt.defaultTarget',
+        'agents.systemPrompt.modelScopeHint',
+        'agents.systemPrompt.mode.replace',
+        'agents.systemPrompt.preserveDynamic',
+        'agents.systemPrompt.resetDefault',
+        'agents.systemPrompt.resetModel',
+        'agents.systemPrompt.resetHint',
+        'agents.systemPrompt.resetAll',
+        'agents.systemPrompt.saved',
+        'agents.systemPrompt.zcodeCatalogHint',
+      ] as const) {
+        expect(translate(locale, key, { name: 'ZCode' })).not.toBe(key);
+        expect(translate(locale, key, { name: 'ZCode' })).not.toBe('');
+      }
+    }
+    expect(translate('zh-CN', 'agents.systemPrompt.button')).toBe('系统提示词');
+    expect(translate('zh-TW', 'agents.systemPrompt.button')).toBe('系統提示詞');
+    expect(translate('en', 'agents.systemPrompt.button')).toBe('System prompt');
+  });
+  it('localizes the probe-budget state, explanation and summary in every locale', () => {
+    for (const locale of supportedLocales) {
+      for (const key of [
+        'apiAccess.health.budgetExhausted',
+        'apiAccess.health.budgetExhaustedDetail',
+        'apiAccess.health.budgetSummary',
+      ] as const) {
+        expect(translate(locale, key, { count: 2 })).not.toBe(key);
+        expect(translate(locale, key, { count: 2 })).not.toBe('');
+      }
+      expect(translate(locale, 'apiAccess.health.budgetSummary', { count: 2 })).toContain('2');
+    }
+    expect(translate('en', 'apiAccess.health.budgetExhausted')).toBe('Probe budget exhausted');
+    expect(translate('zh-CN', 'apiAccess.health.budgetExhausted')).toBe('探测预算耗尽');
+    expect(translate('zh-TW', 'apiAccess.health.budgetExhausted')).toBe('探測預算耗盡');
+  });
+
   it('localizes credential tag controls in every language', () => {
     for (const [locale, label] of [['en', 'Tags'], ['zh-CN', '标签'], ['zh-TW', '標籤'], ['ja', 'タグ']] as const) {
       expect(translate(locale, 'authFiles.tags.label')).toBe(label);

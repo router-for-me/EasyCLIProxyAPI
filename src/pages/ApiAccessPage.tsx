@@ -1906,6 +1906,7 @@ function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: Prov
   const checkedCount = resultValues.filter((result) => result.status !== 'checking').length;
   const healthyCount = resultValues.filter((result) => result.status === 'healthy').length;
   const failedCount = resultValues.filter((result) => result.status === 'failed').length;
+  const exhaustedCount = resultValues.filter((result) => result.status === 'budget-exhausted').length;
   const hasCheckingModel = resultValues.some((result) => result.status === 'checking');
 
   const saveResult = (result: ProviderModelHealthResult) => {
@@ -1942,6 +1943,7 @@ function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: Prov
   const statusLabel = (state: ProviderModelHealthState | undefined) => {
     if (!state) return t('apiAccess.health.notChecked');
     if (state.status === 'checking') return t('apiAccess.health.checking');
+    if (state.status === 'budget-exhausted') return t('apiAccess.health.budgetExhausted');
     return state.status === 'healthy'
       ? t('apiAccess.health.healthy')
       : t('apiAccess.health.failed');
@@ -1972,7 +1974,7 @@ function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: Prov
           total: models.length,
           healthy: healthyCount,
           failed: failedCount,
-        })}</span>
+        })}{exhaustedCount ? ` · ${t('apiAccess.health.budgetSummary', { count: exhaustedCount })}` : ''}</span>
         {modelError ? (
           <MessageNotice message={t('apiAccess.health.modelLoadFailed', { error: modelError })} onDismiss={() => setModelError('')} />
         ) : modelLoading ? (
@@ -2034,8 +2036,8 @@ function ProviderHealthDialog({ row, onClose, onModelToggle, keySelector }: Prov
                 </label>
               ) : null}
               <span
-                className={`state-pill provider-health-pill provider-health-model-pill ${state?.status === 'checking' ? 'checking' : checked?.status === 'healthy' ? 'success' : checked?.status === 'failed' ? 'error' : ''}`}
-                title={latencyTitle}
+                className={`state-pill provider-health-pill provider-health-model-pill ${state?.status === 'checking' ? 'checking' : checked?.status === 'healthy' ? 'success' : checked?.status === 'failed' ? 'error' : checked?.status === 'budget-exhausted' ? 'warning' : ''}`}
+                title={checked?.status === 'budget-exhausted' ? t('apiAccess.health.budgetExhaustedDetail') : latencyTitle}
               >
                 {statusLabel(state)}
                 {latencyInline ? ` · ${latencyInline}` : ''}

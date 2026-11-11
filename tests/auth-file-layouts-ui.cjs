@@ -3,6 +3,7 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const net = require('node:net');
 
 // [width, height, deviceScaleFactor]: phones, tablets, laptops, desktops, ultrawide, portrait monitor and a short window.
 const displays = [
@@ -10,6 +11,34 @@ const displays = [
   [1366, 768, 1], [1440, 900, 2], [1920, 1080, 1], [2560, 1440, 1], [3440, 1440, 1], [1080, 1920, 1], [1280, 420, 1],
 ];
 const layouts = [['even', 'Even rows'], ['stacked', 'Stacked'], ['compact', 'Compact']];
+
+const cardActionIssues = () => [...document.querySelectorAll('.auth-file-card')].flatMap((card, index) => {
+  const footer = card.querySelector('.auth-card-actions');
+  if (!footer?.getClientRects().length) return [];
+  const issues = [];
+  const cardBox = card.getBoundingClientRect();
+  const footerBox = footer.getBoundingClientRect();
+  const buttons = [...footer.querySelectorAll('button')];
+  const boxes = buttons.map(button => button.getBoundingClientRect());
+  buttons.forEach((button, buttonIndex) => {
+    const box = boxes[buttonIndex];
+    const label = button.textContent.trim();
+    for (const [owner, boundary] of [['card', cardBox], ['footer', footerBox], ['group', button.parentElement.getBoundingClientRect()]]) {
+      if (box.left < boundary.left - 1 || box.right > boundary.right + 1 || box.top < boundary.top - 1 || box.bottom > boundary.bottom + 1) {
+        issues.push(`card ${index}: "${label}" extends outside its ${owner}`);
+      }
+    }
+    if (button.scrollWidth > button.clientWidth + 1) issues.push(`card ${index}: "${label}" clips its label`);
+    boxes.slice(buttonIndex + 1).forEach(other => {
+      if (Math.min(box.right, other.right) - Math.max(box.left, other.left) > 1
+        && Math.min(box.bottom, other.bottom) - Math.max(box.top, other.top) > 1) {
+        issues.push(`card ${index}: "${label}" overlaps another action`);
+      }
+    });
+  });
+  if (footer.scrollWidth > footer.clientWidth + 1) issues.push(`card ${index}: action footer overflows horizontally`);
+  return issues;
+});
 
 const openPage = async (page, base) => {
   await page.route('**/*', route => route.request().url().startsWith(`${base}/`) ? route.continue() : route.abort());
@@ -29,7 +58,11 @@ const openPage = async (page, base) => {
     if (!base) {
       const { createServer } = await import('vite');
       const react = (await import('@vitejs/plugin-react')).default;
-      server = await createServer({ configFile: false, root: path.resolve(__dirname, '..'), plugins: [react()], logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
+      const probe = net.createServer();
+      await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
+      const port = probe.address().port;
+      await new Promise(resolve => probe.close(resolve));
+      server = await createServer({ configFile: false, root: path.resolve(__dirname, '..'), plugins: [react()], logLevel: 'error', server: { host: '127.0.0.1', port, strictPort: true } });
       await server.listen();
       base = `http://127.0.0.1:${server.httpServer.address().port}`;
     }
@@ -73,7 +106,6 @@ const openPage = async (page, base) => {
               const b = rects[other];
               if (Math.min(rect.right, b.right) - Math.max(rect.left, b.left) > 1 && Math.min(rect.bottom, b.bottom) - Math.max(rect.top, b.top) > 1) issues.push(`cards ${index} and ${other} overlap`);
             }
-            // Only the layouts' own elements: the card action buttons at phone widths are covered by the separate fix for them.
             for (const part of cards[index].querySelectorAll('.auth-card-glance-toggle, .auth-card-glance-plan, .auth-status-badge, .auth-card-identity > *')) {
               if (!visible(part)) continue;
               const box = part.getBoundingClientRect();
@@ -95,6 +127,7 @@ const openPage = async (page, base) => {
             withPercent: glance.filter(card => /\d+%/.test(card.querySelector('.auth-card-glance-line')?.textContent ?? '')).length };
         });
         assert.deepEqual(result.issues, [], context);
+        assert.deepEqual(await page.evaluate(cardActionIssues), [], `${context}: every action fits its card`);
         assert.equal(result.cards, 10, `${context}: a full page of cards is shown`);
         assert.equal(result.listItems, 10, `${context}: every card stays a list item of the credential list`);
         const minimum = layout === 'compact' ? 280 : 420;
@@ -116,6 +149,7 @@ const openPage = async (page, base) => {
       assert.equal(await toggle.getAttribute('aria-expanded'), 'true', `${display}: Enter expands the card`);
       assert.equal(await page.locator('.auth-file-card:not([data-glance])').count(), 1, `${display}: only the chosen card expands`);
       assert.ok(await page.locator('.auth-file-card:not([data-glance]) .auth-card-actions').isVisible(), `${display}: the expanded card shows its actions`);
+      assert.deepEqual(await page.evaluate(cardActionIssues), [], `${display}: expanded Compact actions fit their card`);
       await page.keyboard.press('Enter');
       assert.equal(await page.locator('.auth-file-card[data-glance]').count(), 10, `${display}: Enter collapses it again`);
       assert.deepEqual(errors, [], `${display}: no page errors`);
@@ -133,7 +167,44 @@ const openPage = async (page, base) => {
     await openPage(page, base);
     assert.equal(await page.getByRole('radio', { name: 'Stacked', exact: true }).getAttribute('aria-checked'), 'true', 'a chosen layout survives a reload');
     await context.close();
-    console.log(`Authentication Files layouts: ${displays.length} displays x ${layouts.length} layouts passed`);
+    // Long translated action labels must also wrap at desktop column widths and
+    // in the narrower cards exposed by Compact. Use fictional, local IPC only.
+    for (const locale of ['en', 'zh-CN', 'zh-TW', 'ja', 'ru']) {
+      const context = await browser.newContext({ viewport: { width: 1690, height: 1000 } });
+      const page = await context.newPage();
+      const errors = [];
+      page.on('pageerror', error => errors.push(String(error)));
+      await page.route('**/*', route => route.request().url().startsWith(`${base}/`) ? route.continue() : route.abort());
+      for (const theme of ['light', 'dark']) {
+        await page.goto(`${base}/tests/fixtures/auth-file-list.html?locale=${locale}&theme=${theme}`);
+        await page.locator('.auth-file-card').first().waitFor();
+        for (const [layout] of layouts) {
+          await page.locator('.auth-files-layout-control button').nth(layouts.findIndex(([value]) => value === layout)).click();
+          if (layout === 'compact') await page.locator('.auth-card-glance-toggle').first().click();
+          for (const width of [320, 390, 800, 1024, 1280, 1690, 2535]) {
+            await page.setViewportSize({ width, height: 1000 });
+            await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+            assert.deepEqual(await page.evaluate(cardActionIssues), [], `${locale} ${theme} ${layout} ${width}: action bounds`);
+          }
+          const card = page.locator('.auth-file-card:not([data-glance])').first();
+          const deleteButton = card.locator('.auth-list-icon-actions > button').last();
+          await deleteButton.scrollIntoViewIfNeeded();
+          assert.equal(await deleteButton.evaluate(button => {
+            const box = button.getBoundingClientRect();
+            return button.contains(document.elementFromPoint(box.right - 2, box.top + box.height / 2));
+          }), true, `${locale} ${theme} ${layout}: the delete button's right edge is clickable`);
+          await deleteButton.focus();
+          await page.keyboard.press('Enter');
+          const dialog = page.getByRole('alertdialog');
+          await dialog.waitFor();
+          await page.keyboard.press('Escape');
+          await dialog.waitFor({ state: 'hidden' });
+        }
+      }
+      assert.deepEqual(errors, [], `${locale}: no page errors`);
+      await context.close();
+    }
+    console.log(`Authentication Files layouts: ${displays.length} displays x ${layouts.length} layouts, plus action bounds and keyboard access in 5 locales x 2 themes x 3 layouts x 7 widths passed`);
   } finally {
     if (browser) await browser.close();
     if (server) await server.close();

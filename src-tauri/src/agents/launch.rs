@@ -183,8 +183,13 @@ pub(crate) fn launch_agent(
     }
     let executable_override = executable_path.as_deref().map(Path::new);
     let desktop_override = desktop_executable_path.as_deref().map(Path::new);
-    let status = inspect_agent_config_with_executables(client, &home, config.port, effective_agent_api_key(&config), executable_override, desktop_override);
+    let (status, detected_executable) = inspect_agent_config_and_executable(client, &home, config.port, effective_agent_api_key(&config), executable_override, desktop_override);
     if !status.installed {
+        if client == AgentClient::Codex {
+            if let Some(error) = status.error {
+                return Err(error);
+            }
+        }
         return Err(format!("{} was not detected. Install it and detect it again", client.name()));
     }
     let default_target = status
@@ -251,10 +256,24 @@ pub(crate) fn launch_agent(
         (AgentClient::ClaudeDesktop | AgentClient::ZCode | AgentClient::WorkBuddy, "cli") => {
             Err(format!("{} does not support CLI launch mode", client.name()))
         }
+        (AgentClient::Codex, "cli") => {
+            let plan = prepare_codex_cli_launch(&home, &status, detected_executable, &custom_arguments)?;
+            let launch_directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
+            let path = plan.environment_path.to_string_lossy();
+            launch_cli_agent(
+                &plan.executable,
+                client.name(),
+                &launch_directory,
+                &plan.arguments,
+                &[],
+                &[("PATH", path.as_ref())],
+                &terminal,
+            )
+        }
         (_, "cli") => {
             let executable = executable_override.filter(|path| path.is_file()).map(Path::to_path_buf)
                 .or_else(|| find_agent_executable(client, &home))
-                .ok_or_else(|| format!("Executable for {} not found", client.name()))?;
+                .ok_or_else(|| status.error.clone().unwrap_or_else(|| format!("Executable for {} not found", client.name())))?;
             let launch_directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
             if client == AgentClient::DeepSeekHarness {
                 let mode = deepseek_harness_launch_mode(deepseek_harness_options.as_ref())?;
@@ -290,6 +309,33 @@ pub(crate) fn launch_agent(
         (_, "app") => Err(format!("{} does not support desktop App launch mode", client.name())),
         _ => Err("Unsupported agent launch mode".to_string()),
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct CodexCliLaunchPlan {
+    pub(crate) executable: PathBuf,
+    pub(crate) arguments: Vec<String>,
+    pub(crate) environment_path: std::ffi::OsString,
+}
+
+pub(crate) fn prepare_codex_cli_launch(
+    home: &Path,
+    status: &AgentConfigStatus,
+    detected_executable: Option<PathBuf>,
+    custom_arguments: &[String],
+) -> Result<CodexCliLaunchPlan, String> {
+    let executable = detected_executable.ok_or_else(|| status.error.clone()
+        .unwrap_or_else(|| "Executable for Codex not found".to_string()))?;
+    let environment_path = agent_command_path(home, &executable)?;
+    let mut arguments = agent_cli_launch_arguments(AgentClient::Codex, None)?;
+    arguments.extend_from_slice(custom_arguments);
+    #[cfg(windows)]
+    let (executable, arguments) = if !arguments.is_empty() {
+        let directories = env::split_paths(&environment_path).collect::<Vec<_>>();
+        let node = find_named_agent_executable_in_directories(&directories, &["node"]);
+        windows_literal_cli_invocation_with_node(&executable, &arguments, node.as_deref())?
+    } else { (executable, arguments) };
+    Ok(CodexCliLaunchPlan { executable, arguments, environment_path })
 }
 
 
@@ -952,8 +998,8 @@ fn codex_cli_daemon_command(
     executable_override: Option<&Path>,
     action: &str,
 ) -> Result<Command, String> {
-    let executable = executable_override.filter(|path| path.is_file()).map(Path::to_path_buf)
-        .or_else(|| find_agent_executable(AgentClient::Codex, home))
+    let executable = resolve_codex_cli(home, executable_override)?
+        .map(|resolved| resolved.path)
         .ok_or_else(|| "Executable for Codex not found".to_string())?;
     #[cfg(target_os = "windows")]
     let mut command = windows_command_for_executable(&executable, false);
@@ -1625,9 +1671,19 @@ fn windows_powershell_cli_script(
 
 #[cfg(any(windows, test))]
 fn windows_literal_cli_invocation(executable: &Path, arguments: &[String]) -> Result<(PathBuf, Vec<String>), String> {
+    windows_literal_cli_invocation_with_node(executable, arguments, None)
+}
+
+#[cfg(any(windows, test))]
+fn windows_literal_cli_invocation_with_node(
+    executable: &Path,
+    arguments: &[String],
+    node_path: Option<&Path>,
+) -> Result<(PathBuf, Vec<String>), String> {
     let extension = executable.extension().and_then(|value| value.to_str()).unwrap_or_default();
     if ["js", "mjs", "cjs"].iter().any(|value| extension.eq_ignore_ascii_case(value)) {
-        let node = program_on_path("node.exe").ok_or("Node.js executable was not found")?;
+        let node = node_path.map(Path::to_path_buf).or_else(|| program_on_path("node.exe"))
+            .ok_or("Node.js executable was not found")?;
         let mut forwarded = vec![path_to_string(executable)];
         forwarded.extend_from_slice(arguments);
         return Ok((node, forwarded));
@@ -1642,7 +1698,10 @@ fn windows_literal_cli_invocation(executable: &Path, arguments: &[String]) -> Re
         let script = directory.join(script.as_str());
         if !script.is_file() { return Err("CLI wrapper entry point was not found".into()); }
         let node = directory.join("node.exe");
-        let node = if node.is_file() { node } else { program_on_path("node.exe").ok_or("Node.js executable was not found")? };
+        let node = if node.is_file() { node } else {
+            node_path.map(Path::to_path_buf).or_else(|| program_on_path("node.exe"))
+                .ok_or("Node.js executable was not found")?
+        };
         let mut forwarded = vec![path_to_string(&script)];
         forwarded.extend_from_slice(arguments);
         return Ok((node, forwarded));
@@ -2065,14 +2124,42 @@ mod tests {
         assert_eq!(&received[..received.len() - 1], arguments.iter().map(|value| value.as_bytes()).collect::<Vec<_>>());
     }
 
+    #[test]
+    fn codex_cli_windows_wrapper_uses_resolved_node_and_preserves_literal_arguments() {
+        let root = crate::unique_test_temp_path("codex-cli-node-wrapper");
+        fs::create_dir_all(&root).unwrap();
+        let wrapper = root.join("codex shim.cmd");
+        let script = root.join("codex entry.js");
+        let node = root.join("node runtime.exe");
+        fs::write(&wrapper, "@echo off\r\nnode \"%dp0%/codex entry.js\" %*\r\n").unwrap();
+        fs::write(&script, "").unwrap();
+        fs::write(&node, "").unwrap();
+        let arguments = vec!["a b".to_string(), "&literal".to_string(), "\"quoted\"".to_string()];
+        let (program, forwarded) = windows_literal_cli_invocation_with_node(&wrapper, &arguments, Some(&node)).unwrap();
+        assert_eq!(program, node);
+        assert_eq!(forwarded[0], path_to_string(&script));
+        assert_eq!(&forwarded[1..], arguments);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn codex_cli_daemon_command_preserves_executable_arguments_and_path() {
+        use std::os::unix::fs::PermissionsExt;
+        if let Some(root) = env::var_os("CPA_CODEX_DAEMON_TEST_HOME") {
+            let root = PathBuf::from(root);
+            let missing = root.join("missing");
+            let error = codex_cli_daemon_command(&root, Some(&missing), "version").unwrap_err();
+            assert!(error.contains("configured CLI path"), "{error}");
+            assert!(!root.join("fallback.calls").exists());
+            return;
+        }
         let root = env::temp_dir().join(format!("cpa-daemon-command-{}-{}", std::process::id(),
             SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
         fs::create_dir_all(&root).unwrap();
         let executable = root.join("codex fixture");
-        fs::write(&executable, b"command construction fixture").unwrap();
+        fs::write(&executable, b"#!/bin/sh\nprintf 'codex-cli 1.2.3\\n'\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
         for action in ["version", "restart"] {
             let command = codex_cli_daemon_command(&root, Some(&executable), action).unwrap();
             assert_eq!(command.get_program(), executable.as_os_str());
@@ -2081,7 +2168,19 @@ mod tests {
             let path = command.get_envs().find(|(key, _)| *key == "PATH").unwrap().1.unwrap();
             assert_eq!(env::split_paths(path).next().unwrap(), root);
         }
+        let fallback = root.join("codex");
+        fs::write(&fallback, b"#!/bin/sh\nprintf 'called\\n' >> \"$HOME/fallback.calls\"\nprintf 'codex-cli 9.9.9\\n'\n").unwrap();
+        fs::set_permissions(&fallback, fs::Permissions::from_mode(0o755)).unwrap();
+        let output = Command::new(env::current_exe().unwrap())
+            .args(["--exact", "agents::launch::tests::codex_cli_daemon_command_preserves_executable_arguments_and_path", "--nocapture"])
+            .env_clear()
+            .env("CPA_CODEX_DAEMON_TEST_HOME", &root)
+            .env("HOME", &root)
+            .env("PATH", &root)
+            .output().unwrap();
         fs::remove_dir_all(root).unwrap();
+        assert!(output.status.success(), "{}\n{}",
+            String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     }
 
     #[test]
@@ -2136,15 +2235,27 @@ mod tests {
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         fs::create_dir_all(&root).unwrap();
         let desktop = root.join("Custom Desktop.exe");
+        #[cfg(unix)]
         let cli = root.join("custom-cli.exe");
         fs::write(&desktop, b"desktop fixture").unwrap();
-        fs::write(&cli, b"cli fixture").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::write(&cli, "#!/bin/sh\nprintf 'codex-cli 1.2.3\\n'\n").unwrap();
+            fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        #[cfg(windows)]
+        let cli = {
+            let cli = root.join("custom-cli.cmd");
+            fs::write(&cli, "@echo off\r\necho codex-cli 1.2.3\r\n").unwrap();
+            cli
+        };
         for client in [AgentClient::Codex, AgentClient::OpenCode, AgentClient::DeepSeekHarness] {
             let status = inspect_agent_config_with_executables(client, &root, 8317, "test-key", Some(&cli), Some(&desktop));
             assert!(status.installed, "{}", client.name());
             assert!(status.launch_targets.iter().any(|target| target.id == "app"), "{}", client.name());
             let cli_target = status.launch_targets.iter().find(|target| target.id == "cli").unwrap();
-            assert!(cli_target.detail.contains("custom-cli.exe"));
+            assert!(cli_target.detail.contains("custom-cli."));
             assert!(!cli_target.detail.contains("Custom Desktop.exe"));
         }
         for client in [AgentClient::ClaudeDesktop, AgentClient::ZCode, AgentClient::WorkBuddy] {

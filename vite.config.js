@@ -16,6 +16,11 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           const normalizedId = id.replaceAll('\\', '/');
+          // Keep pure translation data out of the application chunk. These
+          // modules have no runtime dependency on React or application services.
+          if (/\/src\/i18n\/(?:locales\/[^/]+|resources|ja|ru|traditional|easyMode|home|authFileList|themeDiy|acp)\.ts$/.test(normalizedId)) {
+            return 'translations';
+          }
           if (!normalizedId.includes('/node_modules/')) return undefined;
           if (normalizedId.includes('/node_modules/@tauri-apps/')) return 'tauri-vendor';
           if (normalizedId.includes('/node_modules/@dnd-kit/')) return 'dnd-vendor';

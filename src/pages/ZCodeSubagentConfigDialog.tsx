@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { CircleAlert, LoaderCircle, RotateCw, Users, X } from "lucide-react";
+import { CircleAlert, FileText, LoaderCircle, RotateCw, Users, X } from "lucide-react";
 import { Dialog } from "../components/Dialog";
 import { EmptyState } from "../components/EmptyState";
 import { MessageNotice } from "../appNotice";
@@ -41,6 +41,7 @@ export function ZCodeSubagentConfigDialog({
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [search, setSearch] = useState("");
+  const [expandedPromptPaths, setExpandedPromptPaths] = useState<Record<string, boolean>>({});
 
   const load = useCallback(() => {
     setLoading(true);
@@ -70,6 +71,16 @@ export function ZCodeSubagentConfigDialog({
     setSubagents((prev) =>
       prev.map((s) => (s.filePath === filePath ? { ...s, thoughtLevel: thoughtLevel || null } : s))
     );
+  };
+
+  const updateSubagentPrompt = (filePath: string, systemPrompt: string) => {
+    setSubagents((prev) =>
+      prev.map((s) => (s.filePath === filePath ? { ...s, systemPrompt } : s))
+    );
+  };
+
+  const togglePromptExpanded = (filePath: string) => {
+    setExpandedPromptPaths((prev) => ({ ...prev, [filePath]: !prev[filePath] }));
   };
 
   const save = async () => {
@@ -230,7 +241,8 @@ export function ZCodeSubagentConfigDialog({
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
               {filteredSubagents.length > 0 ? (
                 filteredSubagents.map((sub) => {
-                  const currentModelClean = sub.model ? sub.model.replace(/^cpa-gui\//, "") : "";
+                  const currentModelClean = sub.model && sub.model !== "inherit" ? sub.model.replace(/^cpa-gui\//, "") : "";
+                  const promptOpen = Boolean(expandedPromptPaths[sub.filePath]);
                   return (
                     <div
                       key={sub.filePath}
@@ -238,59 +250,88 @@ export function ZCodeSubagentConfigDialog({
                       style={{
                         padding: "12px 16px",
                         display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        gap: "14px",
+                        flexDirection: "column",
+                        gap: "10px",
                         borderRadius: "8px",
                         border: "1px solid var(--border-color, #e5e7eb)",
                         background: "var(--color-surface, #ffffff)",
                       }}
                     >
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          <strong style={{ fontSize: "13px" }}>{sub.name}</strong>
-                          {sub.tools.length > 0 ? (
-                            <span style={{ fontSize: "11px", opacity: 0.75, background: "var(--tag-bg, #f3f4f6)", padding: "1px 6px", borderRadius: "3px" }}>
-                              [{sub.tools.slice(0, 3).join(", ")}{sub.tools.length > 3 ? "..." : ""}]
-                            </span>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "14px" }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <strong style={{ fontSize: "13px" }}>{sub.name}</strong>
+                            {sub.tools.length > 0 ? (
+                              <span style={{ fontSize: "11px", opacity: 0.75, background: "var(--tag-bg, #f3f4f6)", padding: "1px 6px", borderRadius: "3px" }}>
+                                [{sub.tools.slice(0, 3).join(", ")}{sub.tools.length > 3 ? "..." : ""}]
+                              </span>
+                            ) : null}
+                          </div>
+                          {sub.description ? (
+                            <p style={{ margin: "4px 0 0", fontSize: "12px", opacity: 0.7, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={sub.description}>
+                              {sub.description}
+                            </p>
                           ) : null}
                         </div>
-                        {sub.description ? (
-                          <p style={{ margin: "4px 0 0", fontSize: "12px", opacity: 0.7, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={sub.description}>
-                            {sub.description}
-                          </p>
-                        ) : null}
+
+                        <div style={{ display: "flex", gap: "8px", alignItems: "center", flexShrink: 0 }}>
+                          <button
+                            type="button"
+                            className="secondary-button small-button"
+                            onClick={() => togglePromptExpanded(sub.filePath)}
+                            disabled={saving}
+                          >
+                            <FileText size={13} />
+                            {t(promptOpen ? "agents.zcode.subagents.hidePrompt" : "agents.zcode.subagents.editPrompt")}
+                          </button>
+
+                          <Select
+                            value={currentModelClean}
+                            onChange={(e) => {
+                              const val = e.currentTarget.value ? `cpa-gui/${e.currentTarget.value}` : "";
+                              updateSubagentModel(sub.filePath, val);
+                            }}
+                            style={{ minWidth: "150px", fontSize: "12px" }}
+                          >
+                            <option value="">继承默认</option>
+                            {models.map((m) => (
+                              <option key={m.name} value={m.name}>
+                                {m.name}
+                              </option>
+                            ))}
+                          </Select>
+
+                          <Select
+                            value={sub.thoughtLevel && sub.thoughtLevel !== "inherit" ? sub.thoughtLevel : ""}
+                            onChange={(e) => updateSubagentThoughtLevel(sub.filePath, e.currentTarget.value)}
+                            style={{ minWidth: "105px", fontSize: "12px" }}
+                          >
+                            {thoughtLevelOptions.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label.split(" ")[0]}
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
                       </div>
 
-                      <div style={{ display: "flex", gap: "8px", alignItems: "center", flexShrink: 0 }}>
-                        <Select
-                          value={currentModelClean}
-                          onChange={(e) => {
-                            const val = e.currentTarget.value ? `cpa-gui/${e.currentTarget.value}` : "";
-                            updateSubagentModel(sub.filePath, val);
-                          }}
-                          style={{ minWidth: "160px", fontSize: "12px" }}
-                        >
-                          <option value="">继承默认</option>
-                          {models.map((m) => (
-                            <option key={m.name} value={m.name}>
-                              {m.name}
-                            </option>
-                          ))}
-                        </Select>
-
-                        <Select
-                          value={sub.thoughtLevel ?? ""}
-                          onChange={(e) => updateSubagentThoughtLevel(sub.filePath, e.currentTarget.value)}
-                          style={{ minWidth: "110px", fontSize: "12px" }}
-                        >
-                          {thoughtLevelOptions.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label.split(" ")[0]}
-                            </option>
-                          ))}
-                        </Select>
-                      </div>
+                      {promptOpen ? (
+                        <label style={{ display: "flex", flexDirection: "column", gap: "6px", paddingTop: "8px", borderTop: "1px dashed var(--border-color, #e5e7eb)" }}>
+                          <span style={{ fontSize: "12px", fontWeight: 500 }}>
+                            {t("agents.zcode.subagents.promptLabel")}
+                          </span>
+                          <textarea
+                            className="codex-catalog-system-prompt"
+                            rows={8}
+                            spellCheck={false}
+                            value={sub.systemPrompt ?? ""}
+                            onChange={(e) => updateSubagentPrompt(sub.filePath, e.currentTarget.value)}
+                          />
+                          <small style={{ fontSize: "11px", opacity: 0.7 }}>
+                            {t("agents.zcode.subagents.promptHint")}
+                          </small>
+                        </label>
+                      ) : null}
                     </div>
                   );
                 })

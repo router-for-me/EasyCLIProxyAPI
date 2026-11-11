@@ -1502,6 +1502,58 @@ fn rematerializing_core_binary_preserves_bytes_and_cleans_up_temporary_file() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn core_file_replace_installs_a_read_only_source_and_keeps_the_target_replaceable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = agent_test_home("core-replace-read-only-source");
+    let source = root.join("read-only-core");
+    let target = root.join(CORE_METADATA_FILE);
+    fs::write(&source, b"new content").unwrap();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o555)).unwrap();
+    fs::write(&target, b"old content").unwrap();
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o555)).unwrap();
+
+    copy_core_file_replace(&source, &target).unwrap();
+
+    assert_eq!(fs::read(&target).unwrap(), b"new content");
+    assert_eq!(fs::read(&source).unwrap(), b"new content");
+    assert_eq!(
+        fs::metadata(&source).unwrap().permissions().mode() & 0o777,
+        0o555
+    );
+    let mode = fs::metadata(&target).unwrap().permissions().mode();
+    assert_eq!(mode & 0o600, 0o600, "target must stay writable: {mode:o}");
+    assert_eq!(
+        mode & 0o111,
+        0o111,
+        "executable bits must be preserved: {mode:o}"
+    );
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn rematerializing_a_read_only_core_binary_succeeds_and_stays_writable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = agent_test_home("core-rematerialize-read-only");
+    fs::create_dir_all(&root).unwrap();
+    let binary_path = root.join(core_binary_name());
+    fs::write(&binary_path, b"signed core bytes").unwrap();
+    fs::set_permissions(&binary_path, fs::Permissions::from_mode(0o555)).unwrap();
+
+    rematerialize_core_binary(&binary_path).unwrap();
+
+    assert_eq!(fs::read(&binary_path).unwrap(), b"signed core bytes");
+    let mode = fs::metadata(&binary_path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o600, 0o600, "binary must stay writable: {mode:o}");
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn core_start_log_path_follows_the_managed_logs_directory() {
     let base_dir = PathBuf::from("test-base");

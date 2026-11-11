@@ -40,7 +40,33 @@ import "./PluginsPage.css";
 type Tab = "installed" | "store" | "ecpa" | "settings";
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-export function PluginsPage() {
+/** The same plugin can arrive from several hints; the first entry wins. */
+function dedupeStoreEntries(entries: PluginStoreEntry[]): PluginStoreEntry[] {
+  const seen = new Set<string>();
+  return entries.filter(entry => !seen.has(entry.id) && Boolean(seen.add(entry.id)));
+}
+
+/** Keeps a startup update visible even before the store resolves that plugin. */
+function knownUpdateEntry(store: PluginStoreResponse, id: string, version: string): PluginStoreEntry {
+  const found = store.plugins.find(entry => entry.id === id);
+  if (found) return { ...found, updateAvailable: true, version };
+  return {
+    storeId: id, sourceId: '', sourceName: '', sourceUrl: '', id, name: id, description: '',
+    author: '', version, repository: '', installType: '', authRequired: false, authConfigured: false,
+    platforms: [], logo: '', homepage: '', license: '', tags: [], locales: {},
+    installed: true, installedVersion: '', installedSourceId: '', installSourceStatus: 'matched',
+    path: '', configured: false, registered: false, enabled: false, effectiveEnabled: false,
+    updateAvailable: true,
+  };
+}
+
+export function PluginsPage({ discoveredPlugins = [], discoveredUpdates = {}, onPluginUpdatesResolved }: {
+  /** Plugins the sidebar already loaded, so startup updates show without a second check. */
+  discoveredPlugins?: PluginListEntry[];
+  /** Plugin ID → newer version found by the startup check. */
+  discoveredUpdates?: Record<string, string>;
+  onPluginUpdatesResolved?: (pluginIDs: string[]) => void;
+} = {}) {
   const { t, locale } = useI18n();
   const pt = (key: Parameters<typeof pluginText>[0]) => pluginText(key, locale);
   const [tab, setTab] = useState<Tab>("installed");
@@ -84,6 +110,10 @@ export function PluginsPage() {
   const tabRef = useRef(tab);
   tabRef.current = tab;
   const notice = useAppNotice();
+  // Startup check targets stay listed even when the store copy of the plugin is absent.
+  const previousDiscovery = useRef<{ plugins: PluginListEntry[]; updates: Record<string, string> }>({
+    plugins: [], updates: {},
+  });
   const { askConfirmation, confirmationDialog } = useConfirmation();
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; ++requests.current; }; }, []);
@@ -132,6 +162,37 @@ export function PluginsPage() {
     finally { if (mounted.current && revision === requests.current) setLoading(false); }
   }, [locale, notice]);
   useEffect(() => { if (tab !== "ecpa") void load(tab); }, [tab]);
+
+  // Reuse the startup check's targets so the plugin page shows them immediately.
+  useEffect(() => {
+    if (pending.current || !supported) return;
+    const previous = previousDiscovery.current;
+    const changed = discoveredPlugins.length !== previous.plugins.length
+      || discoveredPlugins.some((plugin, index) => plugin.id !== previous.plugins[index]?.id
+        || plugin.metadata?.version !== previous.plugins[index]?.metadata?.version)
+      || Object.values(discoveredUpdates).sort().join() !== Object.values(previous.updates).sort().join();
+    previousDiscovery.current = { plugins: discoveredPlugins, updates: discoveredUpdates };
+    if (!changed) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const nextStore = await pluginStoreApi.list();
+        if (cancelled || !mounted.current) return;
+        const known = Object.entries(discoveredUpdates).map(([id, version]) =>
+          knownUpdateEntry(nextStore, id, version));
+        const plugins = dedupeStoreEntries([
+          ...filterInstalledStorePlugins(nextStore, discoveredPlugins.filter(isPluginInstalled)).plugins,
+          ...known,
+        ]);
+        if (!plugins.length) return;
+        const updates = await refreshPluginReleaseVersions({ ...nextStore, plugins });
+        if (!cancelled && mounted.current) setLocalUpdates(updates);
+      } catch {
+        // The startup check stays silent; the plugin page reports its own errors.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [discoveredPlugins, discoveredUpdates, supported]);
 
   // Follow existing files for a bounded period after config writes. Missing
   // binaries cannot load by waiting, and the API does not report loading progress.
@@ -224,6 +285,7 @@ export function PluginsPage() {
   };
   const installed = async (result: PluginStoreInstallResult) => {
     ++requests.current;
+    onPluginUpdatesResolved?.([result.id]);
     setRestartRequired(previous => previous || result.restartRequired);
     setLocalUpdates(previous => previous ? {
       ...previous,
@@ -298,6 +360,7 @@ export function PluginsPage() {
       }
       if (mounted.current && anyRestart) setRestartRequired(true);
       if (mounted.current && completed.size > 0) {
+        onPluginUpdatesResolved?.([...completed.keys()]);
         setLocalUpdates(previous => previous ? {
           ...previous,
           plugins: previous.plugins.map(entry => completed.has(entry.id)
@@ -335,6 +398,7 @@ export function PluginsPage() {
     await mutate(async () => {
       const result = await pluginsApi.deletePlugin(plugin.id);
       if (mounted.current && result.restartRequired) setRestartRequired(true);
+      if (installed) onPluginUpdatesResolved?.([plugin.id]);
     }, pt(installed ? "removed" : "removedConfig"));
   };
   const installLocal = async () => {
@@ -396,16 +460,18 @@ export function PluginsPage() {
           <button type="button" className="icon-button quiet ghost tiny-button plugin-search-clear" disabled={!search} aria-label={t("common.clear")} title={t("common.clear")}
             onClick={() => { setSearch(""); searchRef.current?.focus(); }}><X size={15} aria-hidden="true" /></button>
         </div>
-                {tab === "installed" && <>
+        </>}
+        <div className="plugin-toolbar-actions">
+        {supported === true && tab === "installed" && <div className="plugin-toolbar-group">
           <button type="button" className="secondary-button plugin-check-updates" disabled={locked || !installedPlugins.length} onClick={() => void load("installed", true, true)}><RefreshCw size={16} aria-hidden="true" />{pt("checkUpdates")}</button>
           <button type="button" className={`${updatablePlugins.length > 0 ? "primary-button" : "secondary-button"} plugin-update-all`} disabled={locked || !installedPlugins.length || (localUpdates !== null && updatablePlugins.length === 0)} onClick={() => void updateAll()}><Download size={16} aria-hidden="true" />{updatablePlugins.length > 0 ? `${pt("updateAll")} (${updatablePlugins.length})` : pt("updateAll")}</button>
-        </>}
-                </>}
-        {tab !== "ecpa" && <>
+        </div>}
+        {tab !== "ecpa" && <div className="plugin-toolbar-group">
         <button type="button" className="secondary-button plugin-development-guide" onClick={() => void openExternalUrl({ url: "https://help.router-for.me/cn/plugin/development.html" }).catch(reason => { if (mounted.current) setError(message(reason)); })}><ExternalLink size={16} aria-hidden="true" />{pt("developmentGuide")}</button>
         {data && !data.pluginsEnabled ? <span className="plugin-disabled-hint" role="status" aria-label={pt("disabledHint")} title={pt("disabledHint")}>{pt("pluginsOff")}</span> : null}
         <button className="secondary-button plugin-refresh" disabled={locked} onClick={() => void load(tabRef.current, tabRef.current === "installed")}><RefreshCw size={16} aria-hidden="true" />{t("common.refresh")}</button>
-        </>}
+        </div>}
+        </div>
       </div>
     </div>
     <div className="plugin-tab-panel" id="plugin-tab-panel" role={supported !== null ? "tabpanel" : undefined} aria-labelledby={supported !== null ? `plugin-tab-${tab}` : undefined}>
@@ -445,10 +511,11 @@ export function PluginsPage() {
             const meta = [versionText, plugin.metadata?.author || storeEntry?.author].filter(Boolean).join(" · ");
             const removeLabel = `${pt(installed ? "remove" : "removeConfig")} ${getPluginTitle(plugin)}`;
             return <article className="surface-card plugin-card plugin-local-card" key={plugin.id}>
-            <div className="plugin-card-title"><span className="plugin-icon"><PluginLogo src={plugin.logo || plugin.metadata?.logo} size={23} className="plugin-logo" /></span><div><h2>{getPluginTitle(plugin)}</h2>{getPluginTitle(plugin) !== plugin.id && <code>{plugin.id}</code>}</div><span className={`plugin-badge ${status === "active" ? "active" : status === "missingFile" || status === "notLoaded" ? "warning" : ""}`}>{pt(status)}</span></div>
-            {meta && <p className="plugin-meta">{meta}</p>}
-            {plugin.path ? <p className="plugin-path">{plugin.path}</p> : <p className="plugin-card-description">{pt("missingFileHint")}</p>}
+            <div className="plugin-card-title"><span className="plugin-icon"><PluginLogo src={plugin.logo || plugin.metadata?.logo} size={23} className="plugin-logo" /></span><div><h2>{getPluginTitle(plugin)}</h2>{getPluginTitle(plugin) !== plugin.id && <code title={plugin.id}>{plugin.id}</code>}</div><span className={`plugin-badge ${status === "active" ? "active" : status === "missingFile" || status === "notLoaded" ? "warning" : ""}`}>{pt(status)}</span></div>
+            {!plugin.path && <p className="plugin-card-description">{pt("missingFileHint")}</p>}
             {status === "notLoaded" && <p className="plugin-card-description">{pt("notLoadedHint")}</p>}
+            {meta && <p className="plugin-meta" title={meta}>{meta}</p>}
+            {plugin.path && <p className="plugin-path" title={plugin.path}>{plugin.path}</p>}
             {collectPluginResourceEntries([plugin]).length > 0 && <div className="plugin-menus">{collectPluginResourceEntries([plugin]).map(entry => <button key={entry.menuIndex} title={entry.description} className="secondary-button small-button" disabled={locked} onClick={() => openResource(entry)}><ExternalLink size={14} />{entry.label}</button>)}</div>}
             <div className="plugin-card-actions">
               {installed && (update
@@ -470,7 +537,7 @@ export function PluginsPage() {
                   <span className="ecpa-plugin-icon"><PluginLogo src={entry.logo} size={23} className="plugin-logo" /></span>
                   <div>
                     <h2>{entry.name || entry.id}</h2>
-                    <code>{entry.id}</code>
+                    <code title={entry.id}>{entry.id}</code>
                   </div>
                   {entry.version ? <span className="ecpa-plugin-version">{entry.installedVersion && updating ? `${entry.installedVersion} → ${entry.version}` : entry.version}</span> : null}
                 </div>

@@ -1,3 +1,4 @@
+mod client_agent;
 mod resp;
 mod sources;
 mod token;
@@ -32,7 +33,8 @@ use tokio_util::sync::CancellationToken;
 use self::{
     resp::{pull_usage_queue, UsageSubscription},
     token::{
-        normalize as normalize_keeper_tokens, ClampedTokenFields, TokenValues as KeeperTokenValues,
+        normalize as normalize_keeper_tokens, ClampedTokenFields, TokenBreakdownValues,
+        TokenQuality, TokenValues as KeeperTokenValues,
     },
 };
 
@@ -245,7 +247,14 @@ pub(crate) struct UsageRecord {
     client_ip: Option<String>,
     #[serde(default, skip_serializing)]
     x_forwarded_for: Option<String>,
-    #[serde(default, skip_serializing)]
+    #[serde(
+        default,
+        rename(serialize = "client_agent"),
+        alias = "client_agent",
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "client_agent::serialize",
+        deserialize_with = "client_agent::deserialize"
+    )]
     user_agent: Option<String>,
     #[serde(default)]
     reasoning_effort: String,
@@ -2766,10 +2775,12 @@ fn normalize_usage_record(value: Value, config: &GuiConfigFile) -> Result<UsageR
     let cache_creation_tokens = token_u64(tokens_object, "cache_creation_tokens");
     let raw_cached_tokens =
         token_u64(tokens_object, "cached_tokens").max(token_u64(tokens_object, "cache_tokens"));
+    let token_breakdown = parse_token_breakdown(object, tokens_object, cache_read_present);
     let normalized_tokens = normalize_keeper_tokens(
         &executor_type,
         &provider,
         &auth_type,
+        token_breakdown,
         KeeperTokenValues {
             input: token_u64(tokens_object, "input_tokens"),
             output: token_u64(tokens_object, "output_tokens"),
@@ -5068,6 +5079,95 @@ fn optional_u64_field(object: &serde_json::Map<String, Value>, key: &str) -> Opt
     })
 }
 
+/// Reads the core's schema-v2 `token_breakdown` for a usage record.
+///
+/// The breakdown is protocol-agnostic: `input` already splits cache reads and
+/// cache writes, and `output` already splits reasoning. It is only accepted when
+/// it is a well-formed partition; otherwise `None` is returned and the flat
+/// legacy fields are normalized per executor type as before.
+///
+/// Each field of the partition has to be present. Here a zero is a real
+/// measurement, so a field the core omitted cannot be read as zero; treating an
+/// absent value as one would fabricate the very figure being verified.
+fn parse_token_breakdown(
+    object: &serde_json::Map<String, Value>,
+    tokens_object: Option<&serde_json::Map<String, Value>>,
+    cache_read_present: bool,
+) -> Option<TokenBreakdownValues> {
+    let value = object.get("token_breakdown")?;
+    let breakdown = value.as_object()?;
+    if breakdown.get("schema_version").and_then(Value::as_u64) != Some(2) {
+        return None;
+    }
+    let quality = TokenQuality::parse(breakdown.get("quality").and_then(Value::as_str));
+    if quality == TokenQuality::Unknown {
+        return None;
+    }
+    let input = breakdown.get("input")?.as_object()?;
+    let output = breakdown.get("output")?.as_object()?;
+    let field = |scope: &serde_json::Map<String, Value>, key: &str| -> Option<u64> {
+        scope.get(key)?.as_u64()
+    };
+    let parsed = TokenBreakdownValues {
+        input_total: field(input, "total_tokens")?,
+        uncached: field(input, "uncached_tokens")?,
+        cache_read: field(input, "cache_read_tokens")?,
+        cache_write: field(input, "cache_write_tokens")?,
+        output_total: field(output, "total_tokens")?,
+        non_reasoning: field(output, "non_reasoning_tokens")?,
+        reasoning: field(output, "reasoning_tokens")?,
+        total: field(breakdown, "total_tokens")?,
+        unclassified: field(breakdown, "unclassified_tokens")?,
+        quality,
+    };
+    let raw = RawTokenCounts {
+        input: token_u64(tokens_object, "input_tokens"),
+        output: token_u64(tokens_object, "output_tokens"),
+        reasoning: token_u64(tokens_object, "reasoning_tokens"),
+        cache_read: token_u64(tokens_object, "cache_read_tokens"),
+        cache_read_present,
+        cache_creation: token_u64(tokens_object, "cache_creation_tokens"),
+        total: token_u64(tokens_object, "total_tokens"),
+    };
+    if !breakdown_matches_raw(parsed, raw) {
+        return None;
+    }
+    Some(parsed)
+}
+
+/// The core reports vendors in two dialects: one where `input_tokens` already
+/// contains the cache buckets, and one where it does not. Likewise `output_tokens`
+/// may or may not include reasoning. The flat counts are therefore checked
+/// against either reading, and a partition that agrees with neither is dropped
+/// instead of being trusted on its own say-so.
+#[derive(Clone, Copy, Default)]
+struct RawTokenCounts {
+    input: u64,
+    output: u64,
+    reasoning: u64,
+    cache_read: u64,
+    cache_read_present: bool,
+    cache_creation: u64,
+    total: u64,
+}
+
+fn breakdown_matches_raw(breakdown: TokenBreakdownValues, raw: RawTokenCounts) -> bool {
+    let raw_consistent = raw.total == 0 || raw.total == breakdown.total;
+    let input_consistent = raw.input == breakdown.input_total || raw.input == breakdown.uncached;
+    let output_consistent =
+        raw.output == breakdown.output_total || raw.output == breakdown.non_reasoning;
+    let reasoning_consistent = raw.reasoning == breakdown.reasoning;
+    let cache_read_consistent = !(raw.cache_read_present || raw.cache_read != 0)
+        || raw.cache_read == breakdown.cache_read;
+    let cache_write_consistent = raw.cache_creation == breakdown.cache_write;
+    raw_consistent
+        && input_consistent
+        && output_consistent
+        && reasoning_consistent
+        && cache_read_consistent
+        && cache_write_consistent
+}
+
 fn token_u64(object: Option<&serde_json::Map<String, Value>>, key: &str) -> u64 {
     object.map(|object| u64_field(object, key)).unwrap_or(0)
 }
@@ -5709,6 +5809,160 @@ mod tests {
     }
 
     #[test]
+    fn plugin_executor_record_uses_token_breakdown_end_to_end() {
+        // Shape taken from issue #652: plugin executor, Claude protocol, write-only cache.
+        let record: Value = serde_json::from_str(
+            r#"{
+                "request_id": "issue-652-probe",
+                "timestamp": "2026-11-15T23:50:49Z",
+                "executor_type": "executorAdapter",
+                "provider": "example-plugin",
+                "auth_type": "oauth",
+                "model": "claude-sonnet-4-5",
+                "tokens": {
+                    "input_tokens": 15,
+                    "output_tokens": 4,
+                    "cached_tokens": 1000,
+                    "cache_read_tokens": 0,
+                    "cache_creation_tokens": 1000,
+                    "total_tokens": 1019
+                },
+                "accounting_version": 2,
+                "token_breakdown": {
+                    "schema_version": 2,
+                    "quality": "complete",
+                    "total_tokens": 1019,
+                    "input": {
+                        "total_tokens": 1015,
+                        "uncached_tokens": 15,
+                        "cache_read_tokens": 0,
+                        "cache_write_tokens": 1000
+                    },
+                    "output": {
+                        "total_tokens": 4,
+                        "non_reasoning_tokens": 4,
+                        "reasoning_tokens": 0
+                    },
+                    "unclassified_tokens": 0
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let object = record.as_object().unwrap();
+        let tokens_object = object.get("tokens").and_then(Value::as_object);
+        let parsed = parse_token_breakdown(object, tokens_object, true)
+            .expect("a complete, self-consistent partition must be read");
+        assert_eq!(parsed.input_total, 1015);
+        assert_eq!(parsed.uncached, 15);
+        assert_eq!(parsed.cache_read, 0);
+        assert_eq!(parsed.cache_write, 1000);
+        assert_eq!(parsed.output_total, 4);
+        assert_eq!(parsed.reasoning, 0);
+        assert_eq!(parsed.total, 1019);
+        assert_eq!(parsed.quality, TokenQuality::Complete);
+    }
+
+    #[test]
+    fn breakdown_that_contradicts_raw_counts_is_rejected() {
+        // The partition sums correctly but claims a different total than the record.
+        let record: Value = serde_json::from_str(
+            r#"{
+                "tokens": {
+                    "input_tokens": 15,
+                    "output_tokens": 4,
+                    "cache_read_tokens": 0,
+                    "cache_creation_tokens": 1000,
+                    "total_tokens": 1019
+                },
+                "token_breakdown": {
+                    "schema_version": 2,
+                    "quality": "complete",
+                    "total_tokens": 5000,
+                    "input": {
+                        "total_tokens": 1015,
+                        "uncached_tokens": 15,
+                        "cache_read_tokens": 0,
+                        "cache_write_tokens": 1000
+                    },
+                    "output": {"total_tokens": 4, "non_reasoning_tokens": 4, "reasoning_tokens": 0},
+                    "unclassified_tokens": 0
+                }
+            }"#,
+        )
+        .unwrap();
+        let object = record.as_object().unwrap();
+        let tokens_object = object.get("tokens").and_then(Value::as_object);
+        assert!(parse_token_breakdown(object, tokens_object, true).is_none());
+    }
+
+    #[test]
+    fn missing_breakdown_bucket_is_rejected() {
+        // An omitted bucket is not a measured zero.
+        let record: Value = serde_json::from_str(
+            r#"{
+                "tokens": {"input_tokens": 15, "output_tokens": 4, "total_tokens": 1019},
+                "token_breakdown": {
+                    "schema_version": 2,
+                    "quality": "complete",
+                    "total_tokens": 1019,
+                    "input": {
+                        "total_tokens": 1015,
+                        "uncached_tokens": 15,
+                        "cache_read_tokens": 0
+                    },
+                    "output": {"total_tokens": 4, "non_reasoning_tokens": 4, "reasoning_tokens": 0},
+                    "unclassified_tokens": 0
+                }
+            }"#,
+        )
+        .unwrap();
+        let object = record.as_object().unwrap();
+        let tokens_object = object.get("tokens").and_then(Value::as_object);
+        assert!(parse_token_breakdown(object, tokens_object, true).is_none());
+    }
+
+    #[test]
+    fn inconsistent_quality_breakdown_is_rejected() {
+        let record: Value = serde_json::from_str(
+            r#"{
+                "tokens": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 10},
+                "token_breakdown": {
+                    "schema_version": 2,
+                    "quality": "inconsistent",
+                    "total_tokens": 10,
+                    "input": {"total_tokens": 0, "uncached_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0},
+                    "output": {"total_tokens": 0, "non_reasoning_tokens": 0, "reasoning_tokens": 0},
+                    "unclassified_tokens": 10
+                }
+            }"#,
+        )
+        .unwrap();
+        let object = record.as_object().unwrap();
+        assert!(parse_token_breakdown(object, None, false).is_none());
+    }
+
+    #[test]
+    fn unknown_schema_version_breakdown_is_rejected() {
+        let record: Value = serde_json::from_str(
+            r#"{
+                "tokens": {"input_tokens": 10, "output_tokens": 0, "total_tokens": 10},
+                "token_breakdown": {
+                    "schema_version": 3,
+                    "quality": "complete",
+                    "total_tokens": 10,
+                    "input": {"total_tokens": 10, "uncached_tokens": 10, "cache_read_tokens": 0, "cache_write_tokens": 0},
+                    "output": {"total_tokens": 0, "non_reasoning_tokens": 0, "reasoning_tokens": 0},
+                    "unclassified_tokens": 0
+                }
+            }"#,
+        )
+        .unwrap();
+        let object = record.as_object().unwrap();
+        assert!(parse_token_breakdown(object, None, false).is_none());
+    }
+
+    #[test]
     fn repairs_legacy_claude_input_tokens_on_demand() {
         let root = test_root("claude-input-migration");
         let connection = open_test_database(&root);
@@ -6186,6 +6440,7 @@ mod tests {
             transient_error_cooldown_seconds: crate::DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS,
             streaming_bootstrap_retries: crate::DEFAULT_STREAMING_BOOTSTRAP_RETRIES,
             reverse_proxy: None,
+            auto_update: crate::auto_update::AutoUpdateSettings::default(),
         };
         let record = normalize_usage_record(
             serde_json::json!({
@@ -6212,6 +6467,74 @@ mod tests {
         assert_eq!(record.tokens.total_tokens, 30);
         assert_eq!(record.tokens.cache_read_tokens, 5);
         assert!(!record.api_key_hash.is_empty());
+    }
+
+    #[test]
+    fn client_agent_queue_sqlite_ui_and_export_roundtrip_keep_only_safe_identity() {
+        let root = test_root("client-agent-roundtrip");
+        let mut connection = open_test_database(&root);
+        let config = GuiConfigFile::default();
+        let raw = "OpenClaw/2026.11.19 (/home/private; person@example.test; token=private-value)";
+        let record = normalize_usage_record(
+            serde_json::json!({
+                "request_id": "client-agent-roundtrip", "timestamp": "2026-11-19T08:00:00Z",
+                "user_agent": raw, "client_ip": "192.0.2.1", "x_forwarded_for": "192.0.2.2",
+                "model": "claude-test", "provider": "codex"
+            }),
+            &config,
+        )
+        .unwrap();
+        insert_usage_records(&mut connection, &[record]).unwrap();
+        let stored: String = connection
+            .query_row("SELECT user_agent FROM usage_events LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(stored, raw);
+        let page = load_usage_events(&connection, &UsageQuery::default(), &config).unwrap();
+        let value = serde_json::to_value(&page.items[0]).unwrap();
+        assert_eq!(value["client_agent"], "openclaw");
+        for key in ["user_agent", "client_ip", "x_forwarded_for"] {
+            assert!(value.get(key).is_none());
+        }
+        let text = value.to_string();
+        for private in [
+            "/home/private",
+            "person@example.test",
+            "private-value",
+            "192.0.2.",
+        ] {
+            assert!(!text.contains(private));
+        }
+        let sdk = normalize_usage_record(serde_json::json!({"request_id": "sdk", "user_agent": "python-httpx/0.28 token=secret"}), &config).unwrap();
+        assert_eq!(serde_json::to_value(sdk).unwrap()["client_agent"], "other");
+        let missing = normalize_usage_record(serde_json::json!({"request_id": "legacy", "provider": "codex", "model": "claude-code"}), &config).unwrap();
+        assert!(serde_json::to_value(missing)
+            .unwrap()
+            .get("client_agent")
+            .is_none());
+        let injected = normalize_usage_record(
+            serde_json::json!({"request_id": "not-header", "client_agent": "openclaw"}),
+            &config,
+        )
+        .unwrap();
+        assert!(serde_json::to_value(injected)
+            .unwrap()
+            .get("client_agent")
+            .is_none());
+        let imported: UsageRecord = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            serde_json::to_value(imported).unwrap()["client_agent"],
+            "openclaw"
+        );
+        let mut legacy = serde_json::to_value(&page.items[0]).unwrap();
+        legacy.as_object_mut().unwrap().remove("client_agent");
+        let legacy: UsageRecord = serde_json::from_value(legacy).unwrap();
+        assert!(serde_json::to_value(legacy)
+            .unwrap()
+            .get("client_agent")
+            .is_none());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

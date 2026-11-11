@@ -38,6 +38,7 @@ import { useAppUpdate } from '../appUpdate';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { createVersionManagementVisitTracker } from '../services/versionManagementVisits';
 import { AppReleaseNotes } from '../components/AppReleaseNotes';
+import { AutoUpdatePanel } from '../components/AutoUpdatePanel';
 import { Dialog } from '../components/Dialog';
 import { SelectMenu, type SelectMenuOption } from '../components/SelectMenu';
 
@@ -755,23 +756,13 @@ export function VersionManagementPage() {
             )}
 
             <div className="app-version-info-section">
-              <MessageNotice message={appUpdateError} />
-              <div className="version-alert-banner neutral">
-                <Info size={14} aria-hidden="true" />
-                <span>
-                  {appUpdate?.autoUpdateSupported
-                    ? t('kernel.versions.autoUpdateSupported')
-                    : t('appUpdate.manualFallback')}
-                  {appIsPreview && latestAppPublishedAt
-                    ? ` · ${t('appUpdate.publishedAt', { date: latestAppPublishedAt })}`
-                    : ''}
-                </span>
-              </div>
-              {appUpdate && !appUpdate.autoUpdateSupported && appUnsupportedReason ? (
-                <div className="version-alert-banner neutral version-unsupported-reason">
-                  <Info size={14} aria-hidden="true" />
-                  <span title={appUpdate.unsupportedReason ?? undefined}>{appUnsupportedReason}</span>
-                </div>
+              <MessageNotice message={appUpdateError || channelError} />
+              <AutoUpdatePanel
+                embedded
+                appUnavailableHint={appUpdate && !appUpdate.autoUpdateSupported ? (appUnsupportedReason ?? t('appUpdate.manualFallback')) : undefined}
+              />
+              {appIsPreview && latestAppPublishedAt && !appUpdateError && !channelError ? (
+                <p className="app-version-meta">{t('appUpdate.publishedAt', { date: latestAppPublishedAt })}</p>
               ) : null}
               {activeChannel.startsWith('preview') ? (
                 <>
@@ -809,7 +800,6 @@ export function VersionManagementPage() {
                   </div>
                 </>
               ) : null}
-              {channelError ? <MessageNotice message={channelError} /> : null}
             </div>
           </div>
 
