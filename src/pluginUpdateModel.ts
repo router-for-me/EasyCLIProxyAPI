@@ -10,6 +10,12 @@ import { isPluginInstalled } from './services/pluginStatus';
  * completed update, or an uninstall removes a known target.
  */
 const knownUpdates = new Map<string, string>();
+/**
+ * Plugin IDs finished (updated or uninstalled) while a check was already
+ * running. A check drops their results because they were read before that
+ * change; the entry is consumed by that check so later checks report normally.
+ */
+const staleCheckTargets = new Set<string>();
 let startupCheckStarted = false;
 const listeners = new Set<() => void>();
 
@@ -32,40 +38,57 @@ export function clearKnownPluginUpdate(pluginID: string) {
 
 export function resetPluginUpdateNotifications() {
   knownUpdates.clear();
+  staleCheckTargets.clear();
   startupCheckStarted = false;
   notifyPluginUpdates();
 }
 
 /** A finished update is no longer pending, whatever the next check says. */
 export function forgetUpdatedPlugins(pluginIDs: Iterable<string>) {
-  for (const id of pluginIDs) knownUpdates.delete(id);
+  const ids = [...pluginIDs];
+  for (const id of ids) knownUpdates.delete(id);
+  // A check that started before this update or uninstall still carries the old
+  // store rows; its stale targets must not raise the light again.
+  for (const id of ids) staleCheckTargets.add(id);
   notifyPluginUpdates();
 }
 
 /** Drop targets for plugins that are no longer installed. */
 export function pruneKnownPluginUpdates(installedIDs: Iterable<string>) {
   const installed = new Set(installedIDs);
+  let changed = false;
   for (const id of [...knownUpdates.keys()]) {
-    if (!installed.has(id)) knownUpdates.delete(id);
+    if (installed.has(id)) continue;
+    knownUpdates.delete(id);
+    changed = true;
   }
+  if (changed) notifyPluginUpdates();
 }
 
 /** Equal, older and unparsable tags are never reported as a new version. */
 const isNewer = (latest: string | undefined, installed: string): boolean =>
-  Boolean(installed.trim() && latest?.trim()) && isNewerPluginRelease(installed, latest ?? '');
+  Boolean(installed.trim() && latest) && isNewerPluginRelease(installed, latest ?? '');
 
 /**
  * Records a successful check. Targets from sources that failed to answer are
- * kept so a transient outage does not hide a real update.
+ * kept so a transient outage does not hide a real update, and a store row from
+ * a source that failed neither invents nor erases any target.
  */
-export function mergeCheckedPluginUpdates(result: PluginStoreResponse) {
+export function mergeCheckedPluginUpdates(result: PluginStoreResponse, superseded: ReadonlySet<string> = new Set()) {
   const failed = new Set(result.sourceErrors.map((error) => error.sourceId).filter(Boolean));
   const next = new Map<string, string>();
   for (const entry of result.plugins) {
     const known = knownUpdates.get(entry.id);
-    if (entry.updateAvailable && isNewer(entry.version, entry.installedVersion)) next.set(entry.id, entry.version);
-    else if (known && (failed.has(entry.sourceId) || !entry.version)) next.set(entry.id, known);
+    const trusted = !failed.has(entry.sourceId) && Boolean(entry.version);
+    if (!trusted) {
+      if (known && !superseded.has(entry.id)) next.set(entry.id, known);
+    } else if (entry.updateAvailable && !superseded.has(entry.id) && isNewer(entry.version, entry.installedVersion)) {
+      next.set(entry.id, entry.version);
+    }
   }
+  const unchanged = next.size === knownUpdates.size
+    && [...next].every(([id, version]) => knownUpdates.get(id) === version);
+  if (unchanged) return;
   knownUpdates.clear();
   for (const [id, version] of next) knownUpdates.set(id, version);
   notifyPluginUpdates();
@@ -105,7 +128,13 @@ export function runStartupPluginUpdateCheck() {
       if (!installed.length) return;
       pruneKnownPluginUpdates(installed.map((plugin) => plugin.id));
       const checked = await refreshInstalledStoreEntries(await pluginStoreApi.list(), installed);
-      if (checked) mergeCheckedPluginUpdates(checked);
+      if (!checked || !staleCheckTargets.size) {
+        if (checked) mergeCheckedPluginUpdates(checked);
+        return;
+      }
+      const superseded = new Set(staleCheckTargets);
+      staleCheckTargets.clear();
+      mergeCheckedPluginUpdates(checked, superseded);
     } catch {
       // Offline or unavailable sources must not surface errors at startup.
     }

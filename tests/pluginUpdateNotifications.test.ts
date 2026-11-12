@@ -4,8 +4,15 @@ import { normalizePluginList, normalizePluginStore } from '../src/services/plugi
 import {
   checkInstalledPluginUpdates, forgetUpdatedPlugins, mergeCheckedPluginUpdates,
   pluginUpdateIndicatorState, pruneKnownPluginUpdates, readKnownPluginUpdates,
-  resetPluginUpdateNotifications, runStartupPluginUpdateCheck,
+  resetPluginUpdateNotifications, runStartupPluginUpdateCheck, subscribePluginUpdates,
 } from '../src/pluginUpdateModel';
+
+/** Lets a test answer a store request after the app already moved on. */
+function deferred<T>() {
+  let resolve: (value: T) => void = () => {};
+  const promise = new Promise<T>((settle) => { resolve = settle; });
+  return { promise, resolve };
+}
 
 const LOCAL = normalizePluginList({
   plugins_enabled: true,
@@ -76,8 +83,9 @@ describe('plugin startup update notifications', () => {
 
   it('never marks equal or older versions as new', () => {
     mergeCheckedPluginUpdates(normalizePluginStore(storeResponse([
-      { id: 'active-plugin', version: '1.0.0', installed: true, installed_version: '1.0.0', install_source_status: 'matched' },
-      { id: 'disabled-plugin', version: '1.0.0', installed: true, installed_version: '2.0.0', install_source_status: 'matched' },
+      { id: 'active-plugin', version: '1.0.0', installed: true, installed_version: '1.0.0', install_source_status: 'matched', update_available: true },
+      { id: 'disabled-plugin', version: '1.0.0', installed: true, installed_version: '2.0.0', install_source_status: 'matched', update_available: true },
+      { id: 'unknown-version', version: '', installed: false, installed_version: '2.0.0', install_source_status: 'matched', update_available: true },
     ])));
     expect(pluginUpdateIndicatorState()).toBeNull();
   });
@@ -127,5 +135,66 @@ describe('plugin startup update notifications', () => {
       { id: 'disabled-plugin', source_id: 'official', version: '2.0.0', installed: true, installed_version: '2.0.0', install_source_status: 'matched' },
     ])));
     expect(readKnownPluginUpdates()).toEqual({});
+  });
+
+  it('keeps a confirmed update when a row from a failed source appears', () => {
+    mergeCheckedPluginUpdates(normalizePluginStore(storeResponse([
+      { id: 'disabled-plugin', source_id: 'official', version: '3.0.0', installed: true, installed_version: '2.0.0', install_source_status: 'matched', update_available: true },
+    ])));
+    expect(readKnownPluginUpdates()).toEqual({ 'disabled-plugin': '3.0.0' });
+    // The mirrored row lacks a version and no longer offers the update itself.
+    mergeCheckedPluginUpdates(normalizePluginStore(storeResponse([
+      { id: 'disabled-plugin', source_id: 'mirror', version: '', installed: true, installed_version: '2.0.0', install_source_status: 'matched', update_available: false },
+      { id: 'mirror-only', source_id: 'mirror', version: '5.0.0', installed: true, installed_version: '1.0.0', install_source_status: 'matched', update_available: true },
+    ], [{ source_id: 'mirror', message: 'offline' }])));
+    expect(readKnownPluginUpdates()).toEqual({ 'disabled-plugin': '3.0.0' });
+  });
+
+  it('notifies subscribers only when pruning changes the targets', () => {
+    mergeCheckedPluginUpdates(normalizePluginStore(storeResponse([
+      { id: 'disabled-plugin', source_id: 'official', version: '3.0.0', installed: true, installed_version: '2.0.0', install_source_status: 'matched', update_available: true },
+    ])));
+    let notifications = 0;
+    const unsubscribe = subscribePluginUpdates(() => { notifications++; });
+    pruneKnownPluginUpdates(['active-plugin', 'disabled-plugin']);
+    expect(notifications).toBe(0);
+    expect(readKnownPluginUpdates()).toEqual({ 'disabled-plugin': '3.0.0' });
+    pruneKnownPluginUpdates(['active-plugin']);
+    expect(notifications).toBe(1);
+    expect(pluginUpdateIndicatorState()).toBeNull();
+    unsubscribe();
+  });
+
+  it('ignores startup results captured before a plugin was updated', async () => {
+    const store = deferred<string>();
+    mockBackend(() => store.promise);
+    runStartupPluginUpdateCheck();
+    await settle();
+    expect(readKnownPluginUpdates()).toEqual({});
+    // The update finishes while the store request is still in flight.
+    forgetUpdatedPlugins(['active-plugin']);
+    store.resolve(storeResponse([
+      { id: 'active-plugin', source_id: 'official', version: '1.1.0', installed: true, install_source_status: 'matched', update_available: true },
+      { id: 'disabled-plugin', source_id: 'official', version: '3.0.0', installed: true, install_source_status: 'matched', update_available: true },
+    ]));
+    await settle();
+    expect(readKnownPluginUpdates()).toEqual({ 'disabled-plugin': '3.0.0' });
+    expect(pluginUpdateIndicatorState()).toBe('available');
+  });
+
+  it('ignores startup results captured before a plugin was uninstalled', async () => {
+    const store = deferred<string>();
+    mockBackend(() => store.promise);
+    runStartupPluginUpdateCheck();
+    await settle();
+    store.resolve(storeResponse([
+      { id: 'active-plugin', source_id: 'official', version: '1.1.0', installed: true, install_source_status: 'matched', update_available: true },
+      { id: 'disabled-plugin', source_id: 'official', version: '3.0.0', installed: true, install_source_status: 'matched', update_available: true },
+    ]));
+    await settle();
+    expect(readKnownPluginUpdates()).toEqual({ 'active-plugin': '1.1.0', 'disabled-plugin': '3.0.0' });
+    forgetUpdatedPlugins(['active-plugin']);
+    pruneKnownPluginUpdates(['disabled-plugin']);
+    expect(readKnownPluginUpdates()).toEqual({ 'disabled-plugin': '3.0.0' });
   });
 });
