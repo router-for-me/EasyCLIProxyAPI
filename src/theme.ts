@@ -24,6 +24,7 @@ import {
 } from './themes/anime';
 import { isThemeImageDataUrl } from './themes/resources';
 import { parseCustomThemes, type CustomThemeDiagnostic, type SkippedCustomTheme } from './themes/customThemes';
+import { onCustomThemesChanged } from './services/events';
 export type { AppTheme, ThemePreference } from './themeController';
 
 const preferences = new ThemePreferences();
@@ -164,6 +165,9 @@ async function detectWindowMaterial() {
 
 export async function initializeThemePreferences(): Promise<void> {
   if (!isTauri()) return;
+  // Live reload when files under the themes folder change; the Reload button stays available if this cannot attach.
+  void onCustomThemesChanged(() => { void loadCustomThemes(); })
+    .catch((error: unknown) => console.warn('Custom theme change listener unavailable', error));
   await Promise.all([preferences.initialize({
     load: () => getThemeSelection(),
     save: (selection) => saveThemeSelection({ selection }),

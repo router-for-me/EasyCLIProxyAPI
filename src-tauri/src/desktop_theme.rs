@@ -255,6 +255,89 @@ pub(crate) fn list_custom_themes() -> Result<CustomThemeList, String> {
     list_theme_files(&custom_themes_dir()?)
 }
 
+/// Emitted when the custom-themes folder or any theme file in it changes.
+pub(crate) const CUSTOM_THEMES_CHANGED_EVENT: &str = "custom-themes-changed";
+
+pub(crate) fn start_custom_themes_watcher(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
+    watch_custom_themes(custom_themes_dir()?, move || {
+        let _ = app.emit(CUSTOM_THEMES_CHANGED_EVENT, ());
+    })
+}
+
+// The parent stays watched so the themes folder itself can be created or removed; its contents are
+// watched recursively once the folder exists, so editing theme.json or assets is seen too.
+fn watch_custom_themes(
+    directory: std::path::PathBuf,
+    on_change: impl Fn() + Send + 'static,
+) -> Result<(), String> {
+    use notify::{RecursiveMode, Watcher};
+    use std::{sync::mpsc, thread, time::{Duration, Instant}};
+
+    let parent = super::configuration_watcher::nearest_existing_watch_directory(&directory)
+        .ok_or_else(|| "Failed to find a directory to monitor for custom themes".to_string())?;
+    let (sender, receiver) = mpsc::channel::<()>();
+    let filter = directory.clone();
+    let mut watcher = notify::recommended_watcher(move |result: Result<notify::Event, notify::Error>| {
+        let Ok(event) = result else { return };
+        // Reads made by our own loader produce access events; ignoring them prevents a reload loop.
+        if !event.kind.is_access()
+            && event.paths.iter().any(|path| theme_event_path_is_relevant(path, &filter))
+        {
+            let _ = sender.send(());
+        }
+    })
+    .map_err(|error| format!("Failed to create custom themes watcher: {error}"))?;
+    watcher
+        .watch(&parent, RecursiveMode::NonRecursive)
+        .map_err(|error| format!("Failed to monitor custom themes directory: {error}"))?;
+    let mut contents_watched = false;
+    watch_theme_contents(&mut watcher, &directory, &mut contents_watched)?;
+
+    thread::spawn(move || {
+        let mut watcher = watcher;
+        while receiver.recv().is_ok() {
+            // Coalesce a burst of writes: report after 200 ms of quiet, or 500 ms in total.
+            let deadline = Instant::now() + Duration::from_millis(500);
+            while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+                if receiver.recv_timeout(remaining.min(Duration::from_millis(200))).is_err() {
+                    break;
+                }
+            }
+            if let Err(error) = watch_theme_contents(&mut watcher, &directory, &mut contents_watched) {
+                eprintln!("{error}");
+            }
+            on_change();
+        }
+    });
+    Ok(())
+}
+
+fn watch_theme_contents(
+    watcher: &mut notify::RecommendedWatcher,
+    directory: &std::path::Path,
+    contents_watched: &mut bool,
+) -> Result<(), String> {
+    use notify::{RecursiveMode, Watcher};
+    if !directory.is_dir() {
+        *contents_watched = false;
+        return Ok(());
+    }
+    if *contents_watched {
+        return Ok(());
+    }
+    watcher
+        .watch(directory, RecursiveMode::Recursive)
+        .map_err(|error| format!("Failed to monitor custom theme files: {error}"))?;
+    *contents_watched = true;
+    Ok(())
+}
+
+fn theme_event_path_is_relevant(path: &std::path::Path, directory: &std::path::Path) -> bool {
+    // Inside the themes folder, or a same-named entry in its parent (folder created, removed or renamed).
+    path.starts_with(directory) || path.file_name() == directory.file_name()
+}
+
 #[tauri::command]
 pub(crate) fn open_custom_themes_directory() -> Result<(), String> {
     let directory = custom_themes_dir()?;
@@ -609,5 +692,59 @@ mod tests {
         assert_eq!(portal_color_scheme(2), Some(tauri::Theme::Light));
         assert_eq!(portal_color_scheme(0), None);
         assert_eq!(portal_color_scheme(3), None);
+    }
+
+    #[test]
+    fn theme_event_relevance_matches_paths_inside_the_themes_directory() {
+        use std::path::Path;
+        let directory = Path::new("/tmp/core-base/themes");
+        assert!(theme_event_path_is_relevant(directory, directory));
+        assert!(theme_event_path_is_relevant(
+            Path::new("/tmp/core-base/themes/my-dark/theme.json"),
+            directory,
+        ));
+        // A same-named entry in the parent: the themes folder created, removed or renamed.
+        assert!(theme_event_path_is_relevant(Path::new("/tmp/core-base/themes"), directory));
+        assert!(!theme_event_path_is_relevant(
+            Path::new("/tmp/core-base/config.yaml"),
+            directory,
+        ));
+        assert!(!theme_event_path_is_relevant(
+            Path::new("/tmp/other/themes-backup/my-dark"),
+            directory,
+        ));
+    }
+
+    #[test]
+    fn nested_theme_edits_and_folder_changes_are_reported_but_unrelated_files_are_not() {
+        use std::{sync::mpsc, time::Duration};
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ezcpa-theme-watch-{}-{stamp}", std::process::id()));
+        let directory = root.join("themes");
+        std::fs::create_dir_all(directory.join("mountain")).unwrap();
+        std::fs::write(directory.join("mountain/theme.json"), "{}").unwrap();
+        let (sender, receiver) = mpsc::channel();
+        watch_custom_themes(directory.clone(), move || {
+            let _ = sender.send(());
+        })
+        .unwrap();
+        let expect_change = |label: &str| {
+            receiver
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap_or_else(|_| panic!("{label} was not reported"));
+        };
+        std::fs::write(directory.join("mountain/theme.json"), r#"{"id":"mountain-dark"}"#).unwrap();
+        expect_change("nested theme.json edit");
+        std::fs::create_dir_all(directory.join("sea")).unwrap();
+        expect_change("new theme folder");
+        std::fs::write(root.join("config.yaml"), "model: unchanged\n").unwrap();
+        assert!(
+            receiver.recv_timeout(Duration::from_millis(1500)).is_err(),
+            "a file outside the themes folder was reported"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
