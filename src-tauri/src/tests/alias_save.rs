@@ -654,6 +654,94 @@ async fn alias_save_can_retry_after_restoration_reformats_yaml() {
     assert_eq!(persisted, yaml_json(&updated));
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn desktop_row_context_survives_save_and_reload() {
+    let home = super::support::agent_test_home("desktop-row-context");
+    let paths = config_paths("claude-desktop", &home).unwrap();
+    let models = super::support::test_agent_models(&["model-a", "model-b", "model-c"]);
+    let initial = "codex-api-key:\n  - models: [{name: model-a}, {name: model-b}, {name: model-c}]\n";
+    let requested: ClaudeDesktopModelMappings = serde_json::from_value(serde_json::json!({
+        "desktopModels": [
+            {"model": "model-a", "alias": "claude-opus-5", "context1m": true},
+            {"model": "model-b", "alias": "claude-sonnet-5", "context1m": false},
+            {"model": "model-c", "alias": "claude-haiku-4-5", "context1m": false}
+        ]
+    })).unwrap();
+    let mappings = resolve_claude_desktop_model_mappings(
+        AgentClient::ClaudeDesktop, &models, "model-a", Some(requested),
+    ).unwrap().unwrap();
+    let mut previous = mappings.clone();
+    previous.desktop_models.as_mut().unwrap()[0].context_1m = false;
+    apply_agent_configuration_with_oauth(
+        AgentClient::ClaudeDesktop, &home, 8317, "client-key", "model-a",
+        AgentConfigurationOptions {
+            models: &models,
+            codex_catalog: None,
+            oauth_configuration: false,
+            claude_code_model_mappings: None,
+            claude_desktop_model_mappings: Some(&previous),
+        },
+    ).unwrap();
+    let core = MockCore::new(initial, Failure::None);
+    commit_agent_with_core(&core.config, Some(mappings.clone()), &models, |mappings| {
+        apply_agent_configuration_with_oauth(
+            AgentClient::ClaudeDesktop,
+            &home,
+            8317,
+            "client-key",
+            "model-a",
+            AgentConfigurationOptions {
+                models: &models,
+                codex_catalog: None,
+                oauth_configuration: false,
+                claude_code_model_mappings: None,
+                claude_desktop_model_mappings: mappings,
+            },
+        )
+    }).await.unwrap();
+    let (persisted, _) = core.finish();
+    let images = config_images(&paths).unwrap();
+    let reloaded = matching_desktop_mappings(&paths, &images).unwrap();
+    assert_eq!(reloaded, mappings);
+    let entries = reloaded.desktop_models.as_ref().unwrap();
+    assert_eq!(entries.iter().map(|entry| entry.context_1m).collect::<Vec<_>>(), [true, false, false]);
+    let profile: serde_json::Value = serde_json::from_slice(&fs::read(&paths[2]).unwrap()).unwrap();
+    for (index, entry) in entries.iter().enumerate() {
+        assert_eq!(profile["inferenceModels"][index]["name"], entry.alias);
+        assert_eq!(profile["inferenceModels"][index]["labelOverride"], entry.model);
+        assert_eq!(profile["inferenceModels"][index]["supports1m"].as_bool().unwrap_or(false), index == 0);
+        assert_eq!(profile["inferenceModels"][index]["prefer1m"].as_bool().unwrap_or(false), index == 0);
+        assert!(persisted["codex-api-key"][0]["models"].as_array().unwrap().iter()
+            .any(|model| model["name"] == entry.model && model["alias"] == entry.alias));
+    }
+    let response = serde_json::to_value(current_desktop_mappings(&home).unwrap()).unwrap();
+    assert_eq!(response["desktopModels"][0]["context1m"], true);
+    assert_eq!(response["desktopModels"][1]["context1m"], false);
+    assert_eq!(response["desktopModels"][2]["context1m"], false);
+    let mut enriched_profile = profile.clone();
+    enriched_profile["inferenceModels"][0]["contextWindow"] = serde_json::json!(1_000_000);
+    enriched_profile["inferenceModels"][1]["custom"] = serde_json::json!({"keep": true});
+    fs::write(&paths[2], enriched_profile.to_string()).unwrap();
+    assert_eq!(matching_desktop_mappings(&paths, &config_images(&paths).unwrap()), Some(mappings.clone()));
+    for (field, changed) in [
+        ("name", serde_json::json!("claude-opus-4-6")),
+        ("labelOverride", serde_json::json!("another-model")),
+        ("supports1m", serde_json::json!(false)),
+        ("prefer1m", serde_json::json!(false)),
+    ] {
+        let mut changed_profile = enriched_profile.clone();
+        changed_profile["inferenceModels"][0][field] = changed;
+        fs::write(&paths[2], changed_profile.to_string()).unwrap();
+        assert!(matching_desktop_mappings(&paths, &config_images(&paths).unwrap()).is_none(), "{field}");
+    }
+    fs::write(&paths[2], enriched_profile.to_string()).unwrap();
+    let response = serde_json::to_value(current_desktop_mappings(&home).unwrap()).unwrap();
+    assert_eq!(response["desktopModels"][0]["context1m"], true);
+    assert_eq!(response["desktopModels"][1]["context1m"], false);
+    assert_eq!(response["desktopModels"][2]["context1m"], false);
+    fs::remove_dir_all(home).unwrap();
+}
+
 struct DesktopRestoreFixture {
     home: PathBuf,
     id: String,
