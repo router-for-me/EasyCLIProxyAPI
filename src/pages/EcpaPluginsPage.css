@@ -27,7 +27,7 @@
 
 .ecpa-plugins-heading h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 1.4;
   color: var(--text-primary);
@@ -61,7 +61,7 @@
   gap: 8px;
   flex: 1 1 240px;
   width: auto;
-  max-width: 440px;
+  max-width: none;
   min-width: 0;
   height: 40px;
   min-height: 40px;
@@ -106,8 +106,9 @@
 
 .ecpa-plugin-search.search-control:focus-within {
   border-color: var(--primary-color);
-  outline: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 12%, transparent);
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+  box-shadow: none;
 }
 
 .ecpa-plugin-search-clear {
@@ -143,7 +144,16 @@
   overflow: hidden;
 }
 
-.ecpa-tag-bar > .ecpa-tag-chip {
+.ecpa-tag-shortcuts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ecpa-tag-bar > .ecpa-tag-chip,
+.ecpa-tag-shortcuts > .ecpa-tag-chip {
   flex: 0 0 auto;
   max-width: 132px;
   overflow: hidden;
@@ -194,7 +204,6 @@
   color: var(--text-primary);
 }
 
-/* Trigger for the tag picker: a compact icon chip pinned after the visible tags. */
 .ecpa-tag-picker {
   position: relative;
   flex: 0 0 auto;
@@ -203,21 +212,34 @@
 }
 
 .ecpa-tag-picker-trigger.filter-chip {
-  gap: 4px;
-  padding: 4px 8px;
-  color: var(--text-secondary);
-}
-
-.ecpa-tag-picker-trigger.filter-chip.has-selection {
-  border-color: var(--color-warning, #c77b30);
-  color: var(--color-warning-text, #8b5b21);
-  background: var(--color-warning-subtle, #fff7e9);
-}
-
-.ecpa-tag-picker-trigger.filter-chip.open,
-.ecpa-tag-picker-trigger.filter-chip[aria-expanded='true'] {
-  border-color: var(--primary-color);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 100px;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
   background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.ecpa-tag-picker-trigger.filter-chip:hover,
+.ecpa-tag-picker-trigger.filter-chip[aria-expanded='true'] {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.ecpa-tag-picker-trigger.filter-chip:focus-visible {
+  outline: 1px solid var(--primary-color);
+  outline-offset: 2px;
 }
 
 .ecpa-tag-picker-trigger > svg {
@@ -234,35 +256,19 @@
   font-variant-numeric: tabular-nums;
 }
 
-.ecpa-tag-picker-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: var(--radius-full);
-  background: var(--color-warning, #c77b30);
-  color: #fff;
-  font-size: 10.5px;
-  font-weight: 600;
-  line-height: 1;
-  box-shadow: 0 0 0 1px var(--bg-card);
-}
-
 /* Floating multi-select panel: portalled to the body so the grid never reflows. */
 .ecpa-tag-picker-panel {
   position: fixed;
   z-index: 1200;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   box-sizing: border-box;
-  padding: 8px;
+  padding: 12px;
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
+  border-radius: 10px;
   background: var(--bg-card);
-  box-shadow: var(--ui-popover-shadow, 0 12px 32px rgba(15, 23, 42, 0.16));
+  box-shadow: var(--shadow-sm);
   animation: ecpa-tag-picker-in var(--motion-fast) ease;
 }
 
@@ -275,50 +281,59 @@
 
 .ecpa-tag-picker-options {
   display: flex;
-  flex-wrap: wrap;
-  align-content: flex-start;
-  gap: 6px;
+  flex-direction: column;
+  gap: 2px;
   /* The panel sets an absolute max-height; the list takes the remaining space so
      the footer stays visible and the last row scrolls instead of being cut. */
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 2px;
   scrollbar-width: thin;
 }
 
 .ecpa-tag-picker-option {
-  display: inline-flex;
+  display: flex;
+  flex: none;
   align-items: center;
-  gap: 6px;
-  min-height: 30px;
-  padding: 4px 10px 4px 6px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-full);
-  background: var(--bg-card);
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.4;
+  text-align: left;
+  box-shadow: none;
   cursor: pointer;
-  transition: border-color var(--motion-fast) ease, background-color var(--motion-fast) ease, color var(--motion-fast) ease;
+  transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease;
 }
 
 .ecpa-tag-picker-option:hover {
-  border-color: var(--primary-color);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
 .ecpa-tag-picker-option:focus-visible {
-  outline: 2px solid var(--ui-focus-ring);
-  outline-offset: 1px;
+  outline: 1px solid var(--primary-color);
+  outline-offset: -1px;
 }
 
 .ecpa-tag-picker-option.selected {
-  border-color: var(--primary-color);
   background: var(--ui-accent-soft);
   color: var(--primary-color);
   font-weight: 500;
+}
+
+.ecpa-tag-picker-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ecpa-tag-picker-check {
@@ -345,7 +360,7 @@
   align-items: center;
   justify-content: flex-end;
   flex: none;
-  padding-top: 6px;
+  padding-top: 8px;
   border-top: 1px solid var(--border-color);
 }
 
@@ -387,7 +402,7 @@
 
 .ecpa-plugin-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
   gap: 16px;
   min-width: 0;
 }
@@ -398,15 +413,15 @@
   flex-direction: column;
   padding: 16px;
   gap: 12px;
-  border: var(--card-border-width) solid var(--border-color);
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   background: var(--bg-card);
-  transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+  box-shadow: none;
 }
 
 .ecpa-plugin-card:hover {
-  border-color: var(--primary-color);
-  box-shadow: var(--ui-card-hover-shadow);
+  border-color: var(--border-color);
+  box-shadow: none;
 }
 
 .ecpa-plugin-card:focus-visible {
@@ -430,7 +445,7 @@
 
 .ecpa-plugin-card-title {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) auto;
+  grid-template-columns: 40px minmax(0, 1fr) fit-content(38%);
   align-items: center;
   gap: 8px 12px;
   min-width: 0;
@@ -441,7 +456,9 @@
 }
 
 .ecpa-plugin-card-title h2 {
-  font-size: 15px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
   margin: 0 0 4px;
   color: var(--text-primary);
   overflow-wrap: anywhere;
@@ -450,8 +467,17 @@
 .ecpa-plugin-card-title code {
   display: block;
   color: var(--text-tertiary);
-  font-size: 11px;
-  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 400;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+
+.ecpa-plugin-card-title code[title] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ecpa-plugin-icon {
@@ -461,8 +487,8 @@
   height: 40px;
   flex-shrink: 0;
   border-radius: var(--radius-md);
-  color: var(--primary-color);
-  background: var(--ui-accent-soft);
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
 }
 
 .ecpa-plugin-icon img.plugin-logo {
@@ -481,7 +507,9 @@
   border-radius: var(--radius-md);
   background: var(--bg-tertiary);
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
   line-height: 1.5;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -489,7 +517,8 @@
 
 .ecpa-plugin-description {
   font-size: 13px;
-  line-height: 1.7;
+  font-weight: 400;
+  line-height: 1.6;
   color: var(--text-secondary);
   margin: 0;
   overflow-wrap: anywhere;
@@ -499,9 +528,10 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 12px;
+  gap: 8px 12px;
   color: var(--text-tertiary);
   font-size: 12px;
+  font-weight: 400;
   margin: 0;
   line-height: 1.6;
   overflow-wrap: anywhere;
@@ -510,7 +540,7 @@
 .ecpa-plugin-card-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
 .ecpa-plugin-card-tag {
@@ -520,7 +550,8 @@
   border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 400;
   line-height: 1.5;
 }
 
@@ -547,7 +578,6 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  row-gap: 6px;
   padding-top: 12px;
   margin-top: auto;
   border-top: 1px solid var(--border-color);
@@ -568,23 +598,24 @@
   flex-shrink: 0;
 }
 
-/* The install/update control lives in one fixed slot on its own line at the end
-   of the row. Reserving that line in every state keeps the action row height and
-   the card height identical while the store list loads, once it settles, and
-   during an install or update, so the row never reflows. */
 .ecpa-plugin-action-slot {
   display: inline-flex;
-  flex: 0 0 100%;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+  max-width: 100%;
   min-height: 34px;
+  margin-left: auto;
 }
 
 .ecpa-plugin-action-slot > .primary-button,
 .ecpa-plugin-action-slot > .ecpa-install-blocked {
   width: 104px;
   min-width: 104px;
+  flex: none;
+  margin: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -612,7 +643,7 @@
   background: var(--success-badge-bg);
   color: var(--success-badge-text);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 400;
   line-height: 1.5;
   white-space: nowrap;
 }
@@ -621,10 +652,4 @@
   min-height: 250px;
 }
 
-@media (max-width: 760px) {
-  .ecpa-plugin-search {
-    flex: 1 1 100%;
-    max-width: none;
-  }
-}
 }

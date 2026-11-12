@@ -396,16 +396,18 @@ export function PluginsPage() {
           <button type="button" className="icon-button quiet ghost tiny-button plugin-search-clear" disabled={!search} aria-label={t("common.clear")} title={t("common.clear")}
             onClick={() => { setSearch(""); searchRef.current?.focus(); }}><X size={15} aria-hidden="true" /></button>
         </div>
-                {tab === "installed" && <>
+        </>}
+        <div className="plugin-toolbar-actions">
+        {supported === true && tab === "installed" && <div className="plugin-toolbar-group">
           <button type="button" className="secondary-button plugin-check-updates" disabled={locked || !installedPlugins.length} onClick={() => void load("installed", true, true)}><RefreshCw size={16} aria-hidden="true" />{pt("checkUpdates")}</button>
           <button type="button" className={`${updatablePlugins.length > 0 ? "primary-button" : "secondary-button"} plugin-update-all`} disabled={locked || !installedPlugins.length || (localUpdates !== null && updatablePlugins.length === 0)} onClick={() => void updateAll()}><Download size={16} aria-hidden="true" />{updatablePlugins.length > 0 ? `${pt("updateAll")} (${updatablePlugins.length})` : pt("updateAll")}</button>
-        </>}
-                </>}
-        {tab !== "ecpa" && <>
+        </div>}
+        {tab !== "ecpa" && <div className="plugin-toolbar-group">
         <button type="button" className="secondary-button plugin-development-guide" onClick={() => void openExternalUrl({ url: "https://help.router-for.me/cn/plugin/development.html" }).catch(reason => { if (mounted.current) setError(message(reason)); })}><ExternalLink size={16} aria-hidden="true" />{pt("developmentGuide")}</button>
         {data && !data.pluginsEnabled ? <span className="plugin-disabled-hint" role="status" aria-label={pt("disabledHint")} title={pt("disabledHint")}>{pt("pluginsOff")}</span> : null}
         <button className="secondary-button plugin-refresh" disabled={locked} onClick={() => void load(tabRef.current, tabRef.current === "installed")}><RefreshCw size={16} aria-hidden="true" />{t("common.refresh")}</button>
-        </>}
+        </div>}
+        </div>
       </div>
     </div>
     <div className="plugin-tab-panel" id="plugin-tab-panel" role={supported !== null ? "tabpanel" : undefined} aria-labelledby={supported !== null ? `plugin-tab-${tab}` : undefined}>
@@ -445,10 +447,11 @@ export function PluginsPage() {
             const meta = [versionText, plugin.metadata?.author || storeEntry?.author].filter(Boolean).join(" · ");
             const removeLabel = `${pt(installed ? "remove" : "removeConfig")} ${getPluginTitle(plugin)}`;
             return <article className="surface-card plugin-card plugin-local-card" key={plugin.id}>
-            <div className="plugin-card-title"><span className="plugin-icon"><PluginLogo src={plugin.logo || plugin.metadata?.logo} size={23} className="plugin-logo" /></span><div><h2>{getPluginTitle(plugin)}</h2>{getPluginTitle(plugin) !== plugin.id && <code>{plugin.id}</code>}</div><span className={`plugin-badge ${status === "active" ? "active" : status === "missingFile" || status === "notLoaded" ? "warning" : ""}`}>{pt(status)}</span></div>
-            {meta && <p className="plugin-meta">{meta}</p>}
-            {plugin.path ? <p className="plugin-path">{plugin.path}</p> : <p className="plugin-card-description">{pt("missingFileHint")}</p>}
+            <div className="plugin-card-title"><span className="plugin-icon"><PluginLogo src={plugin.logo || plugin.metadata?.logo} size={23} className="plugin-logo" /></span><div><h2>{getPluginTitle(plugin)}</h2>{getPluginTitle(plugin) !== plugin.id && <code title={plugin.id}>{plugin.id}</code>}</div><span className={`plugin-badge ${status === "active" ? "active" : status === "missingFile" || status === "notLoaded" ? "warning" : ""}`}>{pt(status)}</span></div>
+            {!plugin.path && <p className="plugin-card-description">{pt("missingFileHint")}</p>}
             {status === "notLoaded" && <p className="plugin-card-description">{pt("notLoadedHint")}</p>}
+            {meta && <p className="plugin-meta" title={meta}>{meta}</p>}
+            {plugin.path && <p className="plugin-path" title={plugin.path}>{plugin.path}</p>}
             {collectPluginResourceEntries([plugin]).length > 0 && <div className="plugin-menus">{collectPluginResourceEntries([plugin]).map(entry => <button key={entry.menuIndex} title={entry.description} className="secondary-button small-button" disabled={locked} onClick={() => openResource(entry)}><ExternalLink size={14} />{entry.label}</button>)}</div>}
             <div className="plugin-card-actions">
               {installed && (update
@@ -470,7 +473,7 @@ export function PluginsPage() {
                   <span className="ecpa-plugin-icon"><PluginLogo src={entry.logo} size={23} className="plugin-logo" /></span>
                   <div>
                     <h2>{entry.name || entry.id}</h2>
-                    <code>{entry.id}</code>
+                    <code title={entry.id}>{entry.id}</code>
                   </div>
                   {entry.version ? <span className="ecpa-plugin-version">{entry.installedVersion && updating ? `${entry.installedVersion} → ${entry.version}` : entry.version}</span> : null}
                 </div>

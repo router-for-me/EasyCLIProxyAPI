@@ -1,10 +1,14 @@
 @layer components {
-.plugin-tab-panel { display: flex; flex-direction: column; gap: 20px; }
-.plugins-page { display: flex; flex-direction: column; gap: 20px; min-width: 0; max-width: 1500px; margin: 0 auto; padding: 0 0 24px; }
+.plugin-tab-panel { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.plugins-page { display: flex; flex-direction: column; gap: 16px; min-width: 0; max-width: 1500px; margin: 0 auto; padding: 0 0 24px; container-type: inline-size; }
 .plugin-global-toggle { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; }
-.plugin-navigation { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
-.plugin-navigation > .plugin-toolbar { margin-left: auto; justify-content: flex-end; flex: 0 0 auto; }
-.plugin-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; flex: 0 0 auto; }
+.plugin-navigation { display: flex; flex-direction: column; align-items: stretch; gap: 16px; min-width: 0; }
+.plugin-navigation > .plugin-toolbar { margin: 0; flex: none; }
+.plugin-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.plugin-toolbar:has(> .plugin-toolbar-actions:empty) { display: none; }
+.plugin-toolbar-actions { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; max-width: 100%; margin-left: auto; }
+.plugin-toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.plugin-toolbar .plugin-search { flex: 1 1 240px; width: auto; max-width: none; }
 .plugin-toolbar select, .plugin-toolbar .secondary-button { white-space: nowrap; }
 .plugins-page .plugin-refresh, .plugins-page .plugin-development-guide, .plugins-page .plugin-check-updates, .plugins-page .plugin-update-all { flex: none; }
 .plugin-search { display: flex; align-items: center; gap: 8px; width: 260px; min-width: 0; min-height: 40px; box-sizing: border-box; padding: 0 8px 0 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-card); color: var(--text-tertiary); }
@@ -12,27 +16,27 @@
 .plugin-search input { appearance: none; border: 0; border-radius: var(--radius-none); background: transparent; color: var(--text-primary); flex: 1; width: 100%; min-width: 0; margin: 0; padding: 9px 0; font: inherit; font-size: 13px; line-height: 20px; }
 .plugin-search input:focus, .plugin-search input:focus-visible { outline: none; box-shadow: none; }
 .plugin-search input::-webkit-search-cancel-button, .plugin-search input::-webkit-search-decoration { -webkit-appearance: none; }
-.plugin-search:focus-within { border-color: var(--primary-color); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 12%, transparent); }
+.plugin-search:focus-within { border-color: var(--primary-color); outline: 2px solid var(--primary-color); outline-offset: 2px; box-shadow: none; }
 .plugin-search-clear { flex: none; }
 .plugin-search-clear:disabled { visibility: hidden; }
 .plugin-toolbar select { border: 1px solid var(--border-color); border-radius: var(--radius-md); color: var(--text-primary); background: var(--bg-card); padding: 10px 12px; }
-.plugin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 16px; }
-.plugin-card { min-width: 0; display: flex; flex-direction: column; padding: 16px; gap: 12px; }
+.plugin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); gap: 16px; min-width: 0; }
+.plugin-grid:has(> .plugin-local-card:only-child) { grid-template-columns: minmax(0, 560px); }
+.plugin-card { min-width: 0; display: flex; flex-direction: column; padding: 16px; gap: 12px; border: 1px solid var(--border-color); box-shadow: none; }
 .plugin-card-title { display: grid; grid-template-columns: 40px minmax(0, 1fr) fit-content(38%); align-items: center; gap: 8px 12px; min-width: 0; }
 .plugin-card-title > div { min-width: 0; }
 .plugin-card-title > .plugin-badge { justify-self: end; white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
-.plugin-card-title h2 { font-size: 15px; margin: 0 0 5px; overflow-wrap: anywhere; }
-.plugin-card-title code { color: var(--text-tertiary); font-size: 11px; overflow-wrap: anywhere; }
-.plugin-icon { display: grid; place-items: center; width: 40px; height: 40px; flex-shrink: 0; border-radius: var(--radius-md); color: var(--primary-color); background: var(--ui-accent-soft); }
-.plugin-badge { display: inline-flex; padding: 4px 8px; border-radius: var(--radius-md); background: var(--bg-tertiary); color: var(--text-tertiary); font-size: 11px; white-space: nowrap; }
+.plugin-card-title h2 { font-size: 16px; font-weight: 600; line-height: 1.5; margin: 0 0 4px; overflow-wrap: anywhere; }
+.plugin-card-title code { color: var(--text-tertiary); font-size: 12px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-icon { display: grid; place-items: center; width: 40px; height: 40px; flex-shrink: 0; border-radius: var(--radius-md); color: var(--text-secondary); background: var(--bg-tertiary); }
+.plugin-badge { display: inline-flex; padding: 4px 8px; border-radius: var(--radius-md); background: var(--bg-tertiary); color: var(--text-tertiary); font-size: 12px; font-weight: 400; white-space: nowrap; }
 .plugin-badge.active { color: var(--success-badge-text); background: var(--success-badge-bg); }
 .plugin-badge.warning { color: var(--amber-text); background: var(--color-warning-subtle); }
-.plugin-meta, .plugin-path { color: var(--text-tertiary); font-size: 12px; margin: 0; line-height: 1.7; overflow-wrap: anywhere; }
-.plugin-path { font-family: ui-monospace, monospace; font-size: 11px; }
-.plugin-local-card .plugin-path { padding: 8px 10px; border-radius: var(--radius-md); background: var(--bg-secondary); }
-.plugin-local-card .plugin-card-description { padding: 10px 12px; border-radius: var(--radius-md); background: var(--bg-secondary); color: var(--text-tertiary); font-size: 12px; }
+.plugin-meta, .plugin-path { color: var(--text-tertiary); font-size: 12px; font-weight: 400; margin: 0; line-height: 1.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-meta { font-variant-numeric: tabular-nums; }
+.plugin-path { font-family: ui-monospace, monospace; }
 .plugin-local-card .plugin-card-title h2:last-child { margin-bottom: 0; }
-.plugin-card-description { font-size: 13px; line-height: 1.7; color: var(--text-secondary); margin: 0; overflow-wrap: anywhere; }
+.plugin-card-description { font-size: 13px; font-weight: 400; line-height: 1.6; color: var(--text-secondary); margin: 0; overflow-wrap: anywhere; }
 .plugin-card-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 12px; margin-top: auto; border-top: 1px solid var(--border-color); }
 .plugin-card-actions button { margin-top: 0; }
 .plugins-page .plugin-card-actions > button:not(.icon-button) { width: auto; }
@@ -74,7 +78,7 @@
 @media (max-width: 900px) { .app-shell:has(.plugin-resource-page) { grid-template-rows: max-content minmax(0, 1fr); } }
 .plugin-resource-status { margin: 24px; }
 .plugin-resource-host > .plugin-banner { margin: 16px; }
-@media (max-width: 700px) { .plugin-card { padding: 16px; } .plugin-navigation > .plugin-toolbar { flex: 1 1 100%; flex-wrap: wrap; } .plugin-search { flex: 1 1 160px; width: auto; } }
+@container (max-width: 760px) { .plugin-toolbar .plugin-search { flex-basis: 100%; } .plugin-toolbar-actions { flex: 1 1 100%; } }
 @media (max-width: 420px) { .plugin-card-title { grid-template-columns: 40px minmax(0, 1fr); } .plugin-card-title > .plugin-badge { grid-column: 2; justify-self: start; } }
 
 /* Keep technical metadata subordinate to the plugin name and available actions. */
@@ -98,11 +102,6 @@
   .plugin-install-dialog .config-dialog-heading, .plugin-install-body, .plugin-dialog-actions { padding: 16px; }
   .plugin-install-dialog .plugin-dialog-actions > button { flex: 1; }
   .plugin-settings-actions > button { width: 100%; }
-}
-
-@media (max-width: 700px) {
-  .plugin-toolbar .plugin-search { flex-basis: 100%; }
-  .plugin-toolbar select { margin-right: auto; }
 }
 
 .plugin-settings { display: grid; gap: 20px; width: 100%; min-width: 0; margin: 0; padding: 0; }
