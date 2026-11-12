@@ -15,13 +15,16 @@ describe('Antigravity current quota response', () => {
     ],
   }] });
 
-  it('recognizes new labels without window fields and preserves model details', () => {
+  it('recognizes new labels without window fields and summarizes the Gemini group', () => {
     const rows = rowsFor(0.4);
     expect(rows.map(row => row.label)).toEqual(['Gemini models · 5-hour limit', 'Gemini models · Weekly limit']);
     expect(rows[0].quotaAvailable).toBe(true);
     expect(rows[0].resetAtMs).toBe(Date.parse('2030-01-01T00:00:00Z'));
-    expect(rows[0].detail).toContain('Gemini Flash, Gemini Pro, Gemini Argon');
-    expect(antigravityDescription('Gemini Models', 'Models within this group: gemini argon')).toBe('Models within this group: gemini argon');
+    expect(rows[0].groupDescription).toBe('Gemini models');
+    expect(rows[0].detail).toBe('Gemini models');
+    expect(antigravityDescription('Gemini Models', 'Models within this group: gemini argon')).toBe('Gemini models');
+    expect(antigravityDescription('Claude and GPT Models', 'Models within this group: Claude 4.5, GPT-5')).toBe('Models within this group: Claude 4.5, GPT-5');
+    expect(antigravityDescription('Claude and GPT Models', 'Models within this group: Claude 4.5')).toBe('Models within this group: Claude 4.5');
     expect(antigravityDescription('Unknown models', 'Custom description')).toBe('Custom description');
   });
 
