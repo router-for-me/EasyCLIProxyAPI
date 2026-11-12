@@ -443,8 +443,28 @@ pub(crate) fn matching_desktop_mappings(
 ) -> Option<ClaudeDesktopModelMappings> {
     let raw = read_agent_bytes(&desktop_mapping_path(paths).ok()?).ok()??;
     let state: DesktopMappingState = serde_json::from_slice(&raw).ok()?;
-    (state.version == 1 && Some(state.profile_models_hash) == profile_models_hash(images))
-        .then_some(state.mappings)
+    if state.version != 1 {
+        return None;
+    }
+    if Some(state.profile_models_hash) == profile_models_hash(images) {
+        return Some(state.mappings);
+    }
+    let entries = state.mappings.desktop_models.as_ref()?;
+    validate_claude_desktop_entries(entries).ok()?;
+    let (path, bytes) = images.get(2)?;
+    let profile = parse(path, text(bytes.as_deref()).ok()?).ok()?;
+    let models = profile.get("inferenceModels")?.as_array()?;
+    (entries.len() == models.len()
+        && entries.iter().zip(models).all(|(entry, model)| {
+            model.get("name").and_then(Value::as_str) == Some(entry.model_id())
+                && model.get("labelOverride").and_then(Value::as_str)
+                    == Some(entry.source_or_alias())
+                && model.get("supports1m").and_then(Value::as_bool).unwrap_or(false)
+                    == entry.context_1m
+                && model.get("prefer1m").and_then(Value::as_bool).unwrap_or(false)
+                    == entry.context_1m
+        }))
+    .then_some(state.mappings)
 }
 
 pub(crate) fn current_desktop_mappings(home: &Path) -> Option<ClaudeDesktopModelMappings> {
