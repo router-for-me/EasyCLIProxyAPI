@@ -40,7 +40,33 @@ import "./PluginsPage.css";
 type Tab = "installed" | "store" | "ecpa" | "settings";
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-export function PluginsPage() {
+/** The same plugin can arrive from several hints; the first entry wins. */
+function dedupeStoreEntries(entries: PluginStoreEntry[]): PluginStoreEntry[] {
+  const seen = new Set<string>();
+  return entries.filter(entry => !seen.has(entry.id) && Boolean(seen.add(entry.id)));
+}
+
+/** Keeps a startup update visible even before the store resolves that plugin. */
+function knownUpdateEntry(store: PluginStoreResponse, id: string, version: string): PluginStoreEntry {
+  const found = store.plugins.find(entry => entry.id === id);
+  if (found) return { ...found, updateAvailable: true, version };
+  return {
+    storeId: id, sourceId: '', sourceName: '', sourceUrl: '', id, name: id, description: '',
+    author: '', version, repository: '', installType: '', authRequired: false, authConfigured: false,
+    platforms: [], logo: '', homepage: '', license: '', tags: [], locales: {},
+    installed: true, installedVersion: '', installedSourceId: '', installSourceStatus: 'matched',
+    path: '', configured: false, registered: false, enabled: false, effectiveEnabled: false,
+    updateAvailable: true,
+  };
+}
+
+export function PluginsPage({ discoveredPlugins = [], discoveredUpdates = {}, onPluginUpdatesResolved }: {
+  /** Plugins the sidebar already loaded, so startup updates show without a second check. */
+  discoveredPlugins?: PluginListEntry[];
+  /** Plugin ID → newer version found by the startup check. */
+  discoveredUpdates?: Record<string, string>;
+  onPluginUpdatesResolved?: (pluginIDs: string[]) => void;
+} = {}) {
   const { t, locale } = useI18n();
   const pt = (key: Parameters<typeof pluginText>[0]) => pluginText(key, locale);
   const [tab, setTab] = useState<Tab>("installed");
@@ -84,6 +110,10 @@ export function PluginsPage() {
   const tabRef = useRef(tab);
   tabRef.current = tab;
   const notice = useAppNotice();
+  // Startup check targets stay listed even when the store copy of the plugin is absent.
+  const previousDiscovery = useRef<{ plugins: PluginListEntry[]; updates: Record<string, string> }>({
+    plugins: [], updates: {},
+  });
   const { askConfirmation, confirmationDialog } = useConfirmation();
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; ++requests.current; }; }, []);
@@ -132,6 +162,37 @@ export function PluginsPage() {
     finally { if (mounted.current && revision === requests.current) setLoading(false); }
   }, [locale, notice]);
   useEffect(() => { if (tab !== "ecpa") void load(tab); }, [tab]);
+
+  // Reuse the startup check's targets so the plugin page shows them immediately.
+  useEffect(() => {
+    if (pending.current || !supported) return;
+    const previous = previousDiscovery.current;
+    const changed = discoveredPlugins.length !== previous.plugins.length
+      || discoveredPlugins.some((plugin, index) => plugin.id !== previous.plugins[index]?.id
+        || plugin.metadata?.version !== previous.plugins[index]?.metadata?.version)
+      || Object.values(discoveredUpdates).sort().join() !== Object.values(previous.updates).sort().join();
+    previousDiscovery.current = { plugins: discoveredPlugins, updates: discoveredUpdates };
+    if (!changed) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const nextStore = await pluginStoreApi.list();
+        if (cancelled || !mounted.current) return;
+        const known = Object.entries(discoveredUpdates).map(([id, version]) =>
+          knownUpdateEntry(nextStore, id, version));
+        const plugins = dedupeStoreEntries([
+          ...filterInstalledStorePlugins(nextStore, discoveredPlugins.filter(isPluginInstalled)).plugins,
+          ...known,
+        ]);
+        if (!plugins.length) return;
+        const updates = await refreshPluginReleaseVersions({ ...nextStore, plugins });
+        if (!cancelled && mounted.current) setLocalUpdates(updates);
+      } catch {
+        // The startup check stays silent; the plugin page reports its own errors.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [discoveredPlugins, discoveredUpdates, supported]);
 
   // Follow existing files for a bounded period after config writes. Missing
   // binaries cannot load by waiting, and the API does not report loading progress.
@@ -224,6 +285,7 @@ export function PluginsPage() {
   };
   const installed = async (result: PluginStoreInstallResult) => {
     ++requests.current;
+    onPluginUpdatesResolved?.([result.id]);
     setRestartRequired(previous => previous || result.restartRequired);
     setLocalUpdates(previous => previous ? {
       ...previous,
@@ -298,6 +360,7 @@ export function PluginsPage() {
       }
       if (mounted.current && anyRestart) setRestartRequired(true);
       if (mounted.current && completed.size > 0) {
+        onPluginUpdatesResolved?.([...completed.keys()]);
         setLocalUpdates(previous => previous ? {
           ...previous,
           plugins: previous.plugins.map(entry => completed.has(entry.id)
@@ -335,6 +398,7 @@ export function PluginsPage() {
     await mutate(async () => {
       const result = await pluginsApi.deletePlugin(plugin.id);
       if (mounted.current && result.restartRequired) setRestartRequired(true);
+      if (installed) onPluginUpdatesResolved?.([plugin.id]);
     }, pt(installed ? "removed" : "removedConfig"));
   };
   const installLocal = async () => {

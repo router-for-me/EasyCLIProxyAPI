@@ -61,6 +61,7 @@ export const en: Record<MessageKey, string> = {
   'agents.provider.syncFailed': 'The provider was switched, but conversation sync failed: {error}. Retry in conversation management.',
   'agents.provider.refreshFailed': 'The provider was switched, but refreshing its status failed: {error}',
   'app.nav.plugins': 'Plugins',
+  'plugins.updateAvailable': 'Plugin updates available',
   'app.nav.mcpSkills': 'MCP & Skills',
   'app.nav.pluginPages': 'Plugin pages',
   'oauth.vertex.title': 'Vertex JSON Login',

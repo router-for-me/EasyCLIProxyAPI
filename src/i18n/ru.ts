@@ -365,6 +365,7 @@ export const ru: Record<MessageKey, string> = {
   'agents.provider.syncFailed': 'Провайдер переключен, но синхронизация диалогов не удалась: {error}. Повторите в управлении сеансами.',
   'agents.provider.refreshFailed': 'Провайдер переключен, но обновить его статус не удалось: {error}',
   'app.nav.plugins': 'Плагины',
+  'plugins.updateAvailable': 'Доступны обновления плагинов',
   'app.nav.pluginPages': 'Страницы плагинов',
   'oauth.vertex.title': 'Вход по Vertex JSON',
   'oauth.vertex.locationPlaceholder': 'us-central1',
