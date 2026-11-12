@@ -3959,6 +3959,84 @@ pub(crate) fn build_opencode_agent_config(
 
 const ZCODE_CPA_REASONING_MAP: &str = super::zcode::ZCODE_CPA_REASONING_MAP;
 
+fn zcode_model_id_list(value: Option<&serde_json::Value>) -> Vec<&str> {
+    value
+        .and_then(serde_json::Value::as_array)
+        .map(|ids| ids.iter().filter_map(serde_json::Value::as_str))
+        .into_iter()
+        .flatten()
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+/// Merges the membership (`personalModelIds`) and picker order (`modelOrder`)
+/// persisted for the managed ZCode provider.
+///
+/// Upstream seeded both keys only when they were absent (`or_insert_with`), so
+/// the list froze at the first sync: models the proxy started serving later
+/// never reached ZCode's picker, and retired models never disappeared. Merge
+/// instead, while keeping the visibility the user chose inside ZCode:
+///
+/// * keep the user's order for models that are still served,
+/// * append models that the proxy now serves and that neither list mentions,
+/// * never resurrect a model that `modelOrder` still lists but the user removed
+///   from `personalModelIds` (that is how ZCode hides a model), and
+/// * drop models the proxy no longer serves.
+fn merge_zcode_model_ids(
+    existing_ids: Option<&serde_json::Value>,
+    existing_order: Option<&serde_json::Value>,
+    model_names: &[&str],
+) -> (serde_json::Value, serde_json::Value) {
+    let existing_ids = zcode_model_id_list(existing_ids);
+    let existing_order = existing_order
+        .map(|value| zcode_model_id_list(Some(value)))
+        .unwrap_or_else(|| existing_ids.clone());
+    let served = model_names
+        .iter()
+        .copied()
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>();
+    if served.is_empty() {
+        return (
+            serde_json::json!(existing_ids),
+            serde_json::json!(existing_order),
+        );
+    }
+    let is_served =
+        |name: &str| served.iter().any(|candidate| candidate.eq_ignore_ascii_case(name));
+    let hidden = existing_order
+        .iter()
+        .filter(|name| !existing_ids.iter().any(|id| id.eq_ignore_ascii_case(*name)))
+        .map(|name| name.to_ascii_lowercase())
+        .collect::<std::collections::HashSet<_>>();
+    let mut merged_ids = Vec::with_capacity(served.len());
+    let mut merged_order = Vec::with_capacity(served.len());
+    let mut id_keys = std::collections::HashSet::new();
+    let mut order_keys = std::collections::HashSet::new();
+    for name in existing_ids.iter().copied().filter(|name| is_served(*name)) {
+        if id_keys.insert(name.to_ascii_lowercase()) {
+            merged_ids.push(name);
+        }
+    }
+    for name in existing_order.iter().copied().filter(|name| is_served(*name)) {
+        if order_keys.insert(name.to_ascii_lowercase()) {
+            merged_order.push(name);
+        }
+    }
+    for name in served.iter().copied() {
+        let key = name.to_ascii_lowercase();
+        if !hidden.contains(&key) && !id_keys.contains(&key) {
+            id_keys.insert(key.clone());
+            merged_ids.push(name);
+        }
+        if !order_keys.contains(&key) {
+            order_keys.insert(key);
+            merged_order.push(name);
+        }
+    }
+    (serde_json::json!(merged_ids), serde_json::json!(merged_order))
+}
+
 pub(crate) fn build_zcode_agent_config(
     existing: Option<&str>,
     base_url: &str,
@@ -3998,8 +4076,15 @@ pub(crate) fn build_zcode_agent_config(
     api.insert("baseUrl".to_string(), serde_json::json!(base_url));
     let ordered = ordered_agent_models(available_models, model);
     let model_names = ordered.iter().map(|option| option.name.as_str()).collect::<Vec<_>>();
-    provider_config.entry("personalModelIds").or_insert_with(|| serde_json::json!(model_names));
-    provider_config.entry("modelOrder").or_insert_with(|| serde_json::json!(model_names));
+    let existing_personal_ids = provider_config.get("personalModelIds").cloned();
+    let existing_model_order = provider_config.get("modelOrder").cloned();
+    let (personal_ids, model_order) = merge_zcode_model_ids(
+        existing_personal_ids.as_ref(),
+        existing_model_order.as_ref(),
+        &model_names,
+    );
+    provider_config.insert("personalModelIds".to_string(), personal_ids);
+    provider_config.insert("modelOrder".to_string(), model_order);
     rules.retain(|rule| {
         rule.get("providerId").and_then(serde_json::Value::as_str)
             != Some(MANAGED_AGENT_PROVIDER_ID)

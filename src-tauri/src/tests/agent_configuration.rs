@@ -1602,6 +1602,175 @@ fn zcode_agent_config_repairs_zero_manual_token_limits() {
 }
 
 #[test]
+fn zcode_agent_config_merges_model_membership_and_preserves_user_order() {
+    // Seeding personalModelIds/modelOrder only when the keys were absent froze
+    // the model list at the first sync: models the proxy started serving later
+    // never appeared in ZCode's picker and retired models never went away. The
+    // writer must merge instead, keeping the order the user arranged.
+    let models = test_agent_models(&["gpt-test", "deepseek-test", "new-model"]);
+    let existing = r#"{"schemaVersion":1,"config":{"providerConfigRules":{"providerRules":[{"providerId":"cpa-gui","providerName":"EasyCLIProxyAPI","enabled":true,"config":{"group":"standard-personal","access":{"type":"api-key","apiKey":"old"},"api":{"type":"anthropic-messages","baseUrl":"http://127.0.0.1:8317/v1"},"personalModelIds":["deepseek-test","retired-model","gpt-test"],"modelOrder":["gpt-test","deepseek-test","retired-model"]}}]},"modelConfigRules":{"providerModelRules":[],"manualProviderModelRules":[]}}}"#;
+    let rendered = build_zcode_agent_config(
+        Some(existing),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "deepseek-test",
+        &models,
+    )
+    .unwrap();
+    let managed_config = |rendered: &str| {
+        let value: serde_json::Value = serde_json::from_str(rendered).unwrap();
+        let rules = value["config"]["providerConfigRules"]["providerRules"]
+            .as_array()
+            .unwrap()
+            .clone();
+        rules
+            .into_iter()
+            .find(|rule| rule["providerId"] == MANAGED_AGENT_PROVIDER_ID)
+            .unwrap()["config"]
+            .clone()
+    };
+    let managed = managed_config(&rendered);
+    assert_eq!(
+        managed["personalModelIds"],
+        serde_json::json!(["deepseek-test", "gpt-test", "new-model"])
+    );
+    assert_eq!(
+        managed["modelOrder"],
+        serde_json::json!(["gpt-test", "deepseek-test", "new-model"])
+    );
+
+    // Syncing again must not reshuffle or reorder what the user already arranged.
+    let again = build_zcode_agent_config(
+        Some(&rendered),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "new-model",
+        &models,
+    )
+    .unwrap();
+    let managed = managed_config(&again);
+    assert_eq!(
+        managed["personalModelIds"],
+        serde_json::json!(["deepseek-test", "gpt-test", "new-model"])
+    );
+    assert_eq!(
+        managed["modelOrder"],
+        serde_json::json!(["gpt-test", "deepseek-test", "new-model"])
+    );
+}
+
+#[test]
+fn zcode_agent_config_seeds_model_order_from_existing_membership() {
+    // Configurations written by older versions only carry personalModelIds.
+    // modelOrder must inherit that order instead of jumping to the selected
+    // model, otherwise the picker silently reorders itself on every sync.
+    let models = test_agent_models(&["gpt-test", "deepseek-test"]);
+    let existing = r#"{"schemaVersion":1,"config":{"providerConfigRules":{"providerRules":[{"providerId":"cpa-gui","providerName":"EasyCLIProxyAPI","enabled":true,"config":{"group":"standard-personal","access":{"type":"api-key","apiKey":"old"},"api":{"type":"anthropic-messages","baseUrl":"http://127.0.0.1:8317/v1"},"personalModelIds":["deepseek-test","gpt-test"]}}]},"modelConfigRules":{"providerModelRules":[],"manualProviderModelRules":[]}}}"#;
+    let rendered = build_zcode_agent_config(
+        Some(existing),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "gpt-test",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let managed = value["config"]["providerConfigRules"]["providerRules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rule| rule["providerId"] == MANAGED_AGENT_PROVIDER_ID)
+        .unwrap();
+    assert_eq!(
+        managed["config"]["personalModelIds"],
+        serde_json::json!(["deepseek-test", "gpt-test"])
+    );
+    assert_eq!(
+        managed["config"]["modelOrder"],
+        serde_json::json!(["deepseek-test", "gpt-test"])
+    );
+}
+
+#[test]
+fn zcode_agent_config_keeps_membership_when_no_models_are_available() {
+    // An empty model list (for example, the proxy is temporarily unreachable)
+    // must not erase the models the user already has configured.
+    let existing = r#"{"schemaVersion":1,"config":{"providerConfigRules":{"providerRules":[{"providerId":"cpa-gui","providerName":"EasyCLIProxyAPI","enabled":true,"config":{"group":"standard-personal","access":{"type":"api-key","apiKey":"old"},"api":{"type":"anthropic-messages","baseUrl":"http://127.0.0.1:8317/v1"},"personalModelIds":["gpt-test"],"modelOrder":["gpt-test"]}}]},"modelConfigRules":{"providerModelRules":[],"manualProviderModelRules":[]}}}"#;
+    let rendered = build_zcode_agent_config(
+        Some(existing),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "",
+        &[],
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let managed = value["config"]["providerConfigRules"]["providerRules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rule| rule["providerId"] == MANAGED_AGENT_PROVIDER_ID)
+        .unwrap();
+    assert_eq!(managed["config"]["personalModelIds"], serde_json::json!(["gpt-test"]));
+    assert_eq!(managed["config"]["modelOrder"], serde_json::json!(["gpt-test"]));
+}
+
+#[test]
+fn zcode_agent_config_adds_new_models_without_resurrecting_hidden_ones() {
+    // ZCode hides a model by dropping it from personalModelIds while keeping it
+    // in modelOrder. A sync must pick up models the proxy started serving (they
+    // appear in neither list) without re-enabling the ones the user hid.
+    let models = test_agent_models(&["first", "second", "brand-new"]);
+    let existing = r#"{"schemaVersion":1,"config":{"providerConfigRules":{"providerRules":[{"providerId":"cpa-gui","providerName":"EasyCLIProxyAPI","enabled":true,"config":{"group":"standard-personal","access":{"type":"api-key","apiKey":"old"},"api":{"type":"anthropic-messages","baseUrl":"http://127.0.0.1:8317/v1"},"personalModelIds":["second"],"modelOrder":["second","first"]}}]},"modelConfigRules":{"providerModelRules":[{"providerId":"cpa-gui","modelId":"first","config":{}},{"providerId":"cpa-gui","modelId":"second","config":{}}],"manualProviderModelRules":[]}}}"#;
+    let rendered = build_zcode_agent_config(
+        Some(existing),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "second",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+    let managed = value["config"]["providerConfigRules"]["providerRules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rule| rule["providerId"] == MANAGED_AGENT_PROVIDER_ID)
+        .unwrap();
+    assert_eq!(
+        managed["config"]["personalModelIds"],
+        serde_json::json!(["second", "brand-new"]),
+        "hidden model must stay hidden while newly served models are added"
+    );
+    assert_eq!(
+        managed["config"]["modelOrder"],
+        serde_json::json!(["second", "first", "brand-new"])
+    );
+
+    // The next sync keeps the same visibility and order.
+    let again = build_zcode_agent_config(
+        Some(&rendered),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "brand-new",
+        &models,
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&again).unwrap();
+    let managed = value["config"]["providerConfigRules"]["providerRules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rule| rule["providerId"] == MANAGED_AGENT_PROVIDER_ID)
+        .unwrap();
+    assert_eq!(managed["config"]["personalModelIds"], serde_json::json!(["second", "brand-new"]));
+    assert_eq!(
+        managed["config"]["modelOrder"],
+        serde_json::json!(["second", "first", "brand-new"])
+    );
+}
+
+#[test]
 fn zcode_desktop_and_cli_share_the_provider_configuration() {
     let home = agent_test_home("zcode-shared-provider-config");
     let paths = agent_config_paths(AgentClient::ZCode, &home);
