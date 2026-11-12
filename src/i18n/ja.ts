@@ -61,6 +61,7 @@ export const jaOverrides = {
   'agents.provider.refreshFailed': 'プロバイダーは切り替わりましたが、状態の更新に失敗しました：{error}',
   'agents.provider.oauthUnsupported': 'CPA が現在の Codex OAuth 認証情報を受け付けませんでした。設定は変更されていません。内蔵 openai はカスタムプロバイダーの CPA key を使用しないため、対応する CPA 認証拡張か API Key ログインが必要です。',
   'app.nav.plugins': 'プラグイン',
+  'plugins.updateAvailable': 'プラグインの更新があります',
   'app.nav.mcpSkills': 'MCP & スキル',
   'app.nav.pluginPages': 'プラグインページ',
   'oauth.vertex.title': 'Vertex JSON ログイン',

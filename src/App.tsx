@@ -64,6 +64,7 @@ import { languageOptions, useI18n } from './i18n';
 import { getUpdateChannel, setUpdateChannel } from './services/appUpdates';
 import { AppUpdateDialog, AppUpdateProvider, useAppUpdate } from './appUpdate';
 import { appUpdateIndicatorState } from './appUpdateModel';
+import { forgetUpdatedPlugins, pluginUpdateIndicatorState } from './pluginUpdateModel';
 import { canOpenAppPage, requestAppNavigation } from './navigation';
 import { useThemePreference } from './theme';
 import { usePrivacyMode } from './privacy';
@@ -222,7 +223,7 @@ function AppContent() {
   const { status } = useCoreRuntime();
   const coreReady = Boolean(status?.ready);
   const [navElement, setNavElement] = useState<HTMLElement | null>(null);
-  const { entries: pluginEntries, fetched: pluginEntriesFetched } = usePluginNavEntries(coreReady);
+  const { entries: pluginEntries, plugins: installedPluginList, fetched: pluginEntriesFetched, pluginUpdates } = usePluginNavEntries(coreReady);
   const pluginEntry = findPluginNavEntry(pluginEntries, active);
   const navPages = pages.filter((page) => page.id !== 'easy');
   const { layout: autoPluginLayout, compact: navCompact } = usePluginNavLayout(navElement, navPages.length, pluginEntries.length);
@@ -443,7 +444,14 @@ function AppContent() {
                 const locked = !canOpenAppPage(page.id, coreReady);
                 const updateIndicator = page.id === 'versions'
                   ? appUpdateIndicatorState(hasUpdate, coreHasUpdate, appUpdateProcessing)
-                  : null;
+                  : page.id === 'plugins'
+                    ? pluginUpdateIndicatorState(pluginUpdates)
+                    : null;
+                const updateIndicatorLabel = page.id === 'plugins'
+                  ? Object.keys(pluginUpdates).length > 0
+                    ? `${t('plugins.updateAvailable')} (${Object.keys(pluginUpdates).length})`
+                    : ''
+                  : availableUpdateLabel;
                 const row = (
                   <button
                     key={page.id}
@@ -468,10 +476,10 @@ function AppContent() {
                         className={`nav-update-indicator ${updateIndicator}`}
                         title={updateIndicator === 'processing'
                           ? t('appUpdate.progressTitle')
-                          : availableUpdateLabel}
+                          : updateIndicatorLabel}
                         aria-label={updateIndicator === 'processing'
                           ? t('appUpdate.progressTitle')
-                          : availableUpdateLabel}
+                          : updateIndicatorLabel}
                       />
                     ) : null}
                   </button>
@@ -621,6 +629,12 @@ function AppContent() {
                   setTheme={setTheme}
                   locale={locale}
                   setLocale={setLocale}
+                />
+              ) : ActivePage === PluginsPage ? (
+                <PluginsPage
+                  discoveredPlugins={installedPluginList}
+                  discoveredUpdates={pluginUpdates}
+                  onPluginUpdatesResolved={forgetUpdatedPlugins}
                 />
               ) : (
                 <ActivePage />
