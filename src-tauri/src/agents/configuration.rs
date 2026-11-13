@@ -3515,19 +3515,18 @@ pub(crate) fn build_codex_agent_config_with_oauth(
             .map_err(|error| format!("Invalid Codex config.toml format: {error}"))?,
         None => Document::new(),
     };
-    let provider_id = if codex_uses_openai_proxy(&document) { "openai" } else { MANAGED_AGENT_PROVIDER_ID };
-    if provider_id == "openai" {
-        let previous_oauth = codex_provider_table(&document)
-            .and_then(|p| p.get("requires_openai_auth")).and_then(Item::as_bool) == Some(true);
-        if previous_oauth != oauth_configuration {
-            return Err("Turn off the openai provider identity before changing the sign-in method".into());
-        }
-        set_codex_table_item(document.as_table_mut(), "openai_base_url", value(base_url));
+    if document.contains_key("forced_login_method") {
+        set_codex_table_item(document.as_table_mut(), "forced_login_method",
+            value(if oauth_configuration { "chatgpt" } else { "api" }));
+    }
+    document.remove("profile");
+    if document.contains_key("cli_auth_credentials_store") {
+        set_codex_table_item(document.as_table_mut(), "cli_auth_credentials_store", value("file"));
     }
     set_codex_table_item(
         document.as_table_mut(),
         "model_provider",
-        value(provider_id),
+        value(MANAGED_AGENT_PROVIDER_ID),
     );
     set_codex_table_item(document.as_table_mut(), "model", value(model));
     set_codex_table_item(
@@ -3561,6 +3560,8 @@ pub(crate) fn build_codex_agent_config_with_oauth(
     set_codex_table_item(provider, "base_url", value(base_url));
     set_codex_table_item(provider, "wire_api", value("responses"));
     set_codex_table_item(provider, "experimental_bearer_token", value(api_key));
+    provider.remove("env_key");
+    provider.remove("env_key_instructions");
     if oauth_configuration {
         set_codex_table_item(provider, "requires_openai_auth", value(true));
     } else {
@@ -3589,12 +3590,7 @@ pub(crate) fn build_codex_auth_update(
 ) -> Result<AgentFileUpdate, String> {
     let path = codex_configuration_directory(home).join("auth.json");
     let after = if oauth_configuration {
-        if validate_codex_oauth_login_at(&path).is_ok() {
-            read_optional_text(&path)?
-                .ok_or_else(|| "Codex OAuth login credentials were deleted before the application configuration was applied. Sign in again".to_string())?
-        } else {
-            available_codex_oauth_auth(home)?
-        }
+        available_codex_oauth_auth(home)?
     } else {
         let path_text = read_optional_text(&path)?;
         let mut root = parse_agent_json_object(path_text.as_deref(), "Codex auth.json")?;
@@ -3606,13 +3602,15 @@ pub(crate) fn build_codex_auth_update(
     Ok(AgentFileUpdate { path, after })
 }
 
-const CODEX_MANAGED_ROOT_KEYS: [&str; 3] = ["model_provider", "model", "model_catalog_json"];
-const CODEX_MANAGED_PROVIDER_KEYS: [&str; 5] = [
+const CODEX_MANAGED_ROOT_KEYS: [&str; 6] = ["model_provider", "model", "model_catalog_json", "forced_login_method", "profile", "cli_auth_credentials_store"];
+const CODEX_MANAGED_PROVIDER_KEYS: [&str; 7] = [
     "name",
     "base_url",
     "wire_api",
     "experimental_bearer_token",
     "requires_openai_auth",
+    "env_key",
+    "env_key_instructions",
 ];
 
 pub(crate) fn set_codex_table_item(

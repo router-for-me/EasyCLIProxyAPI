@@ -989,13 +989,12 @@ pub(crate) fn codex_auth_file_has_oauth_tokens(path: &Path) -> bool {
     let Ok(root) = serde_json::from_str::<serde_json::Value>(&content) else {
         return false;
     };
-    root.get("tokens")
-        .and_then(serde_json::Value::as_object)
-        .is_some_and(|tokens| {
-            tokens
-                .values()
-                .any(|value| value.as_str().is_some_and(|token| !token.trim().is_empty()))
-        })
+    codex_has_oauth_tokens(root.get("tokens"))
+        && match root.get("auth_mode").and_then(serde_json::Value::as_str) {
+            Some("chatgpt") => true,
+            None => root.get("OPENAI_API_KEY").is_none_or(serde_json::Value::is_null),
+            _ => false,
+        }
 }
 
 pub(crate) fn codex_auth_file_has_api_key(path: &Path, api_key: &str) -> bool {
@@ -3763,7 +3762,13 @@ pub(crate) fn inspect_codex_agent_config(
             .and_then(|provider| provider.get("wire_api"))
             .and_then(toml::Value::as_str)
             == Some("responses");
-    let configured = configured_without_auth && auth_configured;
+    let file_auth = root.get("cli_auth_credentials_store").is_none_or(|value| value.as_str() == Some("file"));
+    let login_method = root.get("forced_login_method").is_none_or(|value| {
+        value.as_str() == Some(if oauth_configuration { "chatgpt" } else { "api" })
+    });
+    let configured = configured_without_auth && auth_configured && file_auth && login_method
+        && provider.is_some_and(|provider| !provider.contains_key("env_key"))
+        && root.get("profile").and_then(toml::Value::as_str).is_none_or(|profile| profile.trim().is_empty());
     let model = root
         .get("model")
         .and_then(toml::Value::as_str)

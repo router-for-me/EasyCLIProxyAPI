@@ -68,9 +68,8 @@ fn openai_proxy_switch_preserves_endpoint_auth_and_history_and_restores_override
     assert!(inspect_codex_agent_config(&home.path("config.toml"), 8317, "test-api-key").unwrap().0);
     // Repeated enabling must not replace the saved original override.
     switch_codex_openai_provider(&home.0, true).unwrap();
-    assert!(apply_cpa(&home, false).is_err());
     apply_cpa(&home, true).unwrap();
-    assert!(codex_openai_proxy_enabled(&home.0).unwrap());
+    assert!(!codex_openai_proxy_enabled(&home.0).unwrap());
     assert!(current_codex_oauth_configuration(&home.0).unwrap());
     switch_codex_openai_provider(&home.0, false).unwrap();
     assert_eq!(home.config()["model_providers"]["openai"], before["model_providers"]["openai"]);
@@ -93,7 +92,7 @@ fn openai_proxy_close_and_official_round_trip_restore_correct_routing() {
     assert!(!codex_openai_proxy_enabled(&home.0).unwrap());
     assert!(home.config().get("model_providers").and_then(|p| p.get("openai")).is_none());
     apply_cpa(&home, true).unwrap();
-    assert!(codex_openai_proxy_enabled(&home.0).unwrap());
+    assert!(!codex_openai_proxy_enabled(&home.0).unwrap());
     close_codex_configuration(&home.0).unwrap();
     assert!(!codex_openai_proxy_enabled(&home.0).unwrap());
     assert!(home.config().get("openai_base_url").is_none());
@@ -426,6 +425,163 @@ fn apply_cpa(
             claude_desktop_model_mappings: None,
         },
     )
+}
+
+fn assert_cpa_mode(home: &TestHome, oauth: bool) {
+    let auth: serde_json::Value = serde_json::from_str(&home.read("auth.json")).unwrap();
+    assert_eq!(auth["auth_mode"], if oauth { "chatgpt" } else { "apikey" });
+    assert_eq!(auth["custom"], "keep");
+    if oauth {
+        assert_eq!(auth["tokens"]["access_token"], "test-token");
+        assert!(auth.get("OPENAI_API_KEY").is_none_or(serde_json::Value::is_null));
+    } else {
+        assert_eq!(auth["OPENAI_API_KEY"], "test-api-key");
+        assert!(auth.get("tokens").is_none());
+    }
+    let config = home.config();
+    assert_eq!(config["model_provider"].as_str(), Some("cpa-gui"));
+    let provider = &config["model_providers"]["cpa-gui"];
+    assert_eq!(provider["base_url"].as_str(), Some("http://127.0.0.1:8317/v1"));
+    assert_eq!(provider["experimental_bearer_token"].as_str(), Some("test-api-key"));
+    assert_eq!(provider.get("requires_openai_auth").and_then(toml::Value::as_bool), oauth.then_some(true));
+    assert!(provider.get("env_key").is_none());
+    assert_eq!(inspect_codex_agent_config(&home.path("config.toml"), 8317, "test-api-key").unwrap(),
+        (true, Some("cpa-alias".into()), oauth));
+}
+
+#[test]
+fn codex_cpa_switch_normalizes_mixed_login_and_is_repeatable_without_reset() {
+    for mixed in [false, true] {
+        for first_oauth in [false, true] {
+            let home = TestHome::new();
+            home.write("config.toml", "forced_login_method = \"chatgpt\"\n");
+            let auth = if mixed {
+                OAUTH.replace("\"auth_mode\":\"chatgpt\"", "\"auth_mode\":\"apikey\",\"OPENAI_API_KEY\":\"old-key\"")
+            } else { OAUTH.to_string() };
+            home.write("auth.json", &auth);
+            fs::create_dir_all(home.path("sessions")).unwrap();
+            home.write("sessions/history.jsonl", "history must survive");
+            for oauth in [first_oauth, first_oauth, !first_oauth, !first_oauth, first_oauth] {
+                apply_cpa(&home, oauth).unwrap();
+                assert_cpa_mode(&home, oauth);
+                let before = config_images(&[home.path("config.toml"), home.path("auth.json"), home.path(CODEX_NATIVE_OAUTH_STATE_FILE)]).unwrap();
+                assert_eq!(apply_cpa(&home, oauth).unwrap().outcome, "unchanged");
+                assert_eq!(config_images(&before.iter().map(|(path, _)| path.clone()).collect::<Vec<_>>()).unwrap(), before);
+            }
+            assert_eq!(home.read("sessions/history.jsonl"), "history must survive");
+        }
+    }
+}
+
+#[test]
+fn codex_cpa_oauth_requires_credentials_not_account_metadata() {
+    for tokens in [r#"{"account_id":"metadata-only"}"#, r#"{"access_token":" ","refresh_token":""}"#] {
+        let home = TestHome::new();
+        home.write("auth.json", &format!(r#"{{"auth_mode":"chatgpt","tokens":{tokens}}}"#));
+        let paths = [home.path("config.toml"), home.path("auth.json"), home.path(CODEX_NATIVE_OAUTH_STATE_FILE)];
+        let before = config_images(&paths).unwrap();
+        assert!(!codex_auth_file_has_oauth_tokens(&home.path("auth.json")));
+        assert_eq!(apply_cpa(&home, true).unwrap_err(), CODEX_OAUTH_LOGIN_REQUIRED_ERROR);
+        assert_eq!(config_images(&paths).unwrap(), before);
+        apply_cpa(&home, false).unwrap();
+        assert!(codex_auth_file_has_api_key(&home.path("auth.json"), "test-api-key"));
+    }
+    let home = TestHome::new();
+    apply_cpa(&home, false).unwrap();
+    assert!(codex_auth_file_has_api_key(&home.path("auth.json"), "test-api-key"));
+}
+
+#[test]
+fn codex_cpa_restores_provider_contract_from_openai_identity_in_both_modes() {
+    for first_oauth in [true, false] {
+        let home = TestHome::new();
+        home.write("auth.json", OAUTH);
+        home.write("config.toml", "openai_base_url = \"https://previous.example/v1\"\n");
+        apply_cpa(&home, first_oauth).unwrap();
+        switch_codex_openai_provider(&home.0, true).unwrap();
+        assert!(codex_openai_proxy_enabled(&home.0).unwrap());
+        apply_cpa(&home, !first_oauth).unwrap();
+        assert_cpa_mode(&home, !first_oauth);
+        assert!(!codex_openai_proxy_enabled(&home.0).unwrap());
+        assert_eq!(home.config()["openai_base_url"].as_str(), Some("https://previous.example/v1"));
+        apply_cpa(&home, first_oauth).unwrap();
+        assert_cpa_mode(&home, first_oauth);
+    }
+}
+
+#[test]
+fn codex_cpa_file_auth_preserves_and_restores_explicit_store_and_third_party_settings() {
+    for store in ["file", "keyring", "auto", "ephemeral"] {
+        let home = TestHome::new();
+        let original = format!(r#"model_provider = "third-party"
+model = "third-model"
+profile = "third-party"
+forced_login_method = "api"
+cli_auth_credentials_store = "{store}"
+openai_base_url = "https://third.example/v1"
+[profiles.third-party]
+model_provider = "third-party"
+[model_providers.third-party]
+base_url = "https://third.example/v1"
+env_key = "THIRD_PARTY_API_KEY"
+[model_providers.cpa-gui]
+env_key = "STALE_CPA_KEY"
+env_key_instructions = "old instructions"
+"#);
+        home.write("config.toml", &original);
+        home.write("auth.json", OAUTH);
+        let backup = create_backup("codex", &home.0).unwrap();
+        let original_config = home.config();
+        for oauth in [true, false, true] {
+            apply_cpa(&home, oauth).unwrap();
+            assert_cpa_mode(&home, oauth);
+            assert_eq!(home.config()["cli_auth_credentials_store"].as_str(), Some("file"));
+            assert!(home.config().get("profile").is_none());
+            assert_eq!(home.config()["profiles"], original_config["profiles"]);
+            assert_eq!(home.config()["model_providers"]["third-party"], original_config["model_providers"]["third-party"]);
+        }
+        close_codex_configuration(&home.0).unwrap();
+        assert_eq!(home.config()["cli_auth_credentials_store"].as_str(), Some(store));
+        assert_eq!(home.config()["model_provider"], original_config["model_provider"]);
+        assert_eq!(home.config()["profile"], original_config["profile"]);
+        test_restore_backup(AgentClient::Codex, &home.0, &backup.id);
+        assert_eq!(home.config(), original_config);
+        assert_eq!(home.read("auth.json"), OAUTH);
+    }
+}
+
+#[test]
+fn codex_cpa_status_does_not_report_mixed_or_shadowed_auth_as_applied() {
+    let home = TestHome::new();
+    home.write("auth.json", OAUTH);
+    apply_cpa(&home, true).unwrap();
+    let applied = home.read("config.toml");
+    for prefix in ["cli_auth_credentials_store = \"auto\"\n", "forced_login_method = \"api\"\n", "profile = \"third-party\"\n"] {
+        home.write("config.toml", &format!("{prefix}{applied}"));
+        assert!(!inspect_codex_agent_config(&home.path("config.toml"), 8317, "test-api-key").unwrap().0);
+    }
+    home.write("config.toml", &applied);
+    home.write("auth.json", &OAUTH.replace("\"auth_mode\":\"chatgpt\"", "\"auth_mode\":\"apikey\",\"OPENAI_API_KEY\":\"old-key\""));
+    assert!(!inspect_codex_agent_config(&home.path("config.toml"), 8317, "test-api-key").unwrap().0);
+    apply_cpa(&home, true).unwrap();
+    assert_cpa_mode(&home, true);
+}
+
+#[test]
+fn codex_cpa_existing_integration_preserves_explicit_credentials_store_on_close() {
+    for store in ["keyring", "auto"] {
+        let home = TestHome::new();
+        home.write("config.toml", &format!("cli_auth_credentials_store = \"{store}\"\n{CPA_CONFIG}"));
+        home.write("auth.json", OAUTH);
+        for oauth in [false, true, false] {
+            apply_cpa(&home, oauth).unwrap();
+            assert_cpa_mode(&home, oauth);
+            assert_eq!(home.config()["cli_auth_credentials_store"].as_str(), Some("file"));
+        }
+        close_codex_configuration(&home.0).unwrap();
+        assert_eq!(home.config()["cli_auth_credentials_store"].as_str(), Some(store));
+        assert_eq!(home.config()["profile"].as_str(), Some("legacy-cpa"));
+    }
 }
 
 #[test]

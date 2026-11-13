@@ -23,20 +23,7 @@ struct TemplatePlan {
 }
 
 pub(crate) fn build_codex_template_auth(home: &Path) -> Result<AgentFileUpdate, String> {
-    let path = codex_configuration_directory(home).join("auth.json");
-    validate_codex_oauth_login_at(&path)?;
-    let current = read_agent_bytes(&path)?.ok_or(CODEX_OAUTH_LOGIN_REQUIRED_ERROR)?;
-    let value = parse(&path, text(Some(&current))?)?;
-    let mut target = serde_json::Map::new();
-    for key in ["auth_mode", "tokens", "last_refresh"] {
-        if let Some(value) = value.get(key) {
-            target.insert(key.into(), value.clone());
-        }
-    }
-    Ok(AgentFileUpdate {
-        path,
-        after: serde_json::to_string_pretty(&target).map_err(|_| "Failed to generate authentication template")?,
-    })
+    build_codex_auth_update(home, "", true)
 }
 
 pub(crate) fn build_pi_template_updates(
@@ -146,8 +133,7 @@ async fn prepare_template_plan(
     claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
     api_key: Option<&str>,
 ) -> Result<TemplatePlan, String> {
-    if client == "codex" { ensure_codex_cpa_mode(home)?; }
-    let paths = config_paths(client, home)?;
+    let mut paths = config_paths(client, home)?;
     let api_key = resolve_agent_api_key(config, api_key);
     let (model, mappings, before, after, core) = if client == PI_AGENT_ID {
         let model = resolve_pi_default_model(config, model).await?;
@@ -186,19 +172,33 @@ async fn prepare_template_plan(
             .lock()
             .map_err(|_| "Configuration file lock is poisoned")?;
         let before = config_images(&paths)?;
-        let updates = build_agent_template_updates(AgentDefaultConfiguration {
-            client: parsed,
-            home,
-            port: config.port,
-            api_key,
-            model: &model,
-            models: &prepared.models,
-            codex_catalog: prepared.codex_catalog.as_deref(),
-            oauth_configuration,
-            claude_code_model_mappings: code_mappings.as_ref(),
-            claude_desktop_model_mappings: mappings.as_ref(),
-        })?;
-        let after = prepare_config_updates(client, &paths, &before, &updates, true)?;
+        let (before, after) = if parsed == AgentClient::Codex {
+            let images = prepare_codex_cpa_configuration(home, config.port, api_key, &model,
+                AgentConfigurationOptions {
+                    models: &prepared.models,
+                    codex_catalog: prepared.codex_catalog.as_deref(),
+                    oauth_configuration,
+                    claude_code_model_mappings: None,
+                    claude_desktop_model_mappings: None,
+                })?;
+            paths = images.0.iter().map(|(path, _)| path.clone()).collect();
+            images
+        } else {
+            let updates = build_agent_template_updates(AgentDefaultConfiguration {
+                client: parsed,
+                home,
+                port: config.port,
+                api_key,
+                model: &model,
+                models: &prepared.models,
+                codex_catalog: prepared.codex_catalog.as_deref(),
+                oauth_configuration,
+                claude_code_model_mappings: code_mappings.as_ref(),
+                claude_desktop_model_mappings: mappings.as_ref(),
+            })?;
+            let after = prepare_config_updates(client, &paths, &before, &updates, true)?;
+            (before, after)
+        };
         (model, mappings, before, after, core)
     };
     let mapping_revision = mapping_revision(client, &paths)?;

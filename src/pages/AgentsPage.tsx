@@ -2164,7 +2164,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                         </div>
                         <SegmentedControl id="agent-connection-method" className="agent-auth-segmented" aria-labelledby="agent-connection-method-label"
                           aria-describedby={connectionHelpOpen ? "agent-signin-hint" : undefined} value={oauthConfiguration ? 'oauth' : 'apikey'}
-                          disabled={busy || loading || modelLoading || activeStatus?.codexOpenaiProvider} buttonClassName="agent-auth-segmented-button"
+                          disabled={busy || loading || modelLoading} buttonClassName="agent-auth-segmented-button"
                           onChange={value => { if ((value === 'oauth') !== Boolean(oauthConfiguration)) void changeOauthConfiguration(value === 'oauth'); }}
                           items={[
                             { value: 'apikey', label: t('agents.modify.authApiKey') },
