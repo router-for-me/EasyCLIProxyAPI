@@ -125,6 +125,8 @@
     "shadowLarge": "0 12px 32px #0208144D, 0 4px 8px rgba(2, 8, 20, 0.24)",
     "shadowPopover": "0 8px 24px #02081459, 0 0 0 1px rgba(143, 168, 214, 0.1)",
     "shadowDialog": "0 24px 64px #02081466, 0 0 0 1px rgba(143, 168, 214, 0.12)",
-    "shadowSpotlight": "0 0 0 1px rgba(45, 212, 191, 0.35), 0 0 24px rgba(45, 212, 191, 0.25)"
+    "shadowSpotlight": "0 0 0 1px rgba(45, 212, 191, 0.35), 0 0 24px rgba(45, 212, 191, 0.25)",
+    "fontFamilySans": "'Inter', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif",
+    "fontFamilyMono": "'Cascadia Code', Consolas, monospace"
   }
 }

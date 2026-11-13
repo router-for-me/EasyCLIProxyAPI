@@ -219,7 +219,7 @@
     "tokens": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Appearance tokens. Sizes, spacing, layout and typography are not themeable.",
+      "description": "Appearance tokens. Sizes, spacing and layout are not themeable; fontFamilySans and fontFamilyMono choose font families only.",
       "properties": {
         "windowMaterialWorkspaceOpacity": {
           "type": "string",
@@ -432,6 +432,18 @@
           "type": "string",
           "pattern": "^(?:[0-3](?:\\.\\d+)?|4(?:\\.0+)?)px$",
           "description": "Border width from 0px to 4px."
+        },
+        "fontFamilySans": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Comma-separated installed font family names or generic families, e.g. \"Inter\", system-ui, sans-serif. Letters, digits, spaces, quotes, commas, dots, hyphens and underscores only."
+        },
+        "fontFamilyMono": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Comma-separated installed font family names or generic families, e.g. \"Inter\", system-ui, sans-serif. Letters, digits, spaces, quotes, commas, dots, hyphens and underscores only."
         },
         "shadowExtraSmall": {
           "type": "string",

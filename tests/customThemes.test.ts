@@ -70,6 +70,25 @@ describe('custom themes', () => {
     expect(applied['--ui-accent']).toBe('#6FD3C1');
   });
 
+  test('applies font family tokens and leaves themes without them unchanged', () => {
+    const stack = "'Noto Sans SC', system-ui, sans-serif";
+    const { themes, skipped, diagnostics } = parseCustomThemes([
+      file('fonts', theme({ id: 'fonts-dark', tokens: { fontFamilySans: stack, fontFamilyMono: 'url(x)' } })),
+      file('plain', theme({ id: 'plain-dark' })),
+    ]);
+    expect(skipped).toEqual([]);
+    expect(themes[0].tokens).toEqual({ fontFamilySans: stack });
+    expect(diagnostics).toEqual([{ folder: 'fonts', issues: [{ field: 'fontFamilyMono', code: 'invalid-token' }] }]);
+    const fonts = applicator();
+    fonts.apply(themes[0]);
+    expect(fonts.applied['--font-family-sans']).toBe(stack);
+    expect(fonts.applied).not.toHaveProperty('--font-family-mono');
+    const plain = applicator();
+    plain.apply(themes[1]);
+    expect(plain.applied).not.toHaveProperty('--font-family-sans');
+    expect(plain.applied).not.toHaveProperty('--font-family-mono');
+  });
+
   test('accepts radius and border widths inside their ranges and drops values outside', () => {
     const accepted = { radiusSmall: '0px', radiusMedium: '8.5px', radiusLarge: '24px', radiusFull: '9999px', controlBorderWidth: '0px', cardBorderWidth: '4px' };
     const rejected = { radiusSmall: '25px', radiusMedium: '-1px', radiusLarge: '12', radiusFull: '10000px', controlBorderWidth: '4.5px', cardBorderWidth: '5px' };
