@@ -4036,9 +4036,32 @@ pub(crate) fn build_zcode_agent_config(
     api.insert("type".to_string(), serde_json::json!("anthropic-messages"));
     api.insert("baseUrl".to_string(), serde_json::json!(base_url));
     let ordered = ordered_agent_models(available_models, model);
-    let model_names = ordered.iter().map(|option| option.name.as_str()).collect::<Vec<_>>();
-    provider_config.entry("personalModelIds").or_insert_with(|| serde_json::json!(model_names));
-    provider_config.entry("modelOrder").or_insert_with(|| serde_json::json!(model_names));
+    let model_names = ordered.iter().map(|option| option.name.clone()).collect::<Vec<String>>();
+    if !model_names.is_empty() {
+        // Models removed or disabled in the gateway disappear from /v1/models,
+        // but the previous lists kept their ids forever and ZCode kept showing
+        // these dead entries. Prune to the live catalog, drop duplicates and
+        // preserve the user's order. Never append: a model the user removed
+        // from the list must stay removed while it still exists upstream.
+        let available = model_names.iter().map(String::as_str).collect::<std::collections::HashSet<_>>();
+        let prune = |entries: &[serde_json::Value]| -> Vec<String> {
+            let mut seen = std::collections::HashSet::new();
+            entries.iter().filter_map(serde_json::Value::as_str)
+                .filter(|name| available.contains(*name))
+                .filter(|name| seen.insert((*name).to_string()))
+                .map(String::from).collect()
+        };
+        let personal_model_ids = match provider_config.get("personalModelIds").and_then(serde_json::Value::as_array) {
+            Some(entries) => prune(entries),
+            None => model_names.clone(),
+        };
+        let model_order = match provider_config.get("modelOrder").and_then(serde_json::Value::as_array) {
+            Some(entries) => prune(entries),
+            None => model_names.clone(),
+        };
+        provider_config.insert("personalModelIds".to_string(), serde_json::json!(personal_model_ids));
+        provider_config.insert("modelOrder".to_string(), serde_json::json!(model_order));
+    }
     rules.retain(|rule| {
         rule.get("providerId").and_then(serde_json::Value::as_str)
             != Some(MANAGED_AGENT_PROVIDER_ID)
@@ -4103,37 +4126,63 @@ pub(crate) fn build_zcode_agent_config(
                 Some(500_000) | None => manual
                     .and_then(|rule| rule.pointer("/config/properties/contextWindow"))
                     .and_then(serde_json::Value::as_u64)
+                    .filter(|value| *value > 0)
                     .or(inferred_cw)
                     .or(option.context_window),
                 Some(cw) => Some(cw).or(inferred_cw),
             };
-            if let Some(context_window) = effective_cw {
+            // ZCode validates contextWindow as a positive integer and discards the
+            // entire personal provider config when any rule carries a non-positive
+            // value. Never persist 0; manual rules still require the field present.
+            if let Some(context_window) = effective_cw.filter(|value| *value > 0) {
                 properties.insert("contextWindow".to_string(), serde_json::json!(context_window));
-            } else if manual.is_none() {
+            } else if manual.is_some() {
+                properties.insert(
+                    "contextWindow".to_string(),
+                    serde_json::json!(zcode::ZCODE_MANUAL_CONTEXT_WINDOW_FALLBACK),
+                );
+            } else {
                 properties.remove("contextWindow");
             }
         }
         let specs = ensure_json_object_entry(config_obj, "optionSpecs");
-        if let Some(mot) = inferred_mot {
+        if let Some(mot) = inferred_mot.filter(|value| *value > 0) {
             specs.entry("maxOutputTokens").or_insert_with(|| serde_json::json!({ "max": mot }));
+        }
+        // Drop a stale or non-positive max carried over from the existing rule:
+        // ZCode requires maxOutputTokens.max to be a positive integer. Manual rules
+        // keep a positive fallback because the field is mandatory for them.
+        let has_positive_max = specs
+            .get("maxOutputTokens")
+            .and_then(|value| value.get("max"))
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|value| value > 0);
+        if !has_positive_max {
+            specs.remove("maxOutputTokens");
         }
         if let Some(mot_obj) = specs.get_mut("maxOutputTokens").and_then(serde_json::Value::as_object_mut) { mot_obj.remove("map"); }
         if manual.is_some() && !specs.contains_key("maxOutputTokens") {
             specs.insert("maxOutputTokens".to_string(), serde_json::json!({ "max": zcode::ZCODE_MANUAL_MAX_OUTPUT_TOKENS_FALLBACK }));
         }
-        if !option.reasoning_levels.is_empty() {
-            let is_generated_map = |m: &str| {
-                m == ZCODE_CPA_REASONING_MAP || m == "reasoningLevel == \"none\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}"
-            };
-            let generated = manual.is_none() && specs.get("reasoningLevel")
-                .and_then(|spec| spec.get("map")).and_then(serde_json::Value::as_str)
-                .map(is_generated_map).unwrap_or(false);
+        let mut reasoning_levels = zcode::sanitize_reasoning_levels(&option.reasoning_levels);
+        if reasoning_levels.is_empty() && manual.is_some() {
+            reasoning_levels = zcode::ZCODE_MANUAL_REASONING_LEVELS_FALLBACK.iter().map(|level| (*level).to_string()).collect();
+        }
+        let is_generated_map = |m: &str| {
+            m == ZCODE_CPA_REASONING_MAP || m == "reasoningLevel == \"none\" ? {\"thinking\": {\"type\": \"disabled\"}} : {\"thinking\": {\"type\": \"adaptive\"}, \"output_config\": {\"effort\": reasoningLevel}}"
+        };
+        let generated = manual.is_none() && specs.get("reasoningLevel")
+            .and_then(|spec| spec.get("map")).and_then(serde_json::Value::as_str)
+            .map(is_generated_map).unwrap_or(false);
+        if !reasoning_levels.is_empty() {
             if generated || !specs.contains_key("reasoningLevel") {
                 specs.insert("reasoningLevel".into(), serde_json::json!({
-                    "values": option.reasoning_levels,
+                    "values": reasoning_levels,
                     "map": ZCODE_CPA_REASONING_MAP,
                 }));
             }
+        } else if generated {
+            specs.remove("reasoningLevel");
         }
         if specs.is_empty() {
             config_obj.remove("optionSpecs");
@@ -4164,14 +4213,22 @@ pub(crate) fn build_zcode_agent_config(
             provider_order.push(serde_json::json!(MANAGED_AGENT_PROVIDER_ID));
         }
     }
+    // Keep the previous default model only while it still exists; otherwise
+    // fall back to the first available model instead of pointing at a model
+    // that was disabled or deleted in the gateway.
+    let selection_model = if model_names.is_empty() || model_names.iter().any(|name| name.as_str() == model) {
+        model
+    } else {
+        model_names[0].as_str()
+    };
     let mut selection = serde_json::json!({
         "providerId": MANAGED_AGENT_PROVIDER_ID,
-        "modelId": model,
+        "modelId": selection_model,
     });
     if let Some(previous) = config.get("defaultModelSelection") {
         if previous.get("providerId").and_then(serde_json::Value::as_str)
             == Some(MANAGED_AGENT_PROVIDER_ID)
-            && previous.get("modelId").and_then(serde_json::Value::as_str) == Some(model)
+            && previous.get("modelId").and_then(serde_json::Value::as_str) == Some(selection_model)
         {
             if let Some(options) = previous.get("options") {
                 selection["options"] = options.clone();

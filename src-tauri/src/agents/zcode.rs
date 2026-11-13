@@ -101,8 +101,11 @@ pub(crate) fn infer_zcode_model_knowledge_with_catalog(
 ) -> (Option<u64>, Option<u64>, bool, bool, Vec<String>) {
     let (mut cw, mut mot, img, pdf, rl) = infer_zcode_model_knowledge(model_id);
     if let Some(capabilities) = crate::usage::find_model_capabilities(catalog, model_id) {
-        cw = cw.or(capabilities.context_window);
-        mot = mot.or(capabilities.max_output_tokens);
+        // A context/output limit of 0 means "unknown". Never propagate a
+        // non-positive value: ZCode validates both fields as positive integers and
+        // discards the whole personal provider config when one rule is invalid.
+        cw = cw.or(capabilities.context_window.filter(|value| *value > 0));
+        mot = mot.or(capabilities.max_output_tokens.filter(|value| *value > 0));
     }
     (cw, mot, img, pdf, rl)
 }
@@ -114,6 +117,30 @@ pub(crate) const ZCODE_CPA_REASONING_MAP: &str = "reasoningLevel == \"none\" || 
 /// field: an omitted `maxOutputTokens` fails Zod validation of the whole
 /// provider config and makes ZCode discard every custom provider in memory.
 pub(crate) const ZCODE_MANUAL_MAX_OUTPUT_TOKENS_FALLBACK: u64 = 128_000;
+
+/// Manual model rules also require a positive `properties.contextWindow`. When the
+/// upstream catalog reports no limit (0 or unknown) the writer keeps the manual
+/// rule valid with this fallback instead of persisting a non-positive value.
+pub(crate) const ZCODE_MANUAL_CONTEXT_WINDOW_FALLBACK: u64 = 200_000;
+
+/// Manual model rules must carry a non-empty `reasoningLevel.values` list; this
+/// generic ladder keeps the rule valid when the catalog reports no levels.
+pub(crate) const ZCODE_MANUAL_REASONING_LEVELS_FALLBACK: [&str; 3] = ["low", "medium", "high"];
+
+/// ZCode rejects `reasoningLevel.values` when the list is empty or repeats a
+/// level, so trim, drop blanks and deduplicate before rendering a rule.
+pub(crate) fn sanitize_reasoning_levels(levels: &[String]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut sanitized = Vec::with_capacity(levels.len());
+    for level in levels {
+        let level = level.trim();
+        if level.is_empty() || !seen.insert(level.to_string()) {
+            continue;
+        }
+        sanitized.push(level.to_string());
+    }
+    sanitized
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -223,8 +250,14 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
     entry.insert("modelId".into(), serde_json::json!(model_id));
     let cfg = ensure_json_object_entry(entry, "config");
     let mut properties = cfg.get("properties").and_then(Value::as_object).cloned().unwrap_or_default();
-    if let Some(cw) = config.context_window {
+    if let Some(cw) = config.context_window.filter(|value| *value > 0) {
         properties.insert("contextWindow".into(), serde_json::json!(cw));
+    } else if config.is_manual {
+        // Manual rules require a positive contextWindow in ZCode's schema.
+        properties.insert(
+            "contextWindow".into(),
+            serde_json::json!(ZCODE_MANUAL_CONTEXT_WINDOW_FALLBACK),
+        );
     } else {
         properties.remove("contextWindow");
     }
@@ -239,7 +272,7 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
     properties.insert("supportsMidConversationSystem".into(), serde_json::json!(config.supports_mid_conversation_system));
 
     let mut option_specs = cfg.get("optionSpecs").and_then(Value::as_object).cloned().unwrap_or_default();
-    if let Some(mot) = config.max_output_tokens {
+    if let Some(mot) = config.max_output_tokens.filter(|value| *value > 0) {
         let mot_obj = ensure_json_object_entry(&mut option_specs, "maxOutputTokens");
         mot_obj.insert("max".into(), serde_json::json!(mot));
         mot_obj.remove("map");
@@ -251,14 +284,22 @@ fn build_zcode_rule_object(model_id: &str, config: &ZCodeModelConfig, existing: 
     } else {
         option_specs.remove("maxOutputTokens");
     }
-    let mut rl = option_specs.get("reasoningLevel").and_then(Value::as_object).cloned().unwrap_or_default();
-    rl.insert("values".into(), serde_json::json!(config.reasoning_levels));
-    if let Some(ref m) = config.reasoning_map {
-        rl.insert("map".into(), serde_json::json!(m));
-    } else {
-        rl.insert("map".into(), serde_json::json!(ZCODE_CPA_REASONING_MAP));
+    let mut reasoning_levels = sanitize_reasoning_levels(&config.reasoning_levels);
+    if reasoning_levels.is_empty() && config.is_manual {
+        reasoning_levels = ZCODE_MANUAL_REASONING_LEVELS_FALLBACK.iter().map(|level| (*level).to_string()).collect();
     }
-    option_specs.insert("reasoningLevel".into(), Value::Object(rl));
+    if reasoning_levels.is_empty() {
+        option_specs.remove("reasoningLevel");
+    } else {
+        let mut rl = option_specs.get("reasoningLevel").and_then(Value::as_object).cloned().unwrap_or_default();
+        rl.insert("values".into(), serde_json::json!(reasoning_levels));
+        if let Some(ref m) = config.reasoning_map {
+            rl.insert("map".into(), serde_json::json!(m));
+        } else {
+            rl.insert("map".into(), serde_json::json!(ZCODE_CPA_REASONING_MAP));
+        }
+        option_specs.insert("reasoningLevel".into(), Value::Object(rl));
+    }
 
     cfg.insert("properties".into(), Value::Object(properties));
     if !option_specs.is_empty() {
@@ -532,12 +573,9 @@ pub(crate) fn save_zcode_editor(
 
     let requested_ids = request.models.iter().map(|model| model.id.as_str())
         .collect::<std::collections::HashSet<_>>();
-    let mut enabled_ids: Vec<Value> = request.models.iter().filter(|m| m.enabled).map(|m| serde_json::json!(m.id)).collect();
-    if let Some(existing_ids) = provider_cfg.get("personalModelIds").and_then(Value::as_array) {
-        enabled_ids.extend(existing_ids.iter().filter(|id| {
-            id.as_str().map(|id| !requested_ids.contains(id)).unwrap_or(false)
-        }).cloned());
-    }
+    // The request carries the complete current catalog, so ids that are absent
+    // from it are disabled or deleted models and must not be kept alive.
+    let enabled_ids: Vec<Value> = request.models.iter().filter(|m| m.enabled).map(|m| serde_json::json!(m.id)).collect();
     provider_cfg.insert("personalModelIds".into(), Value::Array(enabled_ids));
     let order_ids: Vec<Value> = request.model_order.iter().map(|id| serde_json::json!(id)).collect();
     provider_cfg.insert("modelOrder".into(), Value::Array(order_ids));
