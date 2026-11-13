@@ -904,7 +904,7 @@ fn apply_runtime_reasoning_levels(model: &mut Map<String, Value>, runtime: &Code
 
 fn disable_fallback_capabilities(model: &mut Map<String, Value>) {
     model.insert("prefer_websockets".to_string(), Value::Bool(false));
-    model.insert("supports_search_tool".to_string(), Value::Bool(false));
+    model.insert("supports_search_tool".to_string(), Value::Bool(true));
     model.insert(
         "web_search_tool_type".to_string(),
         Value::String("text".to_string()),
@@ -1252,6 +1252,7 @@ mod tests {
         assert_eq!(sources.fallback["visibility"], "none");
         assert_eq!(sources.fallback["default_reasoning_summary"], "auto");
         assert_eq!(sources.fallback["supports_parallel_tool_calls"], false);
+        assert_eq!(sources.fallback["supports_search_tool"], true);
         assert_eq!(sources.fallback["truncation_policy"]["mode"], "bytes");
 
         let official_slugs = [
@@ -1682,7 +1683,7 @@ mod tests {
             assert!(sources.template_for_slug(slug).is_none(), "{slug}");
             let runtime = runtime(serde_json::json!({"data":[{"id":slug}]}));
             let models = output_models(&prepare_catalog_with_sources(&runtime, &sources).unwrap());
-            assert_eq!(models[0]["supports_search_tool"], false);
+            assert_eq!(models[0]["supports_search_tool"], true);
         }
     }
 
@@ -1869,7 +1870,7 @@ mod tests {
             model["base_instructions"],
             "You are Codex, a model-neutral coding agent."
         );
-        assert_eq!(model["supports_search_tool"], false);
+        assert_eq!(model["supports_search_tool"], true);
         assert_eq!(
             model["service_tiers"],
             serde_json::json!([{
@@ -1921,7 +1922,7 @@ mod tests {
             "include_skills_usage_instructions": false,
             "include_plugin_usage_instructions": false,
             "include_apps_usage_instructions": false,
-            "supports_search_tool": false,
+            "supports_search_tool": true,
             "use_responses_lite": false,
             "guardian": null,
             "node_repl_auto_review_required": false,
@@ -2186,6 +2187,44 @@ mod tests {
             .find(|level| level["effort"] == "high")
             .unwrap();
         assert_eq!(high["description"], fallback_descriptions);
+    }
+
+    #[test]
+    fn third_party_models_default_to_tool_search_without_touching_official_templates() {
+        let sources = parse_sources(MODEL_CATALOG_JSON).unwrap();
+        let mut models: Vec<Value> = sources
+            .templates
+            .keys()
+            .map(|slug| serde_json::json!({"id":slug}))
+            .collect();
+        models.extend([
+            serde_json::json!({"id":"third-party-model", "supports_search_tool":false}),
+            serde_json::json!({"id":"vendor/third-party-model"}),
+        ]);
+        let runtime = runtime(serde_json::json!({"models":models}));
+        let catalog = prepare_catalog_with_sources(&runtime, &sources).unwrap();
+        for model in output_models(&catalog) {
+            let slug = model["slug"].as_str().unwrap();
+            if let Some(template) = sources.template_for_slug(slug) {
+                assert_eq!(
+                    model.get("supports_search_tool"),
+                    template.value.get("supports_search_tool"),
+                    "{slug}"
+                );
+            } else {
+                assert_eq!(model["supports_search_tool"], true, "{slug}");
+            }
+        }
+    }
+
+    #[test]
+    fn fallback_templates_without_a_tool_search_field_default_to_enabled() {
+        let mut sources = test_sources();
+        sources.fallback.remove("supports_search_tool");
+        let runtime = runtime(serde_json::json!({"models":[{"id":"C"}]}));
+        let catalog = prepare_catalog_with_sources(&runtime, &sources).unwrap();
+        let model = &output_models(&catalog)[0];
+        assert_eq!(model["supports_search_tool"], true);
     }
 
     #[test]

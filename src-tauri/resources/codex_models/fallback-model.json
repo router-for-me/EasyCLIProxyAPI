@@ -72,7 +72,7 @@
   "upgrade": null,
   "priority": 99,
   "model_messages": null,
-  "supports_search_tool": false,
+  "supports_search_tool": true,
   "service_tiers": [],
   "default_service_tier": null,
   "additional_speed_tiers": [],
