@@ -1279,31 +1279,25 @@ pub(crate) async fn fetch_prepared_agent_models(
             copilot::enrich_vscode_context_windows(&mut models, &runtime_models)?;
         }
         if agent_uses_cpa_runtime_context_windows(client) {
-            let runtime_models = fetch_codex_runtime_models(config.port, api_key).await?;
-            codex_catalog::merge_runtime_context_windows(&mut models, &runtime_models);
+            let (runtime_models, content) = tokio::join!(
+                fetch_codex_runtime_models(config.port, api_key),
+                fetch_management_config_yaml(config),
+            );
+            let runtime_models = runtime_models.unwrap_or_default();
+            let _ = enrich_harness_context_windows(
+                &mut models,
+                &runtime_models,
+                content.as_deref().ok(),
+            );
             codex_catalog::merge_runtime_reasoning_levels(&mut models, &runtime_models);
-            // Models the Codex client catalog does not know inherit its default
-            // template, so custom providers report a placeholder context window.
-            // Import authoritative capabilities only when that actually happens.
+            // Retain upstream's fallback for unknown custom-provider limits.
             if models.iter().any(|model| {
-                model
-                    .context_window
-                    .is_none_or(|context_window| {
-                        context_window == codex_catalog::CPA_RUNTIME_CONTEXT_PLACEHOLDER
-                    })
+                model.context_window.is_none_or(|context_window| {
+                    context_window == codex_catalog::CPA_RUNTIME_CONTEXT_PLACEHOLDER
+                })
             }) {
                 let _ = crate::usage::ensure_model_capabilities_catalog().await;
                 codex_catalog::merge_external_model_capabilities(&mut models);
-            }
-        }
-        if client == AgentClient::OpenCode {
-            match fetch_codex_runtime_models(config.port, api_key).await {
-                Ok(runtime_models) => {
-                    codex_catalog::merge_runtime_reasoning_levels(&mut models, &runtime_models);
-                }
-                Err(error) => {
-                    eprintln!("OpenCode reasoning metadata unavailable, using model defaults: {error}");
-                }
             }
         }
         if matches!(client, AgentClient::ClaudeCode | AgentClient::ClaudeDesktop) {
@@ -1397,7 +1391,15 @@ fn sync_prepared_codex_model_catalog(
 pub(crate) fn agent_uses_cpa_runtime_context_windows(client: AgentClient) -> bool {
     matches!(
         client,
-        AgentClient::ZCode | AgentClient::WorkBuddy | AgentClient::KimiCode | AgentClient::GrokBuild
+        AgentClient::ZCode
+            | AgentClient::WorkBuddy
+            | AgentClient::KimiCode
+            | AgentClient::GrokBuild
+            | AgentClient::OpenClaw
+            | AgentClient::Hermes
+            | AgentClient::OpenCode
+            | AgentClient::ClaudeCode
+            | AgentClient::ClaudeDesktop
     )
 }
 
