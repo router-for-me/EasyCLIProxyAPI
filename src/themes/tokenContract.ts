@@ -1,4 +1,4 @@
-export type ThemeTokenKind = 'color' | 'opacity' | 'radius' | 'border-width' | 'shadow';
+export type ThemeTokenKind = 'color' | 'opacity' | 'radius' | 'border-width' | 'shadow' | 'font-family';
 
 type ThemeTokenSpec = Readonly<{
   kind: ThemeTokenKind;
@@ -39,6 +39,13 @@ export const themeTokenKinds: Readonly<Record<ThemeTokenKind, {
   shadow: {
     schema: { type: 'string', pattern: shadowPattern, description: 'none or comma-separated box shadows: [inset] x y [blur] [spread] color.' },
     valid: (value) => new RegExp(shadowPattern).test(value),
+  },
+  // Family names only: no url(), @font-face, @import, escapes or braces, so a value cannot inject CSS.
+  'font-family': {
+    schema: { type: 'string', minLength: 1, maxLength: 200, description: 'Comma-separated installed font family names or generic families, e.g. "Inter", system-ui, sans-serif. Letters, digits, spaces, quotes, commas, dots, hyphens and underscores only.' },
+    valid: (value) => value.length <= 200 && /^[\p{L}\p{N} ,'"._-]+$/u.test(value)
+      && value.split(',').every((item) => item.trim().length > 0)
+      && value.split('"').length % 2 === 1 && value.split("'").length % 2 === 1,
   },
 };
 
@@ -99,6 +106,9 @@ export const themeTokenDefinitions = {
 
   controlBorderWidth: { kind: 'border-width', properties: ['--border-width'] },
   cardBorderWidth: { kind: 'border-width', properties: ['--card-border-width'] },
+
+  fontFamilySans: { kind: 'font-family', properties: ['--font-family-sans'] },
+  fontFamilyMono: { kind: 'font-family', properties: ['--font-family-mono'] },
 
   shadowExtraSmall: { kind: 'shadow', properties: ['--shadow-xs'] },
   shadowSmall: { kind: 'shadow', properties: ['--shadow-sm'] },

@@ -19,7 +19,7 @@ export function ThemeDiyGuide({ onClose }: { onClose: () => void }) {
     'Optional top-level image field: "assets": { "backdropImage": "assets/backdrop.webp" }',
     t('app.theme.diy.gradient'),
     t('app.theme.diy.recovery'),
-    'Resource rules: theme.json <= 64 KiB; images <= 8 MiB. Image files must exist inside the theme folder. No remote URLs, absolute asset paths, .. or symlinks. Do not add CSS, scripts, layout or font settings. The optional icon path is validated but is not displayed in theme cards.',
+    'Resource rules: theme.json <= 64 KiB; images <= 8 MiB. Image files must exist inside the theme folder. No remote URLs, absolute asset paths, .. or symlinks. Do not add CSS, scripts, layout, font size or font weight settings; font families only via fontFamilySans and fontFamilyMono. The optional icon path is validated but is not displayed in theme cards.',
     'Built-in/reserved IDs: system, ' + builtinThemes.map(theme => theme.id).join(', ') + '.',
     'Complete reference example (adapt the ID, name and colors to the request):',
     '```json\n' + json + '\n```',
