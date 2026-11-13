@@ -11,6 +11,7 @@ export const onAppUpdateProgress = (handler: Handler<AppUpdateTask>): Promise<()
 export const onCoreInstallProgress = (handler: Handler<CoreInstallTask>): Promise<() => void> => listen('core-install-progress', handler);
 export const onCodexSessionRepairProgress = (handler: Handler<CodexSessionRepairProgress>): Promise<() => void> => listen('codex-session-repair-progress', handler);
 export const onConfigFilesChanged = (handler: () => void): Promise<() => void> => listen('config-files-changed', handler);
+export const onCustomThemesChanged = (handler: () => void): Promise<() => void> => listen('custom-themes-changed', handler);
 export const onUsageRecordsUpdated = (handler: () => void): Promise<() => void> => listen('usage-records-updated', handler);
 export const onAgentUsageSyncProgress = (handler: Handler<AgentUsageSyncProgress>): Promise<() => void> => listen('agent-usage-sync-progress', handler);
 export const onAgentUsageSynced = (handler: Handler<AgentUsageSyncResult | null>): Promise<() => void> => listen('agent-usage-synced', handler);

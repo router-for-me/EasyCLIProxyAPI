@@ -2789,6 +2789,12 @@ fn main() {
                 eprintln!("Failed to start configuration file watcher: {error}");
             }
 
+            if let Err(error) =
+                desktop_theme::start_custom_themes_watcher(app.handle().clone())
+            {
+                eprintln!("Failed to start custom themes watcher: {error}");
+            }
+
             network_proxy::start_monitor(app.handle().clone());
             core_recovery::start(app.handle().clone());
             agent_usage::start_background_sync(app.handle().clone());
