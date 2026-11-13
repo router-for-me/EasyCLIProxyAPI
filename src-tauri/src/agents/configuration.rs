@@ -3515,6 +3515,11 @@ pub(crate) fn build_codex_agent_config_with_oauth(
             .map_err(|error| format!("Invalid Codex config.toml format: {error}"))?,
         None => Document::new(),
     };
+    if let Some(settings) = codex_selected_profile_settings(&document) {
+        for (key, item) in settings.iter() {
+            set_codex_table_item(document.as_table_mut(), key, item.clone());
+        }
+    }
     if document.contains_key("forced_login_method") {
         set_codex_table_item(document.as_table_mut(), "forced_login_method",
             value(if oauth_configuration { "chatgpt" } else { "api" }));
@@ -3712,6 +3717,25 @@ pub(crate) fn merge_missing_codex_table_items(
     }
 }
 
+pub(crate) fn codex_selected_profile_settings(
+    document: &toml_edit::Document,
+) -> Option<toml_edit::Document> {
+    let name = document.get("profile")?.as_str()?;
+    let profile = document.get("profiles")?.as_table()?.get(name)?.as_table()?;
+    let mut settings = toml_edit::Document::new();
+    for (key, item) in profile.iter() {
+        let mut item = item.clone();
+        if let (Some(selected), Some(root)) = (
+            item.as_table_mut(),
+            document.get(key).and_then(toml_edit::Item::as_table),
+        ) {
+            merge_missing_codex_table_items(selected, root);
+        }
+        settings.as_table_mut().insert(key, item);
+    }
+    Some(settings)
+}
+
 pub(crate) fn build_restored_codex_agent_config(
     current: Option<&str>,
     original: Option<&str>,
@@ -3730,6 +3754,23 @@ pub(crate) fn build_restored_codex_agent_config_with_policy(
     let original_document = original
         .map(|content| parse_codex_document(Some(content), "Original Codex config.toml"))
         .transpose()?;
+    if let Some(original) = original_document.as_ref() {
+        if let Some(settings) = codex_selected_profile_settings(original) {
+            let selected: toml::Value = toml::from_str(&settings.to_string())
+                .map_err(|error| format!("Invalid Codex profile settings: {error}"))?;
+            let current: toml::Value = toml::from_str(&current_document.to_string())
+                .map_err(|error| format!("Invalid current Codex configuration: {error}"))?;
+            for (key, _) in settings.iter() {
+                if !CODEX_MANAGED_ROOT_KEYS.contains(&key) && current.get(key) == selected.get(key) {
+                    restore_codex_table_item(
+                        current_document.as_table_mut(),
+                        Some(original.as_table()),
+                        key,
+                    );
+                }
+            }
+        }
+    }
     if let Some(original_document) = original_document.as_ref() {
         merge_missing_codex_table_items(
             current_document.as_table_mut(),

@@ -240,6 +240,15 @@ fn routing_settings(document: &toml_edit::Document) -> toml_edit::Document {
     for key in ROUTING_KEYS {
         restore_codex_table_item(saved.as_table_mut(), Some(document.as_table()), key);
     }
+    if let Some(settings) = codex_selected_profile_settings(document) {
+        for (key, _) in settings.iter() {
+            restore_codex_table_item(saved.as_table_mut(), Some(document.as_table()), key);
+        }
+        if let Some(name) = document.get("profile").and_then(toml_edit::Item::as_str) {
+            ensure_toml_child_table(saved.as_table_mut(), "profiles")
+                .insert(name, document["profiles"][name].clone());
+        }
+    }
     if let Some(openai) = document
         .get("model_providers")
         .and_then(toml_edit::Item::as_table_like)
@@ -598,7 +607,11 @@ pub(crate) fn prepare_codex_cpa_configuration(
         state.original_settings = Some(routing_settings(&current_document).to_string());
         state.original_auth = auth.map(str::to_string);
     } else if state.original_settings.is_none() {
-        let mut saved = toml_edit::Document::new();
+        let mut saved = if codex_selected_profile_settings(&current_document).is_some() {
+            routing_settings(&current_document)
+        } else {
+            toml_edit::Document::new()
+        };
         for key in ["profile", "cli_auth_credentials_store"] {
             restore_codex_table_item(saved.as_table_mut(), Some(current_document.as_table()), key);
         }

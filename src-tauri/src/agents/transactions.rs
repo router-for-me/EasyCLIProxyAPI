@@ -1023,7 +1023,14 @@ fn validate_unmanaged_preserved(
         let mut value = value.clone();
         if client == "codex" && path.file_name().and_then(|v| v.to_str()) == Some("config.toml") {
             let rendered = render(path, &value)?;
-            if codex_uses_openai_proxy(&parse_codex_document(Some(&rendered), "Codex configuration")?) {
+            let document = parse_codex_document(Some(&rendered), "Codex configuration")?;
+            if let Some(settings) = codex_selected_profile_settings(&document) {
+                let settings = parse(path, Some(&settings.to_string()))?;
+                if let (Some(root), Some(selected)) = (value.as_object_mut(), settings.as_object()) {
+                    root.extend(selected.clone());
+                }
+            }
+            if codex_uses_openai_proxy(&document) {
                 if let Some(root) = value.as_object_mut() { root.remove("openai_base_url"); }
             }
         }

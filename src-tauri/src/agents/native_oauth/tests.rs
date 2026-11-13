@@ -551,6 +551,60 @@ env_key_instructions = "old instructions"
 }
 
 #[test]
+fn codex_cpa_preserves_selected_profile_behavior_in_both_modes_and_restores_on_close() {
+    for managed in [false, true] {
+        let home = TestHome::new();
+        let original = format!(r#"model_provider = "{}"
+model = "root-model"
+profile = "work"
+approval_policy = "never"
+sandbox_mode = "read-only"
+[features]
+shell_tool = true
+multi_agent = false
+[profiles.work]
+model_provider = "third-party"
+model = "profile-model"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+[profiles.work.features]
+multi_agent = true
+[profiles.other]
+approval_policy = "never"
+[model_providers.third-party]
+base_url = "https://third.example/v1"
+env_key = "THIRD_PARTY_API_KEY"
+"#, if managed { MANAGED_AGENT_PROVIDER_ID } else { "third-party" });
+        home.write("config.toml", &original);
+        home.write("auth.json", OAUTH);
+        let original_config = home.config();
+        let selected = &original_config["profiles"]["work"];
+        let backup = create_backup("codex", &home.0).unwrap();
+        for oauth in [true, false, true] {
+            apply_cpa(&home, oauth).unwrap();
+            assert_cpa_mode(&home, oauth);
+            let active = home.config();
+            assert!(active.get("profile").is_none());
+            assert_eq!(active["approval_policy"], selected["approval_policy"]);
+            assert_eq!(active["sandbox_mode"], selected["sandbox_mode"]);
+            assert_eq!(active["features"]["shell_tool"].as_bool(), Some(true));
+            assert_eq!(active["features"]["multi_agent"].as_bool(), Some(true));
+            assert_eq!(active["profiles"], original_config["profiles"]);
+        }
+        close_codex_configuration(&home.0).unwrap();
+        let restored = home.config();
+        for key in ["profile", "approval_policy", "sandbox_mode", "features", "profiles"] {
+            assert_eq!(restored[key], original_config[key], "{key}");
+        }
+        assert_eq!(restored["model_provider"], original_config["model_provider"]);
+        assert_eq!(restored["model"], original_config["model"]);
+        test_restore_backup(AgentClient::Codex, &home.0, &backup.id);
+        assert_eq!(home.config(), original_config);
+        assert_eq!(home.read("auth.json"), OAUTH);
+    }
+}
+
+#[test]
 fn codex_cpa_status_does_not_report_mixed_or_shadowed_auth_as_applied() {
     let home = TestHome::new();
     home.write("auth.json", OAUTH);
