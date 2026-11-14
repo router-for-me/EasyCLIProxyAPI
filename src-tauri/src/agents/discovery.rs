@@ -1205,6 +1205,19 @@ pub(crate) fn inspect_agent_config_with_executables(
     executable_override: Option<&Path>,
     desktop_override: Option<&Path>,
 ) -> AgentConfigStatus {
+    inspect_agent_config_and_executable(
+        client, home, port, api_key, executable_override, desktop_override,
+    ).0
+}
+
+pub(crate) fn inspect_agent_config_and_executable(
+    client: AgentClient,
+    home: &Path,
+    port: u16,
+    api_key: &str,
+    executable_override: Option<&Path>,
+    desktop_override: Option<&Path>,
+) -> (AgentConfigStatus, Option<PathBuf>) {
     let paths = agent_config_paths(client, home);
     let config_exists = paths.iter().any(|path| path.is_file());
     let result = config_paths(client.id(), home)
@@ -1245,7 +1258,13 @@ pub(crate) fn inspect_agent_config_with_executables(
     };
     let copilot_cli = (client == AgentClient::CopilotCli)
         .then(|| detect_copilot_cli(home, executable_override)).flatten();
-    let executable = if client == AgentClient::CopilotCli {
+    let codex_cli = (client == AgentClient::Codex)
+        .then(|| resolve_codex_cli(home, executable_override));
+    let codex_error = codex_cli.as_ref().and_then(|result| result.as_ref().err()).cloned();
+    let codex_cli = codex_cli.and_then(Result::ok).flatten();
+    let executable = if client == AgentClient::Codex {
+        codex_cli.as_ref().map(|resolved| resolved.path.clone())
+    } else if client == AgentClient::CopilotCli {
         copilot_cli.as_ref().map(|(path, _)| path.clone())
     } else { executable_override.filter(|path| path.is_file()
         || (matches!(client, AgentClient::ClaudeDesktop | AgentClient::ZCode | AgentClient::WorkBuddy)
@@ -1253,7 +1272,9 @@ pub(crate) fn inspect_agent_config_with_executables(
         .or_else(|| find_agent_executable(client, home)) };
     let plugin_version = (client == AgentClient::VscodeCopilot).then(||
         executable.as_deref().and_then(|path| read_vscode_copilot_version(path, home))).flatten();
-    let cli_version = if client == AgentClient::CopilotCli {
+    let cli_version = if client == AgentClient::Codex {
+        codex_cli.map(|resolved| resolved.version)
+    } else if client == AgentClient::CopilotCli {
         copilot_cli.map(|(_, version)| version)
     } else if client == AgentClient::VscodeCopilot {
         None
@@ -1321,13 +1342,14 @@ pub(crate) fn inspect_agent_config_with_executables(
             "Only a configuration file was detected. You can still edit the configuration and connect it to CPA, but launch functionality is unavailable".to_string(),
         );
     }
+    let error = error.or(codex_error);
     if let Some(message) = error.as_ref() {
         warnings.push(message.clone());
     }
 
     let configuration_synchronized = agent_configuration_is_synchronized(client, home, configured);
 
-    AgentConfigStatus {
+    (AgentConfigStatus {
         id: client.id().to_string(),
         name: client.name().to_string(),
         supported_platform: client.supported_platform(),
@@ -1377,7 +1399,7 @@ pub(crate) fn inspect_agent_config_with_executables(
             .flatten(),
         warnings,
         error,
-    }
+    }, executable)
 }
 
 pub(crate) fn agent_installation_detected(
@@ -2889,31 +2911,50 @@ pub(crate) fn find_all_named_agent_executables_in_directories(
 }
 
 pub(crate) fn find_codex_executable(home: &Path) -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    #[cfg(target_os = "windows")]
-    {
-        let local_app_data = env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join("AppData/Local"));
-        let bin_root = local_app_data.join("OpenAI/Codex/bin");
-        if let Ok(entries) = fs::read_dir(&bin_root) {
-            for entry in entries.flatten() {
-                let candidate = entry.path().join("codex.exe");
-                if agent_cli_executable(&candidate) {
-                    candidates.push(candidate);
-                }
-            }
-        }
-    }
-    let directories = agent_executable_directories(home);
-    candidates.extend(find_all_named_agent_executables_in_directories(&directories, &["codex"]));
+    resolve_codex_cli(home, None).ok().flatten().map(|resolved| resolved.path)
+}
 
-    for candidate in &candidates {
-        if read_agent_version(candidate, home).is_some() {
-            return Some(candidate.clone());
+#[derive(Debug)]
+pub(crate) struct ResolvedCodexCli {
+    pub(crate) path: PathBuf,
+    pub(crate) version: String,
+}
+
+pub(crate) fn resolve_codex_cli(
+    home: &Path,
+    executable_override: Option<&Path>,
+) -> Result<Option<ResolvedCodexCli>, String> {
+    let environment_override = env::var_os("CODEX_CLI_PATH")
+        .filter(|path| !path.to_string_lossy().trim().is_empty()).map(PathBuf::from);
+    resolve_codex_cli_in_directories(
+        home, executable_override, environment_override.as_deref(),
+        &agent_executable_directories(home),
+    )
+}
+
+pub(crate) fn resolve_codex_cli_in_directories(
+    home: &Path,
+    executable_override: Option<&Path>,
+    environment_override: Option<&Path>,
+    directories: &[PathBuf],
+) -> Result<Option<ResolvedCodexCli>, String> {
+    let validate = |path: PathBuf| {
+        let path = if path.is_absolute() { path } else {
+            env::current_dir().ok()?.join(path)
+        };
+        if !agent_cli_executable(&path) {
+            return None;
         }
+        let version = read_agent_version_with_process_group(&path, home, true)?;
+        Some(ResolvedCodexCli { path, version })
+    };
+    if let Some(path) = executable_override.or(environment_override) {
+        return validate(path.to_path_buf()).map(Some).ok_or_else(|| {
+            format!("Codex CLI at {} could not be executed or did not return a version. Check the configured CLI path", path.display())
+        });
     }
-    candidates.into_iter().next()
+    Ok(find_all_named_agent_executables_in_directories(directories, &["codex"])
+        .into_iter().find_map(validate))
 }
 
 pub(crate) fn agent_executable_directories(home: &Path) -> Vec<PathBuf> {
@@ -3094,12 +3135,17 @@ pub(crate) fn windows_command_for_executable(executable: &Path, keep_shell_open:
     }
 
     let mut command = Command::new(windows_command_processor());
-    command.args(["/D", if keep_shell_open { "/K" } else { "/C" }, "call"]);
+    command.args(windows_batch_command_arguments(keep_shell_open));
     command.raw_arg(windows_batch_executable_argument(executable));
     command
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn windows_batch_command_arguments(keep_shell_open: bool) -> [&'static str; 3] {
+    ["/D", if keep_shell_open { "/K" } else { "/C" }, "call"]
+}
+
+#[cfg(any(target_os = "windows", test))]
 pub(crate) fn windows_batch_executable_argument(executable: &Path) -> String {
     format!("\"{}\"", path_to_string(executable))
 }
@@ -3108,6 +3154,21 @@ pub(crate) fn command_output_with_timeout(
     command: &mut Command,
     timeout: Duration,
 ) -> io::Result<Option<std::process::Output>> {
+    command_output_with_timeout_and_process_group(command, timeout, false)
+}
+
+fn command_output_with_timeout_and_process_group(
+    command: &mut Command,
+    timeout: Duration,
+    isolate_process_group: bool,
+) -> io::Result<Option<std::process::Output>> {
+    #[cfg(unix)]
+    if isolate_process_group {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(not(unix))]
+    let _ = isolate_process_group;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -3141,6 +3202,10 @@ pub(crate) fn command_output_with_timeout(
             }
             thread::sleep(AGENT_VERSION_PROBE_POLL_INTERVAL);
         };
+        #[cfg(unix)]
+        if isolate_process_group {
+            unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL); }
+        }
         let stdout = stdout_reader
             .join()
             .map_err(|_| io::Error::other("Agent detection output thread exited unexpectedly"))??;
@@ -3173,6 +3238,14 @@ fn terminate_agent_probe_process(child: &mut Child) {
 }
 
 pub(crate) fn read_agent_version(path: &Path, home: &Path) -> Option<String> {
+    read_agent_version_with_process_group(path, home, false)
+}
+
+fn read_agent_version_with_process_group(
+    path: &Path,
+    home: &Path,
+    isolate_process_group: bool,
+) -> Option<String> {
     #[cfg(target_os = "windows")]
     let mut command = windows_command_for_executable(path, false);
 
@@ -3182,7 +3255,9 @@ pub(crate) fn read_agent_version(path: &Path, home: &Path) -> Option<String> {
     command.arg("--version");
     configure_background_command(&mut command);
     configure_agent_command_environment(&mut command, home, path).ok()?;
-    let output = command_output_with_timeout(&mut command, AGENT_VERSION_PROBE_TIMEOUT).ok()??;
+    let output = command_output_with_timeout_and_process_group(
+        &mut command, AGENT_VERSION_PROBE_TIMEOUT, isolate_process_group,
+    ).ok()??;
     if !output.status.success() {
         return None;
     }
