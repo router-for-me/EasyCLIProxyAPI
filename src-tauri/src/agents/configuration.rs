@@ -3569,8 +3569,10 @@ pub(crate) fn build_codex_agent_config_with_oauth(
     provider.remove("env_key_instructions");
     if oauth_configuration {
         set_codex_table_item(provider, "requires_openai_auth", value(true));
+        set_codex_table_item(provider, "supports_standalone_web_search", value(true));
     } else {
         provider.remove("requires_openai_auth");
+        provider.remove("supports_standalone_web_search");
     }
     let rendered = document.to_string();
     toml::from_str::<toml::Value>(&rendered)
@@ -3608,12 +3610,13 @@ pub(crate) fn build_codex_auth_update(
 }
 
 const CODEX_MANAGED_ROOT_KEYS: [&str; 6] = ["model_provider", "model", "model_catalog_json", "forced_login_method", "profile", "cli_auth_credentials_store"];
-const CODEX_MANAGED_PROVIDER_KEYS: [&str; 7] = [
+const CODEX_MANAGED_PROVIDER_KEYS: [&str; 8] = [
     "name",
     "base_url",
     "wire_api",
     "experimental_bearer_token",
     "requires_openai_auth",
+    "supports_standalone_web_search",
     "env_key",
     "env_key_instructions",
 ];

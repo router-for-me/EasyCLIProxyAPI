@@ -444,6 +444,12 @@ fn assert_cpa_mode(home: &TestHome, oauth: bool) {
     assert_eq!(provider["base_url"].as_str(), Some("http://127.0.0.1:8317/v1"));
     assert_eq!(provider["experimental_bearer_token"].as_str(), Some("test-api-key"));
     assert_eq!(provider.get("requires_openai_auth").and_then(toml::Value::as_bool), oauth.then_some(true));
+    assert_eq!(
+        provider
+            .get("supports_standalone_web_search")
+            .and_then(toml::Value::as_bool),
+        oauth.then_some(true)
+    );
     assert!(provider.get("env_key").is_none());
     assert_eq!(inspect_codex_agent_config(&home.path("config.toml"), 8317, "test-api-key").unwrap(),
         (true, Some("cpa-alias".into()), oauth));

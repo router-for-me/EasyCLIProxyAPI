@@ -3766,7 +3766,19 @@ pub(crate) fn inspect_codex_agent_config(
     let login_method = root.get("forced_login_method").is_none_or(|value| {
         value.as_str() == Some(if oauth_configuration { "chatgpt" } else { "api" })
     });
-    let configured = configured_without_auth && auth_configured && file_auth && login_method
+    let standalone_web_search = if oauth_configuration {
+        provider
+            .and_then(|provider| provider.get("supports_standalone_web_search"))
+            .and_then(toml::Value::as_bool)
+            == Some(true)
+    } else {
+        provider.is_none_or(|provider| !provider.contains_key("supports_standalone_web_search"))
+    };
+    let configured = configured_without_auth
+        && auth_configured
+        && file_auth
+        && login_method
+        && standalone_web_search
         && provider.is_some_and(|provider| !provider.contains_key("env_key"))
         && root.get("profile").and_then(toml::Value::as_str).is_none_or(|profile| profile.trim().is_empty());
     let model = root
