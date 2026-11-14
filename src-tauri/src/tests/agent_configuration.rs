@@ -613,6 +613,12 @@ fn codex_oauth_configuration_uses_openai_auth_with_bearer_token() {
     );
     assert_eq!(
         provider
+            .get("supports_standalone_web_search")
+            .and_then(toml::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        provider
             .get("experimental_bearer_token")
             .and_then(toml::Value::as_str),
         Some(DEFAULT_API_KEY)
@@ -729,9 +735,65 @@ fn codex_api_and_oauth_modes_write_the_same_catalog() {
     assert!(!api_updates[0].after.contains("service_tier"));
     assert!(!oauth_updates[0].after.contains("service_tier"));
     assert!(!api_updates[0].after.contains("requires_openai_auth"));
+    assert!(!api_updates[0].after.contains("supports_standalone_web_search"));
     assert!(oauth_updates[0]
         .after
         .contains("requires_openai_auth = true"));
+    assert!(oauth_updates[0]
+        .after
+        .contains("supports_standalone_web_search = true"));
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn codex_oauth_standalone_web_search_marks_legacy_config_for_update_and_restores_cleanly() {
+    let home = agent_test_home("codex-oauth-standalone-web-search");
+    let config_path = home.join(".codex/config.toml");
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(
+        config_path.with_file_name("auth.json"),
+        r#"{"tokens":{"access_token":"oauth-access-token"}}"#,
+    )
+    .unwrap();
+
+    let rendered_oauth = build_codex_agent_config_with_oauth(
+        None,
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "gpt-6.1-sol",
+        true,
+    )
+    .unwrap();
+    let legacy_oauth = rendered_oauth.replace("supports_standalone_web_search = true\n", "");
+    assert_ne!(legacy_oauth, rendered_oauth);
+    fs::write(&config_path, &legacy_oauth).unwrap();
+
+    let (legacy_configured, legacy_model, legacy_is_oauth) =
+        inspect_codex_agent_config(&config_path, 8317, DEFAULT_API_KEY).unwrap();
+    assert!(!legacy_configured);
+    assert_eq!(legacy_model.as_deref(), Some("gpt-6.1-sol"));
+    assert!(legacy_is_oauth);
+
+    fs::write(&config_path, &rendered_oauth).unwrap();
+    let (updated_configured, _, updated_is_oauth) =
+        inspect_codex_agent_config(&config_path, 8317, DEFAULT_API_KEY).unwrap();
+    assert!(updated_configured);
+    assert!(updated_is_oauth);
+
+    let switched_api = build_codex_agent_config_with_oauth(
+        Some(&rendered_oauth),
+        "http://127.0.0.1:8317/v1",
+        DEFAULT_API_KEY,
+        "gpt-6.1-sol",
+        false,
+    )
+    .unwrap();
+    assert!(!switched_api.contains("supports_standalone_web_search"));
+    assert!(!switched_api.contains("requires_openai_auth"));
+
+    let restored = build_restored_codex_agent_config_with_policy(Some(&rendered_oauth), None, false).unwrap();
+    assert!(restored.is_none());
+
     fs::remove_dir_all(home).unwrap();
 }
 
