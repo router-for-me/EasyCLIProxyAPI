@@ -304,31 +304,72 @@ pub(crate) fn proxy_codex_delta(path: &Path) -> Option<FileDelta> {
     (!delta.daily.is_empty()).then_some(delta)
 }
 
-fn load_proxy_model_prices(connection: &Connection) -> HashMap<String, ProxyModelPrice> {
-    let Ok(mut statement) = connection.prepare(
-        "SELECT model, source_model_id, prompt_per_1m, completion_per_1m, cache_read_per_1m, cache_creation_per_1m FROM model_prices",
-    ) else {
-        return HashMap::new();
-    };
-    let Ok(rows) = statement.query_map([], |row| {
-        let model: String = row.get(0)?;
-        let source_model_id: String = row.get(1)?;
-        let price = ProxyModelPrice {
-            prompt: row.get(2)?,
-            completion: row.get(3)?,
-            cache_read: row.get(4)?,
-            cache_creation: row.get(5)?,
-        };
-        Ok((model, source_model_id, price))
+fn read_proxy_model_price_rows(
+    statement: &mut rusqlite::Statement<'_>,
+    has_source: bool,
+) -> Vec<(String, String, String, ProxyModelPrice)> {
+    let offset = usize::from(has_source);
+    let Ok(mapped) = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            if has_source {
+                row.get::<_, String>(2)?
+            } else {
+                String::new()
+            },
+            ProxyModelPrice {
+                prompt: row.get(2 + offset)?,
+                completion: row.get(3 + offset)?,
+                cache_read: row.get(4 + offset)?,
+                cache_creation: row.get(5 + offset)?,
+            },
+        ))
     }) else {
+        return Vec::new();
+    };
+    mapped.flatten().collect()
+}
+
+fn load_proxy_model_prices(connection: &Connection) -> HashMap<String, ProxyModelPrice> {
+    let rows = if let Ok(mut statement) = connection.prepare(
+        "SELECT model, source_model_id, source, prompt_per_1m, completion_per_1m, cache_read_per_1m, cache_creation_per_1m FROM model_prices ORDER BY model ASC",
+    ) {
+        read_proxy_model_price_rows(&mut statement, true)
+    } else if let Ok(mut statement) = connection.prepare(
+        "SELECT model, source_model_id, prompt_per_1m, completion_per_1m, cache_read_per_1m, cache_creation_per_1m FROM model_prices ORDER BY model ASC",
+    ) {
+        read_proxy_model_price_rows(&mut statement, false)
+    } else {
         return HashMap::new();
     };
-    let mut prices = HashMap::new();
-    for row in rows.flatten() {
-        let (model, source_model_id, price) = row;
-        prices.insert(model.to_ascii_lowercase(), price);
-        if !source_model_id.trim().is_empty() {
-            prices.insert(source_model_id.to_ascii_lowercase(), price);
+
+    let valid_rows = rows
+        .into_iter()
+        .filter(|(model, source_model_id, source, _)| {
+            if source == "litellm" {
+                return false;
+            }
+            if matches!(source.as_str(), "models.dev" | "litellm-sync") {
+                return crate::usage::synced_source_matches_model(model, source_model_id);
+            }
+            true
+        })
+        .collect::<Vec<_>>();
+
+    let mut prices = HashMap::with_capacity(valid_rows.len());
+    for (model, _, _, price) in &valid_rows {
+        let trimmed = model.trim();
+        if !trimmed.is_empty() {
+            prices.insert(trimmed.to_ascii_lowercase(), *price);
+        }
+    }
+    for (_, source_model_id, _, price) in &valid_rows {
+        let trimmed = source_model_id.trim();
+        if !trimmed.is_empty() {
+            prices
+                .entry(trimmed.to_ascii_lowercase())
+                .or_insert(*price);
         }
     }
     prices
@@ -1863,6 +1904,48 @@ mod tests {
             .daily
             .contains_key(&("2026-10-29".to_string(), "gpt-5".to_string())));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn proxy_model_prices_preserve_explicit_models_and_ignore_contaminated_sync_rows() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE model_prices (
+                    model TEXT PRIMARY KEY,
+                    source_model_id TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    prompt_per_1m REAL NOT NULL,
+                    completion_per_1m REAL NOT NULL,
+                    cache_read_per_1m REAL NOT NULL,
+                    cache_creation_per_1m REAL NOT NULL
+                );",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO model_prices VALUES ('gpt-5', '', 'manual', 1.25, 10.0, 0.125, 0.0)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO model_prices VALUES ('gpt-5-high', 'gpt-5', 'litellm-sync', 9.0, 90.0, 0.9, 0.0)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO model_prices VALUES ('gemini-4-argon-high', 'anthropic/claude-fable-5', 'models.dev', 10.0, 50.0, 1.0, 12.5)",
+                [],
+            )
+            .unwrap();
+
+        let prices = load_proxy_model_prices(&connection);
+        assert!((prices["gpt-5"].prompt - 1.25).abs() < 1e-9);
+        assert!((prices["gpt-5-high"].prompt - 9.0).abs() < 1e-9);
+        assert!(!prices.contains_key("gemini-4-argon-high"));
+        assert!(!prices.contains_key("anthropic/claude-fable-5"));
     }
 
     #[test]
