@@ -532,13 +532,17 @@
 
 .config-dialog.usage-log-detail-dialog {
   width: min(960px, 100%);
-  max-height: 88vh;
+  height: auto;
+  max-height: min(860px, calc(100vh - 40px));
+  max-height: min(860px, calc(100dvh - 40px));
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow: hidden;
 }
 
 .usage-log-detail-heading {
+  flex-shrink: 0;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -600,6 +604,7 @@
 }
 
 .usage-log-detail-tabs {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -617,14 +622,16 @@
 }
 
 .usage-log-detail-panel {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  overflow: hidden;
 }
 
 .usage-log-detail-toolbar {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -638,14 +645,36 @@
 }
 
 .usage-log-detail-scroll {
-  flex: 1;
-  min-height: 220px;
-  max-height: 56vh;
-  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   gap: 12px;
   padding-right: 4px;
+}
+
+.usage-log-detail-scroll > *,
+.usage-log-empty-stack > *,
+.usage-log-sections > * {
+  flex-shrink: 0;
+}
+
+.config-dialog.usage-log-detail-dialog > .config-dialog-actions {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.config-dialog.usage-log-detail-dialog > .config-dialog-actions button {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 88px;
 }
 
 .usage-log-loading,

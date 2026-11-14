@@ -986,6 +986,7 @@ function UsageLogDetailModal({
   return (
     <Dialog
       className="config-dialog usage-log-detail-dialog"
+      actionsClassName="single-action usage-log-detail-footer"
       tabIndex={-1}
       labelledBy="usage-log-detail-title"
       onClose={onClose}
