@@ -680,6 +680,7 @@ export function OAuthLoginPage({ onOpenAuthFiles }: { onOpenAuthFiles?: (provide
         <PluginOAuthProviders
           builtInProviderIds={[...BUILTIN_OAUTH_PROVIDER_IDS, 'vertex']}
           browser={selectedBrowser === NO_AUTO_OPEN_BROWSER_ID ? 'default' : selectedBrowser || 'default'}
+          onOpenAuthFiles={onOpenAuthFiles}
         />
       </div>
     </section>

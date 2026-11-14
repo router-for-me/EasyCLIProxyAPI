@@ -128,6 +128,8 @@ export const oauthModelProvidersFromAuthFiles = (files: AuthFileRecord[]): strin
 
 export type OAuthAccountSummary = {
   name: string;
+  /** Credential provider stored by the core, used to filter credential files. */
+  provider: string;
   label: string;
   disabled: boolean;
   tone?: 'warning' | 'error';
@@ -141,7 +143,11 @@ export const groupOAuthAccountsByProvider = (files: AuthFileRecord[]): Map<strin
   dedupeAuthFiles(files).filter(isOAuthCredentialFile).forEach((file) => {
     const provider = authFileProvider(file);
     if (!provider) return;
-    const accounts = grouped.get(provider) ?? [];
+    // Plugins may expose several OAuth entries backed by one credential provider
+    // (for example doubao and dola). Prefer the entry recorded with the credential
+    // so each login card lists only the accounts created through that entry.
+    const entry = normalizeOAuthProvider(readString(file, 'oauth_provider') || provider);
+    const accounts = grouped.get(entry) ?? [];
     const status = readString(file, 'status').toLowerCase();
     const hasCooldown = Array.isArray(file.cooldowns) && file.cooldowns.length > 0;
     const tone: 'warning' | 'error' | undefined =
@@ -152,12 +158,19 @@ export const groupOAuthAccountsByProvider = (files: AuthFileRecord[]): Map<strin
           : undefined;
     accounts.push({
       name: readString(file, 'name'),
-      label: readString(file, 'email', 'account', 'label') || authFileName(file),
+      provider,
+      label: readString(file, 'email', 'account', 'account_id', 'accountId', 'label') || authFileName(file),
       disabled: readBoolean(file, 'disabled'),
       ...(tone ? { tone } : {}),
       identities: authFileIdentities(file),
     });
-    grouped.set(provider, accounts);
+    grouped.set(entry, accounts);
+    // Keep the credential-provider bucket for hosts that group by provider alone.
+    if (entry !== provider) {
+      const providerAccounts = grouped.get(provider) ?? [];
+      providerAccounts.push(accounts[accounts.length - 1]);
+      grouped.set(provider, providerAccounts);
+    }
   });
   return grouped;
 };
