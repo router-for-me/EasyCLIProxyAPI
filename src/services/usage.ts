@@ -37,6 +37,8 @@ export type UsageRecord = {
   api_key_hash: string;
   api_key_display: string;
   api_key_remark: string;
+  request_id?: string;
+  executor_type?: string;
   tokens: {
     input_tokens: number;
     output_tokens: number;
