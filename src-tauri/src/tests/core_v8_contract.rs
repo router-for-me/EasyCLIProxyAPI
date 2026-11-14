@@ -394,6 +394,7 @@ async fn v8_accepts_gui_settings_and_reloads_client_keys() {
         &CoreSensitiveWordsSettings {
             antigravity_sensitive_words: vec!["sample".into()],
             devin_sensitive_words: vec!["sample-devin".into()],
+            ..Default::default()
         },
     )
     .unwrap()

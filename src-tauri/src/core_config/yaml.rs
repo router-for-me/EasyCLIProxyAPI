@@ -366,7 +366,24 @@ pub(crate) fn normalize_core_sensitive_words_settings(
     CoreSensitiveWordsSettings {
         antigravity_sensitive_words: normalize(settings.antigravity_sensitive_words),
         devin_sensitive_words: normalize(settings.devin_sensitive_words),
+        antigravity_sensitive_words_replace: normalize_sensitive_word_replacements(settings.antigravity_sensitive_words_replace),
+        devin_sensitive_words_replace: normalize_sensitive_word_replacements(settings.devin_sensitive_words_replace),
     }
+}
+
+fn normalize_sensitive_word_replacements(
+    replacements: std::collections::BTreeMap<String, String>,
+) -> std::collections::BTreeMap<String, String> {
+    let mut normalized = std::collections::BTreeMap::new();
+    for (target, replacement) in replacements {
+        let trimmed = target.trim();
+        if trimmed.is_empty() || (normalized.contains_key(trimmed) && target != trimmed) {
+            continue;
+        }
+        // Replacement whitespace and empty strings are meaningful to the core.
+        normalized.insert(trimmed.to_string(), replacement);
+    }
+    normalized
 }
 
 pub(crate) fn core_sensitive_words_settings_from_value(
@@ -402,9 +419,24 @@ pub(crate) fn core_sensitive_words_settings_from_value(
             })
             .collect()
     };
+    let read_replacements = |provider: &str| -> Result<std::collections::BTreeMap<String, String>, String> {
+        let Some(value) = nested_yaml_value(root, &["oauth", "providers", provider, "sensitive-words-replace"])
+            .or_else(|| nested_yaml_value(root, &[provider, "sensitive-words-replace"])) else {
+            return Ok(Default::default());
+        };
+        if value.is_null() {
+            return Ok(Default::default());
+        }
+        let invalid = || format!("{provider}.sensitive-words-replace must be a mapping of strings to strings");
+        value.as_mapping().ok_or_else(invalid)?.iter().map(|(key, value)| {
+            Ok((key.as_str().ok_or_else(invalid)?.to_string(), value.as_str().ok_or_else(invalid)?.to_string()))
+        }).collect()
+    };
     Ok(CoreSensitiveWordsSettings {
         antigravity_sensitive_words: read_words("antigravity")?,
         devin_sensitive_words: read_words("devin")?,
+        antigravity_sensitive_words_replace: read_replacements("antigravity")?,
+        devin_sensitive_words_replace: read_replacements("devin")?,
     })
 }
 
@@ -485,6 +517,23 @@ pub(crate) fn patch_core_sensitive_words_yaml(
                         .map(serde_norway::Value::String)
                         .collect(),
                 ),
+            )?;
+        }
+        for (provider, replacements) in [
+            ("antigravity", &settings.antigravity_sensitive_words_replace),
+            ("devin", &settings.devin_sensitive_words_replace),
+        ] {
+            let root = document.as_mapping().ok_or("Kernel configuration root must be a YAML mapping")?;
+            let current = nested_yaml_value(root, &["oauth", "providers", provider, "sensitive-words-replace"])
+                .or_else(|| nested_yaml_value(root, &[provider, "sensitive-words-replace"]));
+            if replacements.is_empty() && current.is_none_or(serde_norway::Value::is_null) {
+                continue;
+            }
+            changed |= set_core_yaml_schema_value(
+                document,
+                &[provider, "sensitive-words-replace"],
+                &["oauth", "providers", provider, "sensitive-words-replace"],
+                serde_norway::to_value(replacements).map_err(|error| format!("Failed to serialize sensitive-word replacements: {error}"))?,
             )?;
         }
         Ok(changed)
@@ -935,6 +984,15 @@ pub(crate) fn collect_yaml_value_changes(
     changes: &mut Vec<YamlValueChange>,
 ) -> Result<(), String> {
     if original == updated {
+        return Ok(());
+    }
+    // A replacement map is one setting: render it atomically so removing or
+    // renaming a target does not leave stale rules in the configuration.
+    if matches!(path.iter().map(String::as_str).collect::<Vec<_>>().as_slice(),
+        ["antigravity" | "devin", "sensitive-words-replace"]
+        | ["oauth", "providers", "antigravity" | "devin", "sensitive-words-replace"]
+    ) {
+        changes.push(YamlValueChange { path: path.clone(), value: updated.clone() });
         return Ok(());
     }
     match (original, updated) {

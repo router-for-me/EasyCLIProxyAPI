@@ -13,6 +13,12 @@ export type MessageVariables = Record<string, string | number>;
 
 export const zhTW: Record<MessageKey, string> = {
   ...createTraditionalMessages(zhCN),
+  'config.sensitiveWords.replacements': '敏感詞替換',
+  'config.sensitiveWords.replacementsHint': '僅處理系統提示詞；按字面比對，不區分大小寫。替換內容留空可刪除符合的文字，內容中的空格和換行會保留。',
+  'config.sensitiveWords.target': '原文',
+  'config.sensitiveWords.replacement': '替換內容',
+  'config.sensitiveWords.replacementPlaceholder': '留空以刪除符合的文字',
+  'config.sensitiveWords.invalidReplacements': '請填寫每條規則的原文；同一供應商的原文不能重複（不區分大小寫）。',
   'home.catalog.refresh': "重新整理模型目錄",
   'home.catalog.refreshing': "正在同步目錄…",
   'home.catalog.hint': "立即同步遠端模型目錄和能力定義，無需重新啟動核心",

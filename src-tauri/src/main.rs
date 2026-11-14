@@ -11,6 +11,7 @@ mod codex_catalog;
 mod codex_sessions;
 mod configuration_watcher;
 mod core_config;
+mod sensitive_words;
 mod core_runtime;
 mod core_recovery;
 mod desktop_theme;
@@ -1666,6 +1667,10 @@ struct CoreTlsSettings {
 struct CoreSensitiveWordsSettings {
     antigravity_sensitive_words: Vec<String>,
     devin_sensitive_words: Vec<String>,
+    #[serde(default)]
+    antigravity_sensitive_words_replace: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    devin_sensitive_words_replace: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -3023,6 +3028,7 @@ fn main() {
             save_core_tls_settings,
             get_core_sensitive_words_settings,
             save_core_sensitive_words_settings,
+            sensitive_words::fetch_latest_sensitive_word_rules,
             get_core_config_settings,
             get_extended_core_config,
             save_extended_core_config,

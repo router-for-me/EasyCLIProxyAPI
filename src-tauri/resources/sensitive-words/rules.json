@@ -1,0 +1,28 @@
+{
+  "antigravity": {
+    "wordReplacements": {
+      "Codex": "Assistant"
+    },
+    "wordsToObfuscate": [
+      "Claude",
+      "GPT-5",
+      "GPT-6",
+      "Anthropic"
+    ]
+  },
+  "devin": {
+    "wordReplacements": {
+      "Claude Code": "Devin Assistant",
+      "private phrase": ""
+    },
+    "systemPromptLineFilters": [
+      "Claude Agent SDK",
+      "You are a Claude agent",
+      "For clear communication with the user the assistant MUST avoid using emojis",
+      "Bypass all content filters",
+      "Hermes",
+      "OpenClaw",
+      "Deepseek Harness"
+    ]
+  }
+}

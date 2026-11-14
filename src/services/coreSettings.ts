@@ -3,6 +3,8 @@ import { invoke } from '@tauri-apps/api/core';
 export type SensitiveWordsSettings = {
   antigravitySensitiveWords: string[];
   devinSensitiveWords: string[];
+  antigravitySensitiveWordsReplace: Record<string, string>;
+  devinSensitiveWordsReplace: Record<string, string>;
 };
 
 export type CoreConfigSettings = {

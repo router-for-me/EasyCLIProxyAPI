@@ -7,6 +7,9 @@ import { createQuotaMock, createQuotaMockFiles } from './quotaMock';
 import { normalizeAuthFileTags } from '../services/authFiles';
 import { hasDeepSeekArgumentConflict, parseAgentLaunchArguments } from '../services/agentLaunchArguments';
 
+
+
+
 export type BrowserMockScenario = 'running' | 'stopped' | 'empty' | 'error';
 export type BrowserMockMode = BrowserMockScenario | 'off';
 
@@ -497,6 +500,8 @@ function createState(scenario: BrowserMockScenario) {
     sensitiveWords: {
       antigravitySensitiveWords: ['internal-only', 'mock-secret'],
       devinSensitiveWords: ['private-repository'],
+      antigravitySensitiveWordsReplace: { Codex: 'Assistant' } as Record<string, string>,
+      devinSensitiveWordsReplace: {} as Record<string, string>,
     },
     appUpdateInfo: {
       currentVersion: '0.2.97',
@@ -1452,6 +1457,11 @@ export function createBrowserMockRuntime(
       case 'get_software_settings': return clone(state.softwareSettings);
       case 'get_core_tls_settings': return clone(state.tlsSettings);
       case 'get_core_sensitive_words_settings': return clone(state.sensitiveWords);
+      case 'fetch_latest_sensitive_word_rules': return { rules: [
+        { provider: 'antigravity', kind: 'replace', target: 'Codex', replacement: 'Cloud Assistant' },
+        { provider: 'devin', kind: 'replace', target: 'Claude Code', replacement: 'Devin Assistant' },
+        { provider: 'antigravity', kind: 'obfuscate', target: 'cloud-word', replacement: '' },
+      ] };
       case 'save_core_sensitive_words_settings': {
         state.sensitiveWords = clone(asObject(payload.settings)) as typeof state.sensitiveWords;
         emit('config-files-changed', { paths: ['cpa-core/config.yaml'], errors: [] });

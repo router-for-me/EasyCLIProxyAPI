@@ -2684,6 +2684,44 @@ textarea:focus-visible {
   margin: 0 auto;
 }
 
+.sw-library { min-width: 0; }
+.sw-library .compact-button { margin-top: 0; }
+.sw-provider-section { min-width: 0; border: 1px solid var(--border-color); border-radius: var(--radius-lg); }
+.sw-provider-section > summary { display: flex; align-items: center; gap: 8px; padding: 16px 20px; color: var(--color-text-primary); font-size: var(--font-size-body); font-weight: var(--font-weight-semibold); cursor: pointer; list-style: none; }
+.sw-provider-section > summary::-webkit-details-marker { display: none; }
+.sw-provider-section > summary::before { content: '›'; font-size: 20px; line-height: 1; color: var(--color-text-muted); }
+.sw-provider-section[open] > summary::before { transform: rotate(90deg); }
+.sw-section-count { margin-left: auto; color: var(--color-text-muted); font-size: var(--font-size-meta); font-weight: var(--font-weight-medium); }
+.sw-provider-body { display: grid; gap: 24px; padding: 0 20px 20px; }
+.sw-field-group { display: grid; min-width: 0; gap: 10px; }
+.sw-field-group + .sw-field-group { padding-top: 20px; border-top: 1px solid var(--border-color); }
+.sw-field-group h3 { margin: 0; font-size: var(--font-size-body); font-weight: var(--font-weight-medium); color: var(--color-text-secondary); }
+.sw-field-heading { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.sw-inline-list { display: grid; gap: 8px; min-width: 0; }
+.sw-inline-row { display: grid; grid-template-columns: minmax(0, 1fr) 64px; align-items: start; gap: 8px; min-width: 0; }
+.sw-inline-pair, .sw-column-labels { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 64px; }
+.sw-column-labels { display: grid; gap: 8px; color: var(--color-text-muted); font-size: var(--font-size-meta); }
+.sw-field-hint { margin-left: 8px; font-size: var(--font-size-meta); opacity: .8; }
+.sw-inline-row textarea { display: block; width: 100%; min-width: 0; min-height: 38px; height: 38px; max-height: 240px; padding: 8px 10px; line-height: 20px; resize: vertical; field-sizing: content; }
+.sw-inline-row .compact-button { min-height: 38px; padding-inline: 8px; }
+.sw-add { justify-self: start; }
+.sw-feedback { display: flex; align-items: center; gap: 10px; font-size: var(--font-size-meta); color: var(--color-text-secondary); }
+.sw-duplicate-notices { display: grid; gap: 8px; }
+.sw-duplicate-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 10px 12px; border: 1px solid var(--color-warning-border); border-radius: var(--radius-md); background: var(--color-warning-subtle); font-size: var(--font-size-meta); }
+.sw-duplicate-notice > span { min-width: 0; overflow-wrap: anywhere; }
+.sw-duplicate-notice strong { color: var(--color-text-primary); font-weight: var(--font-weight-medium); }
+.sw-duplicate-detail { display: block; margin-top: 3px; color: var(--color-text-secondary); }
+.sw-inline-row textarea[aria-invalid='true'] { border-color: var(--color-warning-border); background: var(--color-warning-subtle); }
+@media (max-width: 720px) {
+  .sw-library > .config-panel-heading { flex-wrap: wrap; gap: 12px; }
+  .sw-provider-section > summary { padding: 14px; }
+  .sw-provider-body { padding: 0 14px 14px; }
+  .sw-column-labels { display: none; }
+  .sw-inline-pair { grid-template-columns: minmax(0, 1fr) 58px; }
+  .sw-inline-pair textarea { grid-column: 1; }
+  .sw-inline-pair button { grid-column: 2; grid-row: 1 / 3; align-self: center; }
+}
+
 .config-sensitive-words-grid {
   display: grid;
   gap: 12px;
@@ -2744,6 +2782,43 @@ textarea:focus-visible {
   padding: 6px 0;
   color: var(--color-text-muted);
   font-size: var(--font-size-meta);
+}
+
+.config-sensitive-replacement-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 38px;
+  align-items: end;
+  gap: 8px;
+}
+
+.config-sensitive-replacement-row label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-meta);
+}
+
+.config-sensitive-replacement-row textarea {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+}
+
+@media (max-width: 640px) {
+  .config-sensitive-replacement-row {
+    grid-template-columns: minmax(0, 1fr) 38px;
+  }
+
+  .config-sensitive-replacement-row label {
+    grid-column: 1;
+  }
+
+  .config-sensitive-replacement-row .icon-button {
+    grid-column: 2;
+    grid-row: 1 / 3;
+    align-self: center;
+  }
 }
 
 .config-software-panel > .config-panel-heading {

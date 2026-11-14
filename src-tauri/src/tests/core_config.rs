@@ -1884,6 +1884,7 @@ fn sensitive_words_patch_preserves_other_config_and_clears_each_provider_indepen
     let settings = normalize_core_sensitive_words_settings(CoreSensitiveWordsSettings {
         antigravity_sensitive_words: vec!["  Hermes  ".into(), "".into(), "Nous Research".into()],
         devin_sensitive_words: Vec::new(),
+        ..Default::default()
     });
     let patched = patch_core_sensitive_words_yaml(input, &settings)
         .unwrap()
@@ -1920,6 +1921,7 @@ fn sensitive_words_patch_adds_missing_sections_without_touching_unrelated_fields
     let settings = CoreSensitiveWordsSettings {
         antigravity_sensitive_words: vec!["proxy".into()],
         devin_sensitive_words: vec!["Claude Code".into()],
+        ..Default::default()
     };
     let patched = patch_core_sensitive_words_yaml(input, &settings)
         .unwrap()
@@ -1955,6 +1957,7 @@ fn sensitive_words_patch_adds_missing_sections_without_touching_unrelated_fields
     let only_devin = CoreSensitiveWordsSettings {
         antigravity_sensitive_words: Vec::new(),
         devin_sensitive_words: vec!["another phrase".into()],
+        ..Default::default()
     };
     let patched =
         patch_core_sensitive_words_yaml("antigravity:\n  sensitive-words:\ndevin:\n", &only_devin)
@@ -1985,6 +1988,57 @@ fn enabled_tls_requires_both_paths() {
     let disabled = normalize_core_tls_settings(disabled).unwrap();
     assert_eq!(disabled.cert, "server.crt");
     assert!(disabled.key.is_empty());
+}
+
+#[test]
+fn sensitive_words_replacements_round_trip_rename_clear_and_preserve_values() {
+    let input = "# preserve comment\nconfig-version: 8\noauth:\n  providers:\n    antigravity:\n      sensitive-words: [keep]\n      sensitive-words-replace: {Old: stale, Remove: unused}\n      signature-cache-enabled: true\n    devin:\n      sensitive-words-replace: {OldDevin: stale}\ncustom: {keep: true}\n";
+    let mut settings = core_sensitive_words_settings_from_value(
+        &serde_norway::from_str(input).unwrap(),
+    ).unwrap();
+    settings.antigravity_sensitive_words_replace = [
+        ("  New: target  ".into(), "  replacement\nnext line  ".into()),
+        ("Delete".into(), String::new()),
+        ("   ".into(), "ignored".into()),
+    ].into();
+    settings.devin_sensitive_words_replace.clear();
+    let settings = normalize_core_sensitive_words_settings(settings);
+    assert_eq!(settings.antigravity_sensitive_words_replace.len(), 2);
+    let patched = patch_core_sensitive_words_yaml(input, &settings).unwrap().unwrap();
+    let parsed: serde_norway::Value = serde_norway::from_str(&patched).unwrap();
+    assert!(patched.contains("# preserve comment"));
+    assert_eq!(parsed["custom"]["keep"], true);
+    assert_eq!(parsed["oauth"]["providers"]["antigravity"]["signature-cache-enabled"], true);
+    assert_eq!(core_sensitive_words_settings_from_value(&parsed).unwrap(), settings);
+    assert!(parsed["oauth"]["providers"]["antigravity"]["sensitive-words-replace"]["Old"].is_null());
+    assert!(patch_core_sensitive_words_yaml(&patched, &settings).unwrap().is_none());
+    let cleared = patch_core_sensitive_words_yaml(&patched, &CoreSensitiveWordsSettings::default()).unwrap().unwrap();
+    assert_eq!(core_sensitive_words_settings_from_value(&serde_norway::from_str(&cleared).unwrap()).unwrap(), CoreSensitiveWordsSettings::default());
+}
+
+#[test]
+fn sensitive_words_replacements_validate_and_support_missing_null_and_legacy_sections() {
+    let settings = CoreSensitiveWordsSettings {
+        antigravity_sensitive_words_replace: [("Codex".into(), String::new())].into(),
+        devin_sensitive_words_replace: [("Claude".into(), "Assistant".into())].into(),
+        ..Default::default()
+    };
+    for input in ["config-version: 8\n", "config-version: 8\noauth:\n  providers:\n    antigravity: null\n    devin:\n      sensitive-words-replace: null\n", "antigravity: null\ndevin:\n  sensitive-words-replace: null\n"] {
+        let patched = patch_core_sensitive_words_yaml(input, &settings).unwrap().unwrap();
+        assert_eq!(core_sensitive_words_settings_from_value(&serde_norway::from_str(&patched).unwrap()).unwrap(), settings);
+    }
+    for value in ["[]", "{target: 123}", "{123: replacement}", "{target: null}"] {
+        let input = format!("config-version: 8\noauth:\n  providers:\n    devin:\n      sensitive-words-replace: {value}\n");
+        assert!(core_sensitive_words_settings_from_value(&serde_norway::from_str(&input).unwrap()).is_err());
+    }
+    let input = "config-version: 8\nantigravity:\n  sensitive-words-replace: {Codex: Old}\noauth:\n  providers:\n    devin:\n      sensitive-words-replace: {Claude: Current}\n";
+    let parsed = serde_norway::from_str(input).unwrap();
+    let loaded = core_sensitive_words_settings_from_value(&parsed).unwrap();
+    assert_eq!(loaded.antigravity_sensitive_words_replace["Codex"], "Old");
+    assert_eq!(loaded.devin_sensitive_words_replace["Claude"], "Current");
+    let patched = patch_core_sensitive_words_yaml(input, &CoreSensitiveWordsSettings::default()).unwrap().unwrap();
+    let parsed: serde_norway::Value = serde_norway::from_str(&patched).unwrap();
+    assert!(parsed["antigravity"]["sensitive-words-replace"].as_mapping().unwrap().is_empty());
 }
 
 #[test]

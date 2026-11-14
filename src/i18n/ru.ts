@@ -1,6 +1,12 @@
 import type { MessageKey } from './locales/zh-CN';
 
 export const ru: Record<MessageKey, string> = {
+  'config.sensitiveWords.replacements': 'Замена чувствительных слов',
+  'config.sensitiveWords.replacementsHint': 'Только для системных промптов. Буквальное сопоставление без учёта регистра. Пустая замена удаляет совпавший текст; пробелы и переносы строк в замене сохраняются.',
+  'config.sensitiveWords.target': 'Исходный текст',
+  'config.sensitiveWords.replacement': 'Замена',
+  'config.sensitiveWords.replacementPlaceholder': 'Оставьте пустым для удаления текста',
+  'config.sensitiveWords.invalidReplacements': 'Укажите исходный текст для каждого правила. В рамках провайдера он должен быть уникальным без учёта регистра.',
   'home.catalog.refresh': "Обновить каталоги моделей",
   'home.catalog.refreshing': "Синхронизация каталогов…",
   'home.catalog.hint': "Синхронизировать удалённые каталоги моделей и их возможности без перезапуска ядра",

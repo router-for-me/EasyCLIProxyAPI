@@ -130,7 +130,7 @@ describe('template configuration drafts', () => {
     expect(claudeOauthPaths).toContain('upstream.claude.disable-cloaking-model-list');
 
     // 6. Check categories mapping
-    expect(settingsCategories.map(c => c.id)).toEqual(['general', 'proxy', 'aliases', 'routing', 'requests', 'oauth', 'diagnostics', 'software']);
+    expect(settingsCategories.map(c => c.id)).toEqual(['general', 'proxy', 'aliases', 'routing', 'requests', 'sensitiveWords', 'oauth', 'diagnostics', 'software']);
     expect(settingsTemplateGroups.general.map(g => g.id)).toContain('server');
     expect(settingsTemplateGroups.general.map(g => g.id)).toContain('management');
     expect(settingsTemplateGroups.routing.map(g => g.id)).toContain('routing-advanced');

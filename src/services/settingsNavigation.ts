@@ -13,6 +13,7 @@ export const settingsCategories = [
   { id: 'aliases', title: text('模型别名', 'Model aliases', 'モデル別名') },
   { id: 'routing', title: text('路由与稳定性', 'Routing & reliability', 'ルーティングと安定性') },
   { id: 'requests', title: text('模型与请求', 'Models & requests', 'モデルとリクエスト') },
+  { id: 'sensitiveWords', title: text('敏感词设置', 'Sensitive words', '機密語の設定') },
   { id: 'oauth', title: text('上游与凭据', 'Upstreams & credentials', '上流と認証情報') },
   { id: 'diagnostics', title: text('日志与诊断', 'Logs & diagnostics', 'ログと診断') },
   { id: 'software', title: text('应用偏好', 'App preferences', 'アプリの設定') },
@@ -24,6 +25,7 @@ export const settingsTemplateGroups = {
   aliases: [],
   routing: [...routingTemplateGroups, ...extensionTemplateGroups.filter(group => group.id === 'extensions-concurrency')],
   requests: [...requestTemplateGroups, ...payloadTemplateGroups],
+  sensitiveWords: [],
   oauth: ['oauth-common', 'oauth-codex', 'oauth-others', 'oauth-filters', 'oauth-claude', 'oauth-claude-headers', 'oauth-models', 'oauth-media']
     .map(id => oauthTemplateGroups.find(group => group.id === id)!),
   diagnostics: [...generalTemplateGroups.filter(group => group.id === 'diagnostics'), ...extensionTemplateGroups.filter(group => group.id === 'extensions-inflight')],

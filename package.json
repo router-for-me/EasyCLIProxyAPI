@@ -15,6 +15,7 @@
     "test:ui:responsive": "node tests/responsive-layout-ui.cjs",
     "test:ui:refinements": "node tests/ui-refinements-ui.cjs",
     "test:ui:settings": "node tests/config-settings-ui.cjs",
+    "test:ui:sensitive-words": "node tests/sensitive-words-ui.cjs",
     "test:ui:browser-mock": "node tests/browser-mock-ui.cjs",
     "test:ui:agent-environment": "node tests/agent-environment-directory-ui.cjs",
     "test:ui:cli-launch-arguments": "node tests/cli-launch-arguments-ui.cjs",

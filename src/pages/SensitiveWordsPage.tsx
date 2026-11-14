@@ -1,271 +1,402 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Download, Plus, RefreshCw, ShieldAlert } from 'lucide-react';
 import { Notice } from '../components/Notice';
-import { getCoreSensitiveWordsSettings, saveCoreSensitiveWordsSettings } from '../services/coreSettings';
-import type { SensitiveWordsSettings } from '../services/coreSettings';
-import { useCallback, useEffect, useRef, useState, type ClipboardEvent } from 'react';
-import { Check, Plus, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react';
-import { useI18n } from '../i18n';
+import { SettingsHelp } from '../components/SettingsHelp';
 import { useConfirmation } from '../components/ConfirmationDialog';
-
-type Provider = 'antigravity' | 'devin';
-type WordEntry = { id: number; value: string };
-type WordDraft = Record<Provider, WordEntry[]>;
-
-const normalizedWords = (entries: WordEntry[]) => entries.map(({ value }) => value.trim()).filter(Boolean);
-
-type WordEditorProps = {
-  provider: Provider;
-  entries: WordEntry[];
-  composer: string;
-  disabled: boolean;
-  onAdd: (provider: Provider, value: string) => void;
-  onCompose: (provider: Provider, value: string) => void;
-  onChange: (provider: Provider, id: number, value: string) => void;
-  onRemove: (provider: Provider, id: number) => void;
-  onPaste: (provider: Provider, id: number, event: ClipboardEvent<HTMLInputElement>) => void;
+import { useI18n } from '../i18n';
+import { sensitiveWordsMessages } from '../i18n/sensitiveWords';
+import { templateText } from '../i18n/templateConfig';
+import {
+  getCoreSensitiveWordsSettings,
+  saveCoreSensitiveWordsSettings,
+  type SensitiveWordsSettings,
+} from '../services/coreSettings';
+import {
+  fetchLatestSensitiveWordRules,
+  addCloudRules,
+  validateWordEntries,
+  duplicateWordGroups,
+  mergeDuplicateWords,
+  type WordEntry,
+  type SensitiveRule,
+} from '../services/sensitiveWords';
+const providers = ['antigravity', 'devin'] as const;
+const toEntries = (settings: SensitiveWordsSettings): WordEntry[] =>
+  providers.flatMap((provider) => [
+    ...settings[`${provider}SensitiveWords`].map((target) => ({
+      id: crypto.randomUUID(),
+      provider,
+      kind: 'obfuscate' as const,
+      target,
+      replacement: '',
+    })),
+    ...Object.entries(settings[`${provider}SensitiveWordsReplace`]).map(([target, replacement]) => ({
+      id: crypto.randomUUID(),
+      provider,
+      kind: 'replace' as const,
+      target,
+      replacement,
+    })),
+  ]);
+const toSettings = (rows: WordEntry[]): SensitiveWordsSettings => {
+  const settings: SensitiveWordsSettings = {
+    antigravitySensitiveWords: [],
+    devinSensitiveWords: [],
+    antigravitySensitiveWordsReplace: {},
+    devinSensitiveWordsReplace: {},
+  };
+  for (const row of rows) {
+    if (row.kind === 'replace')
+      Object.defineProperty(settings[`${row.provider}SensitiveWordsReplace`], row.target.trim(), {
+        value: row.replacement,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    else settings[`${row.provider}SensitiveWords`].push(row.target.trim());
+  }
+  return settings;
 };
-
-function WordEditor({ provider, entries, composer, disabled, onAdd, onCompose, onChange, onRemove, onPaste }: WordEditorProps) {
-  const { t } = useI18n();
-  const title = t(provider === 'antigravity' ? 'config.sensitiveWords.antigravity' : 'config.sensitiveWords.devin');
-
-  return (
-    <section className="config-sensitive-words-card">
-      <div className="config-sensitive-words-card-heading">
-        <h3>{title}</h3>
-        <span className="config-sensitive-words-count" aria-label={`${entries.length} ${title}`}>{entries.length}</span>
-      </div>
-      <div className="config-sensitive-words-composer">
-        <input
-          className="config-network-input"
-          type="text"
-          aria-label={`${title} ${t('common.add')}`}
-          value={composer}
-          disabled={disabled}
-          placeholder={t('config.sensitiveWords.addPlaceholder')}
-          onChange={(event) => onCompose(provider, event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
-            event.preventDefault();
-            onAdd(provider, composer);
-          }}
-          onPaste={(event) => {
-            const pasted = event.clipboardData.getData('text');
-            if (!/[\r\n]/.test(pasted)) return;
-            event.preventDefault();
-            const input = event.currentTarget;
-            const start = input.selectionStart ?? input.value.length;
-            const end = input.selectionEnd ?? start;
-            onAdd(provider, input.value.slice(0, start) + pasted + input.value.slice(end));
-          }}
-        />
-        <button type="button" className="icon-button quiet" disabled={disabled || !composer.trim()}
-          title={t('common.add')} aria-label={`${t('common.add')} ${title}`}
-          onClick={() => onAdd(provider, composer)}>
-          <Plus size={16} aria-hidden="true" />
-        </button>
-      </div>
-      {entries.length === 0 ? (
-        <p className="config-sensitive-words-empty">{t('config.sensitiveWords.empty')}</p>
-      ) : (
-        <div className="config-sensitive-words-list">
-          {entries.map((entry, index) => (
-            <div className="config-sensitive-words-row" key={entry.id}>
-              <input
-                id={`config-${provider}-word-${entry.id}`}
-                className="config-network-input"
-                type="text"
-                aria-label={`${title} ${index + 1}`}
-                value={entry.value}
-                disabled={disabled}
-                onChange={(event) => onChange(provider, entry.id, event.currentTarget.value)}
-                onPaste={(event) => onPaste(provider, entry.id, event)}
-              />
-              <button type="button" className="icon-button quiet" disabled={disabled}
-                title={t('common.delete')} aria-label={`${t('common.delete')} ${title} ${index + 1}`}
-                onClick={() => onRemove(provider, entry.id)}>
-                <Trash2 size={15} aria-hidden="true" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
 export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void } = {}) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const st = (key: keyof typeof sensitiveWordsMessages) => templateText(sensitiveWordsMessages[key], locale);
   const { askConfirmation, confirmationDialog } = useConfirmation();
-  const nextEntryId = useRef(0);
   const [saved, setSaved] = useState<SensitiveWordsSettings | null>(null);
-  const [draft, setDraft] = useState<WordDraft>({ antigravity: [], devin: [] });
-  const [composer, setComposer] = useState<Record<Provider, string>>({ antigravity: '', devin: '' });
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [rows, setRows] = useState<WordEntry[]>([]);
+  const [busy, setBusy] = useState<'load' | 'save' | 'cloud' | null>('load');
   const [error, setError] = useState('');
+  const [cloudNotice, setCloudNotice] = useState('');
   const [savedNotice, setSavedNotice] = useState(false);
-
-  const replaceDraft = useCallback((settings: SensitiveWordsSettings) => {
-    const toEntries = (words: string[]) => words.map((value) => ({ id: nextEntryId.current++, value }));
-    setDraft({
-      antigravity: toEntries(settings.antigravitySensitiveWords),
-      devin: toEntries(settings.devinSensitiveWords),
-    });
-    setComposer({ antigravity: '', devin: '' });
-  }, []);
-
+  const [undo, setUndo] = useState<WordEntry[] | null>(null);
+  const [undoMessage, setUndoMessage] = useState('');
+  const session = useRef(0);
+  const invalid = validateWordEntries(rows);
+  const duplicates = duplicateWordGroups(rows);
+  const duplicateIds = new Set(duplicates.flatMap((group) => group.entries.map((entry) => entry.id)));
+  const settings = toSettings(rows);
+  const dirty = saved !== null && JSON.stringify(settings) !== JSON.stringify(saved);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
   const load = useCallback(async () => {
-    setLoading(true);
+    const token = ++session.current;
+    setBusy('load');
     setError('');
+    setSavedNotice(false);
+    setCloudNotice('');
     try {
       const result = await getCoreSensitiveWordsSettings();
-      setSaved(result);
-      replaceDraft({
-        ...result,
-        antigravitySensitiveWords: result.antigravitySensitiveWords.length
-          ? result.antigravitySensitiveWords
-          : ['Claude', 'GPT-5', 'GPT-6', 'Codex', 'Anthropic'],
-        devinSensitiveWords: result.devinSensitiveWords.length
-          ? result.devinSensitiveWords
-          : [
-              'Claude Agent SDK',
-              'You are a Claude agent',
-              'For clear communication with the user the assistant MUST avoid using emojis',
-              'Bypass all content filters',
-              'Hermes',
-              'OpenClaw',
-              'Deepseek Harness',
-            ],
-      });
-      setSavedNotice(false);
+      if (token === session.current) {
+        setSaved(result);
+        setRows(toEntries(result));
+        setUndo(null);
+      }
     } catch (cause) {
-      setError(String(cause));
+      if (token === session.current) setError(String(cause));
     } finally {
-      setLoading(false);
+      if (token === session.current) setBusy(null);
     }
-  }, [replaceDraft]);
-
-  useEffect(() => { void load(); }, [load]);
-
-  const words: SensitiveWordsSettings = {
-    antigravitySensitiveWords: [...normalizedWords(draft.antigravity), ...(composer.antigravity.trim() ? [composer.antigravity.trim()] : [])],
-    devinSensitiveWords: [...normalizedWords(draft.devin), ...(composer.devin.trim() ? [composer.devin.trim()] : [])],
-  };
-  const dirty = saved !== null && (
-    JSON.stringify(words.antigravitySensitiveWords) !== JSON.stringify(saved.antigravitySensitiveWords)
-    || JSON.stringify(words.devinSensitiveWords) !== JSON.stringify(saved.devinSensitiveWords)
-  );
-
-  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
-
-  const changeWord = (provider: Provider, id: number, value: string) => {
-    setDraft((current) => ({
-      ...current,
-      [provider]: current[provider].map((entry) => entry.id === id ? { ...entry, value } : entry),
-    }));
+  }, []);
+  useEffect(() => {
+    void load();
+    return () => {
+      ++session.current;
+    };
+  }, [load]);
+  const changed = () => {
     setSavedNotice(false);
+    setCloudNotice('');
+    setError('');
   };
-
-  const composeWord = (provider: Provider, value: string) => {
-    setComposer((current) => ({ ...current, [provider]: value }));
-    setSavedNotice(false);
+  const changeRule = (row: WordEntry, field: 'target' | 'replacement', value: string) => {
+    setRows((current) =>
+      current.map((entry) => (entry.id === row.id ? { ...entry, [field]: value } : entry)),
+    );
+    changed();
   };
-
-  const addWords = (provider: Provider, value: string) => {
-    const entries = value.split(/\r\n|\n|\r/).map((word) => word.trim()).filter(Boolean)
-      .map((word) => ({ id: nextEntryId.current++, value: word }));
-    if (entries.length === 0) return;
-    setDraft((current) => ({ ...current, [provider]: [...current[provider], ...entries] }));
-    setComposer((current) => ({ ...current, [provider]: '' }));
-    setSavedNotice(false);
+  const add = (provider: SensitiveRule['provider'], kind: SensitiveRule['kind']) => {
+    const rule = { id: crypto.randomUUID(), provider, kind, target: '', replacement: '' };
+    setRows((current) => [...current, rule]);
+    changed();
+    requestAnimationFrame(() =>
+      Array.from(document.querySelectorAll<HTMLElement>('.sw-inline-row'))
+        .find((el) => el.dataset.ruleId === rule.id)
+        ?.querySelector<HTMLTextAreaElement>('textarea')
+        ?.focus(),
+    );
   };
-
-  const removeWord = (provider: Provider, id: number) => {
-    setDraft((current) => ({ ...current, [provider]: current[provider].filter((entry) => entry.id !== id) }));
-    setSavedNotice(false);
+  const remove = (row: WordEntry) => {
+    setUndo(rows);
+    setUndoMessage(st('removed'));
+    setRows((current) => current.filter((entry) => entry.id !== row.id));
+    changed();
   };
-
-  const pasteWords = (provider: Provider, id: number, event: ClipboardEvent<HTMLInputElement>) => {
-    const pasted = event.clipboardData.getData('text');
-    if (!/[\r\n]/.test(pasted)) return;
-    event.preventDefault();
-    const input = event.currentTarget;
-    const lines = pasted.split(/\r\n|\n|\r/).filter((line) => line.trim());
-    if (lines.length === 0) return;
-    const start = input.selectionStart ?? input.value.length;
-    const end = input.selectionEnd ?? start;
-    const entries = lines.map((value, index) => ({ id: index === 0 ? id : nextEntryId.current++, value }));
-    entries[0].value = input.value.slice(0, start) + entries[0].value;
-    entries[entries.length - 1].value += input.value.slice(end);
-    setDraft((current) => ({
-      ...current,
-      [provider]: current[provider].flatMap((entry) => entry.id === id ? entries : [entry]),
-    }));
-    setSavedNotice(false);
-  };
-
   const save = async () => {
-    if (!dirty || saving) return;
-    setSaving(true);
+    if (!dirty || invalid || busy !== null) return;
+    const token = session.current;
+    setBusy('save');
     setError('');
     try {
-      const result = await saveCoreSensitiveWordsSettings({
-        settings: words,
-      });
-      setSaved(result);
-      replaceDraft(result);
-      setSavedNotice(true);
+      const result = await saveCoreSensitiveWordsSettings({ settings });
+      if (token === session.current) {
+        setSaved(result);
+        setRows(toEntries(result));
+        setUndo(null);
+        setSavedNotice(true);
+        setCloudNotice('');
+      }
     } catch (cause) {
-      setError(String(cause));
+      if (token === session.current) setError(String(cause));
     } finally {
-      setSaving(false);
+      if (token === session.current) setBusy(null);
     }
   };
-
-  const refresh = async () => {
-    if (dirty && !await askConfirmation({
-      title: t('config.sensitiveWords.discardTitle'),
-      message: t('config.sensitiveWords.discardMessage'),
-      confirmText: t('common.refresh'),
-    })) return;
+  const addLatest = async () => {
+    if (busy !== null) return;
+    const token = session.current;
+    setBusy('cloud');
+    setError('');
+    setCloudNotice('');
+    try {
+      const catalog = await fetchLatestSensitiveWordRules();
+      if (token === session.current) {
+        const merged = addCloudRules(rows, catalog.rules);
+        setRows(merged);
+        setCloudNotice(
+          merged.length === rows.length
+            ? st('nothingToAdd')
+            : `${st('addedLatest')} ${merged.length - rows.length}`,
+        );
+        setSavedNotice(false);
+      }
+    } catch (cause) {
+      if (token === session.current) setError(String(cause));
+    } finally {
+      if (token === session.current) setBusy(null);
+    }
+  };
+  const discard = async () => {
+    if (
+      dirty &&
+      !(await askConfirmation({
+        title: t('config.sensitiveWords.discardTitle'),
+        message: t('config.sensitiveWords.discardMessage'),
+        confirmText: t('common.refresh'),
+      }))
+    )
+      return;
     await load();
   };
-
   return (
-    <section className="panel surface-bare config-sensitive-words-panel">
+    <section className="panel surface-bare config-sensitive-words-panel sw-library">
+      {confirmationDialog}
       <div className="config-panel-heading">
         <div className="config-heading-title">
           <ShieldAlert size={18} aria-hidden="true" />
-          <h2>{t('config.sensitiveWords.title')}</h2>
+          <h2>{st('title')}</h2>
         </div>
         <div className="config-heading-actions">
-          {dirty ? <span className="state-pill">{t('config.network.unsaved')}</span>
-            : savedNotice ? <span className="state-pill success">{t('config.network.saved')}</span> : null}
-          <button type="button" className="icon-button quiet" title={t('common.refresh')} aria-label={t('common.refresh')}
-            disabled={loading || saving} onClick={() => void refresh()}>
-            <RefreshCw size={16} aria-hidden="true" />
+          {dirty ? (
+            <span className="state-pill">{t('config.network.unsaved')}</span>
+          ) : savedNotice ? (
+            <span className="state-pill success">{t('config.network.saved')}</span>
+          ) : null}
+          <button
+            className="secondary-button compact-button sw-cloud-add"
+            disabled={busy !== null || saved === null}
+            onClick={() => void addLatest()}
+          >
+            <Download size={15} />
+            {busy === 'cloud' ? st('syncing') : st('addLatest')}
           </button>
-          <button type="button" className="primary-button compact-button" disabled={loading || saving || !dirty}
-            onClick={() => void save()}>
-            <Check size={16} aria-hidden="true" />
-            {saving ? t('common.saving') : t('common.save')}
+          <button
+            className="secondary-button compact-button"
+            disabled={busy !== null}
+            onClick={() => void discard()}
+          >
+            <RefreshCw size={15} />
+            {t('common.refresh')}
+          </button>
+          <button
+            className="primary-button compact-button sw-save"
+            disabled={busy !== null || !dirty || invalid !== null}
+            onClick={() => void save()}
+          >
+            {busy === 'save' ? t('common.saving') : t('common.save')}
           </button>
         </div>
       </div>
-      {error ? <Notice tone="error" variant="text">{error}</Notice> : null}
-      {loading ? <p>{t('common.loading')}</p> : saved === null ? (
-        <button type="button" className="secondary-button compact-button" onClick={() => void load()}>{t('common.retry')}</button>
-      ) : (
-        <div className="config-sensitive-words-grid">
-          <WordEditor provider="antigravity" entries={draft.antigravity} composer={composer.antigravity}
-            disabled={saving} onAdd={addWords} onCompose={composeWord} onChange={changeWord}
-            onRemove={removeWord} onPaste={pasteWords} />
-          <WordEditor provider="devin" entries={draft.devin} composer={composer.devin}
-            disabled={saving} onAdd={addWords} onCompose={composeWord} onChange={changeWord}
-            onRemove={removeWord} onPaste={pasteWords} />
+      {error ? (
+        <Notice tone="error" variant="text">
+          {error}
+        </Notice>
+      ) : null}
+      {invalid === 'target' ? (
+        <Notice tone="error" variant="text">
+          {st('invalidTarget')}
+        </Notice>
+      ) : null}
+      {cloudNotice ? (
+        <Notice tone="success" variant="text">
+          {cloudNotice}
+        </Notice>
+      ) : null}
+      {undo ? (
+        <div className="sw-feedback" role="status">
+          <span>{undoMessage}</span>
+          <button
+            className="secondary-button compact-button ghost"
+            disabled={busy !== null}
+            onClick={() => {
+              setRows(undo);
+              setUndo(null);
+            }}
+          >
+            {st('undo')}
+          </button>
         </div>
+      ) : null}
+      {saved === null ? (
+        busy ? (
+          <p>{t('common.loading')}</p>
+        ) : (
+          <button className="secondary-button compact-button" onClick={() => void load()}>
+            {t('common.retry')}
+          </button>
+        )
+      ) : (
+        <>
+          {providers.map((provider) => (
+            <details className="sw-provider-section" key={provider} open>
+              <summary>
+                {provider === 'antigravity' ? 'Antigravity' : 'Devin'}
+                <span className="sw-section-count">
+                  {rows.filter((row) => row.provider === provider).length}
+                </span>
+              </summary>
+              <div className="sw-provider-body">
+                {(['replace', 'obfuscate'] as const).map((kind) => {
+                  const group = rows.filter((row) => row.provider === provider && row.kind === kind);
+                  const groupDuplicates = duplicates.filter(
+                    (item) => item.entries[0].provider === provider && item.entries[0].kind === kind,
+                  );
+                  const duplicateHintId = `sw-duplicates-${provider}-${kind}`;
+                  const label = st(
+                    kind === 'replace' ? 'replace' : provider === 'devin' ? 'systemWords' : 'obfuscate',
+                  );
+                  return (
+                    <section className="sw-field-group" key={kind} aria-label={`${provider} ${label}`}>
+                      <div className="sw-field-heading">
+                        <h3>{label}</h3>
+                        <SettingsHelp
+                          label={`${provider === 'antigravity' ? 'Antigravity' : 'Devin'} ${label}`}
+                        >
+                          {st(
+                            kind === 'replace'
+                              ? 'replacementHelp'
+                              : provider === 'devin'
+                                ? 'systemWordsHelp'
+                                : 'obfuscationHelp',
+                          )}
+                        </SettingsHelp>
+                      </div>
+                      {groupDuplicates.length ? (
+                        <div id={duplicateHintId} className="sw-duplicate-notices" aria-live="polite">
+                          {groupDuplicates.map((duplicate) => (
+                            <div className="sw-duplicate-notice" key={duplicate.entries[0].id}>
+                              <span>
+                                <strong>
+                                  {st('duplicateWord')}：{duplicate.entries[0].target.trim()}
+                                </strong>
+                                <span className="sw-duplicate-detail">
+                                  ×{duplicate.entries.length} · {st('caseInsensitive')}
+                                  {!duplicate.canMerge ? ` · ${st('differentReplacements')}` : ''}
+                                </span>
+                              </span>
+                              {duplicate.canMerge ? (
+                                <button
+                                  className="secondary-button compact-button"
+                                  disabled={busy !== null}
+                                  onClick={() => {
+                                    setUndo(rows);
+                                    setUndoMessage(st('merged'));
+                                    setRows((current) => mergeDuplicateWords(current, duplicate));
+                                    changed();
+                                  }}
+                                >
+                                  {st('mergeDuplicates')}
+                                </button>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {group.length ? (
+                        <div className="sw-inline-list">
+                          {kind === 'replace' ? (
+                            <div className="sw-column-labels">
+                              <span>{t('config.sensitiveWords.target')}</span>
+                              <span>
+                                {t('config.sensitiveWords.replacement')}
+                                <span className="sw-field-hint">{st('emptyDeletes')}</span>
+                              </span>
+                            </div>
+                          ) : null}
+                          {group.map((row) => (
+                            <div
+                              className={`sw-inline-row ${kind === 'replace' ? 'sw-inline-pair' : ''}`}
+                              key={row.id}
+                              data-rule-id={row.id}
+                            >
+                              <textarea
+                                className="config-network-input"
+                                rows={1}
+                                aria-label={`${provider} ${label} ${t('config.sensitiveWords.target')}`}
+                                disabled={busy !== null}
+                                aria-invalid={duplicateIds.has(row.id) || undefined}
+                                aria-describedby={duplicateIds.has(row.id) ? duplicateHintId : undefined}
+                                value={row.target}
+                                onChange={(event) => changeRule(row, 'target', event.target.value)}
+                              />
+                              {kind === 'replace' ? (
+                                <textarea
+                                  className="config-network-input"
+                                  rows={1}
+                                  aria-label={`${provider} ${label} ${t('config.sensitiveWords.replacement')}`}
+                                  placeholder={st('emptyDeletes')}
+                                  disabled={busy !== null}
+                                  value={row.replacement}
+                                  onChange={(event) => changeRule(row, 'replacement', event.target.value)}
+                                />
+                              ) : null}
+                              <button
+                                className="secondary-button compact-button ghost"
+                                disabled={busy !== null}
+                                aria-label={`${t('common.delete')} ${row.target}`}
+                                onClick={() => remove(row)}
+                              >
+                                {t('common.delete')}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      <button
+                        className="secondary-button compact-button sw-add"
+                        disabled={busy !== null}
+                        onClick={() => add(provider, kind)}
+                      >
+                        <Plus size={14} />
+                        {t('common.add')}
+                      </button>
+                    </section>
+                  );
+                })}
+              </div>
+            </details>
+          ))}
+        </>
       )}
-      {confirmationDialog}
     </section>
   );
 }
