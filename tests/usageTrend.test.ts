@@ -35,6 +35,18 @@ const point = (
 });
 
 describe('usage trend helpers', () => {
+  test.each(['constructor', 'toString', '__proto__'])('preserves token counts for model key %s', (key) => {
+    const series = buildUsageTrendSeries([{
+      ...point('2026-09-14-15', 1, 10),
+      models: [{ key, label: key, tokens: 10 }],
+    }]);
+
+    expect(series.models.map(({ key: modelKey, tokens }) => ({ key: modelKey, tokens })))
+      .toEqual([{ key, tokens: 10 }]);
+    expect(series.points[0].models[key]).toBe(10);
+    expect(series.totals.tokens).toBe(10);
+  });
+
   test('parses and formats local hour keys', () => {
     const date = parseLocalHourKey('2026-09-14-15');
     expect(date).not.toBeNull();
