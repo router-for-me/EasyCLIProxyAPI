@@ -4,6 +4,7 @@ import {
   loadOAuthModelSettings,
   saveOAuthModelSettings,
   saveOAuthProviderExclusions,
+  syncOAuthProviderExclusionsToCredentials,
   type OAuthModelTarget,
 } from '../src/services/oauthModelSettings';
 import { openOAuthModelNames, setOAuthModelsExcluded } from '../src/services/oauthModels';
@@ -57,6 +58,29 @@ function createApi() {
 }
 
 describe('OAuth model settings scopes', () => {
+  it('uses explicit provider metadata before a credential filename when syncing exclusions', async () => {
+    const writes: Record<string, unknown>[] = [];
+    const api = {
+      async get(): Promise<unknown> {
+        return { files: [
+          { name: 'arbitrary.json', provider: 'CODEX' },
+          { name: 'codex-claude.json', provider: 'claude' },
+          { name: 'codex-legacy.json' },
+        ] };
+      },
+      async patch(_path: string, body: Record<string, unknown>): Promise<unknown> { writes.push(body); return {}; },
+      async put(): Promise<unknown> { return {}; },
+    };
+
+    const count = await syncOAuthProviderExclusionsToCredentials('codex', ['gpt-*'], api);
+
+    expect(count).toBe(2);
+    expect(writes).toEqual([
+      { name: 'arbitrary.json', excluded_models: ['gpt-*'] },
+      { name: 'codex-legacy.json', excluded_models: ['gpt-*'] },
+    ]);
+  });
+
   it('serializes simultaneous provider edits and preserves unrelated values verbatim', async () => {
     const { api, globalRules } = createApi();
     globalRules[' CODEX '] = ['old'];
