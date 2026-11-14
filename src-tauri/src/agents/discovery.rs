@@ -2888,32 +2888,296 @@ pub(crate) fn find_all_named_agent_executables_in_directories(
     result
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CodexCliSemver {
+    major: u64,
+    minor: u64,
+    patch: u64,
+    prerelease: Vec<String>,
+}
+
+impl CodexCliSemver {
+    fn cmp_prerelease_ident(left: &str, right: &str) -> std::cmp::Ordering {
+        let left_numeric = !left.is_empty() && left.bytes().all(|byte| byte.is_ascii_digit());
+        let right_numeric = !right.is_empty() && right.bytes().all(|byte| byte.is_ascii_digit());
+        match (left_numeric, right_numeric) {
+            (true, true) => {
+                let left_value = left.parse::<u64>();
+                let right_value = right.parse::<u64>();
+                match (left_value, right_value) {
+                    (Ok(lhs), Ok(rhs)) => lhs.cmp(&rhs),
+                    _ => left.len().cmp(&right.len()).then_with(|| left.cmp(right)),
+                }
+            }
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            (false, false) => left.cmp(right),
+        }
+    }
+}
+
+impl Ord for CodexCliSemver {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.major
+            .cmp(&other.major)
+            .then_with(|| self.minor.cmp(&other.minor))
+            .then_with(|| self.patch.cmp(&other.patch))
+            .then_with(
+                || match (self.prerelease.is_empty(), other.prerelease.is_empty()) {
+                    (true, true) => std::cmp::Ordering::Equal,
+                    (true, false) => std::cmp::Ordering::Greater,
+                    (false, true) => std::cmp::Ordering::Less,
+                    (false, false) => {
+                        for (left, right) in self.prerelease.iter().zip(other.prerelease.iter()) {
+                            let ordering = Self::cmp_prerelease_ident(left, right);
+                            if ordering != std::cmp::Ordering::Equal {
+                                return ordering;
+                            }
+                        }
+                        self.prerelease.len().cmp(&other.prerelease.len())
+                    }
+                },
+            )
+    }
+}
+
+impl PartialOrd for CodexCliSemver {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+pub(crate) fn parse_codex_cli_semver(output: &str) -> Option<CodexCliSemver> {
+    for raw_token in output.split_whitespace() {
+        let token = raw_token.trim().trim_start_matches(['v', 'V']);
+        let without_build = token.split('+').next().unwrap_or("");
+        let (core, prerelease_part) = match without_build.split_once('-') {
+            Some((core, pre)) => {
+                if pre.is_empty() {
+                    continue;
+                }
+                (core, Some(pre))
+            }
+            None => (without_build, None),
+        };
+        let mut parts = core.split('.');
+        let (Some(major_str), Some(minor_str), Some(patch_str), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            continue;
+        };
+        if [major_str, minor_str, patch_str]
+            .iter()
+            .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
+        {
+            continue;
+        }
+        let (Ok(major), Ok(minor), Ok(patch)) = (
+            major_str.parse::<u64>(),
+            minor_str.parse::<u64>(),
+            patch_str.parse::<u64>(),
+        ) else {
+            continue;
+        };
+        let prerelease = match prerelease_part {
+            Some(pre) => {
+                let segments = pre.split('.').map(str::to_string).collect::<Vec<_>>();
+                if segments.iter().any(|segment| segment.is_empty()) {
+                    continue;
+                }
+                segments
+            }
+            None => Vec::new(),
+        };
+        return Some(CodexCliSemver {
+            major,
+            minor,
+            patch,
+            prerelease,
+        });
+    }
+    None
+}
+
+fn codex_candidate_dedupe_key(path: &Path) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        windows_path_key(path)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        path_to_string(path)
+    }
+}
+
+fn push_unique_codex_candidate(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut std::collections::HashSet<String>,
+    candidate: PathBuf,
+) {
+    if !agent_cli_executable(&candidate) {
+        return;
+    }
+    let key = codex_candidate_dedupe_key(&candidate);
+    if seen.insert(key) {
+        candidates.push(candidate);
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn windows_codex_desktop_bundled_cli_candidates(
+    packages: &[WindowsAppxPackage],
+    desktop_executable: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for package in packages {
+        if let Some(app_exe) = windows_appx_executable(package, None) {
+            if let Some(app_dir) = app_exe.parent() {
+                push_unique_codex_candidate(
+                    &mut candidates,
+                    &mut seen,
+                    app_dir.join("resources").join("codex.exe"),
+                );
+            }
+        }
+        push_unique_codex_candidate(
+            &mut candidates,
+            &mut seen,
+            package
+                .install_location
+                .join("app")
+                .join("resources")
+                .join("codex.exe"),
+        );
+        push_unique_codex_candidate(
+            &mut candidates,
+            &mut seen,
+            package.install_location.join("resources").join("codex.exe"),
+        );
+    }
+    if let Some(app_exe) = desktop_executable {
+        if let Some(app_dir) = app_exe.parent() {
+            push_unique_codex_candidate(
+                &mut candidates,
+                &mut seen,
+                app_dir.join("resources").join("codex.exe"),
+            );
+        }
+    }
+    candidates
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn find_windows_relocated_codex_executables(local_app_data: &Path) -> Vec<PathBuf> {
+    let bin_root = local_app_data.join("OpenAI/Codex/bin");
+    let Ok(entries) = fs::read_dir(&bin_root) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let candidate = entry.path().join("codex.exe");
+        if agent_cli_executable(&candidate) {
+            let modified = fs::metadata(&candidate)
+                .and_then(|meta| meta.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            found.push((modified, candidate));
+        }
+    }
+    found.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+    found.into_iter().map(|(_, path)| path).collect()
+}
+
+pub(crate) fn find_codex_desktop_cli_candidates(home: &Path) -> Vec<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let packages =
+            find_windows_appx_packages(&["OpenAI.Codex", "OpenAI.CodexBeta", "OpenAI.ChatGPT"]);
+        let desktop_exe = find_windows_codex_app_executable(home);
+        windows_codex_desktop_bundled_cli_candidates(&packages, desktop_exe.as_deref())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut candidates = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        if let Some(DesktopAppTarget::Application(app)) = find_codex_app_installation(home) {
+            push_unique_codex_candidate(
+                &mut candidates,
+                &mut seen,
+                app.join("Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"),
+            );
+            push_unique_codex_candidate(
+                &mut candidates,
+                &mut seen,
+                app.join("Contents/Resources/codex"),
+            );
+        }
+        candidates
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = home;
+        Vec::new()
+    }
+}
+
+pub(crate) fn select_preferred_codex_executable<F>(
+    candidates: &[PathBuf],
+    mut probe_version: F,
+) -> Option<PathBuf>
+where
+    F: FnMut(&Path) -> Option<String>,
+{
+    let mut best_index: Option<usize> = None;
+    let mut best_rank: Option<(u8, Option<CodexCliSemver>)> = None;
+
+    for (index, candidate) in candidates.iter().enumerate() {
+        let probed = probe_version(candidate);
+        let rank = match probed.as_deref() {
+            Some(version) => match parse_codex_cli_semver(version) {
+                Some(semver) => (2_u8, Some(semver)),
+                None => (1_u8, None),
+            },
+            None => (0_u8, None),
+        };
+        let is_better = match &best_rank {
+            None => true,
+            Some(current) => rank > *current,
+        };
+        if is_better {
+            best_rank = Some(rank);
+            best_index = Some(index);
+        }
+    }
+
+    best_index.map(|index| candidates[index].clone())
+}
+
 pub(crate) fn find_codex_executable(home: &Path) -> Option<PathBuf> {
     let mut candidates = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    let directories = agent_executable_directories(home);
+    for candidate in find_all_named_agent_executables_in_directories(&directories, &["codex"]) {
+        push_unique_codex_candidate(&mut candidates, &mut seen, candidate);
+    }
+
+    for candidate in find_codex_desktop_cli_candidates(home) {
+        push_unique_codex_candidate(&mut candidates, &mut seen, candidate);
+    }
+
     #[cfg(target_os = "windows")]
     {
         let local_app_data = env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
             .unwrap_or_else(|| home.join("AppData/Local"));
-        let bin_root = local_app_data.join("OpenAI/Codex/bin");
-        if let Ok(entries) = fs::read_dir(&bin_root) {
-            for entry in entries.flatten() {
-                let candidate = entry.path().join("codex.exe");
-                if agent_cli_executable(&candidate) {
-                    candidates.push(candidate);
-                }
-            }
+        for candidate in find_windows_relocated_codex_executables(&local_app_data) {
+            push_unique_codex_candidate(&mut candidates, &mut seen, candidate);
         }
     }
-    let directories = agent_executable_directories(home);
-    candidates.extend(find_all_named_agent_executables_in_directories(&directories, &["codex"]));
 
-    for candidate in &candidates {
-        if read_agent_version(candidate, home).is_some() {
-            return Some(candidate.clone());
-        }
-    }
-    candidates.into_iter().next()
+    select_preferred_codex_executable(&candidates, |candidate| read_agent_version(candidate, home))
 }
 
 pub(crate) fn agent_executable_directories(home: &Path) -> Vec<PathBuf> {
