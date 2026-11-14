@@ -206,6 +206,8 @@ function createUsageEvents() {
       api_key_hash: 'mock-key-hash',
       api_key_display: 'sk-mock••••••••2026',
       api_key_remark: 'Browser Mock key',
+      request_id: `req-mock-${index + 1}`,
+      executor_type: index % 2 === 0 ? 'codex' : 'claude',
       tokens: {
         input_tokens: input,
         output_tokens: output,
@@ -938,6 +940,23 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
     if (index < 0) throw new Error(`Browser Mock credential not found: ${readString(query.name)}`);
     state.authFiles.splice(index, 1);
     return null;
+  }
+  if (method === 'GET' && path.startsWith('/observability/logs/requests/')) {
+    const reqId = decodeURIComponent(path.slice('/observability/logs/requests/'.length));
+    return [
+      '=== REQUEST INFO ===',
+      `Request-ID: ${reqId}`,
+      'Method: POST',
+      'Path: /v1/responses',
+      '',
+      '=== REQUEST BODY ===',
+      JSON.stringify({ model: 'gpt-5.2-codex', stream: true, input: 'Hello from Browser Mock' }, null, 2),
+      '',
+      '=== RESPONSE STREAM ===',
+      'data: {"choices":[{"delta":{"reasoning_content":"Thinking about the request..."}}]}',
+      'data: {"choices":[{"delta":{"content":"Hello! Here is the mock response."}}]}',
+      'data: [DONE]',
+    ].join('\n');
   }
   if (method === 'POST' && path === '/requests/api-call') return mockApiCall(state, asObject(body));
   if (method === 'DELETE' && path === '/oauth/session') {
