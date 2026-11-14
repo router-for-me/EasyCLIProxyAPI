@@ -2705,7 +2705,6 @@ textarea:focus-visible {
 .sw-inline-row textarea { display: block; width: 100%; min-width: 0; min-height: 38px; height: 38px; max-height: 240px; padding: 8px 10px; line-height: 20px; resize: vertical; field-sizing: content; }
 .sw-inline-row .compact-button { min-height: 38px; padding-inline: 8px; }
 .sw-add { justify-self: start; }
-.sw-feedback { display: flex; align-items: center; gap: 10px; font-size: var(--font-size-meta); color: var(--color-text-secondary); }
 .sw-duplicate-notices { display: grid; gap: 8px; }
 .sw-duplicate-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 10px 12px; border: 1px solid var(--color-warning-border); border-radius: var(--radius-md); background: var(--color-warning-subtle); font-size: var(--font-size-meta); }
 .sw-duplicate-notice > span { min-width: 0; overflow-wrap: anywhere; }

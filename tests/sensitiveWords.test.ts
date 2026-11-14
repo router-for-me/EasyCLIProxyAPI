@@ -47,7 +47,9 @@ test('cloud entries need no IDs; editor IDs are generated locally', () => {
 });
 test('validates duplicates while preserving empty replacements', () => {
   expect(validateWordEntries([rule('a', 'A', '')])).toBeNull();
-  expect(validateWordEntries([rule('a', '')])).toBe('target');
+  expect(validateWordEntries([rule('a', '')])).toBeNull();
+  expect(validateWordEntries([rule('a', '  ', 'Only a replacement')])).toBeNull();
+  expect(validateWordEntries([{ ...rule('a', '\t '), kind: 'obfuscate' }])).toBeNull();
   expect(validateWordEntries([rule('a', 'Codex'), rule('b', ' codex ')])).toBe('duplicate');
   expect(validateWordEntries([{ ...rule('a', 'A'), kind: 'obfuscate', replacement: '' }])).toBe('target');
 });

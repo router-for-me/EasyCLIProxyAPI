@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, Plus, RefreshCw, ShieldAlert } from 'lucide-react';
-import { Notice } from '../components/Notice';
+import { Dialog } from '../components/Dialog';
 import { SettingsHelp } from '../components/SettingsHelp';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { useI18n } from '../i18n';
@@ -37,7 +37,7 @@ const toEntries = (settings: SensitiveWordsSettings): WordEntry[] =>
       target,
       replacement,
     })),
-  ]);
+  ]).filter((row) => row.target.trim());
 const toSettings = (rows: WordEntry[]): SensitiveWordsSettings => {
   const settings: SensitiveWordsSettings = {
     antigravitySensitiveWords: [],
@@ -46,6 +46,7 @@ const toSettings = (rows: WordEntry[]): SensitiveWordsSettings => {
     devinSensitiveWordsReplace: {},
   };
   for (const row of rows) {
+    if (!row.target.trim()) continue;
     if (row.kind === 'replace')
       Object.defineProperty(settings[`${row.provider}SensitiveWordsReplace`], row.target.trim(), {
         value: row.replacement,
@@ -57,7 +58,7 @@ const toSettings = (rows: WordEntry[]): SensitiveWordsSettings => {
   }
   return settings;
 };
-export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void } = {}) {
+export function SensitiveWordsPage({ active = true, onDirtyChange }: { active?: boolean; onDirtyChange?: (dirty: boolean) => void } = {}) {
   const { t, locale } = useI18n();
   const st = (key: keyof typeof sensitiveWordsMessages) => templateText(sensitiveWordsMessages[key], locale);
   const { askConfirmation, confirmationDialog } = useConfirmation();
@@ -67,7 +68,6 @@ export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: 
   const [error, setError] = useState('');
   const [savedNotice, setSavedNotice] = useState(false);
   const [undo, setUndo] = useState<WordEntry[] | null>(null);
-  const [undoMessage, setUndoMessage] = useState('');
   const session = useRef(0);
   const invalid = validateWordEntries(rows);
   const duplicates = duplicateWordGroups(rows);
@@ -77,6 +77,9 @@ export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: 
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
+  useEffect(() => {
+    if (!active) setRows((current) => current.filter((row) => row.target.trim()));
+  }, [active]);
   const load = useCallback(async () => {
     const token = ++session.current;
     setBusy('load');
@@ -85,8 +88,9 @@ export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: 
     try {
       const result = await getCoreSensitiveWordsSettings();
       if (token === session.current) {
-        setSaved(result);
-        setRows(toEntries(result));
+        const entries = toEntries(result);
+        setSaved(toSettings(entries));
+        setRows(entries);
         setUndo(null);
       }
     } catch (cause) {
@@ -123,8 +127,7 @@ export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: 
     );
   };
   const remove = (row: WordEntry) => {
-    setUndo(rows);
-    setUndoMessage(st('removed'));
+    if (row.target.trim()) setUndo(rows.filter((entry) => entry.target.trim()));
     setRows((current) => current.filter((entry) => entry.id !== row.id));
     changed();
   };
@@ -190,12 +193,30 @@ export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: 
   return (
     <section className="panel surface-bare config-sensitive-words-panel sw-library">
       {confirmationDialog}
+      {error ? (
+        <Dialog alert size="sm" title={st('title')} onClose={() => setError('')}>
+          <p>{error}</p>
+        </Dialog>
+      ) : null}
       <div className="config-panel-heading">
         <div className="config-heading-title">
           <ShieldAlert size={18} aria-hidden="true" />
           <h2>{st('title')}</h2>
         </div>
         <div className="config-heading-actions">
+          {undo ? (
+            <button
+              className="secondary-button compact-button ghost"
+              disabled={busy !== null}
+              onClick={() => {
+                setRows(undo.filter((row) => row.target.trim()));
+                setUndo(null);
+                changed();
+              }}
+            >
+              {st('undo')}
+            </button>
+          ) : null}
           {dirty ? (
             <span className="state-pill">{t('config.network.unsaved')}</span>
           ) : savedNotice ? (
@@ -226,47 +247,14 @@ export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: 
           </button>
         </div>
       </div>
-      {error ? (
-        <Notice tone="error" variant="text">
-          {error}
-        </Notice>
-      ) : null}
-      {invalid === 'target' ? (
-        <Notice tone="error" variant="text">
-          {st('invalidTarget')}
-        </Notice>
-      ) : null}
-      {undo ? (
-        <div className="sw-feedback" role="status">
-          <span>{undoMessage}</span>
-          <button
-            className="secondary-button compact-button ghost"
-            disabled={busy !== null}
-            onClick={() => {
-              setRows(undo);
-              setUndo(null);
-            }}
-          >
-            {st('undo')}
-          </button>
-        </div>
-      ) : null}
-      {saved === null ? (
-        busy ? (
-          <p>{t('common.loading')}</p>
-        ) : (
-          <button className="secondary-button compact-button" onClick={() => void load()}>
-            {t('common.retry')}
-          </button>
-        )
-      ) : (
+      {saved !== null ? (
         <>
           {providers.map((provider) => (
             <details className="sw-provider-section" key={provider} open>
               <summary>
                 {provider === 'antigravity' ? 'Antigravity' : 'Devin'}
                 <span className="sw-section-count">
-                  {rows.filter((row) => row.provider === provider).length}
+                  {rows.filter((row) => row.provider === provider && row.target.trim()).length}
                 </span>
               </summary>
               <div className="sw-provider-body">
@@ -314,7 +302,6 @@ export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: 
                                   disabled={busy !== null}
                                   onClick={() => {
                                     setUndo(rows);
-                                    setUndoMessage(st('merged'));
                                     setRows((current) => mergeDuplicateWords(current, duplicate));
                                     changed();
                                   }}
@@ -342,6 +329,11 @@ export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: 
                               className={`sw-inline-row ${kind === 'replace' ? 'sw-inline-pair' : ''}`}
                               key={row.id}
                               data-rule-id={row.id}
+                              onBlur={(event) => {
+                                if (!row.target.trim() && !event.currentTarget.contains(event.relatedTarget)) {
+                                  setRows((current) => current.filter((entry) => entry.id !== row.id));
+                                }
+                              }}
                             >
                               <textarea
                                 className="config-network-input"
@@ -391,7 +383,7 @@ export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: 
             </details>
           ))}
         </>
-      )}
+      ) : null}
     </section>
   );
 }

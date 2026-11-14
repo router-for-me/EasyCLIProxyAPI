@@ -2717,7 +2717,7 @@ export function ConfigPanelPage() {
           </div>
           <div id="config-template-panel" hidden={searching || templateGroups.length === 0}><TemplateConfigSection groups={allSettingsTemplateGroups} visibleGroups={templateGroups.map(group => group.id)} onDirtyGroupsChange={setDirtyTemplateGroups} /></div>
           <div className="surface-card" id="config-native-aliases" tabIndex={-1} role="region" aria-label={t('app.nav.thinkingAliases')} hidden={searching || activeSubpage !== 'aliases'}>{aliasesVisited ? <ThinkingAliasesPage embedded /> : null}</div>
-          <div className="surface-card" id="config-native-sensitive-words" tabIndex={-1} role="region" aria-label={t('config.sensitiveWords.title')} hidden={searching || activeSubpage !== 'sensitiveWords'}>{sensitiveWordsVisited ? <SensitiveWordsPage onDirtyChange={setSensitiveWordsDirty} /> : null}</div>
+          <div className="surface-card" id="config-native-sensitive-words" tabIndex={-1} role="region" aria-label={t('config.sensitiveWords.title')} hidden={searching || activeSubpage !== 'sensitiveWords'}>{sensitiveWordsVisited ? <SensitiveWordsPage active={!searching && activeSubpage === 'sensitiveWords'} onDirtyChange={setSensitiveWordsDirty} /> : null}</div>
         </div>
       </div>
 

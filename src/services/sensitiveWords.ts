@@ -54,7 +54,8 @@ export function addCloudRules(current: WordEntry[], cloud: CloudRule[]): WordEnt
 export function validateWordEntries(entries: WordEntry[]): 'target' | 'duplicate' | null {
   const seen = new Set<string>();
   for (const rule of entries) {
-    if (!rule.target.trim() || (rule.kind === 'obfuscate' && [...rule.target.trim()].length < 2))
+    if (!rule.target.trim()) continue;
+    if (rule.kind === 'obfuscate' && [...rule.target.trim()].length < 2)
       return 'target';
     // A replacement may intentionally take precedence over a separate obfuscation entry.
     const identity = `${ruleIdentity(rule)}:${rule.kind}`;
