@@ -214,7 +214,7 @@ function emptyPoint(start: Date, bucket: TrendBucket): PreparedTrendPoint {
     failure: 0,
     canceled: 0,
     tokens: 0,
-    models: {},
+    models: Object.create(null),
     start,
     end: endOfBucket(start, bucket),
   };
@@ -438,7 +438,7 @@ export function buildUsageTrendSeries(
       // Keep the partial slot overlapping the start, and the inclusive end slot.
       if (rangeStart && addBucket(start, '30m').getTime() <= rangeStart.getTime()) return null;
       if (rangeEnd && start.getTime() > rangeEnd.getTime()) return null;
-      const models: Record<string, number> = {};
+      const models: Record<string, number> = Object.create(null);
       for (const model of point.models ?? []) {
         const key = (model.key || model.label || '').trim() || 'unknown';
         const label = (model.label || model.key || key).trim() || key;
