@@ -65,7 +65,6 @@ export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: 
   const [rows, setRows] = useState<WordEntry[]>([]);
   const [busy, setBusy] = useState<'load' | 'save' | 'cloud' | null>('load');
   const [error, setError] = useState('');
-  const [cloudNotice, setCloudNotice] = useState('');
   const [savedNotice, setSavedNotice] = useState(false);
   const [undo, setUndo] = useState<WordEntry[] | null>(null);
   const [undoMessage, setUndoMessage] = useState('');
@@ -83,7 +82,6 @@ export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: 
     setBusy('load');
     setError('');
     setSavedNotice(false);
-    setCloudNotice('');
     try {
       const result = await getCoreSensitiveWordsSettings();
       if (token === session.current) {
@@ -105,7 +103,6 @@ export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: 
   }, [load]);
   const changed = () => {
     setSavedNotice(false);
-    setCloudNotice('');
     setError('');
   };
   const changeRule = (row: WordEntry, field: 'target' | 'replacement', value: string) => {
@@ -143,7 +140,6 @@ export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: 
         setRows(toEntries(result));
         setUndo(null);
         setSavedNotice(true);
-        setCloudNotice('');
       }
     } catch (cause) {
       if (token === session.current) setError(String(cause));
@@ -156,19 +152,23 @@ export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: 
     const token = session.current;
     setBusy('cloud');
     setError('');
-    setCloudNotice('');
+    setSavedNotice(false);
     try {
       const catalog = await fetchLatestSensitiveWordRules();
-      if (token === session.current) {
-        const merged = addCloudRules(rows, catalog.rules);
-        setRows(merged);
-        setCloudNotice(
-          merged.length === rows.length
-            ? st('nothingToAdd')
-            : `${st('addedLatest')} ${merged.length - rows.length}`,
-        );
-        setSavedNotice(false);
+      if (token !== session.current) return;
+      const merged = addCloudRules(rows, catalog.rules);
+      setRows(merged);
+      const validation = validateWordEntries(merged);
+      if (validation) {
+        setError(st('cloudNotSaved'));
+        return;
       }
+      const result = await saveCoreSensitiveWordsSettings({ settings: toSettings(merged) });
+      if (token !== session.current) return;
+      setSaved(result);
+      setRows(toEntries(result));
+      setUndo(null);
+      setSavedNotice(true);
     } catch (cause) {
       if (token === session.current) setError(String(cause));
     } finally {
@@ -234,11 +234,6 @@ export function SensitiveWordsPage({ onDirtyChange }: { onDirtyChange?: (dirty: 
       {invalid === 'target' ? (
         <Notice tone="error" variant="text">
           {st('invalidTarget')}
-        </Notice>
-      ) : null}
-      {cloudNotice ? (
-        <Notice tone="success" variant="text">
-          {cloudNotice}
         </Notice>
       ) : null}
       {undo ? (

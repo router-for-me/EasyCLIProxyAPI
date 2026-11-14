@@ -1,7 +1,7 @@
 # 敏感词云端规则
 
 编辑 `src-tauri/resources/sensitive-words/rules.json`，推送到 GitHub `main` 分支后，
-客户端点击“添加云端最新规则”即可导入，最后点击保存生效。
+客户端点击“添加云端最新规则”即可导入并自动保存生效。
 
 文件按供应商分组，不用填写版本号、规则编号或处理类型。
 
@@ -49,8 +49,14 @@
 - 不要在 JSON 中写注释。文件最大 1 MiB，最多 2000 条规则。
 
 客户端只添加缺少的词条，不覆盖当前配置或未保存的修改；反复点击不会重复添加。
-导入后的词条和手动添加的一样，可以修改和删除。没有后台自动同步。
-下载失败或文件无效时，当前配置保持原样。
+导入后自动保存合并结果，包含当前尚未保存的有效修改。词条可以继续修改和删除，
+手动编辑仍需点击保存。没有后台自动同步。
+下载失败或文件无效时，当前配置保持原样。保存失败时保留合并后的编辑内容，
+显示错误，用户可再次保存；存在无效或重复词条时需要先修正再保存。
 
 下载地址：
 `https://raw.githubusercontent.com/router-for-me/EasyCLIProxyAPI/main/src-tauri/resources/sensitive-words/rules.json`
+
+下载优先使用 GitHub Contents API，复用设置中的 GitHub 访问令牌；留空时
+使用 `GITHUB_TOKEN` 环境变量。请求遵循应用代理设置。API 失败时回退到
+公开 Raw 文件，Token 只发送给 `api.github.com`，不会发送给 Raw 或重定向地址。

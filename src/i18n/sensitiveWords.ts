@@ -38,11 +38,10 @@ export const sensitiveWordsMessages = {
   ),
   addLatest: text('添加云端最新规则', 'Add latest cloud rules', '最新クラウドルールを追加'),
   syncing: text('正在获取…', 'Fetching…', '取得中…'),
-  addedLatest: text('已添加，保存后生效：', 'Added; save to apply:', '追加しました。保存後に適用：'),
-  nothingToAdd: text(
-    '没有新规则，已有词条保持不变。',
-    'No new rules. Existing entries are unchanged.',
-    '新しいルールはありません。既存の項目は保持されます。',
+  cloudNotSaved: text(
+    '规则已添加，请修正无效或重复词条后保存。',
+    'Rules added. Fix invalid or duplicate entries, then save.',
+    'ルールを追加しました。無効な項目や重複を修正して保存してください。',
   ),
   invalidTarget: text(
     '原文不能为空，混淆词至少需要两个字符。',

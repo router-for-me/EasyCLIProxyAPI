@@ -2,6 +2,7 @@ use crate::*;
 use std::collections::BTreeSet;
 
 const DEFAULT_URL: &str = "https://raw.githubusercontent.com/router-for-me/EasyCLIProxyAPI/main/src-tauri/resources/sensitive-words/rules.json";
+const API_URL: &str = "https://api.github.com/repos/router-for-me/EasyCLIProxyAPI/contents/src-tauri/resources/sensitive-words/rules.json?ref=main";
 const MAX_BYTES: usize = 1024 * 1024;
 
 // The repository file is organized for people editing it on GitHub.
@@ -128,16 +129,55 @@ fn parse_catalog(content: &[u8]) -> Result<Catalog, String> {
     Ok(Catalog { rules })
 }
 
-async fn download_catalog(url: &str) -> Result<Catalog, String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| e.to_string())?;
-    let mut response = client
-        .get(url)
+fn configured_token(document: &serde_norway::Value, environment: Option<String>) -> Option<String> {
+    let value = document
+        .as_mapping()
+        .and_then(|root| {
+            nested_yaml_value(root, &["server", "github-token"])
+                .or_else(|| nested_yaml_value(root, &["github-token"]))
+        })
+        .and_then(serde_norway::Value::as_str);
+    crate::plugins::plugin_github_token(&serde_json::json!({"github-token": value}), environment)
+}
+
+fn github_token() -> Option<String> {
+    let environment = std::env::var("GITHUB_TOKEN").ok();
+    let document = lock_core_config_file().ok().and_then(|_guard| {
+        read_core_config_document()
+            .ok()
+            .map(|(_, document)| document.get().clone())
+    });
+    configured_token(
+        document.as_ref().unwrap_or(&serde_norway::Value::Null),
+        environment,
+    )
+}
+
+fn catalog_request(
+    client: &reqwest::Client,
+    api: bool,
+    token: Option<&str>,
+) -> reqwest::RequestBuilder {
+    let request = client
+        .get(if api { API_URL } else { DEFAULT_URL })
         .header("Cache-Control", "no-cache")
-        .header("User-Agent", "EasyCLIProxyAPI")
+        .header("User-Agent", "EasyCLIProxyAPI");
+    if api {
+        let request = request
+            .header("Accept", "application/vnd.github.raw+json")
+            .header("X-GitHub-Api-Version", "2022-11-28");
+        if let Some(token) = token {
+            return request.bearer_auth(token);
+        }
+        request
+    } else {
+        // Never forward the configured token to Raw, mirrors, or redirects.
+        request
+    }
+}
+
+async fn read_catalog_request(request: reqwest::RequestBuilder) -> Result<Catalog, String> {
+    let mut response = request
         .send()
         .await
         .map_err(|e| format!("Cloud sync failed: {e}"))?
@@ -153,24 +193,86 @@ async fn download_catalog(url: &str) -> Result<Catalog, String> {
     parse_catalog(&bytes)
 }
 
+async fn download_catalog(proxy_url: &str, token: Option<&str>) -> Result<Catalog, String> {
+    let client = build_http_client_with_proxy(
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(8))
+            .timeout(Duration::from_secs(20))
+            .redirect(reqwest::redirect::Policy::none()),
+        proxy_url,
+        "Failed to create cloud rules client",
+    )?;
+    match read_catalog_request(catalog_request(&client, true, token)).await {
+        Ok(catalog) => Ok(catalog),
+        Err(api_error) => read_catalog_request(catalog_request(&client, false, None))
+            .await
+            .map_err(|raw_error| format!("GitHub API: {api_error}; Raw fallback: {raw_error}")),
+    }
+}
+
 #[tauri::command]
-pub(crate) async fn fetch_latest_sensitive_word_rules() -> Result<Catalog, String> {
+pub(crate) async fn fetch_latest_sensitive_word_rules(
+    gui_config_state: tauri::State<'_, GuiConfigState>,
+) -> Result<Catalog, String> {
     // Fetch only. The user reviews and saves the merged ordinary settings.
-    download_catalog(DEFAULT_URL).await
+    let config = gui_config_state.snapshot()?;
+    let token = github_token();
+    download_catalog(&config.proxy_url, token.as_deref()).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
+    fn cloud_requests_authenticate_only_the_github_api() {
+        let client = reqwest::Client::new();
+        let api = catalog_request(&client, true, Some("fixture-token"))
+            .build()
+            .unwrap();
+        assert_eq!(api.url().host_str(), Some("api.github.com"));
+        assert_eq!(api.url().path(), "/repos/router-for-me/EasyCLIProxyAPI/contents/src-tauri/resources/sensitive-words/rules.json");
+        assert_eq!(api.url().query(), Some("ref=main"));
+        assert_eq!(api.headers()["authorization"], "Bearer fixture-token");
+        assert_eq!(api.headers()["accept"], "application/vnd.github.raw+json");
+        assert!(!catalog_request(&client, true, None)
+            .build()
+            .unwrap()
+            .headers()
+            .contains_key("authorization"));
+        let raw = catalog_request(&client, false, Some("fixture-token"))
+            .build()
+            .unwrap();
+        assert_eq!(raw.url().host_str(), Some("raw.githubusercontent.com"));
+        assert!(!raw.headers().contains_key("authorization"));
+    }
+    #[test]
+    fn configured_github_token_precedes_environment_and_supports_both_layouts() {
+        for yaml in [
+            "server: {github-token: ' configured '}",
+            "github-token: ' configured '",
+        ] {
+            let document = serde_norway::from_str(yaml).unwrap();
+            assert_eq!(
+                configured_token(&document, Some("environment".into())).as_deref(),
+                Some("configured")
+            );
+        }
+        let document = serde_norway::from_str("server: {github-token: ' '}").unwrap();
+        assert_eq!(
+            configured_token(&document, Some(" environment ".into())).as_deref(),
+            Some("environment")
+        );
+        assert_eq!(configured_token(&serde_norway::Value::Null, None), None);
+    }
+    #[test]
     fn reads_repository_file_and_normalizes_provider_fields() {
         let catalog =
             parse_catalog(include_bytes!("../resources/sensitive-words/rules.json")).unwrap();
         assert_eq!(catalog.rules.len(), 14);
-        assert!(catalog
-            .rules
-            .iter()
-            .any(|r| r.provider == "antigravity" && r.kind == "replace" && r.target == "Codex" && r.replacement == "Assistant"));
+        assert!(catalog.rules.iter().any(|r| r.provider == "antigravity"
+            && r.kind == "replace"
+            && r.target == "Codex"
+            && r.replacement == "Assistant"));
         assert!(catalog
             .rules
             .iter()
@@ -187,9 +289,10 @@ mod tests {
             .rules
             .iter()
             .any(|r| r.target == "phrase" && r.replacement.is_empty()));
-        assert!(catalog.rules.iter().any(|r| r.target == "Other"
-            && r.replacement
-                == "  text\nnext  "));
+        assert!(catalog
+            .rules
+            .iter()
+            .any(|r| r.target == "Other" && r.replacement == "  text\nnext  "));
         assert!(catalog.rules.iter().all(|r| r.kind == "replace"));
     }
     #[test]

@@ -63,13 +63,33 @@ const path = require('node:path');
         assert.equal(await panel.locator('.sw-cloud-settings, input[type=search], [data-source]').count(), 0);
         const ag = panel.locator('.sw-provider-section').first();
         const agReplacement = ag.locator('.sw-field-group').first();
-        assert.equal(await agReplacement.getByRole('heading', { name: locale === 'en' ? 'Sensitive word replacements' : '敏感词替换', exact: true }).count(), 1);
+        assert.equal(
+          await agReplacement
+            .getByRole('heading', {
+              name: locale === 'en' ? 'Sensitive word replacements' : '敏感词替换',
+              exact: true,
+            })
+            .count(),
+          1,
+        );
         const devinWords = panel.locator('.sw-provider-section').nth(1).locator('.sw-field-group').nth(1);
-        assert.equal(await devinWords.getByRole('heading', { name: locale === 'en' ? 'System prompt sensitive words' : '系统提示词敏感词', exact: true }).count(), 1);
+        assert.equal(
+          await devinWords
+            .getByRole('heading', {
+              name: locale === 'en' ? 'System prompt sensitive words' : '系统提示词敏感词',
+              exact: true,
+            })
+            .count(),
+          1,
+        );
         await devinWords.locator('.settings-help-trigger').click();
         const help = page.getByRole('tooltip');
         await help.waitFor();
-        assert.ok((await help.textContent()).includes(locale === 'en' ? 'lines containing these words are removed' : '整行会被移除'));
+        assert.ok(
+          (await help.textContent()).includes(
+            locale === 'en' ? 'lines containing these words are removed' : '整行会被移除',
+          ),
+        );
         await page.keyboard.press('Escape');
         await help.waitFor({ state: 'detached' });
         const existing = agReplacement.locator('.sw-inline-row').first();
@@ -83,6 +103,20 @@ const path = require('node:path');
         );
         const devin = panel.locator('.sw-provider-section').nth(1);
         assert.equal(await devin.locator('.sw-inline-pair').count(), 1);
+        assert.equal(await save.isEnabled(), false, 'cloud import saves immediately');
+        assert.equal(await panel.locator('.notice-success').count(), 0, 'no cloud import result banner');
+        await panel.getByRole('button', { name: locale === 'en' ? 'Refresh' : '刷新', exact: true }).click();
+        await page.waitForFunction(() => !document.querySelector('.sw-cloud-add')?.disabled);
+        assert.equal(
+          await devin.locator('.sw-inline-pair').count(),
+          1,
+          'cloud import persists without a manual save',
+        );
+        assert.equal(
+          await existing.locator('textarea').last().inputValue(),
+          'My choice',
+          'pending valid edits are saved with cloud rules',
+        );
         const count = await panel.locator('.sw-inline-row').count();
         await cloud.click();
         await page.waitForFunction(() => !document.querySelector('.sw-cloud-add')?.disabled);
@@ -92,9 +126,8 @@ const path = require('node:path');
           'repeated cloud import does not duplicate rules',
         );
         await page.locator('#config-subpage-tab-software').click();
-        assert.equal(await page.locator('#config-subpage-tab-sensitiveWords .config-nav-dirty').count(), 1);
+        assert.equal(await page.locator('#config-subpage-tab-sensitiveWords .config-nav-dirty').count(), 0);
         await page.locator('#config-subpage-tab-sensitiveWords').click();
-        await saved();
         const imported = devin.locator('.sw-inline-pair').first();
         await imported.locator('textarea').last().fill('Edited cloud rule');
         await saved();
@@ -118,25 +151,63 @@ const path = require('node:path');
         await added.locator('textarea').first().fill('Private phrase');
         await saved();
         assert.equal(await added.locator('textarea').last().inputValue(), '');
+        await page.evaluate(() => {
+          const nativeInvoke = window.__TAURI_INTERNALS__.invoke;
+          let failSave = true;
+          window.__TAURI_INTERNALS__.invoke = (command, ...args) => {
+            if (command === 'save_core_sensitive_words_settings' && failSave) {
+              failSave = false;
+              return Promise.reject('Fixture save failure');
+            }
+            return nativeInvoke(command, ...args);
+          };
+        });
+        // The cloud rule removed earlier is re-added, then a failed auto-save
+        // must leave the merged draft available for retry.
+        await cloud.click();
+        await page.waitForFunction(() => !document.querySelector('.sw-cloud-add')?.disabled);
+        assert.ok((await panel.textContent()).includes('Fixture save failure'));
+        assert.equal(await devin.locator('.sw-inline-pair').count(), 1);
+        assert.equal(await save.isEnabled(), true, 'failed auto-save retains the draft');
+        await saved();
         const words = ag.locator('.sw-field-group').nth(1);
         for (const value of ['openclaw', 'OpenClaw', 'Openclaw']) {
           await words.getByRole('button', { name: locale === 'en' ? 'Add' : '新增', exact: true }).click();
           await words.locator('textarea').last().fill(value);
         }
         const duplicateNotice = words.locator('.sw-duplicate-notice');
-        assert.ok((await duplicateNotice.textContent()).includes('openclaw'), 'warning identifies the actual duplicate');
-        assert.ok((await duplicateNotice.textContent()).includes(locale === 'en' ? 'Case-insensitive' : '不区分大小写'));
+        assert.ok(
+          (await duplicateNotice.textContent()).includes('openclaw'),
+          'warning identifies the actual duplicate',
+        );
+        assert.ok(
+          (await duplicateNotice.textContent()).includes(
+            locale === 'en' ? 'Case-insensitive' : '不区分大小写',
+          ),
+        );
         assert.equal(await words.locator('textarea[aria-invalid=true]').count(), 3);
         assert.equal(await save.isEnabled(), false);
         if (process.env.SETTINGS_SCREENSHOT_DIR) {
           require('node:fs').mkdirSync(process.env.SETTINGS_SCREENSHOT_DIR, { recursive: true });
           await duplicateNotice.scrollIntoViewIfNeeded();
-          await page.screenshot({ path: path.join(process.env.SETTINGS_SCREENSHOT_DIR, 'duplicate-warning-' + locale + '-' + width + '.png') });
+          await page.screenshot({
+            path: path.join(
+              process.env.SETTINGS_SCREENSHOT_DIR,
+              'duplicate-warning-' + locale + '-' + width + '.png',
+            ),
+          });
         }
-        const merge = words.getByRole('button', { name: locale === 'en' ? 'Merge duplicates' : '合并重复项', exact: true });
+        const merge = words.getByRole('button', {
+          name: locale === 'en' ? 'Merge duplicates' : '合并重复项',
+          exact: true,
+        });
         await merge.click();
         assert.equal(await words.locator('textarea[aria-invalid=true]').count(), 0);
-        assert.equal(await words.locator('textarea').last().inputValue(), 'openclaw', 'merge keeps the first spelling');
+        assert.equal(
+          await words.locator('textarea').last().inputValue(),
+          'openclaw',
+          'merge keeps the first spelling',
+        );
         await panel.getByRole('button', { name: locale === 'en' ? 'Undo' : '撤销', exact: true }).click();
         assert.equal(await words.locator('textarea[aria-invalid=true]').count(), 3, 'merge can be undone');
         await merge.click();
