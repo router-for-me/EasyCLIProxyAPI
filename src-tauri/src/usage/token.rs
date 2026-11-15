@@ -40,6 +40,66 @@ impl ClampedTokenFields {
     }
 }
 
+/// The core's canonical token split from `token_breakdown` (schema v2).
+/// `input_total` includes cache reads and cache writes; `output_total`
+/// includes reasoning.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct CoreTokenBreakdown {
+    pub(super) input_total: u64,
+    pub(super) cache_read: u64,
+    pub(super) cache_write: u64,
+    pub(super) output_total: u64,
+    pub(super) reasoning: u64,
+    pub(super) total: u64,
+}
+
+impl CoreTokenBreakdown {
+    fn is_consistent(self) -> bool {
+        checked_sum(&[self.cache_read, self.cache_write])
+            .is_some_and(|cache| cache <= self.input_total)
+            && self.reasoning <= self.output_total
+            && checked_sum(&[self.input_total, self.output_total]) == Some(self.total)
+    }
+}
+
+/// Normalizes a record, preferring the core's complete token breakdown for
+/// executors without a dedicated handler.
+///
+/// Executors without a handler, such as plugin executors (reported as
+/// `executorAdapter`), give no hint about which upstream protocol produced the
+/// flat token fields. The generic path assumes OpenAI-style counting, which is
+/// wrong for Claude-format usage, where input excludes cache and
+/// `cached_tokens` holds cache writes when nothing was read, and for
+/// Gemini-style usage, where output excludes reasoning. The breakdown already
+/// follows the GUI's convention: input includes cache and output includes
+/// reasoning. Executors with a handler and legacy records without an executor
+/// type keep their existing handling.
+pub(super) fn normalize_with_breakdown(
+    executor_type: &str,
+    provider: &str,
+    auth_type: &str,
+    tokens: TokenValues,
+    breakdown: Option<CoreTokenBreakdown>,
+) -> TokenValues {
+    let (_, parser_contract) = resolve_handler(executor_type, provider, auth_type);
+    if !parser_contract && !executor_type.trim().is_empty() && !tokens.clamped.any() {
+        if let Some(breakdown) = breakdown.filter(|breakdown| breakdown.is_consistent()) {
+            return TokenValues {
+                input: breakdown.input_total,
+                output: breakdown.output_total,
+                reasoning: breakdown.reasoning,
+                cached: breakdown.cache_read,
+                cache_read: breakdown.cache_read,
+                cache_read_present: true,
+                cache_creation: breakdown.cache_write,
+                total: breakdown.total,
+                clamped: tokens.clamped,
+            };
+        }
+    }
+    normalize(executor_type, provider, auth_type, tokens)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TokenHandler {
     Claude,
@@ -339,6 +399,123 @@ mod tests {
         );
         assert_eq!(tokens.output, 70);
         assert_eq!(tokens.total, 1_070);
+    }
+
+    // Claude-format usage from a plugin executor that only wrote the cache:
+    // the core reports cached_tokens = cache writes because nothing was read.
+    fn plugin_cache_write_only() -> (TokenValues, CoreTokenBreakdown) {
+        (
+            TokenValues {
+                input: 15,
+                output: 4,
+                cached: 1_000,
+                cache_read: 0,
+                cache_read_present: true,
+                cache_creation: 1_000,
+                total: 1_019,
+                ..TokenValues::default()
+            },
+            CoreTokenBreakdown {
+                input_total: 1_015,
+                cache_read: 0,
+                cache_write: 1_000,
+                output_total: 4,
+                reasoning: 0,
+                total: 1_019,
+            },
+        )
+    }
+
+    #[test]
+    fn plugin_executor_cache_write_is_not_counted_as_cache_read() {
+        let (raw, breakdown) = plugin_cache_write_only();
+        let tokens = normalize_with_breakdown(
+            "executorAdapter",
+            "example-plugin",
+            "oauth",
+            raw,
+            Some(breakdown),
+        );
+        assert_eq!(tokens.cache_read, 0);
+        assert_eq!(tokens.cached, 0);
+        assert_eq!(tokens.cache_creation, 1_000);
+        assert_eq!(tokens.input, 1_015);
+        assert_eq!(tokens.output, 4);
+        assert_eq!(tokens.total, 1_019);
+    }
+
+    #[test]
+    fn plugin_executor_uses_inclusive_input_from_breakdown() {
+        let tokens = normalize_with_breakdown(
+            "executorAdapter",
+            "example-plugin",
+            "oauth",
+            TokenValues {
+                input: 100,
+                output: 20,
+                reasoning: 5,
+                cached: 600,
+                cache_read: 600,
+                cache_read_present: true,
+                cache_creation: 20,
+                total: 740,
+                ..TokenValues::default()
+            },
+            Some(CoreTokenBreakdown {
+                input_total: 720,
+                cache_read: 600,
+                cache_write: 20,
+                output_total: 20,
+                reasoning: 5,
+                total: 740,
+            }),
+        );
+        assert_eq!(tokens.input, 720);
+        assert_eq!(tokens.cache_read, 600);
+        assert_eq!(tokens.cache_creation, 20);
+        assert_eq!(tokens.reasoning, 5);
+        assert_eq!(tokens.total, 740);
+    }
+
+    #[test]
+    fn plugin_executor_without_breakdown_keeps_existing_fallback() {
+        let (raw, _) = plugin_cache_write_only();
+        assert_eq!(
+            normalize_with_breakdown("executorAdapter", "example-plugin", "oauth", raw, None),
+            normalize("executorAdapter", "example-plugin", "oauth", raw)
+        );
+    }
+
+    #[test]
+    fn inconsistent_breakdown_is_ignored() {
+        let (raw, mut breakdown) = plugin_cache_write_only();
+        breakdown.input_total = 10; // smaller than the cache it claims to contain
+        assert_eq!(
+            normalize_with_breakdown(
+                "executorAdapter",
+                "example-plugin",
+                "oauth",
+                raw,
+                Some(breakdown)
+            ),
+            normalize("executorAdapter", "example-plugin", "oauth", raw)
+        );
+    }
+
+    #[test]
+    fn built_in_and_legacy_records_ignore_breakdown() {
+        let (raw, breakdown) = plugin_cache_write_only();
+        for (executor, provider) in [
+            ("ClaudeExecutor", "anthropic"),
+            ("CodexExecutor", "codex"),
+            ("", "codex"),
+        ] {
+            assert_eq!(
+                normalize_with_breakdown(executor, provider, "oauth", raw, Some(breakdown)),
+                normalize(executor, provider, "oauth", raw),
+                "{executor}/{provider}"
+            );
+        }
     }
 
     #[test]
