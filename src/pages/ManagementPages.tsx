@@ -679,7 +679,7 @@ export function OAuthLoginPage({ onOpenAuthFiles }: { onOpenAuthFiles?: (provide
         <VertexLoginCard />
         <PluginOAuthProviders
           builtInProviderIds={[...BUILTIN_OAUTH_PROVIDER_IDS, 'vertex']}
-          browser={selectedBrowser === NO_AUTO_OPEN_BROWSER_ID ? 'default' : selectedBrowser || 'default'}
+          browser={selectedBrowser || 'default'}
           onOpenAuthFiles={onOpenAuthFiles}
         />
       </div>
