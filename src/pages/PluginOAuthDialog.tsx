@@ -122,7 +122,7 @@ export function PluginOAuthDialog({ plugin, targetProvider, browser = 'default',
         else fail(translate('failed'));
       } catch (reason) { fail(message(reason)); }
     };
-    void startOAuthLogin({ provider, browser: 'none', pluginProvider: true }).then(result => {
+    void startOAuthLogin({ provider, browser, pluginProvider: true }).then(result => {
       const returnedState = result.state?.trim() ?? '';
       if (!current()) { cancel(returnedState); return; }
       state = returnedState;
