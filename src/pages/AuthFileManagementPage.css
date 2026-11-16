@@ -253,9 +253,9 @@
 .auth-list-usage .auth-file-usage-metric strong { font-size: 13px; line-height: 1.2; font-weight: 750; }
 .auth-list-usage .auth-file-usage-scope { display: none; }
 .auth-card-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; min-width: 0; padding-top: 8px; border-top: 1px solid var(--auth-border); }
-.auth-list-icon-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; min-width: max-content; }
+.auth-list-icon-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .auth-list-icon-actions > button { flex: none; }
-.auth-list-main-actions { display: flex; align-items: center; justify-content: flex-end; flex: none; gap: 8px; margin-left: auto; padding-left: 0; border-left: 0; }
+.auth-list-main-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; flex: none; gap: 8px; min-width: 0; margin-left: auto; padding-left: 0; border-left: 0; }
 .auth-list-details-button { min-width: 52px; }
 .auth-list-details { display: grid; gap: 12px; border-top: 1px solid var(--auth-border); padding: 12px 0; }
 .auth-list-details[hidden] { display: none; }
@@ -377,7 +377,6 @@
 .auth-files-page .auth-card-actions {
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
 }
 .auth-files-page .auth-list-icon-actions,
 .auth-files-page .auth-list-main-actions {
