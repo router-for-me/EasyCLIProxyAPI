@@ -153,14 +153,14 @@ fn provider_registration_preserves_unrelated_routes_in_both_schemas() {
             Some("acp/test-model")
         );
         assert_eq!(
-            groups[1]["models"][0]["thinking"]["levels"],
-            serde_norway::to_value(["none", "low", "medium", "high", "xhigh"]).unwrap()
+            groups[1]["models"][0],
+            serde_norway::to_value(json!({"name":"test-model","alias":"acp/test-model"})).unwrap()
         );
-        assert_eq!(
-            crate::core_config::configured_model_reasoning_levels(&groups[1]["models"][1], "openai-compatibility"),
-            ["none", "low", "medium", "high", "xhigh"]
-        );
-        assert!(groups[1]["models"][5].get("thinking").is_none());
+        assert!(groups[1]["models"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .all(|model| model.get("thinking").is_none()));
         assert!(groups[1]
             .get(if v8 { "keys" } else { "api-key-entries" })
             .is_some());

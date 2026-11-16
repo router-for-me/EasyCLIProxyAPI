@@ -85,13 +85,7 @@ fn provider_entry(
 ) -> Result<serde_norway::Value, String> {
     let mut provider = json!({
         "name": PROVIDER, "base-url": url, "proxy-url": "direct", "disabled": models.is_empty(),
-        "models": models.iter().map(|model| {
-            let mut entry = json!({"name":model.id,"alias":format!("acp/{}", model.id)});
-            if !model.reasoning_levels.is_empty() {
-                entry["thinking"] = json!({"levels":model.reasoning_levels});
-            }
-            entry
-        }).collect::<Vec<_>>()
+        "models": models.iter().map(|model| json!({"name":model.id,"alias":format!("acp/{}", model.id)})).collect::<Vec<_>>()
     });
     provider[if v8 { "keys" } else { "api-key-entries" }] = json!([{"api-key":key}]);
     serde_norway::to_value(provider).map_err(|e| e.to_string())
