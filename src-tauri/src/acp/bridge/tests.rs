@@ -4,13 +4,121 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 fn models() -> Vec<AcpModel> {
-    vec![AcpModel {
-        id: "test-model".into(),
-        name: "Test model".into(),
-    }]
+    model_list(&fake_session())
+}
+fn fake_session() -> Value {
+    json!({"sessionId":"isolated-session","models":{"currentModelId":"other","availableModels":[
+        {"modelId":"test-model","name":"Test model"},
+        {"modelId":"test-model-low","name":"Test model (High)"},
+        {"modelId":"test-model-medium"},
+        {"modelId":"test-model-high","name":"Test model (Low)"},
+        {"modelId":"test-model-xhigh"},
+        {"modelId":"plain-model"},
+        {"modelId":"gemini-4-argon-high","name":"Gemini 4 Argon"},
+        {"modelId":"gemini-4-argon-max"}
+    ]}})
 }
 fn request(stream: bool) -> Value {
     json!({"model":"acp/test-model","messages":[{"role":"user","content":"ping"}],"stream":stream})
+}
+
+#[test]
+fn variant_levels_come_from_protocol_ids_without_replacing_models() {
+    let models = models();
+    assert_eq!(models.len(), 8);
+    assert_eq!(models[1].name, "Test model (High)");
+    for model in &models[..5] {
+        assert_eq!(model.reasoning_levels, ["none", "low", "medium", "high", "xhigh"]);
+        assert_eq!(model.reasoning_variants["low"], "test-model-low");
+        assert_eq!(model.reasoning_variants["none"], "test-model");
+    }
+    assert!(models[5].reasoning_levels.is_empty());
+    assert!(models[5].reasoning_variants.is_empty());
+    assert_eq!(models[6].reasoning_levels, ["high", "max"]);
+    assert!(!models[6].reasoning_variants.contains_key("none"));
+    assert_eq!(serde_json::to_value(&models[0]).unwrap()["reasoningLevels"], json!(["none", "low", "medium", "high", "xhigh"]));
+    let legacy: AcpModel = serde_json::from_value(json!({"id":"legacy","name":"Legacy"})).unwrap();
+    assert!(legacy.reasoning_levels.is_empty());
+}
+
+#[test]
+fn grouped_variants_preserve_account_scoped_selected_model_strings() {
+    let directory = crate::unique_test_temp_path("acp-variant-selection");
+    let state = AcpState::default();
+    for (account, selected) in [("first", "test-model-high"), ("second", "gemini-4-argon-max")] {
+        let profile = directory.join(account);
+        prepare_profile(&profile).unwrap();
+        std::fs::write(selected_path(&profile), serde_json::to_vec(selected).unwrap()).unwrap();
+        mark_session(&state, &fake_session(), &profile).unwrap();
+        let status = state.snapshot().unwrap();
+        assert_eq!(status.selected_model, selected);
+        assert_eq!(status.profile, profile.to_string_lossy());
+        assert_eq!(read_selected(&profile).unwrap(), selected);
+        assert!(!status.models.iter().find(|model| model.id == selected).unwrap().reasoning_levels.is_empty());
+    }
+    let session = json!({"models":{"currentModelId":"plain-model","availableModels":[{"modelId":"plain-model"}]}});
+    mark_session(&state, &session, &directory.join("second")).unwrap();
+    let status = state.snapshot().unwrap();
+    assert_eq!(status.selected_model, "plain-model");
+    assert!(status.models[0].reasoning_levels.is_empty());
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn effort_resolves_only_to_advertised_family_variants() {
+    for (control, expected) in [
+        (json!({"reasoning_effort":"low"}), "test-model-low"),
+        (json!({"reasoning":{"effort":"medium"}}), "test-model-medium"),
+        (json!({"thinking":{"effort":"xhigh"}}), "test-model-xhigh"),
+        (json!({"reasoning_effort":"none"}), "test-model"),
+        (json!({"reasoning_effort":"high","reasoning":{"effort":"high"}}), "test-model-high"),
+    ] {
+        let mut value = request(false);
+        value["model"] = json!("acp/test-model-high");
+        value.as_object_mut().unwrap().extend(control.as_object().unwrap().clone());
+        let completion = parse_completion(&value, &models()).unwrap();
+        assert_eq!(completion.model, expected);
+        assert_eq!(completion.alias, "acp/test-model-high");
+    }
+    let mut value = request(false);
+    value["model"] = json!("acp/gemini-4-argon-high");
+    value["reasoning_effort"] = json!("none");
+    let error = parse_completion(&value, &models()).err().unwrap();
+    assert!(error.contains("supported levels: high, max"), "{error}");
+    value["model"] = json!("acp/plain-model");
+    let error = parse_completion(&value, &models()).err().unwrap();
+    assert!(error.contains("does not advertise reasoning levels"), "{error}");
+    value.as_object_mut().unwrap().remove("reasoning_effort");
+    assert_eq!(parse_completion(&value, &models()).unwrap().model, "plain-model");
+}
+
+#[test]
+fn invalid_effort_controls_are_rejected_explicitly() {
+    for (control, expected) in [
+        (json!({"reasoning_effort":"extreme"}), "supported levels: none, low, medium, high, xhigh"),
+        (json!({"reasoning_effort":"max"}), "supported levels:"),
+        (json!({"reasoning_effort":""}), "Unsupported reasoning effort"),
+        (json!({"reasoning_effort":null}), "reasoning_effort must be a string"),
+        (json!({"reasoning_effort":42}), "reasoning_effort must be a string"),
+        (json!({"reasoning_effort":true}), "reasoning_effort must be a string"),
+        (json!({"reasoning_effort":[]}), "reasoning_effort must be a string"),
+        (json!({"reasoning":null}), "reasoning must be an object"),
+        (json!({"reasoning":"high"}), "reasoning must be an object"),
+        (json!({"reasoning":{}}), "only reasoning.effort"),
+        (json!({"reasoning":{"effort":false}}), "reasoning.effort must be a string"),
+        (json!({"reasoning":{"effort":"high","summary":"auto"}}), "only reasoning.effort"),
+        (json!({"thinking":{"budget_tokens":1024}}), "only thinking.effort"),
+        (json!({"thinking":{"effort":1024}}), "thinking.effort must be a string"),
+        (json!({"reasoning_effort":"high","reasoning":{"effort":"low"}}), "Conflicting"),
+        (json!({"reasoning":{"effort":"high"},"thinking":{"effort":"low"}}), "Conflicting"),
+        (json!({"service_tier":"auto"}), "does not advertise a service tier mapping"),
+        (json!({"unknown":true}), "does not support parameter 'unknown'"),
+    ] {
+        let mut value = request(false);
+        value.as_object_mut().unwrap().extend(control.as_object().unwrap().clone());
+        let error = parse_completion(&value, &models()).err().unwrap();
+        assert!(error.contains(expected), "{control}: {error}");
+    }
 }
 
 #[test]
@@ -44,6 +152,15 @@ fn provider_registration_preserves_unrelated_routes_in_both_schemas() {
             groups[1]["models"][0]["alias"].as_str(),
             Some("acp/test-model")
         );
+        assert_eq!(
+            groups[1]["models"][0]["thinking"]["levels"],
+            serde_norway::to_value(["none", "low", "medium", "high", "xhigh"]).unwrap()
+        );
+        assert_eq!(
+            crate::core_config::configured_model_reasoning_levels(&groups[1]["models"][1], "openai-compatibility"),
+            ["none", "low", "medium", "high", "xhigh"]
+        );
+        assert!(groups[1]["models"][5].get("thinking").is_none());
         assert!(groups[1]
             .get(if v8 { "keys" } else { "api-key-entries" })
             .is_some());
@@ -82,7 +199,7 @@ fn fake_official_server() {
     if std::env::var_os("ECPA_ACP_BRIDGE_TEST_HELPER").is_none() {
         return;
     }
-    let mut selected = false;
+    let mut selected = String::new();
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else { break };
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
@@ -90,17 +207,18 @@ fn fake_official_server() {
         };
         let result = match value["method"].as_str().unwrap_or("") {
             "initialize" => json!({"protocolVersion":1,"agentCapabilities":{"auth":{"logout":{}}}}),
-            "session/new" => {
-                json!({"sessionId":"isolated-session","models":{"currentModelId":"other","availableModels":[{"modelId":"test-model"}]}})
-            }
+            "session/new" => fake_session(),
             "session/set_model" => {
-                assert_eq!(value["params"]["modelId"], "test-model");
-                selected = true;
+                selected = value["params"]["modelId"].as_str().unwrap().to_string();
+                assert!(models().iter().any(|model| model.id == selected));
                 json!({})
             }
             "logout" => json!({}),
             "session/prompt" => {
-                assert!(selected, "explicit model selection must precede inference");
+                assert!(!selected.is_empty(), "explicit model selection must precede inference");
+                if let Some(expected) = value["params"]["prompt"][0]["text"].as_str().unwrap().strip_prefix("expect:") {
+                    assert_eq!(selected, expected);
+                }
                 if value["params"]["prompt"][0]["text"] == "wait" {
                     println!(
                         "{}",

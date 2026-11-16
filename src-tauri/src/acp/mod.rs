@@ -13,6 +13,7 @@ pub(crate) async fn set_acp_upstream_enabled(
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -42,6 +43,10 @@ pub(crate) struct AcpStatus {
 pub(crate) struct AcpModel {
     id: String,
     name: String,
+    #[serde(default, rename = "reasoningLevels")]
+    reasoning_levels: Vec<String>,
+    #[serde(skip)]
+    reasoning_variants: BTreeMap<String, String>,
 }
 
 #[derive(Default)]
@@ -104,8 +109,21 @@ fn read_selected(profile: &Path) -> Result<String, String> {
     }
 }
 
+const REASONING_LEVELS: &[&str] = &[
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "auto",
+];
+
+fn model_variant(id: &str) -> (&str, Option<&str>) {
+    match id.rsplit_once('-') {
+        Some((base, level)) if !base.is_empty() && REASONING_LEVELS.contains(&level) => {
+            (base, Some(level))
+        }
+        _ => (id, None),
+    }
+}
+
 fn model_list(session: &Value) -> Vec<AcpModel> {
-    session["models"]["availableModels"]
+    let mut models: Vec<_> = session["models"]["availableModels"]
         .as_array()
         .into_iter()
         .flatten()
@@ -114,9 +132,37 @@ fn model_list(session: &Value) -> Vec<AcpModel> {
             Some(AcpModel {
                 id: id.to_string(),
                 name: model["name"].as_str().unwrap_or(id).to_string(),
+                reasoning_levels: Vec::new(),
+                reasoning_variants: BTreeMap::new(),
             })
         })
-        .collect()
+        .collect();
+    let mut groups: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    for model in &models {
+        let (base, level) = model_variant(&model.id);
+        if let Some(level) = level {
+            groups
+                .entry(base.to_string())
+                .or_default()
+                .insert(level.to_string(), model.id.clone());
+        }
+    }
+    for model in &models {
+        if let Some(variants) = groups.get_mut(model.id.as_str()) {
+            variants.insert("none".into(), model.id.clone());
+        }
+    }
+    for model in &mut models {
+        if let Some(variants) = groups.get(model_variant(&model.id).0) {
+            model.reasoning_levels = REASONING_LEVELS
+                .iter()
+                .filter(|level| variants.contains_key(**level))
+                .map(|level| level.to_string())
+                .collect();
+            model.reasoning_variants = variants.clone();
+        }
+    }
+    models
 }
 
 fn mark_session(state: &AcpState, session: &Value, profile: &Path) -> Result<(), String> {

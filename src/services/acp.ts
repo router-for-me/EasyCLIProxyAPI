@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
-export type AcpModel = { id: string; name: string };
+export type AcpModel = { id: string; name: string; reasoningLevels?: string[] };
 export type AcpStatus = {
   executable: string | null;
   profile: string;

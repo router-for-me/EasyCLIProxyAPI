@@ -85,7 +85,13 @@ fn provider_entry(
 ) -> Result<serde_norway::Value, String> {
     let mut provider = json!({
         "name": PROVIDER, "base-url": url, "proxy-url": "direct", "disabled": models.is_empty(),
-        "models": models.iter().map(|model| json!({"name":model.id,"alias":format!("acp/{}", model.id)})).collect::<Vec<_>>()
+        "models": models.iter().map(|model| {
+            let mut entry = json!({"name":model.id,"alias":format!("acp/{}", model.id)});
+            if !model.reasoning_levels.is_empty() {
+                entry["thinking"] = json!({"levels":model.reasoning_levels});
+            }
+            entry
+        }).collect::<Vec<_>>()
     });
     provider[if v8 { "keys" } else { "api-key-entries" }] = json!([{"api-key":key}]);
     serde_norway::to_value(provider).map_err(|e| e.to_string())
@@ -313,15 +319,22 @@ fn error(status: StatusCode, message: impl AsRef<str>) -> Response<Body> {
 
 struct Completion {
     model: String,
+    alias: String,
     text: String,
     stream: bool,
 }
 
 fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, String> {
     let object = value.as_object().ok_or("Request body must be an object")?;
-    // Do not silently claim support for API controls the Agent does not expose.
     for key in object.keys() {
-        if !["model", "messages", "stream", "stream_options"].contains(&key.as_str()) {
+        if key == "service_tier" {
+            return Err("ACP text access does not support parameter 'service_tier': the model list does not advertise a service tier mapping".into());
+        }
+        if ![
+            "model", "messages", "stream", "stream_options", "reasoning_effort", "reasoning", "thinking",
+        ]
+        .contains(&key.as_str())
+        {
             return Err(format!(
                 "ACP text access does not support parameter '{key}'"
             ));
@@ -329,9 +342,40 @@ fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, St
     }
     let requested = value["model"].as_str().ok_or("model is required")?;
     let model = requested.strip_prefix("acp/").unwrap_or(requested);
-    if !models.iter().any(|item| item.id == model) {
-        return Err("Unknown ACP model; refresh available models".into());
+    let model = models
+        .iter()
+        .find(|item| item.id == model)
+        .ok_or("Unknown ACP model; refresh available models")?;
+    let mut effort = value
+        .get("reasoning_effort")
+        .map(|value| value.as_str().ok_or("reasoning_effort must be a string"))
+        .transpose()?;
+    for key in ["reasoning", "thinking"] {
+        if let Some(value) = value.get(key) {
+            let options = value
+                .as_object()
+                .ok_or_else(|| format!("{key} must be an object containing only a string effort"))?;
+            if options.len() != 1 || !options.contains_key("effort") {
+                return Err(format!("ACP supports only {key}.effort; other {key} controls are not supported"));
+            }
+            let nested = options["effort"]
+                .as_str()
+                .ok_or_else(|| format!("{key}.effort must be a string"))?;
+            if effort.is_some_and(|effort| effort != nested) {
+                return Err("Conflicting ACP reasoning efforts".into());
+            }
+            effort = Some(nested);
+        }
     }
+    let selected = match effort {
+        Some(effort) if model.reasoning_levels.is_empty() => {
+            return Err(format!("ACP model '{}' does not advertise reasoning levels; cannot request effort '{effort}'", model.id));
+        }
+        Some(effort) => model.reasoning_variants.get(effort).ok_or_else(|| {
+            format!("Unsupported reasoning effort '{effort}' for ACP model '{}'; supported levels: {}", model.id, model.reasoning_levels.join(", "))
+        })?,
+        None => &model.id,
+    };
     let messages = value["messages"]
         .as_array()
         .ok_or("messages must be an array")?;
@@ -383,7 +427,8 @@ fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, St
         }
     }
     Ok(Completion {
-        model: model.into(),
+        model: selected.into(),
+        alias: format!("acp/{}", model.id),
         text,
         stream,
     })
@@ -543,7 +588,7 @@ async fn handle_inner<R: tauri::Runtime>(
     };
     let cancel = CancelOnDrop(guard.cancel.clone());
     let stream = request.stream;
-    let model = format!("acp/{}", request.model);
+    let model = request.alias.clone();
     let created = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
