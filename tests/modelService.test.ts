@@ -4,9 +4,27 @@ import {
   modelSearchText,
   modelsFromDiscoveredPayload,
   modelsFromRecord,
+  normalizeBaseUrl,
   reconcileModelSelection,
   usableModelAlias,
 } from '../src/services/modelService';
+
+describe('provider base URL normalization', () => {
+  it.each(['chat/completions', 'messages', 'responses', 'generateContent'])(
+    'strips the %s endpoint with trailing slashes',
+    (endpoint) => {
+      for (const suffix of ['', '/', '///', '/?source=settings#example']) {
+        expect(normalizeBaseUrl(`https://relay.example/custom/v1/${endpoint}${suffix}`))
+          .toBe('https://relay.example/custom/v1');
+      }
+    },
+  );
+
+  it('retains custom base paths and normalizes root URLs', () => {
+    expect(normalizeBaseUrl('https://relay.example/custom/v4/')).toBe('https://relay.example/custom/v4');
+    expect(normalizeBaseUrl('https://relay.example/')).toBe('https://relay.example');
+  });
+});
 
 describe('model discovery selection', () => {
   const discovered = [
