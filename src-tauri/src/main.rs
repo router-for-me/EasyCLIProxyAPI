@@ -1385,7 +1385,7 @@ struct ThinkingAliasSource {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ThinkingAliasSourceLocation {
     Oauth {
-        channel: &'static str,
+        channel: String,
         force_mapping: bool,
     },
     ConfigModel {

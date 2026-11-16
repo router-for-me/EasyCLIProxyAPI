@@ -638,7 +638,7 @@ fn desktop_stale_oauth_route_respects_api_exclusions_but_allows_confirmed_oauth(
         let mappings = custom_mappings(&[("grok-4.6", "claude-opus-4-5")]);
         assert!(ensure_claude_desktop_model_aliases_in_yaml(&input, &mappings, &[]).is_err());
         let definitions = [OAuthModelDefinitions {
-            channel: oauth_alias_channel("xai").unwrap(),
+            channel: "xai".to_string(),
             models: vec![CodexModelDefinition {
                 id: "grok-4.6".into(), display_name: None, description: None,
                 context_window: None, reasoning_levels: vec![], supports_tools: None,

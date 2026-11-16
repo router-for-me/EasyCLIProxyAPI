@@ -44,7 +44,7 @@ pub(super) fn test_codex_oauth_thinking_source(model: &str) -> ResolvedThinkingA
                 .collect(),
         },
         location: ThinkingAliasSourceLocation::Oauth {
-            channel: "codex",
+            channel: "codex".to_string(),
             force_mapping: false,
         },
     }

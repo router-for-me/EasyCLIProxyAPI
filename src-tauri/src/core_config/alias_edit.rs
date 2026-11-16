@@ -80,13 +80,14 @@ fn editable_model_alias_for_mapping(
     if let Some(entry) = entry {
         let position = &entry.position;
         let (models, location, provider, kind, protocol) = if position.section == "oauth-model-alias" {
-            let channel = entry.oauth_channel.as_deref().and_then(oauth_alias_channel)
+            let channel = entry.oauth_channel.as_deref()
                 .ok_or("Unknown OAuth alias channel")?;
+            let (provider, kind, protocol) = oauth_alias_channel_details(channel);
             let models = root.get(yaml_key("oauth-model-alias"))
-                .and_then(|channels| channels.get(channel.key));
+                .and_then(|channels| channels.get(channel));
             (models, ThinkingAliasSourceLocation::Oauth {
-                channel: channel.key, force_mapping: channel.force_mapping,
-            }, channel.provider.to_string(), channel.kind.to_string(), channel.protocol.to_string())
+                channel: channel.to_string(), force_mapping: oauth_alias_force_mapping(root, channel),
+            }, provider, kind, protocol)
         } else {
             let (section, fallback, kind, protocol) = [
                 ("codex-api-key", "Codex API", "codex-api", "codex"),
@@ -232,22 +233,22 @@ fn editable_model_alias_for_mapping(
                 }
                 let channel = channel_name
                     .as_str()
-                    .and_then(oauth_alias_channel)
                     .ok_or("Editing model aliases for this OAuth channel is not supported yet")?;
+                let (provider, kind, protocol) = oauth_alias_channel_details(channel);
                 matches.push(EditableModelAlias {
                     source: ResolvedThinkingAliasSource {
                         source: ThinkingAliasSource {
                             id: model_alias_edit_source_id(alias),
                             model: upstream,
                             display_name,
-                            provider: channel.provider.to_string(),
-                            kind: channel.kind.to_string(),
-                            protocol: channel.protocol.to_string(),
+                            provider,
+                            kind,
+                            protocol,
                             reasoning_levels: Vec::new(),
                         },
                         location: ThinkingAliasSourceLocation::Oauth {
-                            channel: channel.key,
-                            force_mapping: channel.force_mapping,
+                            channel: channel.to_string(),
+                            force_mapping: oauth_alias_force_mapping(root, channel),
                         },
                     },
                     value: model.clone(),
@@ -283,10 +284,11 @@ pub(crate) fn resolve_model_alias_edit_source_for_mapping(
         .as_mapping()
         .ok_or("Kernel configuration root must be a YAML mapping")?;
     let mut source = editable_model_alias_for_mapping(root, alias, entry)?.source;
-    if let ThinkingAliasSourceLocation::Oauth { channel, .. } = source.location {
+    if let ThinkingAliasSourceLocation::Oauth { channel, .. } = &source.location {
         if let Some(model) = definitions
             .iter()
-            .filter(|set| set.channel.key == channel && set.channel.supports_reasoning)
+            .filter(|set| &set.channel == channel
+                && oauth_alias_channel(channel).map(|details| details.supports_reasoning).unwrap_or(true))
             .flat_map(|set| &set.models)
             .find(|model| model.id.eq_ignore_ascii_case(&source.source.model))
         {

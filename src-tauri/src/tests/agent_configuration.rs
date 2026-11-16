@@ -3184,7 +3184,7 @@ fn claude_desktop_aliases_support_claude_oauth_models() {
     let mappings = ClaudeDesktopModelMappings::all("claude-sonnet-4-6");
     let available_models = test_agent_models(&["claude-sonnet-4-6"]);
     let definitions = vec![OAuthModelDefinitions {
-        channel: oauth_alias_channel("claude").unwrap(),
+        channel: "claude".to_string(),
         models: vec![CodexModelDefinition {
             id: "claude-sonnet-4-6".to_string(),
             display_name: None,
@@ -3223,7 +3223,7 @@ fn claude_desktop_aliases_support_xai_oauth_models() {
     let mappings = ClaudeDesktopModelMappings::all("grok-4");
     let available_models = test_agent_models(&["grok-4"]);
     let definitions = vec![OAuthModelDefinitions {
-        channel: oauth_alias_channel("xai").unwrap(),
+        channel: "xai".to_string(),
         models: vec![CodexModelDefinition {
             id: "grok-4".to_string(),
             display_name: None,

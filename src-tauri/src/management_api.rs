@@ -536,7 +536,7 @@ pub(crate) fn management_endpoint(config: &GuiConfigFile, path: &str) -> Result<
     Ok(format!("{origin}/v8/management/{path}"))
 }
 
-fn normalize_oauth_request_provider(provider: &str, plugin_provider: bool) -> Result<String, String> {
+pub(crate) fn normalize_oauth_request_provider(provider: &str, plugin_provider: bool) -> Result<String, String> {
     if !plugin_provider {
         return normalize_management_oauth_provider(provider);
     }
