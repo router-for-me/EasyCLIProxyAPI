@@ -135,13 +135,19 @@ fn provider_health_json_has_text(protocol: &str, value: &serde_json::Value) -> b
                 })
             }),
         "interactions" => {
-            let event = value.get("event_type").or_else(|| value.get("type")).and_then(serde_json::Value::as_str);
-            (event == Some("content.delta")
-                && value.pointer("/delta/type").and_then(serde_json::Value::as_str) == Some("text")
+            let event = value
+                .get("event_type")
+                .or_else(|| value.get("type"))
+                .and_then(serde_json::Value::as_str);
+            (matches!(event, Some("step.delta" | "content.delta"))
+                && value
+                    .pointer("/delta/type")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("text")
                 && provider_health_value_has_text(value.pointer("/delta/text")))
-                || (event == Some("interaction.complete")
-                    && value.pointer("/interaction/status").and_then(serde_json::Value::as_str) == Some("completed")
-                    && provider_health_value_has_text(value.pointer("/interaction/outputs")))
+                || (provider_health_json_has_terminal_success(protocol, value)
+                    && (provider_health_value_has_text(value.pointer("/interaction/steps"))
+                        || provider_health_value_has_text(value.pointer("/interaction/outputs"))))
         }
         _ => false,
     }
@@ -163,9 +169,17 @@ pub(crate) fn provider_health_stream_has_text(protocol: &str, bytes: &[u8]) -> b
 
 fn provider_health_json_has_terminal_success(protocol: &str, value: &serde_json::Value) -> bool {
     if protocol == "interactions" {
-        let event = value.get("event_type").or_else(|| value.get("type")).and_then(serde_json::Value::as_str);
-        return event == Some("interaction.complete")
-            && value.pointer("/interaction/status").and_then(serde_json::Value::as_str) == Some("completed");
+        let event = value
+            .get("event_type")
+            .or_else(|| value.get("type"))
+            .and_then(serde_json::Value::as_str);
+        return matches!(
+            event,
+            Some("interaction.completed" | "interaction.complete")
+        ) && match value.pointer("/interaction/status") {
+            None => true,
+            Some(status) => matches!(status.as_str(), Some("completed" | "succeeded")),
+        };
     }
     if protocol == "openai-chat" {
         // CPA translates Gemini's exhausted thinking budget into OpenAI chunks.

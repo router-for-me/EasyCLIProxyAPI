@@ -98,17 +98,160 @@ data: {"delta":{"type":"text_delta","text":"H"}}
     ));
 }
 
-
 #[test]
 fn interactions_health_probe_recognizes_content_and_completed_events() {
-    assert!(provider_health_stream_has_text("interactions", br#"data: {"event_type":"content.delta","delta":{"type":"text","text":"Hello"}}
-"#));
+    assert!(provider_health_stream_has_text(
+        "interactions",
+        br#"data: {"event_type":"content.delta","delta":{"type":"text","text":"Hello"}}
+"#
+    ));
     assert!(provider_health_stream_has_text("interactions", br#"data: {"event_type":"interaction.complete","interaction":{"status":"completed","outputs":[{"type":"text","text":"Hello"}]}}
 "#));
-    assert!(provider_health_stream_has_terminal_success("interactions", br#"data: {"event_type":"interaction.complete","interaction":{"status":"completed"}}
-"#));
-    assert!(!provider_health_stream_has_terminal_success("interactions", br#"data: {"event_type":"interaction.complete","interaction":{"status":"failed"}}
-"#));
-    assert!(!provider_health_stream_has_text("interactions", br#"data: {"event_type":"content.delta","delta":{"type":"image","text":"metadata"}}
-"#));
+    assert!(provider_health_stream_has_terminal_success(
+        "interactions",
+        br#"data: {"event_type":"interaction.complete","interaction":{"status":"completed"}}
+"#
+    ));
+    assert!(!provider_health_stream_has_terminal_success(
+        "interactions",
+        br#"data: {"event_type":"interaction.complete","interaction":{"status":"failed"}}
+"#
+    ));
+    assert!(!provider_health_stream_has_text(
+        "interactions",
+        br#"data: {"event_type":"content.delta","delta":{"type":"image","text":"metadata"}}
+"#
+    ));
+}
+
+#[test]
+fn interactions_health_probe_recognizes_new_and_legacy_text_deltas() {
+    for event in ["step.delta", "content.delta"] {
+        for event_key in ["event_type", "type"] {
+            for (delta, expected) in [
+                (serde_json::json!({"type": "text", "text": "Hello"}), true),
+                (serde_json::json!({"type": "text", "text": ""}), false),
+                (serde_json::json!({"type": "text", "text": " \n\t"}), false),
+                (
+                    serde_json::json!({"type": "image", "text": "metadata"}),
+                    false,
+                ),
+                (serde_json::json!({"type": "text"}), false),
+            ] {
+                let mut payload = serde_json::json!({"delta": delta});
+                payload[event_key] = serde_json::json!(event);
+                let stream = format!("event: {event}\ndata: {payload}\n\n");
+                assert_eq!(
+                    provider_health_stream_has_text("interactions", stream.as_bytes()),
+                    expected,
+                    "{payload}"
+                );
+                assert!(!provider_health_stream_has_terminal_success(
+                    "interactions",
+                    stream.as_bytes()
+                ));
+            }
+        }
+    }
+}
+
+#[test]
+fn interactions_health_probe_checks_completed_event_status_and_text() {
+    for event in ["interaction.completed", "interaction.complete"] {
+        for event_key in ["event_type", "type"] {
+            for (status, expected) in [
+                (Some(serde_json::json!("completed")), true),
+                (Some(serde_json::json!("succeeded")), true),
+                (None, true),
+                (Some(serde_json::json!("failed")), false),
+                (Some(serde_json::json!("cancelled")), false),
+                (Some(serde_json::json!("canceled")), false),
+                (Some(serde_json::json!("in_progress")), false),
+                (Some(serde_json::json!(42)), false),
+            ] {
+                for output_key in ["steps", "outputs"] {
+                    for output in [
+                        serde_json::json!([{"type": "text", "text": "Hello"}]),
+                        serde_json::json!([{"content": [{"type": "text", "text": "Hello"}]}]),
+                        serde_json::json!([]),
+                    ] {
+                        let has_text = output.as_array().is_some_and(|items| !items.is_empty());
+                        let mut payload = serde_json::json!({"interaction": {}});
+                        payload[event_key] = serde_json::json!(event);
+                        payload["interaction"][output_key] = output;
+                        if let Some(status) = &status {
+                            payload["interaction"]["status"] = status.clone();
+                        }
+                        let stream = format!("event: {event}\ndata: {payload}\n\n");
+                        assert_eq!(
+                            provider_health_stream_has_terminal_success(
+                                "interactions",
+                                stream.as_bytes()
+                            ),
+                            expected,
+                            "{payload}"
+                        );
+                        assert_eq!(
+                            provider_health_stream_has_text("interactions", stream.as_bytes()),
+                            expected && has_text,
+                            "{payload}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn interactions_health_probe_handles_chunk_boundaries_and_done() {
+    let chunks: &[(&[u8], bool, bool)] = &[
+        (
+            b"event: step.delta\ndata: {\"index\":1,\"delta\":{\"text\":\"Hel",
+            false,
+            false,
+        ),
+        (
+            b"lo! How can I help\",\"type\":\"text\"},\"event_type\":\"step.",
+            false,
+            false,
+        ),
+        (
+            b"delta\"}\n\nevent: interaction.completed\ndata: {\"interaction\":{\"status\":\"comp",
+            true,
+            false,
+        ),
+        (
+            b"leted\"},\"event_type\":\"interaction.completed\"}\n\nevent: done\ndata: [DO",
+            true,
+            true,
+        ),
+        (b"NE]\n\n", true, true),
+    ];
+    let mut received = Vec::new();
+    for (chunk, has_text, has_terminal_success) in chunks {
+        received.extend_from_slice(chunk);
+        assert_eq!(
+            provider_health_stream_has_text("interactions", &received),
+            *has_text
+        );
+        assert_eq!(
+            provider_health_stream_has_terminal_success("interactions", &received),
+            *has_terminal_success
+        );
+    }
+    for stream in [
+        "event: done\ndata: [DONE]\n\n",
+        "event: step.delta\ndata: not json\n\n",
+        "data: {}\n\n",
+    ] {
+        assert!(!provider_health_stream_has_text(
+            "interactions",
+            stream.as_bytes()
+        ));
+        assert!(!provider_health_stream_has_terminal_success(
+            "interactions",
+            stream.as_bytes()
+        ));
+    }
 }
