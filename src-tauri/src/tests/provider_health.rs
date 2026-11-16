@@ -255,3 +255,79 @@ fn interactions_health_probe_handles_chunk_boundaries_and_done() {
         ));
     }
 }
+async fn interactions_serve_new_events_once(listener: tokio::net::TcpListener) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (mut socket, _) = listener.accept().await.expect("accept");
+    let mut buffer = vec![0u8; 4096];
+    let _ = socket.read(&mut buffer).await;
+    let request = String::from_utf8_lossy(&buffer);
+    assert!(
+        request.contains("/v1beta/interactions"),
+        "unexpected path: {request}"
+    );
+    let body = concat!(
+        "event: step.delta\n",
+        "data: {\"index\":1,\"delta\":{\"text\":\"Hello! How can I help\",\"type\":\"text\"},\"event_type\":\"step.delta\"}\n\n",
+        "event: interaction.completed\n",
+        "data: {\"interaction\":{\"status\":\"completed\"},\"event_type\":\"interaction.completed\"}\n\n",
+        "event: done\n",
+        "data: [DONE]\n\n"
+    );
+    let head = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    let _ = socket.write_all(head.as_bytes()).await;
+    let _ = socket.write_all(body.as_bytes()).await;
+    let _ = socket.flush().await;
+}
+
+/// Drives the same streaming loop the desktop probe uses against a local server
+/// replaying the real Interactions event names, so the deploy path is covered
+/// without a live provider key.
+#[tokio::test]
+async fn interactions_streaming_probe_path_accepts_new_events() {
+    use futures_util::StreamExt;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = tokio::spawn(interactions_serve_new_events_once(listener));
+
+    let client = reqwest::Client::builder().build().expect("client");
+    let response = client
+        .post(format!("http://{addr}/v1beta/interactions"))
+        .header("Content-Type", "application/json")
+        .body("{\"model\":\"gemini-4-hydrogen\",\"input\":\"hi\",\"stream\":true}")
+        .send()
+        .await
+        .expect("send");
+    assert!(response.status().is_success());
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    assert!(provider_health_content_type_is_streaming(content_type));
+
+    let mut stream = response.bytes_stream();
+    let mut received = Vec::new();
+    let mut first_token = false;
+    let mut terminal = false;
+    while let Some(chunk) = stream.next().await {
+        received.extend_from_slice(&chunk.expect("chunk"));
+        if provider_health_stream_has_text("interactions", &received) {
+            first_token = true;
+        }
+        if provider_health_stream_has_terminal_success("interactions", &received) {
+            terminal = true;
+        }
+        if first_token && terminal {
+            break;
+        }
+    }
+    assert!(first_token, "probe never saw the first token");
+    assert!(terminal, "probe never saw a terminal success");
+    let _ = server.await;
+}
