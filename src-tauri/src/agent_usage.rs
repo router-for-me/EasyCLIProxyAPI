@@ -55,6 +55,7 @@ pub(crate) struct UsageCounter {
 pub(crate) struct FileDelta {
     pub(crate) daily: BTreeMap<(String, String), UsageCounter>,
     pub(crate) hourly: BTreeMap<(String, u8, String), UsageCounter>,
+    pub(crate) session_model: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -651,8 +652,19 @@ pub(crate) fn read_usage_file(path: &Path, source: &str, delta: &mut FileDelta) 
                     }
                 }
             }
+            if source == "antigravity" {
+                if let Some(model) = antigravity_model_hint(&value) {
+                    delta.session_model = Some(model);
+                }
+            }
             add_value_usage(&value, source, path, delta);
         }
+    }
+    if delta.session_model.is_none() {
+        delta.session_model = antigravity_sibling_model(path);
+    }
+    if let Some(model) = delta.session_model.clone() {
+        reassign_antigravity_models(delta, model);
     }
     for (sample, time) in claude_samples.into_values() {
         add_sample_at(sample, time, delta);
@@ -807,6 +819,122 @@ fn read_zcode_database(path: &Path, delta: &mut FileDelta) -> Result<(), ()> {
         );
     }
     Ok(())
+}
+
+const ANTIGRAVITY_MODEL_LABELS: &[(&str, &str)] = &[
+    ("flash lite", "gemini-3.5-flash-lite"),
+    ("flash-lite", "gemini-3.5-flash-lite"),
+    ("flash (high)", "gemini-3.8-flash-high"),
+    ("flash high", "gemini-3.8-flash-high"),
+    ("flash (low)", "gemini-3.8-flash-low"),
+    ("flash low", "gemini-3.8-flash-low"),
+    ("flash (dynamic)", "gemini-3.8-flash-tiered"),
+    ("flash tiered", "gemini-3.8-flash-tiered"),
+    ("pro", "gemini-3-pro"),
+];
+
+fn antigravity_model_label(value: &str) -> Option<String> {
+    let lowered = value.to_lowercase();
+    for (needle, model) in ANTIGRAVITY_MODEL_LABELS {
+        if lowered.contains(needle) {
+            return Some((*model).to_string());
+        }
+    }
+    None
+}
+
+fn antigravity_model_hint(value: &Value) -> Option<String> {
+    let object = value.as_object()?;
+    let source = object.get("source")?.as_str()?;
+    if !source.eq_ignore_ascii_case("USER_EXPLICIT") {
+        return None;
+    }
+    let content = object.get("content")?.as_str()?;
+    for marker in [
+        "changed setting `Model Selection` from None to ",
+        "changed setting `Model Selection` to ",
+    ] {
+        let Some(position) = content.find(marker) else {
+            continue;
+        };
+        let rest = &content[position + marker.len()..];
+        let label = rest
+            .split_once(". ")
+            .map(|(label, _)| label)
+            .unwrap_or(rest)
+            .lines()
+            .next()?
+            .trim_end_matches('.');
+        return antigravity_model_label(label);
+    }
+    None
+}
+
+fn antigravity_sibling_model(path: &Path) -> Option<String> {
+    let mut logs_dir = path.parent()?;
+    while logs_dir.file_name().is_some_and(|name| {
+        name.eq_ignore_ascii_case("chunks")
+            || name.eq_ignore_ascii_case("transcript")
+            || name.eq_ignore_ascii_case("transcript_full")
+    }) {
+        logs_dir = logs_dir.parent()?;
+    }
+    if !logs_dir
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("logs"))
+    {
+        return None;
+    }
+    for name in ["transcript.jsonl", "transcript_full.jsonl"] {
+        let sibling = logs_dir.join(name);
+        if !sibling.is_file() {
+            continue;
+        }
+        let file = File::open(&sibling).ok()?;
+        let reader = BufReader::new(file);
+        for line in reader.lines() {
+            let Ok(line) = line else { continue };
+            if line.len() > MAX_JSON_LINE_BYTES {
+                continue;
+            }
+            let Ok(value) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            if let Some(model) = antigravity_model_hint(&value) {
+                return Some(model);
+            }
+        }
+    }
+    None
+}
+
+fn reassign_antigravity_models(delta: &mut FileDelta, model: String) {
+    let daily_keys: Vec<(String, String)> = delta
+        .daily
+        .iter()
+        .filter(|(key, counter)| counter.samples > 0 && key.1.is_empty())
+        .map(|(key, _)| key.clone())
+        .collect();
+    for key in daily_keys {
+        if let Some(counter) = delta.daily.remove(&key) {
+            let new_key = (key.0.clone(), model.clone());
+            let target = delta.daily.entry(new_key).or_default();
+            add_counter(target, &counter);
+        }
+    }
+    let hourly_keys: Vec<(String, u8, String)> = delta
+        .hourly
+        .iter()
+        .filter(|(key, counter)| counter.samples > 0 && key.2.is_empty())
+        .map(|(key, _)| key.clone())
+        .collect();
+    for key in hourly_keys {
+        if let Some(counter) = delta.hourly.remove(&key) {
+            let new_key = (key.0, key.1, model.clone());
+            let target = delta.hourly.entry(new_key).or_default();
+            add_counter(target, &counter);
+        }
+    }
 }
 
 fn add_value_usage(value: &Value, source: &str, path: &Path, delta: &mut FileDelta) {
@@ -1695,6 +1823,32 @@ mod tests {
         let mut delta = FileDelta::default();
         add_value_usage(&value, "claude", Path::new("session.jsonl"), &mut delta);
         assert_eq!(delta_total(&delta).total_tokens, 26);
+    }
+
+    #[test]
+    fn recovers_antigravity_models_from_client_labels() {
+        assert_eq!(
+            antigravity_model_label("Gemini 3.8 Flash (High)").as_deref(),
+            Some("gemini-3.8-flash-high")
+        );
+        assert_eq!(
+            antigravity_model_label("Gemini 3.8 Flash (Low)").as_deref(),
+            Some("gemini-3.8-flash-low")
+        );
+        assert_eq!(
+            antigravity_model_label("Gemini 3.8 Flash Lite").as_deref(),
+            Some("gemini-3.5-flash-lite")
+        );
+        assert!(antigravity_model_label("Unknown Model").is_none());
+
+        let value = json!({
+            "source": "USER_EXPLICIT",
+            "content": "<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` from None to Gemini 3.8 Flash (High). No need to comment on this change if the user doesn't ask about it.\n</USER_SETTINGS_CHANGE>"
+        });
+        assert_eq!(
+            antigravity_model_hint(&value).as_deref(),
+            Some("gemini-3.8-flash-high")
+        );
     }
 
     #[test]
