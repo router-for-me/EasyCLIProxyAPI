@@ -331,3 +331,109 @@ async fn interactions_streaming_probe_path_accepts_new_events() {
     assert!(terminal, "probe never saw a terminal success");
     let _ = server.await;
 }
+/// Serves one raw HTTP response with the given body and closes the connection.
+async fn serve_raw_http_once(listener: tokio::net::TcpListener, body: &'static str) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (mut socket, _) = listener.accept().await.expect("accept");
+    let mut buffer = vec![0u8; 8192];
+    let _ = socket.read(&mut buffer).await;
+    let head = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    let _ = socket.write_all(head.as_bytes()).await;
+    for chunk in body.as_bytes().chunks(48) {
+        let _ = socket.write_all(chunk).await;
+        let _ = socket.flush().await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+fn interactions_probe_request(url: String) -> crate::provider_health::ProviderHealthProbeRequest {
+    crate::provider_health::ProviderHealthProbeRequest {
+        url,
+        header: std::collections::HashMap::from([(
+            "Content-Type".to_string(),
+            "application/json".to_string(),
+        )]),
+        source_provider: None,
+        data: "{\"model\":\"gemini-4-hydrogen\",\"input\":\"hi\",\"stream\":true}".to_string(),
+        protocol: "interactions".to_string(),
+        model: "gemini-4-hydrogen".to_string(),
+        source: "test-key".to_string(),
+        auth_index: String::new(),
+        proxy_url: None,
+        timeout_ms: Some(5_000),
+    }
+}
+
+/// The production probe path, not a re-implementation, must accept a stream
+/// that only carries the interaction.completed event and its steps payload.
+#[tokio::test]
+async fn interactions_probe_path_accepts_completed_only_stream() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = tokio::spawn(serve_raw_http_once(
+        listener,
+        "event: interaction.completed\ndata: {\"interaction\":{\"status\":\"completed\",\"steps\":[{\"type\":\"text\",\"text\":\"Hello\"}]},\"event_type\":\"interaction.completed\"}\n\nevent: done\ndata: [DONE]\n\n",
+    ));
+
+    let request = interactions_probe_request(format!("http://{addr}/v1beta/interactions"));
+    let client = reqwest::Client::builder().build().expect("client");
+    let result = crate::provider_health::execute_health_probe(None, client, request).await;
+    server.await.expect("server");
+    let response = result.expect("completed-only stream must be accepted");
+    // The probe reports the terminal-event latency as a first token because the
+    // completed payload carries text, which is the pre-existing behaviour for
+    // completed-only streams and must stay accepted.
+    assert!(response.first_token_latency_ms.is_some());
+    assert!(response.response_latency_ms > 0);
+}
+
+/// A stream whose only text arrives through step.delta must report a first
+/// token latency measured on the real production loop.
+#[tokio::test]
+async fn interactions_probe_path_reports_first_token_for_step_delta() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = tokio::spawn(serve_raw_http_once(
+        listener,
+        "event: step.delta\ndata: {\"index\":1,\"delta\":{\"text\":\"Hello! How can I help\",\"type\":\"text\"},\"event_type\":\"step.delta\"}\n\nevent: interaction.completed\ndata: {\"interaction\":{\"status\":\"completed\"},\"event_type\":\"interaction.completed\"}\n\nevent: done\ndata: [DONE]\n\n",
+    ));
+
+    let request = interactions_probe_request(format!("http://{addr}/v1beta/interactions"));
+    let client = reqwest::Client::builder().build().expect("client");
+    let result = crate::provider_health::execute_health_probe(None, client, request).await;
+    server.await.expect("server");
+    let response = result.expect("step.delta stream must be accepted");
+    assert!(
+        response.first_token_latency_ms.is_some(),
+        "a text delta must produce a first-token latency"
+    );
+}
+
+/// A failed completion must never be accepted by the production probe.
+#[tokio::test]
+async fn interactions_probe_path_rejects_failed_completion_stream() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = tokio::spawn(serve_raw_http_once(
+        listener,
+        "event: interaction.completed\ndata: {\"interaction\":{\"status\":\"failed\"},\"event_type\":\"interaction.completed\"}\n\nevent: done\ndata: [DONE]\n\n",
+    ));
+
+    let request = interactions_probe_request(format!("http://{addr}/v1beta/interactions"));
+    let client = reqwest::Client::builder().build().expect("client");
+    let result = crate::provider_health::execute_health_probe(None, client, request).await;
+    server.await.expect("server");
+    assert!(
+        result.is_err(),
+        "a failed interaction must not be reported as healthy"
+    );
+}

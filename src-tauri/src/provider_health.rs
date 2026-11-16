@@ -20,29 +20,29 @@ mod tests;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProviderHealthProbeRequest {
-    url: String,
-    header: HashMap<String, String>,
-    data: String,
-    protocol: String,
+    pub(crate) url: String,
+    pub(crate) header: HashMap<String, String>,
+    pub(crate) data: String,
+    pub(crate) protocol: String,
     #[serde(default)]
-    source_provider: Option<String>,
+    pub(crate) source_provider: Option<String>,
     #[serde(default)]
-    proxy_url: Option<String>,
-    timeout_ms: Option<u64>,
+    pub(crate) proxy_url: Option<String>,
+    pub(crate) timeout_ms: Option<u64>,
     #[serde(default)]
-    model: String,
+    pub(crate) model: String,
     #[serde(default)]
-    source: String,
+    pub(crate) source: String,
     #[serde(default)]
-    auth_index: String,
+    pub(crate) auth_index: String,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProviderHealthProbeResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
-    first_token_latency_ms: Option<u64>,
-    response_latency_ms: u64,
+    pub(crate) first_token_latency_ms: Option<u64>,
+    pub(crate) response_latency_ms: u64,
 }
 
 #[derive(Default)]
@@ -483,7 +483,7 @@ fn provider_health_proxy_url<'a>(url: &reqwest::Url, requested: Option<&'a str>,
     if proxy.eq_ignore_ascii_case("direct") { "" } else { proxy }
 }
 
-async fn execute_health_probe(
+pub(crate) async fn execute_health_probe(
     usage_app: Option<&tauri::AppHandle>,
     client: reqwest::Client,
     request: ProviderHealthProbeRequest,
