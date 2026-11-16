@@ -185,13 +185,95 @@ fn unsupported_inputs_are_rejected_without_dropping_parameters() {
     for messages in [
         json!([]),
         json!([{"role":"system","content":"x"}]),
-        json!([{"role":"user","content":"x"},{"role":"assistant","content":"y"}]),
+        json!([{"role":"user","content":"x"},{"role":"tool","content":"y"}]),
+        json!([{"role":"user","content":"x"},{"role":"function","content":"y"}]),
+        json!([{"role":"developer","content":"x"},{"role":"user","content":"y"}]),
         json!([{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.test/image"}}]}]),
+        json!([{"role":"user","content":"x","name":"n"}]),
+        json!([{"role":"user","content":""}]),
     ] {
         let mut value = request(false);
         value["messages"] = messages;
         assert!(parse_completion(&value, &models()).is_err());
     }
+}
+
+#[test]
+fn single_user_message_is_passed_through_unchanged() {
+    let completion = parse_completion(&request(false), &models()).unwrap();
+    assert_eq!(completion.text, "ping");
+    let mut value = request(false);
+    value["messages"] =
+        json!([{"role":"user","content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}]);
+    assert_eq!(parse_completion(&value, &models()).unwrap().text, "ab");
+}
+
+#[test]
+fn system_messages_are_flattened_before_the_user_turn() {
+    let mut value = request(false);
+    value["messages"] = json!([
+        {"role":"system","content":"be brief"},
+        {"role":"system","content":[{"type":"text","text":"stay calm"}]},
+        {"role":"user","content":"hello"},
+    ]);
+    assert_eq!(
+        parse_completion(&value, &models()).unwrap().text,
+        "System: be brief\n\nSystem: stay calm\n\nUser: hello"
+    );
+}
+
+#[test]
+fn multi_turn_history_is_flattened_into_one_prompt() {
+    let mut value = request(false);
+    value["messages"] = json!([
+        {"role":"system","content":"be brief"},
+        {"role":"user","content":"hi"},
+        {"role":"assistant","content":[{"type":"text","text":"hello"}]},
+        {"role":"user","content":"again"},
+    ]);
+    assert_eq!(
+        parse_completion(&value, &models()).unwrap().text,
+        "System: be brief\n\nUser: hi\n\nAssistant: hello\n\nUser: again"
+    );
+}
+
+#[test]
+fn history_must_end_with_a_user_turn() {
+    let mut value = request(false);
+    value["messages"] = json!([
+        {"role":"user","content":"hi"},
+        {"role":"assistant","content":"hello"},
+    ]);
+    let error = parse_completion(&value, &models()).err().unwrap();
+    assert!(
+        error.contains("the last message must be from the user"),
+        "{error}"
+    );
+}
+
+#[test]
+fn unsupported_roles_name_the_role() {
+    let mut value = request(false);
+    value["messages"] = json!([
+        {"role":"user","content":"hi"},
+        {"role":"tool","content":"result"},
+        {"role":"user","content":"again"},
+    ]);
+    let error = parse_completion(&value, &models()).err().unwrap();
+    assert!(error.contains("role 'tool'"), "{error}");
+}
+
+#[test]
+fn oversized_flattened_prompt_is_rejected() {
+    let mut value = request(false);
+    let big = "x".repeat(MAX_BODY - 8);
+    value["messages"] = json!([
+        {"role":"user","content":big},
+        {"role":"assistant","content":big},
+        {"role":"user","content":"tail"},
+    ]);
+    let error = parse_completion(&value, &models()).err().unwrap();
+    assert!(error.contains("1 MiB"), "{error}");
 }
 
 #[test]
@@ -517,5 +599,80 @@ async fn real_cpa_lists_and_routes_registered_acp_models() {
             std::fs::read_to_string(directory.join("core.log")).unwrap_or_default()
         );
     }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn http_bridge_flattens_multi_turn_history_into_the_prompt() {
+    let app = tauri::test::mock_app();
+    app.manage(AcpState::default());
+    app.manage(crate::GuiConfigState::new(crate::GuiConfigFile::default()));
+    let directory = crate::unique_test_temp_path("acp-http-history");
+    std::fs::create_dir_all(&directory).unwrap();
+    {
+        let state = app.state::<AcpState>();
+        let mut status = state.status.lock().unwrap();
+        status.models = models();
+        status.authenticated = true;
+        status.upstream_enabled = true;
+        status.executable = Some("fake-official-cli".into());
+        status.profile = directory.to_string_lossy().into_owned();
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(serve(
+        app.handle().clone(),
+        listener,
+        "internal-test-key".into(),
+        stop.clone(),
+        spawn_fake,
+    ));
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let mut value = request(false);
+    value["messages"] = json!([
+        {"role":"system","content":"be brief"},
+        {"role":"user","content":"hi"},
+        {"role":"assistant","content":[{"type":"text","text":"hello"}]},
+        {"role":"user","content":"again"}
+    ]);
+    let response = http
+        .post(format!("{base}/v1/chat/completions"))
+        .bearer_auth("internal-test-key")
+        .json(&value)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["choices"][0]["message"]["content"], "ACP_OK");
+    assert_eq!(body["model"], "acp/test-model");
+    let mut rejected = value.clone();
+    rejected["messages"] = json!([
+        {"role":"user","content":"hi"},
+        {"role":"tool","content":"x"}
+    ]);
+    let response = http
+        .post(format!("{base}/v1/chat/completions"))
+        .bearer_auth("internal-test-key")
+        .json(&rejected)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    let body: Value = response.json().await.unwrap();
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("role 'tool'"),
+        "{body}"
+    );
+    stop.cancel();
+    server.await.unwrap();
     std::fs::remove_dir_all(directory).unwrap();
 }

@@ -318,6 +318,87 @@ struct Completion {
     stream: bool,
 }
 
+fn message_text(message: &Value, role: &str) -> Result<String, String> {
+    let message = message
+        .as_object()
+        .ok_or_else(|| format!("Invalid {role} message"))?;
+    if message
+        .keys()
+        .any(|key| !["role", "content"].contains(&key.as_str()))
+    {
+        return Err("Unsupported ACP message fields".into());
+    }
+    let text = match &message["content"] {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => {
+            let mut text = String::new();
+            for part in parts {
+                if part["type"] != "text" {
+                    return Err("ACP accepts text content only".into());
+                }
+                text.push_str(part["text"].as_str().ok_or("Invalid text content")?);
+            }
+            text
+        }
+        _ => return Err("ACP accepts text content only".into()),
+    };
+    if text.trim().is_empty() {
+        return Err(format!("A non-empty {role} message is required"));
+    }
+    Ok(text)
+}
+
+// The official CLI is stateless per request, so earlier turns are flattened
+// into the single prompt text block instead of a server-side conversation.
+fn prompt_text(messages: &[Value]) -> Result<String, String> {
+    let mut system = Vec::new();
+    let mut turns = Vec::new();
+    for message in messages {
+        let role = message["role"].as_str().unwrap_or("");
+        let label = match role {
+            "system" | "user" | "assistant" => role,
+            "" => return Err("Invalid message role".into()),
+            role => {
+                return Err(format!(
+                    "ACP accepts system, user and assistant messages only; role '{role}' is not supported"
+                ))
+            }
+        };
+        let text = message_text(message, label)?;
+        if role == "system" {
+            system.push(format!("System: {text}"));
+        } else {
+            let label = if role == "user" { "User" } else { "Assistant" };
+            turns.push((label, text));
+        }
+    }
+    if messages.is_empty() {
+        return Err("A non-empty user message is required".into());
+    }
+    if messages[messages.len() - 1]["role"] != "user" {
+        return Err("the last message must be from the user".into());
+    }
+    if system.is_empty() && turns.len() == 1 {
+        let text = turns.remove(0).1;
+        if text.len() > MAX_BODY {
+            return Err("ACP prompt exceeds 1 MiB after flattening the conversation".into());
+        }
+        return Ok(text);
+    }
+    let turns = turns
+        .into_iter()
+        .map(|(label, text)| format!("{label}: {text}"));
+    let text = system
+        .into_iter()
+        .chain(turns)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if text.len() > MAX_BODY {
+        return Err("ACP prompt exceeds 1 MiB after flattening the conversation".into());
+    }
+    Ok(text)
+}
+
 fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, String> {
     let object = value.as_object().ok_or("Request body must be an object")?;
     for key in object.keys() {
@@ -373,33 +454,7 @@ fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, St
     let messages = value["messages"]
         .as_array()
         .ok_or("messages must be an array")?;
-    if messages.len() != 1 || messages[0]["role"] != "user" {
-        return Err("ACP currently accepts one user text message per request; history and system/tool messages are not supported".into());
-    }
-    let message = messages[0].as_object().ok_or("Invalid user message")?;
-    if message
-        .keys()
-        .any(|key| !["role", "content"].contains(&key.as_str()))
-    {
-        return Err("Unsupported ACP message fields".into());
-    }
-    let text = match &messages[0]["content"] {
-        Value::String(text) => text.clone(),
-        Value::Array(parts) => {
-            let mut text = String::new();
-            for part in parts {
-                if part["type"] != "text" {
-                    return Err("ACP accepts text content only".into());
-                }
-                text.push_str(part["text"].as_str().ok_or("Invalid text content")?);
-            }
-            text
-        }
-        _ => return Err("ACP accepts text content only".into()),
-    };
-    if text.trim().is_empty() {
-        return Err("A non-empty user message is required".into());
-    }
+    let text = prompt_text(messages)?;
     let stream = match value.get("stream") {
         None => false,
         Some(Value::Bool(stream)) => *stream,
