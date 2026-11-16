@@ -169,7 +169,6 @@ fn native_oauth_round_trip_preserves_cpa_and_unrelated_user_edits() {
         original["model_providers"]["cpa-gui"]
     );
     assert!(!home.path("auth.json").exists());
-    assert!(ensure_codex_cpa_mode(&home.0).is_err());
     assert!(
         !sync_codex_model_catalog_if_configured(&home.0, 8317, "test-api-key", &[], "unused")
             .unwrap()

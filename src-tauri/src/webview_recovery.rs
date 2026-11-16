@@ -57,8 +57,12 @@ fn client_size(width: i32, height: i32, minimized: bool) -> Option<tauri::Physic
 // on other targets; the predicate itself stays target-independent and testable.
 #[cfg(windows)]
 fn is_minimized_resize_message(message: u32, wparam: usize) -> bool {
-    message == windows_sys::Win32::UI::WindowsAndMessaging::WM_SIZE
-        && wparam == windows_sys::Win32::UI::WindowsAndMessaging::SIZE_MINIMIZED as usize
+    is_minimized_resize_codes(
+        message,
+        wparam,
+        windows_sys::Win32::UI::WindowsAndMessaging::WM_SIZE,
+        windows_sys::Win32::UI::WindowsAndMessaging::SIZE_MINIMIZED,
+    )
 }
 
 fn is_minimized_resize_codes(message: u32, wparam: usize, size: u32, minimized: u32) -> bool {

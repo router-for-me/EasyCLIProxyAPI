@@ -5,7 +5,9 @@ import { homeEn } from '../home';
 import { authFileListEn } from '../authFileList';
 import { themeDiyEn } from '../themeDiy';
 
+import { acpEn } from '../acp';
 export const en: Record<MessageKey, string> = {
+  ...acpEn,
   'agents.responseLanguage.label': 'Response language',
   'agents.responseLanguage.unmanaged': 'Keep existing setting (unmanaged)',
   'agents.responseLanguage.default': 'Claude default (remove override)',

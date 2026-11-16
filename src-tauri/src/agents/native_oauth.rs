@@ -227,13 +227,6 @@ pub(crate) fn codex_native_oauth_enabled(home: &Path) -> Result<bool, String> {
     Ok(native_selected(&document, &state))
 }
 
-pub(crate) fn ensure_codex_cpa_mode(home: &Path) -> Result<(), String> {
-    if codex_native_oauth_enabled(home)? {
-        return Err("Click “Update Configuration” or “One-Click Setup” to restore the CPA configuration".into());
-    }
-    Ok(())
-}
-
 // Save only the settings changed by this switch. Other user edits survive both directions.
 fn routing_settings(document: &toml_edit::Document) -> toml_edit::Document {
     let mut saved = toml_edit::Document::new();

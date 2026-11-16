@@ -4,7 +4,9 @@ import { homeZhCN } from '../home';
 import { authFileListZhCN } from '../authFileList';
 import { themeDiyZhCN } from '../themeDiy';
 
+import { acpZhCN } from '../acp';
 export const zhCN: Record<string, string> = {
+  ...acpZhCN,
   'agents.responseLanguage.label': '回复语言',
   'agents.responseLanguage.unmanaged': '保留现有设置（不管理）',
   'agents.responseLanguage.default': 'Claude 默认（移除覆盖）',

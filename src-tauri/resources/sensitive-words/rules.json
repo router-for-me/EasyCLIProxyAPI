@@ -1,7 +1,8 @@
 {
   "antigravity": {
     "wordReplacements": {
-      "Codex": "Assistant"
+      "Codex": "Antigratity Assistant",
+      "deepseek harness": "antigravity cli"
     },
     "wordsToObfuscate": [
       "Claude",

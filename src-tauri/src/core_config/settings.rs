@@ -1883,14 +1883,14 @@ pub(crate) fn restore_window_position_for_monitor(
     saved_position: tauri::PhysicalPosition<i32>,
     window_size: tauri::PhysicalSize<u32>,
     work_area: &tauri::PhysicalRect<i32, u32>,
-    scale_factor: f64,
+    _scale_factor: f64,
 ) -> (tauri::PhysicalPosition<i32>, tauri::Position) {
     let fitted_physical = fit_window_position_to_work_area(saved_position, window_size, work_area);
     #[cfg(target_os = "macos")]
-    let target_position = if scale_factor.is_finite() && scale_factor > 0.0 {
+    let target_position = if _scale_factor.is_finite() && _scale_factor > 0.0 {
         tauri::Position::Logical(tauri::LogicalPosition::new(
-            f64::from(fitted_physical.x) / scale_factor,
-            f64::from(fitted_physical.y) / scale_factor,
+            f64::from(fitted_physical.x) / _scale_factor,
+            f64::from(fitted_physical.y) / _scale_factor,
         ))
     } else {
         tauri::Position::Physical(fitted_physical)

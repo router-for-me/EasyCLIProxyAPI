@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agents;
+mod acp;
 mod agent_skills;
 mod agent_usage;
 mod agent_usage_store;
@@ -2630,6 +2631,7 @@ fn main() {
                 .build(),
         )
         .manage(CoreDownloadState::default())
+        .manage(acp::AcpState::default())
         .manage(AppUpdateState::default())
         .manage(window_activity::WindowActivity::default())
         .manage(CoreProcessState::new(should_start_core_on_launch(
@@ -2895,6 +2897,9 @@ fn main() {
 
                 process_state.set_starting(false);
 
+                let acp_app = core_app.clone();
+                tauri::async_runtime::spawn(acp::restore(acp_app));
+
                 let proxy_app = core_app.clone();
                 tauri::async_runtime::spawn(async move {
                     let manager = proxy_app.state::<reverse_proxy::ReverseProxyManagerState>();
@@ -2925,6 +2930,15 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            acp::get_acp_status,
+            acp::acp_connect,
+            acp::switch_acp_account,
+            acp::add_acp_account,
+            acp::relogin_acp_account,
+            acp::cancel_acp_operation,
+            acp::select_acp_model,
+            acp::test_acp_connection,
+            acp::set_acp_upstream_enabled,
             window_activity::main_window_active,
             desktop_theme::get_linux_system_theme,
             desktop_theme::list_custom_themes,
@@ -3137,6 +3151,7 @@ fn main() {
                 return;
             }
             process_state.recovery.cancel();
+            app_handle.state::<acp::AcpState>().shutdown();
             if let Err(error) = persist_main_window_geometry(app_handle) {
                 eprintln!("Failed to save main window geometry: {error}");
             }
@@ -3156,6 +3171,7 @@ fn main() {
             });
         }
         tauri::RunEvent::Exit => {
+            app_handle.state::<acp::AcpState>().shutdown();
             #[cfg(windows)]
             webview_recovery::stop(app_handle);
             usage::stop_usage_collector(app_handle);

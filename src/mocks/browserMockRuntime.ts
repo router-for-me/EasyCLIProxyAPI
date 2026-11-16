@@ -6,6 +6,7 @@ import { createPluginMock, type PluginWebviewMockState } from './pluginMock';
 import { createQuotaMock, createQuotaMockFiles } from './quotaMock';
 import { normalizeAuthFileTags } from '../services/authFiles';
 import { hasDeepSeekArgumentConflict, parseAgentLaunchArguments } from '../services/agentLaunchArguments';
+import type { AcpStatus } from '../services/acp';
 
 
 
@@ -1251,6 +1252,13 @@ export function createBrowserMockRuntime(
   onPluginWebview?: (state: PluginWebviewMockState) => void,
 ): BrowserMockRuntime {
   const state = createState(scenario);
+  const acp: AcpStatus = {
+    executable: 'C:/Users/demo/AppData/Local/agy/bin/agy.exe', profile: 'C:/ECPA/acp/antigravity',
+    authenticated: false, busy: false, operation: '', models: [], selectedModel: '', error: null, latestProbe: null, upstreamEnabled: false, upstreamUrl: null,
+    accounts: [{ id: 'default', label: 'Default', email: null as string | null }], activeAccount: 'default',
+  };
+  const acpAccountModels = new Map<string, string>();
+  let acpCancelled = false;
   const applyMockUpdateChannel = (channel: string) => {
     const normalized = channel.trim() || 'stable';
     state.appUpdateInfo.updateChannel = normalized;
@@ -1633,6 +1641,67 @@ export function createBrowserMockRuntime(
         return { firstTokenLatencyMs: 184, responseLatencyMs: 642 };
       }
 
+      case 'get_acp_status': return clone(acp);
+      case 'set_acp_upstream_enabled': {
+        if (acp.busy) throw new Error('An ACP operation is already running');
+        if (payload.enabled && !acp.authenticated) throw new Error('Connect ACP first');
+        acp.upstreamEnabled = payload.enabled === true;
+        acp.upstreamUrl = acp.upstreamEnabled ? 'http://127.0.0.1:18319/v1' : null;
+        acp.latestProbe = null;
+        return clone(acp);
+      }
+      case 'add_acp_account': {
+        if (acp.busy) throw new Error('An ACP operation is already running');
+        const id = 'mock-account-' + acp.accounts.length;
+        acpAccountModels.set(acp.activeAccount, acp.selectedModel);
+        acp.accounts.push({ id, label: readString(payload.label).trim(), email: 'work.acp@example.test' });
+        acp.activeAccount = id; acp.selectedModel = '';
+        acp.latestProbe = null;
+        acp.authenticated = true;
+        acp.selectedModel = acp.models[0]?.id || 'gemini-4-argon-medium';
+        return clone(acp);
+      }
+      case 'switch_acp_account': {
+        if (acp.busy) throw new Error('An ACP operation is already running');
+        const id = readString(payload.accountId);
+        if (!acp.accounts.some(account => account.id === id)) throw new Error('Unknown ACP account');
+        acpAccountModels.set(acp.activeAccount, acp.selectedModel);
+        acp.activeAccount = id; acp.selectedModel = acpAccountModels.get(id) || acp.models[0]?.id || '';
+        acp.latestProbe = null;
+        return clone(acp);
+      }
+      case 'relogin_acp_account':
+      case 'acp_connect': {
+        if (acp.busy) throw new Error('An ACP operation is already running');
+        const account = acp.accounts.find(account => account.id === acp.activeAccount);
+        if (account) account.email = account.id === 'default' ? 'personal.acp@example.test' : 'work.acp@example.test';
+        Object.assign(acp, { authenticated: true, error: null, latestProbe: null,
+          models: [{ id: 'gemini-4-argon-medium', name: 'Gemini 4 Argon (Medium)' }, { id: 'gemini-3.8-flash-low', name: 'Gemini 3.8 Flash (Low)' }] });
+        if (!acp.models.some(model => model.id === acp.selectedModel)) acp.selectedModel = acp.models[0].id;
+        return clone(acp);
+      }
+      case 'select_acp_model': {
+        if (acp.busy) throw new Error('Wait for the current ACP operation to finish');
+        if (!acp.models.some(model => model.id === payload.model)) throw new Error('Refresh available ACP models first');
+        acp.selectedModel = readString(payload.model);
+        acp.latestProbe = null;
+        return clone(acp);
+      }
+      case 'test_acp_connection': {
+        if (acp.busy) throw new Error('An ACP operation is already running');
+        if (!acp.authenticated || !acp.selectedModel) throw new Error('Refresh available ACP models first');
+        acp.busy = true; acp.operation = 'test'; acp.error = null; acp.latestProbe = null; acpCancelled = false;
+        try {
+          await sleep(Math.max(delayMs, 250));
+          if (acpCancelled) throw new Error('ACP request cancelled');
+          acp.latestProbe = { text: 'ACP_OK', model: acp.selectedModel, durationMs: 9214, firstTextMs: 8780, stopReason: 'end_turn' };
+          return clone(acp.latestProbe);
+        } catch (cause) {
+          acp.error = cause instanceof Error ? cause.message : String(cause);
+          throw cause;
+        } finally { acp.busy = false; acp.operation = ''; }
+      }
+      case 'cancel_acp_operation': acpCancelled = true; return null;
       case 'list_oauth_browsers': return [
         { id: 'default', label: 'System default browser' },
         { id: 'chrome', label: 'Google Chrome (Mock)' },
