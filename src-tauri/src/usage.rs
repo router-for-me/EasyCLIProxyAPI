@@ -32,7 +32,8 @@ use tokio_util::sync::CancellationToken;
 use self::{
     resp::{pull_usage_queue, UsageSubscription},
     token::{
-        normalize as normalize_keeper_tokens, ClampedTokenFields, TokenValues as KeeperTokenValues,
+        normalize_with_breakdown as normalize_keeper_tokens, ClampedTokenFields,
+        CoreTokenBreakdown, TokenValues as KeeperTokenValues,
     },
 };
 
@@ -2790,6 +2791,7 @@ fn normalize_usage_record(value: Value, config: &GuiConfigFile) -> Result<UsageR
                 total: token_was_negative(tokens_object, "total_tokens"),
             },
         },
+        core_token_breakdown(object),
     );
     let tokens = UsageTokenStats {
         input_tokens: normalized_tokens.input,
@@ -5068,6 +5070,26 @@ fn optional_u64_field(object: &serde_json::Map<String, Value>, key: &str) -> Opt
     })
 }
 
+/// Reads the core's `token_breakdown` when it is a complete schema v2 breakdown.
+fn core_token_breakdown(object: &serde_json::Map<String, Value>) -> Option<CoreTokenBreakdown> {
+    let breakdown = object.get("token_breakdown")?.as_object()?;
+    if optional_u64_field(breakdown, "schema_version")? < 2
+        || breakdown.get("quality").and_then(Value::as_str) != Some("complete")
+    {
+        return None;
+    }
+    let input = breakdown.get("input")?.as_object()?;
+    let output = breakdown.get("output")?.as_object()?;
+    Some(CoreTokenBreakdown {
+        input_total: optional_u64_field(input, "total_tokens")?,
+        cache_read: u64_field(input, "cache_read_tokens"),
+        cache_write: u64_field(input, "cache_write_tokens"),
+        output_total: optional_u64_field(output, "total_tokens")?,
+        reasoning: u64_field(output, "reasoning_tokens"),
+        total: optional_u64_field(breakdown, "total_tokens")?,
+    })
+}
+
 fn token_u64(object: Option<&serde_json::Map<String, Value>>, key: &str) -> u64 {
     object.map(|object| u64_field(object, key)).unwrap_or(0)
 }
@@ -6391,6 +6413,266 @@ mod tests {
         assert_eq!(record.tokens.input_tokens, 720);
         assert_eq!(record.tokens.total_tokens, 740);
         assert_eq!(record.tokens.cache_read_tokens, 600);
+    }
+
+    #[test]
+    fn plugin_executor_cache_write_only_record_has_zero_cache_read() {
+        // Shape of a core v8 usage record for a Claude-format plugin executor
+        // whose request only wrote the prompt cache.
+        let record = normalize_usage_record(
+            serde_json::json!({
+                "executor_type": "executorAdapter",
+                "provider": "example-plugin",
+                "auth_type": "oauth",
+                "request_id": "plugin-cache-write",
+                "tokens": {
+                    "input_tokens": 15,
+                    "output_tokens": 4,
+                    "cached_tokens": 1000,
+                    "cache_read_tokens": 0,
+                    "cache_read_tokens_present": true,
+                    "cache_creation_tokens": 1000,
+                    "total_tokens": 1019
+                },
+                "accounting_version": 2,
+                "token_breakdown": {
+                    "schema_version": 2,
+                    "quality": "complete",
+                    "total_tokens": 1019,
+                    "input": {
+                        "total_tokens": 1015,
+                        "uncached_tokens": 15,
+                        "cache_read_tokens": 0,
+                        "cache_write_tokens": 1000
+                    },
+                    "output": {
+                        "total_tokens": 4,
+                        "non_reasoning_tokens": 4,
+                        "reasoning_tokens": 0
+                    },
+                    "unclassified_tokens": 0
+                }
+            }),
+            &GuiConfigFile::default(),
+        )
+        .unwrap();
+
+        assert_eq!(record.tokens.cache_read_tokens, 0);
+        assert_eq!(record.tokens.cache_creation_tokens, 1000);
+        assert_eq!(record.tokens.input_tokens, 1015);
+        assert_eq!(record.tokens.total_tokens, 1019);
+    }
+
+    #[test]
+    fn plugin_executor_record_without_complete_breakdown_keeps_fallback() {
+        let record = normalize_usage_record(
+            serde_json::json!({
+                "executor_type": "executorAdapter",
+                "provider": "example-plugin",
+                "auth_type": "oauth",
+                "request_id": "plugin-partial-breakdown",
+                "tokens": {
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "cached_tokens": 30,
+                    "cache_read_tokens_present": true,
+                    "total_tokens": 120
+                },
+                "token_breakdown": { "schema_version": 2, "quality": "partial", "total_tokens": 120 }
+            }),
+            &GuiConfigFile::default(),
+        )
+        .unwrap();
+
+        assert_eq!(record.tokens.cache_read_tokens, 30);
+    }
+
+    fn plugin_claude_record(
+        uncached: u64,
+        cache_read: u64,
+        cache_write: u64,
+        output: u64,
+        with_breakdown: bool,
+    ) -> UsageRecord {
+        let input = uncached + cache_read + cache_write;
+        let total = input + output;
+        let mut value = serde_json::json!({
+            "executor_type": "executorAdapter",
+            "provider": "example-plugin",
+            "auth_type": "oauth",
+            "model": "claude-opus-5-5",
+            "request_id": format!("plugin-cost-{uncached}-{cache_read}-{cache_write}-{with_breakdown}"),
+            "tokens": {
+                "input_tokens": uncached,
+                "output_tokens": output,
+                "cached_tokens": if cache_read > 0 { cache_read } else { cache_write },
+                "cache_read_tokens": cache_read,
+                "cache_read_tokens_present": true,
+                "cache_creation_tokens": cache_write,
+                "total_tokens": total
+            },
+            "accounting_version": 2
+        });
+        if with_breakdown {
+            value["token_breakdown"] = serde_json::json!({
+                "schema_version": 2,
+                "quality": "complete",
+                "total_tokens": total,
+                "input": {
+                    "total_tokens": input,
+                    "uncached_tokens": uncached,
+                    "cache_read_tokens": cache_read,
+                    "cache_write_tokens": cache_write
+                },
+                "output": { "total_tokens": output, "non_reasoning_tokens": output, "reasoning_tokens": 0 },
+                "unclassified_tokens": 0
+            });
+        }
+        normalize_usage_record(value, &GuiConfigFile::default()).unwrap()
+    }
+
+    #[test]
+    fn plugin_executor_prices_each_input_token_once() {
+        let prices = bundled_model_prices().unwrap();
+        let price = official_model_price("claude-opus-5-5").unwrap();
+        let expected = |uncached: u64, read: u64, write: u64, output: u64| {
+            (uncached as f64 * price.prompt
+                + read as f64 * price.cache_read
+                + write as f64 * price.cache_creation
+                + output as f64 * price.completion)
+                / TOKENS_PER_PRICE_UNIT
+        };
+        for (uncached, read, write, output) in [(100, 0, 20_000, 300), (1_000, 80_000, 5_000, 300)]
+        {
+            let record = plugin_claude_record(uncached, read, write, output, true);
+            let cost = usage_record_cost(&record, &prices).unwrap().total;
+            assert!(
+                (cost - expected(uncached, read, write, output)).abs() < 1e-12,
+                "uncached={uncached} read={read} write={write}: {cost}"
+            );
+        }
+    }
+
+    #[test]
+    fn plugin_executor_gemini_output_includes_reasoning_and_openai_is_unchanged() {
+        let record = |model: &str, output: u64, with_breakdown: bool| {
+            let mut value = serde_json::json!({
+                "executor_type": "executorAdapter",
+                "provider": "example-plugin",
+                "auth_type": "oauth",
+                "model": model,
+                "request_id": format!("plugin-{model}-{with_breakdown}"),
+                "tokens": {
+                    "input_tokens": 50_000,
+                    "output_tokens": output,
+                    "reasoning_tokens": 2_000,
+                    "cached_tokens": 40_000,
+                    "cache_read_tokens": 40_000,
+                    "cache_read_tokens_present": true,
+                    "cache_creation_tokens": 0,
+                    "total_tokens": 52_800
+                },
+                "accounting_version": 2
+            });
+            if with_breakdown {
+                value["token_breakdown"] = serde_json::json!({
+                    "schema_version": 2,
+                    "quality": "complete",
+                    "total_tokens": 52_800,
+                    "input": {
+                        "total_tokens": 50_000,
+                        "uncached_tokens": 10_000,
+                        "cache_read_tokens": 40_000,
+                        "cache_write_tokens": 0
+                    },
+                    "output": { "total_tokens": 2_800, "non_reasoning_tokens": 800, "reasoning_tokens": 2_000 },
+                    "unclassified_tokens": 0
+                });
+            }
+            normalize_usage_record(value, &GuiConfigFile::default()).unwrap()
+        };
+        let prices = bundled_model_prices().unwrap();
+
+        // Gemini format: candidatesTokenCount (800) excludes thoughtsTokenCount (2,000).
+        let gemini = record("gemini-3.1-pro-preview", 800, true);
+        assert_eq!(gemini.tokens.output_tokens, 2_800);
+        assert_eq!(gemini.tokens.input_tokens, 50_000);
+        assert_eq!(gemini.tokens.cache_read_tokens, 40_000);
+        let price = official_model_price("gemini-3.1-pro-preview").unwrap();
+        let expected =
+            (10_000.0 * price.prompt + 40_000.0 * price.cache_read + 2_800.0 * price.completion)
+                / TOKENS_PER_PRICE_UNIT;
+        let cost = usage_record_cost(&gemini, &prices).unwrap().total;
+        assert!((cost - expected).abs() < 1e-12, "{cost}");
+
+        // OpenAI Chat / Responses format: completion_tokens already includes reasoning.
+        let with = record("gpt-5.5", 2_800, true);
+        let without = record("gpt-5.5", 2_800, false);
+        let fields = |record: &UsageRecord| {
+            let tokens = &record.tokens;
+            (
+                tokens.input_tokens,
+                tokens.output_tokens,
+                tokens.reasoning_tokens,
+                tokens.cache_read_tokens,
+                tokens.cache_creation_tokens,
+                tokens.total_tokens,
+            )
+        };
+        assert_eq!(fields(&with), fields(&without));
+        let with_cost = usage_record_cost(&with, &prices).unwrap().total;
+        let without_cost = usage_record_cost(&without, &prices).unwrap().total;
+        assert_eq!(with_cost, without_cost);
+    }
+
+    #[test]
+    fn devin_executor_output_includes_reasoning_from_breakdown() {
+        // DevinExecutor has no dedicated handler. It parses Interactions usage,
+        // where output_tokens excludes reasoning_tokens.
+        let record = normalize_usage_record(
+            serde_json::json!({
+                "executor_type": "DevinExecutor",
+                "provider": "devin",
+                "auth_type": "oauth",
+                "request_id": "devin-reasoning",
+                "tokens": {
+                    "input_tokens": 20_000,
+                    "output_tokens": 500,
+                    "reasoning_tokens": 1_500,
+                    "cached_tokens": 15_000,
+                    "cache_read_tokens": 15_000,
+                    "cache_read_tokens_present": true,
+                    "cache_creation_tokens": 0,
+                    "total_tokens": 22_000
+                },
+                "accounting_version": 2,
+                "token_breakdown": {
+                    "schema_version": 2,
+                    "quality": "complete",
+                    "total_tokens": 22_000,
+                    "input": {
+                        "total_tokens": 20_000,
+                        "uncached_tokens": 5_000,
+                        "cache_read_tokens": 15_000,
+                        "cache_write_tokens": 0
+                    },
+                    "output": {
+                        "total_tokens": 2_000,
+                        "non_reasoning_tokens": 500,
+                        "reasoning_tokens": 1_500
+                    },
+                    "unclassified_tokens": 0
+                }
+            }),
+            &GuiConfigFile::default(),
+        )
+        .unwrap();
+
+        assert_eq!(record.tokens.output_tokens, 2_000);
+        assert_eq!(record.tokens.reasoning_tokens, 1_500);
+        assert_eq!(record.tokens.input_tokens, 20_000);
+        assert_eq!(record.tokens.cache_read_tokens, 15_000);
+        assert_eq!(record.tokens.total_tokens, 22_000);
     }
 
     #[test]
