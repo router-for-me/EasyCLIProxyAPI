@@ -28,7 +28,10 @@ fn variant_levels_come_from_protocol_ids_without_replacing_models() {
     assert_eq!(models.len(), 8);
     assert_eq!(models[1].name, "Test model (High)");
     for model in &models[..5] {
-        assert_eq!(model.reasoning_levels, ["none", "low", "medium", "high", "xhigh"]);
+        assert_eq!(
+            model.reasoning_levels,
+            ["none", "low", "medium", "high", "xhigh"]
+        );
         assert_eq!(model.reasoning_variants["low"], "test-model-low");
         assert_eq!(model.reasoning_variants["none"], "test-model");
     }
@@ -36,7 +39,10 @@ fn variant_levels_come_from_protocol_ids_without_replacing_models() {
     assert!(models[5].reasoning_variants.is_empty());
     assert_eq!(models[6].reasoning_levels, ["high", "max"]);
     assert!(!models[6].reasoning_variants.contains_key("none"));
-    assert_eq!(serde_json::to_value(&models[0]).unwrap()["reasoningLevels"], json!(["none", "low", "medium", "high", "xhigh"]));
+    assert_eq!(
+        serde_json::to_value(&models[0]).unwrap()["reasoningLevels"],
+        json!(["none", "low", "medium", "high", "xhigh"])
+    );
     let legacy: AcpModel = serde_json::from_value(json!({"id":"legacy","name":"Legacy"})).unwrap();
     assert!(legacy.reasoning_levels.is_empty());
 }
@@ -45,16 +51,29 @@ fn variant_levels_come_from_protocol_ids_without_replacing_models() {
 fn grouped_variants_preserve_account_scoped_selected_model_strings() {
     let directory = crate::unique_test_temp_path("acp-variant-selection");
     let state = AcpState::default();
-    for (account, selected) in [("first", "test-model-high"), ("second", "gemini-4-argon-max")] {
+    for (account, selected) in [
+        ("first", "test-model-high"),
+        ("second", "gemini-4-argon-max"),
+    ] {
         let profile = directory.join(account);
         prepare_profile(&profile).unwrap();
-        std::fs::write(selected_path(&profile), serde_json::to_vec(selected).unwrap()).unwrap();
+        std::fs::write(
+            selected_path(&profile),
+            serde_json::to_vec(selected).unwrap(),
+        )
+        .unwrap();
         mark_session(&state, &fake_session(), &profile).unwrap();
         let status = state.snapshot().unwrap();
         assert_eq!(status.selected_model, selected);
         assert_eq!(status.profile, profile.to_string_lossy());
         assert_eq!(read_selected(&profile).unwrap(), selected);
-        assert!(!status.models.iter().find(|model| model.id == selected).unwrap().reasoning_levels.is_empty());
+        assert!(!status
+            .models
+            .iter()
+            .find(|model| model.id == selected)
+            .unwrap()
+            .reasoning_levels
+            .is_empty());
     }
     let session = json!({"models":{"currentModelId":"plain-model","availableModels":[{"modelId":"plain-model"}]}});
     mark_session(&state, &session, &directory.join("second")).unwrap();
@@ -68,14 +87,23 @@ fn grouped_variants_preserve_account_scoped_selected_model_strings() {
 fn effort_resolves_only_to_advertised_family_variants() {
     for (control, expected) in [
         (json!({"reasoning_effort":"low"}), "test-model-low"),
-        (json!({"reasoning":{"effort":"medium"}}), "test-model-medium"),
+        (
+            json!({"reasoning":{"effort":"medium"}}),
+            "test-model-medium",
+        ),
         (json!({"thinking":{"effort":"xhigh"}}), "test-model-xhigh"),
         (json!({"reasoning_effort":"none"}), "test-model"),
-        (json!({"reasoning_effort":"high","reasoning":{"effort":"high"}}), "test-model-high"),
+        (
+            json!({"reasoning_effort":"high","reasoning":{"effort":"high"}}),
+            "test-model-high",
+        ),
     ] {
         let mut value = request(false);
         value["model"] = json!("acp/test-model-high");
-        value.as_object_mut().unwrap().extend(control.as_object().unwrap().clone());
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(control.as_object().unwrap().clone());
         let completion = parse_completion(&value, &models()).unwrap();
         assert_eq!(completion.model, expected);
         assert_eq!(completion.alias, "acp/test-model-high");
@@ -87,35 +115,86 @@ fn effort_resolves_only_to_advertised_family_variants() {
     assert!(error.contains("supported levels: high, max"), "{error}");
     value["model"] = json!("acp/plain-model");
     let error = parse_completion(&value, &models()).err().unwrap();
-    assert!(error.contains("does not advertise reasoning levels"), "{error}");
+    assert!(
+        error.contains("does not advertise reasoning levels"),
+        "{error}"
+    );
     value.as_object_mut().unwrap().remove("reasoning_effort");
-    assert_eq!(parse_completion(&value, &models()).unwrap().model, "plain-model");
+    assert_eq!(
+        parse_completion(&value, &models()).unwrap().model,
+        "plain-model"
+    );
 }
 
 #[test]
 fn invalid_effort_controls_are_rejected_explicitly() {
     for (control, expected) in [
-        (json!({"reasoning_effort":"extreme"}), "supported levels: none, low, medium, high, xhigh"),
+        (
+            json!({"reasoning_effort":"extreme"}),
+            "supported levels: none, low, medium, high, xhigh",
+        ),
         (json!({"reasoning_effort":"max"}), "supported levels:"),
-        (json!({"reasoning_effort":""}), "Unsupported reasoning effort"),
-        (json!({"reasoning_effort":null}), "reasoning_effort must be a string"),
-        (json!({"reasoning_effort":42}), "reasoning_effort must be a string"),
-        (json!({"reasoning_effort":true}), "reasoning_effort must be a string"),
-        (json!({"reasoning_effort":[]}), "reasoning_effort must be a string"),
+        (
+            json!({"reasoning_effort":""}),
+            "Unsupported reasoning effort",
+        ),
+        (
+            json!({"reasoning_effort":null}),
+            "reasoning_effort must be a string",
+        ),
+        (
+            json!({"reasoning_effort":42}),
+            "reasoning_effort must be a string",
+        ),
+        (
+            json!({"reasoning_effort":true}),
+            "reasoning_effort must be a string",
+        ),
+        (
+            json!({"reasoning_effort":[]}),
+            "reasoning_effort must be a string",
+        ),
         (json!({"reasoning":null}), "reasoning must be an object"),
         (json!({"reasoning":"high"}), "reasoning must be an object"),
         (json!({"reasoning":{}}), "only reasoning.effort"),
-        (json!({"reasoning":{"effort":false}}), "reasoning.effort must be a string"),
-        (json!({"reasoning":{"effort":"high","summary":"auto"}}), "only reasoning.effort"),
-        (json!({"thinking":{"budget_tokens":1024}}), "only thinking.effort"),
-        (json!({"thinking":{"effort":1024}}), "thinking.effort must be a string"),
-        (json!({"reasoning_effort":"high","reasoning":{"effort":"low"}}), "Conflicting"),
-        (json!({"reasoning":{"effort":"high"},"thinking":{"effort":"low"}}), "Conflicting"),
-        (json!({"service_tier":"auto"}), "does not advertise a service tier mapping"),
-        (json!({"unknown":true}), "does not support parameter 'unknown'"),
+        (
+            json!({"reasoning":{"effort":false}}),
+            "reasoning.effort must be a string",
+        ),
+        (
+            json!({"reasoning":{"effort":"high","summary":"auto"}}),
+            "only reasoning.effort",
+        ),
+        (
+            json!({"thinking":{"budget_tokens":1024}}),
+            "only thinking.effort",
+        ),
+        (
+            json!({"thinking":{"effort":1024}}),
+            "thinking.effort must be a string",
+        ),
+        (
+            json!({"reasoning_effort":"high","reasoning":{"effort":"low"}}),
+            "Conflicting",
+        ),
+        (
+            json!({"reasoning":{"effort":"high"},"thinking":{"effort":"low"}}),
+            "Conflicting",
+        ),
+        (
+            json!({"service_tier":"auto"}),
+            "does not advertise a service tier mapping",
+        ),
+        (
+            json!({"unknown":true}),
+            "does not support parameter 'unknown'",
+        ),
     ] {
         let mut value = request(false);
-        value.as_object_mut().unwrap().extend(control.as_object().unwrap().clone());
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(control.as_object().unwrap().clone());
         let error = parse_completion(&value, &models()).err().unwrap();
         assert!(error.contains(expected), "{control}: {error}");
     }
@@ -173,7 +252,10 @@ fn provider_registration_preserves_unrelated_routes_in_both_schemas() {
 fn unsupported_inputs_are_rejected_without_dropping_parameters() {
     assert!(parse_completion(&request(false), &models()).is_ok());
     for (key, value) in [
-        ("tools", json!([])),
+        (
+            "tools",
+            json!([{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]),
+        ),
         ("temperature", json!(0.5)),
         ("max_tokens", json!(64)),
         ("response_format", json!({"type":"json_object"})),
@@ -187,9 +269,7 @@ fn unsupported_inputs_are_rejected_without_dropping_parameters() {
         json!([{"role":"system","content":"x"}]),
         json!([{"role":"user","content":"x"},{"role":"tool","content":"y"}]),
         json!([{"role":"user","content":"x"},{"role":"function","content":"y"}]),
-        json!([{"role":"developer","content":"x"},{"role":"user","content":"y"}]),
         json!([{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.test/image"}}]}]),
-        json!([{"role":"user","content":"x","name":"n"}]),
         json!([{"role":"user","content":""}]),
     ] {
         let mut value = request(false);
@@ -209,17 +289,114 @@ fn single_user_message_is_passed_through_unchanged() {
 }
 
 #[test]
-fn system_messages_are_flattened_before_the_user_turn() {
+fn text_clients_can_send_empty_tools_disabled_tools_and_metadata() {
+    for control in [
+        json!({"tools":[],"tool_choice":"auto","parallel_tool_calls":true}),
+        json!({"tools":null,"tool_choice":null}),
+        json!({"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":"none"}),
+        json!({"n":1,"store":false,"user":"test-user","metadata":{"source":"test"},"response_format":{"type":"text"},"prompt_cache_key":"test-cache","safety_identifier":"test-id"}),
+    ] {
+        let mut value = request(false);
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(control.as_object().unwrap().clone());
+        let parsed = parse_completion(&value, &models()).unwrap();
+        assert_eq!(parsed.text, "ping");
+    }
+    for control in [
+        json!({"tools":{}}),
+        json!({"tool_choice":"required"}),
+        json!({"tool_choice":{"type":"function","function":{"name":"lookup"}}}),
+        json!({"parallel_tool_calls":"false"}),
+        json!({"n":2}),
+        json!({"store":true}),
+        json!({"user":7}),
+        json!({"metadata":[]}),
+    ] {
+        let mut value = request(false);
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(control.as_object().unwrap().clone());
+        assert!(parse_completion(&value, &models()).is_err(), "{value}");
+    }
+}
+
+#[test]
+fn developer_instructions_are_delivered_through_the_official_session_field() {
+    let mut value = request(false);
+    value["messages"] = json!([
+        {"role":"system","content":"be brief"},
+        {"role":"developer","content":"use plain language"},
+        {"role":"user","name":"test-user","content":"verify-system"}
+    ]);
+    let request = parse_completion(&value, &models()).unwrap();
+    assert_eq!(request.text, "verify-system");
+    assert_eq!(request.system, "be brief\n\nuse plain language");
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut client = spawn_fake(Path::new("unused"), Path::new("unused"), "").unwrap();
+    let mut chunks = String::new();
+    let output = complete(
+        &mut client,
+        Path::new("unused"),
+        &request,
+        &cancel,
+        |part| chunks.push_str(part),
+    )
+    .unwrap();
+    assert_eq!(output, "ACP_OK");
+    assert_eq!(chunks, output);
+}
+
+#[test]
+#[ignore = "requires officially authenticated ECPA_ACP_PROBE_PROFILE and ECPA_ACP_PROBE_CLI; makes one real request"]
+fn official_cli_completes_a_chat_client_request_with_system_and_empty_tools() {
+    let profile = PathBuf::from(std::env::var_os("ECPA_ACP_PROBE_PROFILE").expect("Set profile"));
+    let executable = PathBuf::from(std::env::var_os("ECPA_ACP_PROBE_CLI").expect("Set CLI"));
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut discovery = rpc::Client::spawn(&executable, &profile, "").unwrap();
+    discovery.initialize(&cancel).unwrap();
+    let session = discovery.session(&profile, &cancel).unwrap();
+    let models = model_list(&session);
+    let model = models
+        .iter()
+        .find(|m| m.id == "gemini-3.8-flash-low")
+        .unwrap_or(&models[0]);
+    let marker = format!(
+        "ACP_BRIDGE_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let value = json!({
+        "model":format!("acp/{}",model.id),"tools":[],"tool_choice":"auto","stream":false,
+        "messages":[{"role":"system","content":format!("The session check marker is {marker}. When asked for the session check marker, reply with it. Do not use tools.")},
+            {"role":"developer","content":"Keep your response to the required marker."},
+            {"role":"user","content":"Return the session check marker. Do not use tools."}]
+    });
+    let request = parse_completion(&value, &models).unwrap();
+    drop(discovery);
+    let mut client = rpc::Client::spawn(&executable, &profile, "").unwrap();
+    let output = complete(&mut client, &profile, &request, &cancel, |_| {}).unwrap();
+    assert!(
+        output.contains(&marker),
+        "Official system instructions were not applied"
+    );
+}
+
+#[test]
+fn system_messages_are_separate_from_the_user_turn() {
     let mut value = request(false);
     value["messages"] = json!([
         {"role":"system","content":"be brief"},
         {"role":"system","content":[{"type":"text","text":"stay calm"}]},
         {"role":"user","content":"hello"},
     ]);
-    assert_eq!(
-        parse_completion(&value, &models()).unwrap().text,
-        "System: be brief\n\nSystem: stay calm\n\nUser: hello"
-    );
+    let completion = parse_completion(&value, &models()).unwrap();
+    assert_eq!(completion.text, "hello");
+    assert_eq!(completion.system, "be brief\n\nstay calm");
 }
 
 #[test]
@@ -233,7 +410,7 @@ fn multi_turn_history_is_flattened_into_one_prompt() {
     ]);
     assert_eq!(
         parse_completion(&value, &models()).unwrap().text,
-        "System: be brief\n\nUser: hi\n\nAssistant: hello\n\nUser: again"
+        "User: hi\n\nAssistant: hello\n\nUser: again"
     );
 }
 
@@ -282,14 +459,23 @@ fn fake_official_server() {
         return;
     }
     let mut selected = String::new();
+    let mut system = String::new();
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else { break };
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
         let result = match value["method"].as_str().unwrap_or("") {
-            "initialize" => json!({"protocolVersion":1,"agentCapabilities":{"auth":{"logout":{}}}}),
-            "session/new" => fake_session(),
+            "initialize" => {
+                json!({"protocolVersion":1,"agentCapabilities":{"auth":{"logout":{}},"_meta":{"antigravity":{"systemPrompt":{"append":true}}}}})
+            }
+            "session/new" => {
+                system = value["params"]["_meta"]["antigravity"]["systemPrompt"]["append"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+                fake_session()
+            }
             "session/set_model" => {
                 selected = value["params"]["modelId"].as_str().unwrap().to_string();
                 assert!(models().iter().any(|model| model.id == selected));
@@ -297,8 +483,18 @@ fn fake_official_server() {
             }
             "logout" => json!({}),
             "session/prompt" => {
-                assert!(!selected.is_empty(), "explicit model selection must precede inference");
-                if let Some(expected) = value["params"]["prompt"][0]["text"].as_str().unwrap().strip_prefix("expect:") {
+                assert!(
+                    !selected.is_empty(),
+                    "explicit model selection must precede inference"
+                );
+                if value["params"]["prompt"][0]["text"] == "verify-system" {
+                    assert_eq!(system, "be brief\n\nuse plain language");
+                }
+                if let Some(expected) = value["params"]["prompt"][0]["text"]
+                    .as_str()
+                    .unwrap()
+                    .strip_prefix("expect:")
+                {
                     assert_eq!(selected, expected);
                 }
                 if value["params"]["prompt"][0]["text"] == "wait" {
@@ -544,25 +740,63 @@ async fn real_cpa_lists_and_routes_registered_acp_models() {
         if !listed {
             return Err("CPA did not advertise acp/test-model".into());
         }
-        for stream in [false, true] {
-            let response = http
-                .post(format!("{base}/v1/chat/completions"))
-                .bearer_auth("isolated-client-key")
-                .json(&request(stream))
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-            let status = response.status();
-            let body = response.text().await.map_err(|e| e.to_string())?;
-            if !status.is_success() {
-                return Err(format!("CPA returned {status}: {body}"));
-            }
-            if stream {
-                if !body.contains("[DONE]") || !body.contains("ACP_") {
-                    return Err(format!("Incomplete CPA SSE: {body}"));
+        // Exercise both public protocols through the real kernel. The ACP
+        // listener implements Chat Completions; Responses conversion belongs
+        // to CPA and must not be duplicated in the desktop application.
+        for responses in [false, true] {
+            for stream in [false, true] {
+                let (path, payload) = if responses {
+                    ("responses", json!({"model":"acp/test-model","input":[{"role":"developer","content":"use plain language"},{"role":"user","content":"verify-system"}],"instructions":"be brief","tools":[],"tool_choice":"auto","parallel_tool_calls":true,"stream":stream,"store":false}))
+                } else {
+                    let mut value = request(stream);
+                    value["messages"] = json!([{"role":"system","content":"be brief"},{"role":"developer","content":"use plain language"},{"role":"user","content":"verify-system"}]);
+                    value["tools"] = json!([]);
+                    value["tool_choice"] = json!("auto");
+                    ("chat/completions", value)
+                };
+                let response = http
+                    .post(format!("{base}/v1/{path}"))
+                    .bearer_auth("isolated-client-key")
+                    .json(&payload)
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let status = response.status();
+                let body = response.text().await.map_err(|e| e.to_string())?;
+                if !status.is_success() {
+                    return Err(format!("CPA {path} returned {status}: {body}"));
                 }
-            } else if !body.contains("ACP_OK") {
-                return Err(format!("Unexpected CPA response: {body}"));
+                if stream {
+                    if responses {
+                        let events: Vec<Value> = body.lines()
+                            .filter_map(|line| line.strip_prefix("data: "))
+                            .filter_map(|data| serde_json::from_str(data).ok())
+                            .collect();
+                        let text: String = events.iter()
+                            .filter(|event| event["type"] == "response.output_text.delta")
+                            .filter_map(|event| event["delta"].as_str())
+                            .collect();
+                        let completed = events.iter().find(|event| event["type"] == "response.completed");
+                        if text != "ACP_OK" || completed.is_none() {
+                            return Err(format!("Incomplete CPA Responses SSE: {body}"));
+                        }
+                        if completed.unwrap()["response"]["status"] != "completed" {
+                            return Err(format!("CPA Responses did not complete: {body}"));
+                        }
+                    } else if !body.contains("[DONE]") || !body.contains("ACP_") {
+                        return Err(format!("Incomplete CPA Chat SSE: {body}"));
+                    }
+                } else {
+                    let body: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+                    if responses {
+                        if body["object"] != "response" || body["status"] != "completed"
+                            || body["output"][0]["content"][0]["text"] != "ACP_OK" {
+                            return Err(format!("Unexpected CPA Responses response: {body}"));
+                        }
+                    } else if body["choices"][0]["message"]["content"] != "ACP_OK" {
+                        return Err(format!("Unexpected CPA Chat response: {body}"));
+                    }
+                }
             }
         }
         patch_provider(&mut document, None)?;

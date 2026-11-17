@@ -315,6 +315,7 @@ struct Completion {
     model: String,
     alias: String,
     text: String,
+    system: String,
     stream: bool,
 }
 
@@ -324,9 +325,15 @@ fn message_text(message: &Value, role: &str) -> Result<String, String> {
         .ok_or_else(|| format!("Invalid {role} message"))?;
     if message
         .keys()
-        .any(|key| !["role", "content"].contains(&key.as_str()))
+        .any(|key| !["role", "content", "name"].contains(&key.as_str()))
     {
         return Err("Unsupported ACP message fields".into());
+    }
+    if message
+        .get("name")
+        .is_some_and(|name| !name.is_null() && !name.is_string())
+    {
+        return Err("Message name must be a string".into());
     }
     let text = match &message["content"] {
         Value::String(text) => text.clone(),
@@ -351,23 +358,20 @@ fn message_text(message: &Value, role: &str) -> Result<String, String> {
 // The official CLI is stateless per request, so earlier turns are flattened
 // into the single prompt text block instead of a server-side conversation.
 fn prompt_text(messages: &[Value]) -> Result<String, String> {
-    let mut system = Vec::new();
     let mut turns = Vec::new();
     for message in messages {
         let role = message["role"].as_str().unwrap_or("");
         let label = match role {
-            "system" | "user" | "assistant" => role,
+            "system" | "developer" | "user" | "assistant" => role,
             "" => return Err("Invalid message role".into()),
             role => {
                 return Err(format!(
-                    "ACP accepts system, user and assistant messages only; role '{role}' is not supported"
+                    "ACP accepts system, developer, user and assistant messages only; role '{role}' is not supported"
                 ))
             }
         };
         let text = message_text(message, label)?;
-        if role == "system" {
-            system.push(format!("System: {text}"));
-        } else {
+        if role != "system" && role != "developer" {
             let label = if role == "user" { "User" } else { "Assistant" };
             turns.push((label, text));
         }
@@ -378,7 +382,7 @@ fn prompt_text(messages: &[Value]) -> Result<String, String> {
     if messages[messages.len() - 1]["role"] != "user" {
         return Err("the last message must be from the user".into());
     }
-    if system.is_empty() && turns.len() == 1 {
+    if turns.len() == 1 {
         let text = turns.remove(0).1;
         if text.len() > MAX_BODY {
             return Err("ACP prompt exceeds 1 MiB after flattening the conversation".into());
@@ -388,11 +392,7 @@ fn prompt_text(messages: &[Value]) -> Result<String, String> {
     let turns = turns
         .into_iter()
         .map(|(label, text)| format!("{label}: {text}"));
-    let text = system
-        .into_iter()
-        .chain(turns)
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let text = turns.collect::<Vec<_>>().join("\n\n");
     if text.len() > MAX_BODY {
         return Err("ACP prompt exceeds 1 MiB after flattening the conversation".into());
     }
@@ -406,7 +406,23 @@ fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, St
             return Err("ACP text access does not support parameter 'service_tier': the model list does not advertise a service tier mapping".into());
         }
         if ![
-            "model", "messages", "stream", "stream_options", "reasoning_effort", "reasoning", "thinking",
+            "model",
+            "messages",
+            "stream",
+            "stream_options",
+            "reasoning_effort",
+            "reasoning",
+            "thinking",
+            "tools",
+            "tool_choice",
+            "parallel_tool_calls",
+            "n",
+            "store",
+            "user",
+            "metadata",
+            "response_format",
+            "prompt_cache_key",
+            "safety_identifier",
         ]
         .contains(&key.as_str())
         {
@@ -414,6 +430,57 @@ fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, St
                 "ACP text access does not support parameter '{key}'"
             ));
         }
+    }
+    let tools = match value.get("tools") {
+        None | Some(Value::Null) => &[][..],
+        Some(Value::Array(tools)) => tools.as_slice(),
+        _ => return Err("tools must be an array".into()),
+    };
+    let choice = value.get("tool_choice").filter(|choice| !choice.is_null());
+    let disabled = choice.is_some_and(|choice| choice == "none");
+    if !tools.is_empty() && !disabled {
+        return Err("ACP client-executed tool calls are not available in this CLI integration. For text chat, disable tools (tool_choice: 'none') or send tools: []. Tool definitions were not discarded.".into());
+    }
+    if choice.is_some_and(|choice| choice != "none" && choice != "auto") {
+        return Err("tool_choice requires a supported client tool; ACP currently accepts only 'none' or 'auto' with no tools".into());
+    }
+    if value
+        .get("parallel_tool_calls")
+        .is_some_and(|v| !v.is_null() && !v.is_boolean())
+    {
+        return Err("parallel_tool_calls must be a boolean".into());
+    }
+    if value
+        .get("n")
+        .is_some_and(|v| !v.is_null() && v.as_u64() != Some(1))
+    {
+        return Err("ACP supports n: 1 only".into());
+    }
+    if value
+        .get("store")
+        .is_some_and(|v| !v.is_null() && v != false)
+    {
+        return Err("ACP does not store API completions; use store: false".into());
+    }
+    if value
+        .get("response_format")
+        .is_some_and(|v| !v.is_null() && v != &json!({"type":"text"}))
+    {
+        return Err("ACP does not expose structured output controls".into());
+    }
+    for key in ["user", "prompt_cache_key", "safety_identifier"] {
+        if value
+            .get(key)
+            .is_some_and(|v| !v.is_null() && !v.is_string())
+        {
+            return Err(format!("{key} must be a string"));
+        }
+    }
+    if value
+        .get("metadata")
+        .is_some_and(|v| !v.is_null() && !v.is_object())
+    {
+        return Err("metadata must be an object".into());
     }
     let requested = value["model"].as_str().ok_or("model is required")?;
     let model = requested.strip_prefix("acp/").unwrap_or(requested);
@@ -427,11 +494,13 @@ fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, St
         .transpose()?;
     for key in ["reasoning", "thinking"] {
         if let Some(value) = value.get(key) {
-            let options = value
-                .as_object()
-                .ok_or_else(|| format!("{key} must be an object containing only a string effort"))?;
+            let options = value.as_object().ok_or_else(|| {
+                format!("{key} must be an object containing only a string effort")
+            })?;
             if options.len() != 1 || !options.contains_key("effort") {
-                return Err(format!("ACP supports only {key}.effort; other {key} controls are not supported"));
+                return Err(format!(
+                    "ACP supports only {key}.effort; other {key} controls are not supported"
+                ));
             }
             let nested = options["effort"]
                 .as_str()
@@ -447,7 +516,11 @@ fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, St
             return Err(format!("ACP model '{}' does not advertise reasoning levels; cannot request effort '{effort}'", model.id));
         }
         Some(effort) => model.reasoning_variants.get(effort).ok_or_else(|| {
-            format!("Unsupported reasoning effort '{effort}' for ACP model '{}'; supported levels: {}", model.id, model.reasoning_levels.join(", "))
+            format!(
+                "Unsupported reasoning effort '{effort}' for ACP model '{}'; supported levels: {}",
+                model.id,
+                model.reasoning_levels.join(", ")
+            )
         })?,
         None => &model.id,
     };
@@ -455,6 +528,15 @@ fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, St
         .as_array()
         .ok_or("messages must be an array")?;
     let text = prompt_text(messages)?;
+    let system = messages
+        .iter()
+        .filter(|message| message["role"] == "system" || message["role"] == "developer")
+        .map(|message| message_text(message, message["role"].as_str().unwrap()))
+        .collect::<Result<Vec<_>, _>>()?
+        .join("\n\n");
+    if text.len().saturating_add(system.len()) > MAX_BODY {
+        return Err("ACP prompt and system instructions exceed 1 MiB".into());
+    }
     let stream = match value.get("stream") {
         None => false,
         Some(Value::Bool(stream)) => *stream,
@@ -479,6 +561,7 @@ fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, St
         model: selected.into(),
         alias: format!("acp/{}", model.id),
         text,
+        system,
         stream,
     })
 }
@@ -491,7 +574,7 @@ fn complete<F: FnMut(&str)>(
     mut chunk: F,
 ) -> Result<String, String> {
     client.initialize(cancel)?;
-    let session = client.session(profile, cancel)?;
+    let session = client.session_with_system(profile, &request.system, cancel)?;
     client.model(&session, &request.model, cancel)?;
     let mut text = String::new();
     let mut oversized = false;

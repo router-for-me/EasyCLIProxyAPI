@@ -19,10 +19,19 @@ pub(super) struct Client {
     output: mpsc::Receiver<Result<Value, String>>,
     next_id: u64,
     supports_logout: bool,
+    system_prompt: SystemPromptSupport,
     started: std::time::SystemTime,
 }
 
 type WriteRequest = (Value, mpsc::SyncSender<Result<(), String>>);
+
+#[derive(Default)]
+enum SystemPromptSupport {
+    #[default]
+    Unavailable,
+    Standard,
+    Antigravity,
+}
 
 pub(super) fn command(executable: &Path, profile: &Path, proxy: &str) -> Command {
     let mut command = Command::new(executable);
@@ -148,6 +157,7 @@ impl Client {
             output,
             next_id: 0,
             supports_logout: false,
+            system_prompt: SystemPromptSupport::default(),
             started,
         })
     }
@@ -284,6 +294,17 @@ impl Client {
         self.supports_logout = response["agentCapabilities"]["auth"]
             .get("logout")
             .is_some_and(|value| !value.is_null());
+        let capabilities = &response["agentCapabilities"];
+        self.system_prompt = if capabilities["sessionCapabilities"]
+            .get("systemPrompt")
+            .is_some_and(Value::is_object)
+        {
+            SystemPromptSupport::Standard
+        } else if capabilities["_meta"]["antigravity"]["systemPrompt"]["append"] == true {
+            SystemPromptSupport::Antigravity
+        } else {
+            SystemPromptSupport::Unavailable
+        };
         Ok(())
     }
 
@@ -303,12 +324,28 @@ impl Client {
         profile: &Path,
         cancel: &Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<Value, String> {
-        self.call(
-            "session/new",
-            json!({"cwd":profile.join("workspace"),"mcpServers":[]}),
-            cancel,
-            |_| {},
-        )
+        self.session_with_system(profile, "", cancel)
+    }
+
+    pub(super) fn session_with_system(
+        &mut self,
+        profile: &Path,
+        system: &str,
+        cancel: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Value, String> {
+        let mut params = json!({"cwd":profile.join("workspace"),"mcpServers":[]});
+        if !system.is_empty() {
+            match self.system_prompt {
+                SystemPromptSupport::Standard => {
+                    params["systemPrompt"] = json!({"mode":"append","content":[{"type":"text","text":system}]});
+                }
+                SystemPromptSupport::Antigravity => {
+                    params["_meta"] = json!({"antigravity":{"systemPrompt":{"append":system}}});
+                }
+                SystemPromptSupport::Unavailable => return Err("The installed ACP CLI does not advertise system instructions support; update Antigravity CLI".into()),
+            }
+        }
+        self.call("session/new", params, cancel, |_| {})
     }
 
     pub(super) fn model(
