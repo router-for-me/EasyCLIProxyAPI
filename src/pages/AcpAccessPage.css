@@ -25,6 +25,16 @@
   .acp-provider-identity .acp-connection-status { padding: 0; border: 0; background: transparent; }
   .acp-api-enable-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
   .acp-api-enable-row > .acp-provider-actions { flex: none; }
+  .acp-api-enable-row > .acp-muted { flex: 1 1 240px; min-width: 0; }
+  .acp-api-switch { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 12px; min-width: 0; padding: 10px 12px; border: 1px solid var(--acp-border); border-radius: var(--radius-md); background: var(--acp-soft); cursor: pointer; }
+  .acp-api-switch .switch-control { flex: none; }
+  .acp-api-switch-text { display: grid; gap: 2px; flex: 1 1 200px; min-width: 0; }
+  .acp-api-switch-text strong { color: var(--text-primary); font-size: 12px; font-weight: 600; line-height: 1.6; }
+  .acp-api-switch-text .acp-muted { font-size: 11px; line-height: 1.6; }
+  .acp-api-switch-state { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 3px 9px; border: 1px solid var(--acp-border); border-radius: var(--radius-full); background: var(--bg-card); color: var(--acp-muted); font-size: 11px; line-height: 1.5; }
+  .acp-api-switch-state[data-state='on'] { border-color: var(--success-badge-border); background: var(--success-badge-bg); color: var(--success-badge-text); }
+  .acp-api-switch-state[data-state='starting'] { border-color: color-mix(in srgb, var(--text-primary) 22%, var(--bg-card)); color: var(--text-secondary); }
+  .acp-api-switch:has(input:disabled) { cursor: default; }
   .acp-footnote .acp-flow { padding: 0; border: 0; }
   .acp-access-page .acp-provider-card:hover, .acp-access-page .acp-model-card:hover {
     border-color: color-mix(in srgb, var(--text-primary) 20%, var(--bg-card));
