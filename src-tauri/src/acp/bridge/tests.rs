@@ -592,18 +592,18 @@ fn provider_registration_preserves_unrelated_routes_in_both_schemas() {
         assert!(groups[1].get("proxy-url").is_none());
         assert_eq!(groups[1][if v8 { "keys" } else { "api-key-entries" }][0]["proxy-url"].as_str(), Some("direct"));
         assert_eq!(
-            groups[1]["models"][0]["alias"].as_str(),
+            groups[1]["models"][0]["name"].as_str(),
             Some("acp/test-model")
         );
         assert_eq!(
             groups[1]["models"][0],
-            serde_norway::to_value(json!({"name":"test-model","alias":"acp/test-model"})).unwrap()
+            serde_norway::to_value(json!({"name":"acp/test-model"})).unwrap()
         );
         assert!(groups[1]["models"]
             .as_sequence()
             .unwrap()
             .iter()
-            .all(|model| model.get("thinking").is_none()));
+            .all(|model| model.get("alias").is_none() && model.get("thinking").is_none()));
         assert!(groups[1]
             .get(if v8 { "keys" } else { "api-key-entries" })
             .is_some());
@@ -649,6 +649,17 @@ fn unsupported_inputs_are_rejected_without_dropping_parameters() {
         let mut value = request(false);
         value["messages"] = messages;
         assert!(parse_completion(&value, &models()).is_err());
+    }
+}
+
+#[test]
+fn prefixed_and_bare_names_resolve_to_the_same_acp_model() {
+    for name in ["acp/test-model", "test-model"] {
+        let mut value = request(false);
+        value["model"] = json!(name);
+        let completion = parse_completion(&value, &models()).unwrap();
+        assert_eq!(completion.model, "test-model");
+        assert_eq!(completion.alias, "acp/test-model");
     }
 }
 
@@ -1116,8 +1127,16 @@ async fn authenticated_http_bridge_lists_models_completes_streams_and_cancels_di
         .await
         .unwrap();
     assert_eq!(listing["data"][0]["id"], "acp/test-model");
-    for stream in [false, true] {
+    let advertised_model = listing["data"][0]["id"].as_str().unwrap();
+    for (model, stream) in [
+        (advertised_model, false),
+        (advertised_model, true),
+        ("test-model", false),
+        ("test-model", true),
+    ] {
         let mut payload = request(stream);
+        payload["model"] = json!(model);
+        payload["messages"][0]["content"] = json!("expect:test-model");
         payload["max_tokens"] = json!(1024);
         payload["temperature"] = json!(0.7);
         payload["top_p"] = json!(1);
@@ -1144,6 +1163,7 @@ async fn authenticated_http_bridge_lists_models_completes_streams_and_cancels_di
             );
         } else {
             let body: Value = response.json().await.unwrap();
+            assert_eq!(body["model"], advertised_model);
             assert_eq!(body["choices"][0]["message"]["content"], "ACP_OK");
         }
     }
@@ -1229,7 +1249,7 @@ async fn real_cpa_lists_and_routes_registered_acp_models() {
     let mut document: serde_norway::Value = serde_norway::to_value(json!({
         "config-version":8,"server":{"host":"127.0.0.1","port":port},
         "management":{"disable-control-panel":true,"disable-auto-update-panel":true},
-        "auth":{"dir":directory.join("auth")},"access":{"api-keys":["isolated-client-key"]},
+        "oauth":{"auth-dir":directory.join("auth")},"access":{"api-keys":["isolated-client-key"]},
         "logging":{"to-file":false},"requests":{"retry":0}
     }))
     .unwrap();

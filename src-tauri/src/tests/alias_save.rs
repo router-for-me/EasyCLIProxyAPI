@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 const CURRENT: &str = "oauth-model-alias:\n  codex:\n    - name: gpt-test\n      alias: my-alias\n      fork: true\npayload:\n  override:\n    - models: [{name: my-alias, protocol: codex}]\n      params: {reasoning.effort: high}\n";
-const ACP_CURRENT: &str = "openai-compatibility:\n  - name: ecpa-antigravity-acp\n    base-url: http://127.0.0.1:1/v1\n    proxy-url: direct\n    disabled: false\n    api-key-entries: [{api-key: test-bridge-key}]\n    models: [{name: gemini-3.8-flash-high, alias: acp/gemini-3.8-flash-high}]\n";
+const ACP_CURRENT: &str = "openai-compatibility:\n  - name: ecpa-antigravity-acp\n    base-url: http://127.0.0.1:1/v1\n    proxy-url: direct\n    disabled: false\n    api-key-entries: [{api-key: test-bridge-key}]\n    models: [{name: acp/gemini-3.8-flash-high}]\n";
 
 #[test]
 fn v8_management_yaml_is_projected_to_the_legacy_alias_editor_view() {
@@ -423,7 +423,7 @@ fn v8_yaml_from_legacy_json(legacy: &serde_json::Value) -> String {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn desktop_acp_alias_save_persists_mapping_and_context() {
+async fn desktop_acp_alias_save_persists_mapping_and_context_without_second_rename() {
     for v8 in [false, true] {
         for context_1m in [false, true] {
             let home = super::support::agent_test_home("desktop-acp-alias");
@@ -435,8 +435,9 @@ async fn desktop_acp_alias_save_persists_mapping_and_context() {
             assert_eq!(persisted["openai-compatibility"][0]["api-key-entries"][0]["proxy-url"], "direct");
             let models = persisted["openai-compatibility"][0]["models"].as_array().unwrap();
             assert_eq!(models.len(), 2);
-            assert_eq!(models[0]["alias"], "acp/gemini-3.8-flash-high");
-            assert_eq!(models[1]["name"], "gemini-3.8-flash-high");
+            assert_eq!(models[0], serde_json::json!({"name": "acp/gemini-3.8-flash-high"}));
+            assert!(models[0].get("alias").is_none());
+            assert_eq!(models[1]["name"], "acp/gemini-3.8-flash-high");
             assert_eq!(models[1]["alias"], "claude-sonnet-5-5");
             fs::remove_dir_all(home).unwrap();
         }
