@@ -43,6 +43,7 @@ pub(crate) struct ProviderHealthProbeResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) first_token_latency_ms: Option<u64>,
     pub(crate) response_latency_ms: u64,
+    pub(crate) budget_exhausted: bool,
 }
 
 #[derive(Default)]
@@ -181,9 +182,14 @@ fn provider_health_json_has_terminal_success(protocol: &str, value: &serde_json:
             Some(status) => matches!(status.as_str(), Some("completed" | "succeeded")),
         };
     }
+    false
+}
+
+fn provider_health_json_has_budget_exhausted(protocol: &str, value: &serde_json::Value) -> bool {
+    if value.get("error").is_some_and(|error| !error.is_null()) {
+        return false;
+    }
     if protocol == "openai-chat" {
-        // CPA translates Gemini's exhausted thinking budget into OpenAI chunks.
-        // A confirmed reasoning-only generation is usable, but has no text TTFT.
         let exhausted_thinking_budget = value
             .get("choices")
             .and_then(serde_json::Value::as_array)
@@ -194,8 +200,8 @@ fn provider_health_json_has_terminal_success(protocol: &str, value: &serde_json:
         let thoughts = value.pointer("/usage/completion_tokens_details/reasoning_tokens")
             .and_then(serde_json::Value::as_u64).unwrap_or_default();
         let output = value.pointer("/usage/completion_tokens")
-            .and_then(serde_json::Value::as_u64).unwrap_or_default();
-        return exhausted_thinking_budget && thoughts > 0 && output >= thoughts;
+            .and_then(serde_json::Value::as_u64);
+        return exhausted_thinking_budget && thoughts > 0 && output.is_some();
     }
     if protocol != "gemini" {
         return false;
@@ -233,6 +239,33 @@ pub(crate) fn provider_health_stream_has_terminal_success(protocol: &str, bytes:
         serde_json::from_str::<serde_json::Value>(data)
             .ok()
             .is_some_and(|value| provider_health_json_has_terminal_success(protocol, &value))
+    })
+}
+
+pub(crate) fn provider_health_stream_has_budget_exhausted(protocol: &str, bytes: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(bytes);
+    text.lines().any(|line| {
+        let line = line.trim();
+        let data = line.strip_prefix("data:").map(str::trim).unwrap_or(line);
+        serde_json::from_str::<serde_json::Value>(data)
+            .ok()
+            .is_some_and(|value| provider_health_json_has_budget_exhausted(protocol, &value))
+    })
+}
+
+fn provider_health_stream_error(bytes: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(bytes);
+    text.lines().find_map(|line| {
+        let line = line.trim();
+        let data = line.strip_prefix("data:").map(str::trim).unwrap_or(line);
+        let value = serde_json::from_str::<serde_json::Value>(data).ok()?;
+        if value.get("error").is_some_and(|error| !error.is_null())
+            || value.get("type").and_then(serde_json::Value::as_str) == Some("error")
+        {
+            Some(format!("Upstream returned a health check error: {value}"))
+        } else {
+            None
+        }
     })
 }
 
@@ -435,7 +468,7 @@ async fn probe_core_model(
         data: serde_json::json!({
             "model": model,
             "messages": [{ "role": "user", "content": "Reply with OK." }],
-            "max_tokens": 16,
+            "max_tokens": 256,
             "stream": true,
         }).to_string(),
         protocol: "openai-chat".to_string(),
@@ -559,6 +592,9 @@ pub(crate) async fn execute_health_probe(
             return Err("Health check did not receive the model's first token within the limit".to_string());
         }
         received.extend_from_slice(&chunk);
+        if let Some(error) = provider_health_stream_error(&received) {
+            return Err(error);
+        }
         let elapsed_ms = started_at.elapsed().as_millis().max(1) as u64;
         if provider_health_stream_has_text(&request.protocol, &received) {
             if let Some(app) = usage_app {
@@ -574,6 +610,7 @@ pub(crate) async fn execute_health_probe(
             return Ok(ProviderHealthProbeResponse {
                 first_token_latency_ms: Some(elapsed_ms),
                 response_latency_ms: elapsed_ms,
+                budget_exhausted: false,
             });
         }
         if provider_health_stream_has_terminal_success(&request.protocol, &received) {
@@ -583,8 +620,20 @@ pub(crate) async fn execute_health_probe(
             return Ok(ProviderHealthProbeResponse {
                 first_token_latency_ms: None,
                 response_latency_ms: elapsed_ms,
+                budget_exhausted: false,
             });
         }
+    }
+    if provider_health_stream_has_budget_exhausted(&request.protocol, &received) {
+        let elapsed_ms = started_at.elapsed().as_millis().max(1) as u64;
+        if let Some(app) = usage_app {
+            persist_provider_health_success(app, &request, &endpoint, elapsed_ms, None, &received);
+        }
+        return Ok(ProviderHealthProbeResponse {
+            first_token_latency_ms: None,
+            response_latency_ms: elapsed_ms,
+            budget_exhausted: true,
+        });
     }
     Err("Health check did not receive the model's first token".to_string())
 }

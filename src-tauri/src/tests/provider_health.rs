@@ -1,4 +1,5 @@
 use super::*;
+use crate::provider_health::provider_health_stream_has_budget_exhausted;
 
 #[test]
 fn provider_health_stream_detects_only_real_model_text() {
@@ -71,7 +72,7 @@ data: {"delta":{"type":"text_delta","text":"H"}}
         "gemini",
         gemini_thought_only
     ));
-    assert!(provider_health_stream_has_terminal_success(
+    assert!(provider_health_stream_has_budget_exhausted(
         "gemini",
         gemini_thought_only
     ));
@@ -80,7 +81,7 @@ data: {"delta":{"type":"text_delta","text":"H"}}
         br#"data: {"candidates":[{"finishReason":"MAX_TOKENS"}],"usageMetadata":{"totalTokenCount":1,"thoughtsTokenCount":0}}
 
 "#;
-    assert!(!provider_health_stream_has_terminal_success(
+    assert!(!provider_health_stream_has_budget_exhausted(
         "gemini",
         gemini_empty_max_tokens
     ));
@@ -88,7 +89,7 @@ data: {"delta":{"type":"text_delta","text":"H"}}
     let gemini_safety = br#"data: {"candidates":[{"finishReason":"SAFETY"}],"usageMetadata":{"totalTokenCount":14,"thoughtsTokenCount":13}}
 
 "#;
-    assert!(!provider_health_stream_has_terminal_success(
+    assert!(!provider_health_stream_has_budget_exhausted(
         "gemini",
         gemini_safety
     ));

@@ -6,6 +6,23 @@ import { mcpSkillsText } from '../src/i18n/mcpSkills';
 import { pluginConfigText } from '../src/i18n/pluginConfig';
 
 describe('i18n', () => {
+  it('localizes the probe-budget state, explanation and summary in every locale', () => {
+    for (const locale of supportedLocales) {
+      for (const key of [
+        'apiAccess.health.budgetExhausted',
+        'apiAccess.health.budgetExhaustedDetail',
+        'apiAccess.health.budgetSummary',
+      ] as const) {
+        expect(translate(locale, key, { count: 2 })).not.toBe(key);
+        expect(translate(locale, key, { count: 2 })).not.toBe('');
+      }
+      expect(translate(locale, 'apiAccess.health.budgetSummary', { count: 2 })).toContain('2');
+    }
+    expect(translate('en', 'apiAccess.health.budgetExhausted')).toBe('Probe budget exhausted');
+    expect(translate('zh-CN', 'apiAccess.health.budgetExhausted')).toBe('探测预算耗尽');
+    expect(translate('zh-TW', 'apiAccess.health.budgetExhausted')).toBe('探測預算耗盡');
+  });
+
   it('localizes credential tag controls in every language', () => {
     for (const [locale, label] of [['en', 'Tags'], ['zh-CN', '标签'], ['zh-TW', '標籤'], ['ja', 'タグ']] as const) {
       expect(translate(locale, 'authFiles.tags.label')).toBe(label);

@@ -33,6 +33,14 @@ describe('CPA 内核模型健康检测', () => {
     });
   });
 
+  it('reports reasoning-only budget exhaustion separately from success and failure', async () => {
+    mockIPC(() => ({ budgetExhausted: true, responseLatencyMs: 2300 }));
+    expect(await checkCoreModelHealth('aistudio/gemini-4-hydrogen')).toEqual({
+      model: 'aistudio/gemini-4-hydrogen', status: 'budget-exhausted', success: false,
+      budgetExhausted: true, firstTokenLatencyMs: undefined, responseLatencyMs: 2300,
+    });
+  });
+
   it('保留失败原因并识别超时，失败模型不打断其他模型', async () => {
     mockIPC((_command, args) => {
       if (args?.model === 'timeout') throw new Error('request timed out');
