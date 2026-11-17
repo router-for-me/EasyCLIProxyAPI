@@ -177,6 +177,8 @@ Startup and background synchronization do not migrate the service's OAuth direct
 or rotate its management secret. Supply the existing cleartext management credential
 in the GUI configuration; a server-side hash is not a client credential. Invalid
 or unreadable external-mode configuration fails closed and is preserved for repair.
+When only the service's configuration is missing or unusable, the GUI keeps its
+own saved settings instead of replacing them with defaults.
 Local plugin installation and standalone update helpers are blocked as well.
 Intentional configuration saves remain available, without an automatic core restart.
 Background system-proxy detection and reverse-proxy restoration do not rewrite

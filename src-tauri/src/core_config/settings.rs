@@ -1503,21 +1503,45 @@ pub(crate) fn load_external_gui_config_at(
     config.external_core = true;
     config.start_core_on_launch = false;
     config.run_on_startup = false;
-    config.management_secret_key = presence.management_secret_key.unwrap_or_default();
-    let path = install_dir.join(CORE_CONFIG_FILE);
-    let content = fs::read_to_string(&path)
+    config.management_secret_key = presence.management_secret_key.clone().unwrap_or_default();
+    config.auth_dir_user_selected = true;
+    let imported = read_external_core_settings(install_dir).and_then(|settings| {
+        let mut imported = config.clone();
+        apply_core_settings_to_gui_config(&mut imported, &settings);
+        let auth_dir = presence.auth_dir.as_deref().unwrap_or(&settings.auth_dir);
+        imported.auth_dir = path_to_string(&auth_dir_path_for_core(auth_dir, install_dir)?);
+        imported.proxy_url = settings.proxy_url.clone();
+        imported.proxy_override = true;
+        validate_gui_config(&imported)?;
+        Ok(imported)
+    });
+    match imported {
+        Ok(imported) => Ok(imported),
+        Err(error) => {
+            // The service configuration is not the GUI's to repair. Failing the whole
+            // load here would replace the operator's saved settings with startup
+            // defaults, which the next unrelated save writes over a valid file.
+            eprintln!("{error}; keeping the saved GUI settings");
+            if presence.api_keys.is_none() {
+                // Nothing was saved: never invent a client key for someone else's core.
+                config.api_keys.clear();
+            }
+            let auth_dir = presence.auth_dir.as_deref().unwrap_or_default();
+            if let Ok(path) = auth_dir_path_for_core(auth_dir, install_dir) {
+                config.auth_dir = path_to_string(&path);
+            }
+            validate_gui_config(&config)?;
+            Ok(config)
+        }
+    }
+}
+
+fn read_external_core_settings(install_dir: &Path) -> Result<CoreConfigSettings, String> {
+    let content = fs::read_to_string(install_dir.join(CORE_CONFIG_FILE))
         .map_err(|error| format!("Failed to read external kernel configuration: {error}"))?;
     let document = yaml_serde_edit::YamlValue::parse(&content)
         .map_err(|error| format!("Failed to parse external kernel configuration: {error}"))?;
-    let settings = core_config_settings_from_value(document.get())?;
-    apply_core_settings_to_gui_config(&mut config, &settings);
-    let auth_dir = presence.auth_dir.as_deref().unwrap_or(&settings.auth_dir);
-    config.auth_dir = path_to_string(&auth_dir_path_for_core(auth_dir, install_dir)?);
-    config.auth_dir_user_selected = true;
-    config.proxy_url = settings.proxy_url.clone();
-    config.proxy_override = true;
-    validate_gui_config(&config)?;
-    Ok(config)
+    core_config_settings_from_value(document.get())
 }
 
 pub(crate) fn load_or_create_gui_config(external_core: bool) -> Result<GuiConfigFile, String> {

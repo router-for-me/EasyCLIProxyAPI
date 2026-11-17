@@ -483,6 +483,74 @@ fn external_core_writer_persists_true_and_only_retains_an_explicit_false() {
     fs::remove_dir_all(home).unwrap();
 }
 
+#[test]
+fn external_core_keeps_saved_gui_settings_when_the_service_configuration_is_unusable() {
+    let home = agent_test_home("external-core-unusable-service-config");
+    let gui_path = home.join(GUI_CONFIG_FILE);
+    let core_path = home.join(CORE_CONFIG_FILE);
+    let gui = "external-core = true\nlocale = 'ja'\nhost = '127.0.0.2'\nport = 9527\n\
+        management-secret-key = 'gui-credential'\nauth-dir = '/explicit/oauth'\n\
+        proxy-url = 'http://127.0.0.1:9000'\nproxy-override = true\n\
+        run-on-startup = true\nstart-core-on-launch = true\n\
+        api-keys = [{ key = 'saved-client-key', remark = 'laptop' }]\n";
+    fs::write(&gui_path, gui).unwrap();
+    // Missing, malformed, rejected by the importer, and imported but invalid for the GUI.
+    for core in [
+        None,
+        Some("port: [\n"),
+        Some("- not\n- a mapping\n"),
+        Some("port: 0\n"),
+        Some("host: \"127.0.0.3\\a\"\nport: 9999\n"),
+    ] {
+        match core {
+            Some(content) => fs::write(&core_path, content).unwrap(),
+            None => assert!(!core_path.exists()),
+        }
+        let config = load_external_gui_config_at(&gui_path, &home).unwrap();
+        assert!(config.external_core);
+        assert!(!should_start_core_on_launch(&config));
+        assert!(CoreProcessState::from_config(&config).ensure_managed().is_err());
+        assert_eq!(config.locale, "ja");
+        assert_eq!((config.host.as_str(), config.port), ("127.0.0.2", 9527));
+        assert_eq!(config.management_secret_key, "gui-credential");
+        assert_eq!(config.auth_dir, "/explicit/oauth");
+        assert_eq!(config.proxy_url, "http://127.0.0.1:9000");
+        assert_eq!(effective_agent_api_key(&config), "saved-client-key");
+        assert_eq!(config.api_keys[0].remark, "laptop");
+
+        // The exit-time geometry save keeps every setting and the ownership request.
+        let state = GuiConfigState::new(config);
+        let geometry = GuiConfigFile {
+            window_width: Some(1280),
+            window_height: Some(820),
+            ..state.snapshot().unwrap()
+        };
+        write_gui_config_to_path(&geometry, &gui_path).unwrap();
+        let saved: GuiConfigFile = toml::from_str(&fs::read_to_string(&gui_path).unwrap()).unwrap();
+        assert!(external_core_requested_at(&gui_path));
+        assert_eq!(saved.window_width, Some(1280));
+        assert_eq!(saved.locale, "ja");
+        assert_eq!((saved.host.as_str(), saved.port), ("127.0.0.2", 9527));
+        assert_eq!(saved.management_secret_key, "gui-credential");
+        assert_eq!(saved.auth_dir, "/explicit/oauth");
+        assert_eq!(effective_agent_api_key(&saved), "saved-client-key");
+        assert_eq!(core.map(str::to_string), fs::read_to_string(&core_path).ok());
+        fs::write(&gui_path, gui).unwrap();
+    }
+
+    // Without a saved OAuth directory the core's own default is used, never a GUI one.
+    fs::remove_file(&core_path).unwrap();
+    fs::write(&gui_path, "external-core = true\n").unwrap();
+    let config = load_external_gui_config_at(&gui_path, &home).unwrap();
+    assert!(Path::new(&config.auth_dir).is_absolute());
+    assert!(config.auth_dir.ends_with(".cli-proxy-api"), "{}", config.auth_dir);
+    assert!(config.auth_dir_user_selected);
+    assert_eq!(effective_agent_api_key(&config), "");
+    assert!(config.management_secret_key.is_empty());
+    assert_eq!(fs::read_to_string(&gui_path).unwrap(), "external-core = true\n");
+    fs::remove_dir_all(home).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn external_core_startup_and_sanitize_preserve_server_secret_and_auth_directory() {
