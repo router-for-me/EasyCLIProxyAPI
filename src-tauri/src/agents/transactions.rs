@@ -842,7 +842,7 @@ fn preserve_model_extensions(client: &str, path: &Path, before: &Value, after: &
     fn merge_entry(client: &str, before: &Value, after: &mut Value) {
         let mut extensions = before.clone();
         let owned: &[&str] = match client {
-            "claude-desktop" => &["name", "labelOverride", "anthropicFamilyTier", "isFamilyDefault", "behavesAs", "contextWindow", "supports1m", "prefer1m"],
+            "claude-desktop" => &["name", "labelOverride", "anthropicFamilyTier", "isFamilyDefault", "contextWindow", "supports1m", "prefer1m"],
             "opencode" => &["name"],
             "openclaw" => &["id", "name", "alias"],
             "deepseek-harness" => &["id", "name", "contextWindow", "input", "maxTokens", "reasoningEfforts", "compat"],
@@ -864,6 +864,9 @@ fn preserve_model_extensions(client: &str, path: &Path, before: &Value, after: &
             _ => &[],
         };
         if let Some(object) = extensions.as_object_mut() {
+            if client == "claude-desktop" {
+                object.remove("behavesAs");
+            }
             if client == "codex" {
                 object.retain(|key, _| !codex_catalog::is_managed_model_field(key));
             }

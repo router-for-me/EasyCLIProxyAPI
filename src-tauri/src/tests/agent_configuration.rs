@@ -525,35 +525,71 @@ fn claude_desktop_omits_unsupported_context_window_when_1m_is_off() {
 }
 
 #[test]
-fn claude_desktop_inference_entries_declare_behaves_as_per_tier() {
-    let models: Vec<AgentModelOption> = Vec::new();
-    let opus = claude_desktop_inference_model(CLAUDE_DESKTOP_OPUS_MODEL_ID, "gpt-6.1-sol", false, &models);
-    assert_eq!(opus["behavesAs"], "claude-opus-5");
-    assert_eq!(opus["anthropicFamilyTier"], "opus");
-
-    let sonnet = claude_desktop_inference_model(CLAUDE_DESKTOP_SONNET_MODEL_ID, "gemini-4-argon-high", false, &models);
-    assert_eq!(sonnet["behavesAs"], "claude-sonnet-5");
-
-    let haiku = claude_desktop_inference_model(CLAUDE_DESKTOP_HAIKU_MODEL_ID, "gemini-3.8-flash-high", false, &models);
-    assert_eq!(haiku["behavesAs"], "claude-haiku-4-5");
-
-    let untiered = claude_desktop_inference_model("custom-route", "gpt-6.1-sol", false, &models);
-    assert!(untiered.get("behavesAs").is_none());
+fn claude_desktop_inference_entries_use_recognized_route_ids_without_behaves_as() {
+    let mappings = ClaudeDesktopModelMappings {
+        opus: "upstream-large".into(),
+        sonnet: "upstream-medium".into(),
+        haiku: "upstream-small".into(),
+        ..ClaudeDesktopModelMappings::all("")
+    };
+    let profile = build_claude_desktop_profile(
+        None, "http://127.0.0.1:8317", DEFAULT_API_KEY, "upstream-large", &[], Some(&mappings),
+    ).unwrap();
+    let profile: serde_json::Value = serde_json::from_str(&profile).unwrap();
+    let entries = profile["inferenceModels"].as_array().unwrap();
+    assert_eq!(entries.len(), 3);
+    for (entry, (name, tier, source)) in entries.iter().zip([
+        ("claude-opus-5", "opus", "upstream-large"),
+        ("claude-sonnet-5", "sonnet", "upstream-medium"),
+        ("claude-haiku-4-5", "haiku", "upstream-small"),
+    ]) {
+        assert_eq!(entry["name"], name);
+        assert_eq!(entry["labelOverride"], source);
+        assert_eq!(entry["anthropicFamilyTier"], tier);
+        assert_eq!(entry["isFamilyDefault"], true);
+        assert!(entry.get("behavesAs").is_none());
+    }
 }
 
 #[test]
-fn claude_desktop_behaves_as_uses_ids_desktop_knows() {
-    // Desktop looks behavesAs up in an exact-match table, so every value must
-    // be one of its own keys rather than a newer-sounding variant.
-    for (tier, expected) in [
-        ("opus", "claude-opus-5"),
-        ("sonnet", "claude-sonnet-5"),
-        ("haiku", "claude-haiku-4-5"),
-        ("fable", "claude-fable-5-1"),
+fn claude_desktop_inference_entries_preserve_native_and_untiered_ids() {
+    for (route, source, name) in [
+        (CLAUDE_DESKTOP_OPUS_MODEL_ID, "claude-opus-4-6", "claude-opus-4-6"),
+        ("custom-route", "upstream-model", "custom-route"),
     ] {
-        assert_eq!(claude_desktop_behaves_as(tier), Some(expected), "{tier}");
+        let entry = claude_desktop_inference_model(route, source, false, &[]);
+        assert_eq!(entry["name"], name);
+        assert!(entry.get("behavesAs").is_none());
     }
-    assert_eq!(claude_desktop_behaves_as("mythos"), None);
+}
+
+#[test]
+fn claude_desktop_config_update_does_not_restore_behaves_as() {
+    let home = agent_test_home("desktop-removed-model-fields");
+    let paths = config_paths("claude-desktop", &home).unwrap();
+    let path = paths[2].clone();
+    let before = serde_json::json!({"inferenceModels": [{
+        "name": "claude-opus-5",
+        "labelOverride": "old-source",
+        "anthropicFamilyTier": "sonnet",
+        "isFamilyDefault": false,
+        "behavesAs": "claude-opus-5",
+        "customExtension": {"keep": true}
+    }]});
+    let entry = claude_desktop_inference_model(CLAUDE_DESKTOP_OPUS_MODEL_ID, "new-source", false, &[]);
+    let generated = serde_json::json!({"inferenceModels": [entry]});
+    let after = prepare_config_updates(
+        "claude-desktop",
+        &paths,
+        &vec![(path.clone(), Some(serde_json::to_vec(&before).unwrap()))],
+        &[AgentFileUpdate { path, after: generated.to_string() }],
+        false,
+    ).unwrap();
+    let actual: serde_json::Value = serde_json::from_slice(after[0].1.as_ref().unwrap()).unwrap();
+    let mut expected = generated;
+    expected["inferenceModels"][0]["customExtension"] = before["inferenceModels"][0]["customExtension"].clone();
+    assert_eq!(actual, expected);
+    fs::remove_dir_all(home).unwrap();
 }
 
 #[test]
@@ -3106,16 +3142,39 @@ fn claude_desktop_aliases_expose_role_routes_only() {
         Some(MANAGED_CLAUDE_HAIKU_ALIAS_DISPLAY_NAME)
     );
     assert!(!rendered.contains("models: [{"));
-    assert!(rendered.contains("\n      - name: gpt-5.6-sol\n"));
-    assert!(rendered.contains(&format!("\n        alias: {CLAUDE_DESKTOP_OPUS_MODEL_ID}\n")));
-    assert!(
-        rendered.contains("\n        display-name: EasyCLIProxyAPI managed Claude Opus mapping\n")
-    );
+    assert!(models.iter().any(|model| {
+        let identity = configured_model_identity(model).unwrap();
+        identity.1 == "gpt-5.6-sol" && identity.2.is_none()
+    }));
+    assert!(rendered.contains(&format!("\"alias\":\"{CLAUDE_DESKTOP_OPUS_MODEL_ID}\"")));
+    assert!(rendered.contains("\"display-name\":\"EasyCLIProxyAPI managed Claude Opus mapping\""));
     assert_eq!(
         ensure_claude_desktop_model_aliases_in_yaml(&rendered, &mappings, &available_models,)
             .unwrap(),
         rendered
     );
+}
+
+#[test]
+fn claude_desktop_aliases_replace_legacy_suffixed_routes() {
+    let mut input = "openai-compatibility:\n  - name: CPA\n    base-url: https://example.com/v1\n    models:\n      - name: upstream-model\n".to_string();
+    for (alias, display_name) in [
+        ("claude-opus-5-cpa", MANAGED_CLAUDE_OPUS_ALIAS_DISPLAY_NAME),
+        ("claude-sonnet-5-cpa", MANAGED_CLAUDE_SONNET_ALIAS_DISPLAY_NAME),
+        ("claude-haiku-4-5-cpa", MANAGED_CLAUDE_HAIKU_ALIAS_DISPLAY_NAME),
+    ] {
+        input.push_str(&format!("      - name: upstream-model\n        alias: {alias}\n        display-name: {display_name}\n"));
+    }
+    let mappings = ClaudeDesktopModelMappings::all("upstream-model");
+    let models = test_agent_models(&["upstream-model"]);
+    let rendered = ensure_claude_desktop_model_aliases_in_yaml(&input, &mappings, &models).unwrap();
+    let value: serde_norway::Value = serde_norway::from_str(&rendered).unwrap();
+    let root = value.as_mapping().unwrap();
+    for name in ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"] {
+        assert_eq!(configured_model_client_identity(root, name), Some(("upstream-model".into(), name.into())));
+        assert!(configured_model_client_identity(root, &format!("{name}-cpa")).is_none());
+    }
+    assert_eq!(ensure_claude_desktop_model_aliases_in_yaml(&rendered, &mappings, &models).unwrap(), rendered);
 }
 
 #[test]
