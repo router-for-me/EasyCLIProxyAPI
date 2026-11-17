@@ -1565,24 +1565,7 @@ pub(crate) fn current_core_status(
     let installed = binary_path.is_some();
     if process_state.is_some_and(|state| state.external_core) {
         let ready = management_port.is_some_and(is_management_port_open);
-        return Ok(CoreStatus {
-            installed,
-            running: ready,
-            ready,
-            starting: false,
-            recovery: None,
-            managed: false,
-            external: true,
-            process_id: None,
-            current_version: read_core_metadata(&install_dir).map(|metadata| metadata.version),
-            install_dir: path_to_string(&install_dir),
-            binary_path: binary_path.map(|path| path_to_string(&path)),
-            message: if ready {
-                "Externally managed core is reachable"
-            } else {
-                "External core is down; start it with its service manager"
-            }.to_string(),
-        });
+        return Ok(external_core_status(&install_dir, binary_path, ready));
     }
     let starting = process_state.is_some_and(CoreProcessState::is_starting);
     let managed_pid = process_state.and_then(|state| state.managed_pid());
@@ -1626,6 +1609,33 @@ pub(crate) fn current_core_status(
         binary_path: binary_path.map(|path| path_to_string(&path)),
         message,
     })
+}
+
+pub(crate) fn external_core_status(
+    install_dir: &Path,
+    binary_path: Option<PathBuf>,
+    ready: bool,
+) -> CoreStatus {
+    CoreStatus {
+        installed: binary_path.is_some(),
+        running: ready,
+        ready,
+        starting: false,
+        recovery: None,
+        managed: false,
+        external: true,
+        process_id: None,
+        // The service manager installs and upgrades this core, so the GUI's own
+        // install metadata does not describe it. Show what the core itself reports.
+        current_version: ready.then(management_api::reported_core_version).flatten(),
+        install_dir: path_to_string(install_dir),
+        binary_path: binary_path.map(|path| path_to_string(&path)),
+        message: if ready {
+            "Externally managed core is reachable"
+        } else {
+            "External core is down; start it with its service manager"
+        }.to_string(),
+    }
 }
 
 pub(crate) fn is_management_port_open(port: u16) -> bool {

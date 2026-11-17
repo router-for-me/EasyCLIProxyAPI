@@ -23,6 +23,31 @@ use tokio_util::sync::CancellationToken;
 static REQUESTS: LazyLock<Mutex<HashMap<String, CancellationToken>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
+static REPORTED_CORE_VERSION: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
+
+/// Build version the core reported in its most recent management response.
+pub(crate) fn reported_core_version() -> Option<String> {
+    REPORTED_CORE_VERSION.lock().ok()?.clone()
+}
+
+// Every management response names the build that answered it, so the version
+// follows a core that is replaced or restarted outside the GUI.
+pub(crate) fn record_reported_core_version(headers: &reqwest::header::HeaderMap) {
+    let Some(version) = core_version_from_headers(headers) else {
+        return;
+    };
+    if let Ok(mut reported) = REPORTED_CORE_VERSION.lock() {
+        if reported.as_deref() != Some(version.as_str()) {
+            *reported = Some(version);
+        }
+    }
+}
+
+fn core_version_from_headers(headers: &reqwest::header::HeaderMap) -> Option<String> {
+    let version = headers.get("X-CPA-VERSION")?.to_str().ok()?.trim();
+    (!version.is_empty() && version.len() <= 64 && version.chars().all(|c| c.is_ascii_graphic()))
+        .then(|| version.to_string())
+}
 
 // Reserve before sending so cancellation also works before the HTTP request starts.
 #[tauri::command]
@@ -581,6 +606,7 @@ async fn read_management_json<T>(response: reqwest::Response) -> Result<T, Strin
 where
     T: for<'de> Deserialize<'de>,
 {
+    record_reported_core_version(response.headers());
     let status = response.status();
     let text = response
         .text()
@@ -603,6 +629,7 @@ where
 pub(crate) async fn read_management_value(
     response: reqwest::Response,
 ) -> Result<serde_json::Value, String> {
+    record_reported_core_version(response.headers());
     let status = response.status();
     let text = response
         .text()
@@ -621,6 +648,7 @@ pub(crate) async fn read_management_value(
 }
 
 pub(crate) async fn read_management_text(response: reqwest::Response) -> Result<String, String> {
+    record_reported_core_version(response.headers());
     let status = response.status();
     let text = response
         .text()

@@ -1782,3 +1782,37 @@ fn external_core_status_tracks_reachability_without_adopting_a_process() {
     assert!(offline.message.contains("External core is down"));
     assert!(!state.recovery.wants_running());
 }
+
+#[test]
+fn external_core_status_shows_the_reported_version_instead_of_stale_install_metadata() {
+    let install_dir = agent_test_home("external-core-reported-version");
+    fs::create_dir_all(&install_dir).unwrap();
+    write_core_metadata(
+        &install_dir,
+        &CoreMetadata {
+            version: "v8.0.45+left-by-an-older-gui-install".to_string(),
+            asset_name: "installed-core.tar.gz".to_string(),
+            installed_at_unix: 0,
+        },
+    )
+    .unwrap();
+    let mut headers = reqwest::header::HeaderMap::new();
+    for ignored in ["", " ", "8.0.76 with spaces", &"9".repeat(65)] {
+        headers.insert("X-CPA-VERSION", ignored.parse().unwrap());
+        management_api::record_reported_core_version(&headers);
+    }
+    headers.insert("X-CPA-VERSION", " 8.0.76-reported ".parse().unwrap());
+    management_api::record_reported_core_version(&headers);
+    management_api::record_reported_core_version(&reqwest::header::HeaderMap::new());
+
+    let online = external_core_status(&install_dir, None, true);
+    assert_eq!(online.current_version.as_deref(), Some("8.0.76-reported"));
+    assert!(online.external && online.running && !online.managed && !online.installed);
+    // An unreachable core has no version to show; the metadata file is never a fallback.
+    assert!(external_core_status(&install_dir, None, false).current_version.is_none());
+    assert_eq!(
+        read_core_metadata(&install_dir).unwrap().version,
+        "v8.0.45+left-by-an-older-gui-install"
+    );
+    fs::remove_dir_all(install_dir).unwrap();
+}
