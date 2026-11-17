@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::agent_usage::{
-    proxy_codex_delta, read_usage_file, source_files, FileDelta, UsageCounter, SOURCE_NAMES,
+    antigravity_session_database, antigravity_session_id, proxy_codex_delta, read_usage_file,
+    source_files, FileDelta, UsageCounter, SOURCE_NAMES,
 };
 use crate::usage::{load_agent_usage_prices, resolve_agent_usage_price, ModelPrice};
 
@@ -311,6 +312,9 @@ fn millis_to_rfc3339(value: i64) -> String {
 }
 
 fn file_key(source: &str, path: &Path) -> String {
+    if source == "antigravity" {
+        return format!("{source}:v2:{}", path.to_string_lossy());
+    }
     if source == "codex" {
         if let Some(name) = path.file_name() {
             return format!("{source}:{}", name.to_string_lossy());
@@ -319,7 +323,115 @@ fn file_key(source: &str, path: &Path) -> String {
     format!("{source}:{}", path.to_string_lossy())
 }
 
-fn file_stamp(path: &Path) -> Option<(i64, i64)> {
+fn antigravity_key_path(key: &str) -> Option<&str> {
+    key.strip_prefix("antigravity:v2:")
+        .or_else(|| key.strip_prefix("antigravity:"))
+}
+
+fn remove_antigravity_duplicate_rows(
+    transaction: &rusqlite::Transaction<'_>,
+    existing: &HashMap<String, (i64, i64, bool)>,
+    seen: &BTreeSet<String>,
+) -> Result<(), String> {
+    let mut canonical: HashMap<String, BTreeSet<String>> = HashMap::new();
+    let mut canonical_paths: BTreeSet<&str> = BTreeSet::new();
+    for key in seen {
+        let Some(path) = antigravity_key_path(key) else {
+            continue;
+        };
+        canonical_paths.insert(path);
+        let Some(session) = antigravity_session_id(Path::new(path)) else {
+            continue;
+        };
+        canonical.entry(session).or_default().insert(key.clone());
+    }
+    if canonical.is_empty() {
+        return Ok(());
+    }
+    let mut old_by_session: HashMap<String, Vec<String>> = HashMap::new();
+    for key in existing.keys() {
+        if seen.contains(key) {
+            continue;
+        }
+        let Some(path) = antigravity_key_path(key) else {
+            continue;
+        };
+        if let Some(session) = antigravity_session_id(Path::new(path)) {
+            old_by_session.entry(session).or_default().push(key.clone());
+        }
+        let exact_path = canonical_paths.contains(path);
+        let same_session = antigravity_session_id(Path::new(path))
+            .is_some_and(|session| canonical.contains_key(&session));
+        if !exact_path && !same_session {
+            continue;
+        }
+        transaction
+            .execute("DELETE FROM agent_usage_daily WHERE file_key = ?1", [key])
+            .map_err(|error| format!("Failed to drop duplicate Agent usage rows: {error}"))?;
+        transaction
+            .execute("DELETE FROM agent_usage_hourly WHERE file_key = ?1", [key])
+            .map_err(|error| format!("Failed to drop duplicate Agent usage rows: {error}"))?;
+        transaction
+            .execute("DELETE FROM agent_usage_files WHERE file_key = ?1", [key])
+            .map_err(|error| format!("Failed to drop duplicate Agent usage files: {error}"))?;
+    }
+    for (session, mut keys) in old_by_session {
+        if canonical.contains_key(&session) || keys.len() <= 1 {
+            continue;
+        }
+        keys.sort();
+        let keeper = keys
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, key)| {
+                let v2 = key.starts_with("antigravity:v2:");
+                let path = antigravity_key_path(key).unwrap_or_default();
+                let rank = if path.ends_with("transcript.jsonl") {
+                    2u8
+                } else if path.ends_with("transcript_full.jsonl") {
+                    1u8
+                } else {
+                    0u8
+                };
+                (v2, rank)
+            })
+            .map(|(index, _)| index)
+            .unwrap_or(0);
+        for (index, key) in keys.iter().enumerate() {
+            if index == keeper {
+                continue;
+            }
+            transaction
+                .execute("DELETE FROM agent_usage_daily WHERE file_key = ?1", [key])
+                .map_err(|error| format!("Failed to drop archived Agent usage rows: {error}"))?;
+            transaction
+                .execute("DELETE FROM agent_usage_hourly WHERE file_key = ?1", [key])
+                .map_err(|error| format!("Failed to drop archived Agent usage rows: {error}"))?;
+            transaction
+                .execute("DELETE FROM agent_usage_files WHERE file_key = ?1", [key])
+                .map_err(|error| format!("Failed to drop archived Agent usage files: {error}"))?;
+        }
+    }
+    transaction
+        .execute(
+            "DELETE FROM agent_usage_files
+             WHERE source = 'antigravity'
+               AND file_key NOT LIKE 'antigravity:v2:%'
+               AND NOT EXISTS (
+                   SELECT 1 FROM agent_usage_daily
+                   WHERE agent_usage_daily.file_key = agent_usage_files.file_key
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM agent_usage_hourly
+                   WHERE agent_usage_hourly.file_key = agent_usage_files.file_key
+               )",
+            [],
+        )
+        .map_err(|error| format!("Failed to drop stale Agent usage files: {error}"))?;
+    Ok(())
+}
+
+fn raw_file_stamp(path: &Path) -> Option<(i64, i64)> {
     let stamp = |path: &Path| -> Option<(i64, i64)> {
         let metadata = fs::metadata(path).ok()?;
         if !metadata.is_file() {
@@ -341,6 +453,16 @@ fn file_stamp(path: &Path) -> Option<(i64, i64)> {
         Some((wal_size, wal_mtime)) => (size.saturating_add(wal_size), mtime.max(wal_mtime)),
         None => (size, mtime),
     })
+}
+
+fn file_stamp(path: &Path) -> Option<(i64, i64)> {
+    let (size, mtime) = raw_file_stamp(path)?;
+    if let Some(database) = antigravity_session_database(path) {
+        if let Some((db_size, db_mtime)) = raw_file_stamp(&database) {
+            return Some((size.saturating_add(db_size), mtime.max(db_mtime)));
+        }
+    }
+    Some((size, mtime))
 }
 
 fn read_meta(connection: &Connection, key: &str) -> String {
@@ -650,6 +772,7 @@ pub(crate) fn sync(
             existing_files(&transaction, source)
         };
         let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut ready: BTreeSet<String> = BTreeSet::new();
         let mut transaction = connection
             .transaction()
             .map_err(|error| format!("Failed to start agent usage transaction: {error}"))?;
@@ -671,12 +794,14 @@ pub(crate) fn sync(
                         )
                         .map_err(|error| format!("Failed to update agent usage file: {error}"))?;
                 }
+                ready.insert(key.clone());
                 readable += 1;
                 continue;
             }
             let mut delta = FileDelta::default();
             match read_usage_file(path, source, &mut delta) {
                 Ok(()) => {
+                    ready.insert(key.clone());
                     readable += 1;
                     replace_file_rows(&transaction, source, &key, &delta)?;
                     store_file(&transaction, source, &key, path, *size, *mtime_ns)?;
@@ -707,6 +832,10 @@ pub(crate) fn sync(
                     finished: false,
                 });
             }
+        }
+
+        if *source == "antigravity" {
+            remove_antigravity_duplicate_rows(&transaction, &existing, &ready)?;
         }
 
         for key in existing.keys() {
@@ -1456,6 +1585,224 @@ mod tests {
         assert_eq!(pi.totals.input_tokens, 105);
         assert_eq!(pi.totals.output_tokens, 11);
         assert_eq!(pi.totals.samples, 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn drops_antigravity_mirror_rows_when_canonical_transcript_exists() {
+        let root = test_root("agy-mirror");
+        let home = root.join("home");
+        let session = "99999999-9999-9999-9999-999999999999";
+        let logs = home
+            .join(".gemini/antigravity/brain")
+            .join(session)
+            .join(".system_generated/logs");
+        fs::create_dir_all(&logs).unwrap();
+        let timestamp = local_timestamp(2026, 11, 17, 3);
+        let line = format!(
+            "{}\n",
+            json!({
+                "step_index": 1,
+                "source": "MODEL",
+                "type": "PLANNER_RESPONSE",
+                "status": "DONE",
+                "created_at": timestamp,
+                "input_tokens": 100,
+                "output_tokens": 10,
+                "cache_read_tokens": 0
+            })
+        );
+        let transcript = logs.join("transcript.jsonl");
+        let mirror = logs.join("transcript_full.jsonl");
+        fs::write(&transcript, &line).unwrap();
+        fs::write(&mirror, &line).unwrap();
+
+        let mut connection = open_store_at(&root.join("agent_usage.db")).unwrap();
+        for (key, path) in [
+            (format!("antigravity:{}", transcript.display()), &transcript),
+            (format!("antigravity:{}", mirror.display()), &mirror),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO agent_usage_files
+                        (file_key, source, path, size, mtime_ns, scanned_at, present)
+                     VALUES (?1, 'antigravity', ?2, 1, 1, 1, 1)",
+                    params![key, path.to_string_lossy().to_string()],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO agent_usage_daily
+                        (file_key, source, day, model, input_tokens, output_tokens,
+                         cache_read_tokens, cache_creation_tokens, reasoning_tokens,
+                         total_tokens, samples)
+                     VALUES (?1, 'antigravity', '2026-11-17', '', 100, 10, 0, 0, 0, 110, 1)",
+                    [&key],
+                )
+                .unwrap();
+        }
+        let stale = home.join(".gemini/antigravity/config.json");
+        fs::create_dir_all(stale.parent().unwrap()).unwrap();
+        fs::write(&stale, "{}\n").unwrap();
+        connection
+            .execute(
+                "INSERT INTO agent_usage_files
+                    (file_key, source, path, size, mtime_ns, scanned_at, present)
+                 VALUES (?1, 'antigravity', ?2, 1, 1, 1, 0)",
+                params![
+                    format!("antigravity:{}", stale.display()),
+                    stale.to_string_lossy().to_string()
+                ],
+            )
+            .unwrap();
+        let archived_session = "88888888-8888-8888-8888-888888888888";
+        for name in [
+            "transcript.jsonl",
+            "transcript_full.jsonl",
+            "chunks/transcript/00000000.jsonl",
+            "chunks/transcript_full/00000000.jsonl",
+        ] {
+            let path = home
+                .join(".gemini/antigravity/brain")
+                .join(archived_session)
+                .join(".system_generated/logs")
+                .join(name);
+            connection
+                .execute(
+                    "INSERT INTO agent_usage_files
+                        (file_key, source, path, size, mtime_ns, scanned_at, present)
+                     VALUES (?1, 'antigravity', ?2, 1, 1, 1, 1)",
+                    params![
+                        format!("antigravity:{}", path.display()),
+                        path.to_string_lossy().to_string()
+                    ],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO agent_usage_daily
+                        (file_key, source, day, model, input_tokens, output_tokens,
+                         cache_read_tokens, cache_creation_tokens, reasoning_tokens,
+                         total_tokens, samples)
+                     VALUES (?1, 'antigravity', '2026-11-17', 'archived', 10, 0, 0, 0, 0, 10, 1)",
+                    [format!("antigravity:{}", path.display())],
+                )
+                .unwrap();
+        }
+
+        sync(&mut connection, &home, None, |_| {}).unwrap();
+        let canonical_key = format!("antigravity:v2:{}", transcript.display());
+        let canonical: (i64, i64, i64) = connection
+            .query_row(
+                "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+                        COALESCE(SUM(samples), 0)
+                 FROM agent_usage_daily WHERE file_key = ?1",
+                [&canonical_key],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(canonical, (100, 10, 1));
+        let mirrors: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM agent_usage_daily
+                 WHERE source = 'antigravity' AND file_key NOT LIKE 'antigravity:v2:%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(mirrors, 1);
+        let stale_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM agent_usage_files
+                 WHERE source = 'antigravity' AND file_key =?1",
+                [format!("antigravity:{}", stale.display())],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stale_rows, 0);
+        let archived: (i64, i64) = connection
+            .query_row(
+                "SELECT COUNT(*), COALESCE(SUM(total_tokens), 0) FROM agent_usage_daily
+                 WHERE source = 'antigravity' AND file_key LIKE ?1",
+                [format!("%{archived_session}%")],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(archived, (1, 10));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resyncs_antigravity_transcript_when_session_database_updates_later() {
+        let root = test_root("agy-db-resync");
+        let home = root.join("home");
+        let session = "77777777-7777-7777-7777-777777777777";
+        let transcript = home
+            .join(".gemini/antigravity/brain")
+            .join(session)
+            .join(".system_generated/logs/transcript.jsonl");
+        fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        let timestamp = local_timestamp(2026, 11, 18, 1);
+        fs::write(
+            &transcript,
+            format!(
+                "{}\n",
+                json!({
+                    "step_index": 1,
+                    "source": "MODEL",
+                    "type": "PLANNER_RESPONSE",
+                    "status": "DONE",
+                    "created_at": timestamp,
+                    "input_tokens": 80,
+                    "output_tokens": 20,
+                    "cache_read_tokens": 0
+                })
+            ),
+        )
+        .unwrap();
+
+        let mut connection = open_store_at(&root.join("agent_usage.db")).unwrap();
+        let first = sync(&mut connection, &home, None, |_| {}).unwrap();
+        assert_eq!(first.changed_files, 1);
+        let empty_before: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM agent_usage_daily WHERE source = 'antigravity' AND model = ''",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(empty_before, 1);
+
+        let conversations = home.join(".gemini/antigravity/conversations");
+        fs::create_dir_all(&conversations).unwrap();
+        let db = Connection::open(conversations.join(format!("{session}.db"))).unwrap();
+        db.execute(
+            "CREATE TABLE gen_metadata (idx INTEGER PRIMARY KEY, data BLOB NOT NULL)",
+            [],
+        )
+        .unwrap();
+        let model = b"gemini-pro-orchestrator";
+        let mut inner = vec![0x9a, 0x01, model.len() as u8];
+        inner.extend_from_slice(model);
+        let mut outer = vec![0x0a, inner.len() as u8];
+        outer.extend_from_slice(&inner);
+        db.execute(
+            "INSERT INTO gen_metadata (idx, data) VALUES (0, ?1)",
+            [outer],
+        )
+        .unwrap();
+        drop(db);
+
+        let second = sync(&mut connection, &home, None, |_| {}).unwrap();
+        assert_eq!(second.changed_files, 1);
+        let attributed: (String, i64) = connection
+            .query_row(
+                "SELECT model, total_tokens FROM agent_usage_daily WHERE source = 'antigravity'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(attributed, ("gemini-pro-orchestrator".to_string(), 100));
         fs::remove_dir_all(root).unwrap();
     }
 
