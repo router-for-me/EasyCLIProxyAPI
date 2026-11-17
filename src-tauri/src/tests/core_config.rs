@@ -1247,8 +1247,7 @@ fn independent_network_modules_only_patch_their_own_fields() {
 #[test]
 fn core_config_controls_preserve_comments_and_unrelated_values() {
     let input = "# Client authentication\napi-keys:\n  - old-key\n\n# Plugin runtime\nplugins:\n  enabled: false # global switch\n  dir: plugins\n\n# Credential routing\nrouting:\n  strategy: round-robin # current strategy\n  session-affinity: true\n\ndebug: true # untouched\n";
-    let mut document = yaml_serde_edit::YamlValue::parse(input).unwrap();
-    let mut updated = document.get().clone();
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(input).unwrap();
 
     set_core_api_keys(
         &mut updated,
@@ -1262,9 +1261,8 @@ fn core_config_controls_preserve_comments_and_unrelated_values() {
         "fill-first".to_string(),
     )
     .unwrap();
-    document.set(updated);
-
-    let rendered = document.get_string();
+    let rendered = render_updated_core_yaml(input, updated).unwrap();
+    let document = serde_norway::from_str::<serde_norway::Value>(&rendered).unwrap();
     assert!(rendered.contains("# Client authentication"));
     assert!(rendered.contains("# Plugin runtime"));
     assert!(rendered.contains("# global switch"));
@@ -1272,12 +1270,106 @@ fn core_config_controls_preserve_comments_and_unrelated_values() {
     assert!(rendered.contains("# current strategy"));
     assert!(rendered.contains("debug: true # untouched"));
 
-    let settings = core_config_settings_from_value(document.get()).unwrap();
+    let settings = core_config_settings_from_value(&document).unwrap();
     assert_eq!(settings.api_keys, vec!["old-key", "new-key"]);
     assert!(settings.plugins_enabled);
     assert_eq!(settings.routing_strategy, "fill-first");
-    assert_eq!(document.get()["plugins"]["dir"], "plugins");
-    assert_eq!(document.get()["routing"]["session-affinity"], true);
+    assert_eq!(document["plugins"]["dir"], "plugins");
+    assert_eq!(document["routing"]["session-affinity"], true);
+}
+
+fn serialized_v8_yaml_with_multi_word_keys() -> String {
+    let flow_style = r#"config-version: 8
+oauth:
+  providers:
+    antigravity:
+      sensitive-words-replace: {"first: key": "val 1", "second key": "val 2", "third key": "val 3"}
+      antigravity-credits: true
+api-keys:
+  codex:
+    - name: test-upstream
+      models: [{name: model-one}]
+      keys: [{api-key: upstream-test}]
+server:
+  port: 8317
+"#;
+    let document: serde_norway::Value = serde_norway::from_str(flow_style).unwrap();
+    let serialized = serde_norway::to_string(&document).unwrap();
+    assert!(serialized.contains("second key: val 2"));
+    assert!(serialized.contains("third key: val 3"));
+    serialized
+}
+
+#[test]
+fn render_updated_core_yaml_preserves_serialized_v8_multi_word_keys() {
+    let input = serialized_v8_yaml_with_multi_word_keys();
+    let mut expected: serde_norway::Value = serde_norway::from_str(&input).unwrap();
+    set_core_yaml_path_value(&mut expected, &["server", "port"], 9527.into()).unwrap();
+
+    let rendered = render_updated_core_yaml(&input, expected.clone()).unwrap();
+
+    assert_eq!(
+        serde_norway::from_str::<serde_norway::Value>(&rendered).unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn desktop_alias_sync_preserves_serialized_v8_multi_word_keys() {
+    let mut input =
+        management_v8_yaml_to_legacy_view(&serialized_v8_yaml_with_multi_word_keys()).unwrap();
+    assert!(input.contains("second key: val 2"));
+    let original: serde_norway::Value = serde_norway::from_str(&input).unwrap();
+    let alias = "claude-sonnet-5-cc";
+    let mut expected = original.clone();
+    expected["codex-api-key"][0]["models"].as_sequence_mut().unwrap().push(
+        serde_norway::from_str(&format!(
+            "name: model-one\nalias: {alias}\ndisplay-name: EasyCLIProxyAPI managed Claude Desktop mapping\n"
+        )).unwrap(),
+    );
+    for (alias, expected) in [(alias, expected), ("", original)] {
+        let mappings = ClaudeDesktopModelMappings {
+            desktop_models: Some(vec![ClaudeDesktopModelMapping {
+                model: "model-one".into(),
+                alias: alias.into(),
+                context_1m: false,
+            }]),
+            ..ClaudeDesktopModelMappings::all("model-one")
+        };
+        let rendered =
+            ensure_claude_desktop_model_aliases_with_oauth_definitions_and_routes_in_yaml(
+                &input,
+                &mappings,
+                &[],
+                &[],
+                [
+                    CLAUDE_DESKTOP_OPUS_MODEL_ID,
+                    CLAUDE_DESKTOP_SONNET_MODEL_ID,
+                    CLAUDE_DESKTOP_HAIKU_MODEL_ID,
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            serde_norway::from_str::<serde_norway::Value>(&rendered).unwrap(),
+            expected
+        );
+        input = rendered;
+    }
+}
+
+#[test]
+fn render_updated_core_yaml_rejects_lossy_edits() {
+    let input = "server: {port: 8317}\n";
+    let expected =
+        serde_norway::from_str("server: {port: 8317}\ncustom: !example value\n").unwrap();
+
+    let error = render_updated_core_yaml(input, expected).unwrap_err();
+
+    assert!(
+        error.contains("does not match the expected value"),
+        "{error}"
+    );
+    assert!(error.contains("write rejected"), "{error}");
 }
 
 #[test]

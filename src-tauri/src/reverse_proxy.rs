@@ -93,8 +93,8 @@ fn core_forward_client(config: &ReverseProxyConfig) -> Result<(ProxyClient, bool
         let install_dir = crate::core_runtime::core_install_dir()?;
         if install_dir.join(crate::CORE_CONFIG_FILE).is_file() {
             let (_, document) = read_core_config_document()?;
-            core_port = configured_core_port(document.get())?;
-            let tls = crate::core_config::core_tls_settings_from_value(document.get())?;
+            core_port = configured_core_port(&document)?;
+            let tls = crate::core_config::core_tls_settings_from_value(&document)?;
             tls_enabled = tls.enabled;
             if tls_enabled {
                 let cert_path = install_dir.join(&tls.cert);
@@ -139,7 +139,7 @@ fn read_installed_proxy_config() -> Result<Option<ReverseProxyConfig>, String> {
         return Ok(None);
     }
     let (_, document) = read_core_config_document()?;
-    read_proxy_config_document(document.get())
+    read_proxy_config_document(&document)
 }
 
 /// The GUI's own durable configuration (config.toml). Its copy of the settings
@@ -478,7 +478,7 @@ pub fn apply_core_hardening() -> Result<ReverseProxyHardening, String> {
 
     let _config_guard = lock_core_config_file()?;
     let (_, document) = read_core_config_document()?;
-    let mut hardening = read_core_hardening(document.get());
+    let mut hardening = read_core_hardening(&document);
     hardening.restart_required = changed;
     Ok(hardening)
 }
@@ -489,7 +489,7 @@ pub fn read_installed_core_hardening() -> ReverseProxyHardening {
     };
     match read_core_config_document() {
         Ok((_, document)) => {
-            let mut hardening = read_core_hardening(document.get());
+            let mut hardening = read_core_hardening(&document);
             hardening.restart_required = false;
             hardening
         }

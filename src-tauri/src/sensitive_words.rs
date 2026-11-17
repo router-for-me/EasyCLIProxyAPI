@@ -145,7 +145,7 @@ fn github_token() -> Option<String> {
     let document = lock_core_config_file().ok().and_then(|_guard| {
         read_core_config_document()
             .ok()
-            .map(|(_, document)| document.get().clone())
+            .map(|(_, document)| document)
     });
     configured_token(
         document.as_ref().unwrap_or(&serde_norway::Value::Null),

@@ -233,7 +233,7 @@ pub(crate) fn lock_core_config_file() -> Result<std::sync::MutexGuard<'static, (
 pub(crate) fn read_installed_core_config_settings() -> Result<CoreConfigSettings, String> {
     let _config_guard = lock_core_config_file()?;
     let (_, document) = read_core_config_document()?;
-    core_config_settings_from_value(document.get())
+    core_config_settings_from_value(&document)
 }
 
 pub(crate) fn current_core_config_settings(
@@ -443,7 +443,7 @@ pub(crate) fn core_sensitive_words_settings_from_value(
 pub(crate) fn read_core_sensitive_words_settings() -> Result<CoreSensitiveWordsSettings, String> {
     let _config_guard = lock_core_config_file()?;
     let (_, document) = read_core_config_document()?;
-    core_sensitive_words_settings_from_value(document.get())
+    core_sensitive_words_settings_from_value(&document)
 }
 
 pub(crate) fn patch_core_sensitive_words_yaml(
@@ -1843,7 +1843,7 @@ pub(crate) fn set_yaml_edit_nested_value(
     false
 }
 
-pub(crate) fn read_core_config_document() -> Result<(PathBuf, yaml_serde_edit::YamlValue), String> {
+pub(crate) fn read_core_config_document() -> Result<(PathBuf, serde_norway::Value), String> {
     let config_path = core_install_dir()?.join(CORE_CONFIG_FILE);
     if !config_path.is_file() {
         return Err("Kernel configuration has not been generated. Start the CPA kernel first".to_string());
@@ -1851,7 +1851,7 @@ pub(crate) fn read_core_config_document() -> Result<(PathBuf, yaml_serde_edit::Y
 
     let content = fs::read_to_string(&config_path)
         .map_err(|err| format!("Failed to read kernel configuration {}: {err}", path_to_string(&config_path)))?;
-    let document = yaml_serde_edit::YamlValue::parse(&content)
+    let document = serde_norway::from_str(&content)
         .map_err(|err| format!("Failed to parse kernel configuration: {err}"))?;
     Ok((config_path, document))
 }

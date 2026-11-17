@@ -342,9 +342,8 @@ pub(crate) fn edit_model_alias_with_tier_in_yaml_for_mapping(
     if fast && !alias_source_supports_fast(source) {
         return Err("Fast supports only OpenAI-compatible API, Codex API, or Codex OAuth model sources".to_string());
     }
-    let mut document = yaml_serde_edit::YamlValue::parse(content)
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(content)
         .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
-    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or("Kernel configuration root must be a YAML mapping")?;
@@ -493,7 +492,7 @@ pub(crate) fn edit_model_alias_with_tier_in_yaml_for_mapping(
         alias,
         &payload_edit,
     )?;
-    render_updated_core_yaml(&mut document, updated)
+    render_updated_core_yaml(content, updated)
 }
 
 fn remove_editable_model_alias(root: &mut serde_norway::Mapping, original: &EditableModelAlias) -> Result<(), String> {
@@ -517,14 +516,13 @@ fn remove_editable_model_alias(root: &mut serde_norway::Mapping, original: &Edit
 }
 
 pub(crate) fn remove_model_alias_mapping_from_yaml(content: &str, alias: &str, entry: &ThinkingAliasEntry) -> Result<String, String> {
-    let mut document = yaml_serde_edit::YamlValue::parse(content).map_err(|error| error.to_string())?;
-    let mut updated = document.get().clone();
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(content).map_err(|error| error.to_string())?;
     let root = updated.as_mapping_mut().ok_or("Kernel configuration root must be a YAML mapping")?;
     let original = editable_model_alias_for_mapping(root, alias, Some(entry))?;
     remove_editable_model_alias(root, &original)?;
     let scope = AliasPayloadScope::after_removal(root, alias, None);
     remove_alias_payload_options(root, alias, &scope)?;
-    render_updated_core_yaml(&mut document, updated)
+    render_updated_core_yaml(content, updated)
 }
 
 pub(crate) const ALIAS_EFFORT_KEYS: &[&str] = &[

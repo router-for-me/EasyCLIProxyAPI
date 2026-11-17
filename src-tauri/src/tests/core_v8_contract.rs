@@ -184,7 +184,7 @@ async fn check_claude_model_routes(legacy_marker: Option<&str>) {
         api_keys: vec![GuiApiKeyEntry { key: "isolated-client-key".into(), remark: String::new() }],
         ..GuiConfigFile::default()
     };
-    let initial = "config-version: 8\nmanagement: {disable-control-panel: true, disable-auto-update-panel: true}\napi-keys:\n  codex:\n    - name: test-upstream\n      base-url: http://127.0.0.1:1/v1\n      models: [{name: model-one}]\n      keys: [{api-key: upstream-test, weight: 2}]\n";
+    let initial = "config-version: 8\nmanagement: {disable-control-panel: true, disable-auto-update-panel: true}\noauth:\n  providers:\n    antigravity:\n      sensitive-words-replace: {\"first: key\": \"val 1\", \"second key\": \"val 2\"}\n      antigravity-credits: true\napi-keys:\n  codex:\n    - name: test-upstream\n      base-url: http://127.0.0.1:1/v1\n      models: [{name: model-one}]\n      keys: [{api-key: upstream-test, weight: 2}]\n";
     let migrated;
     let initial = if let Some(marker) = legacy_marker {
         let legacy = format!("{marker}codex-api-key:\n  - api-key: upstream-test\n    base-url: http://127.0.0.1:1/v1\n    models: [{{name: model-one, alias: claude-sonnet-custom}}]\noauth-model-alias:\n  codex: [{{name: oauth-original, alias: claude-opus-legacy, fork: true}}]\npayload:\n  override:\n    - models: [{{name: claude-sonnet-custom, protocol: codex}}]\n      params: {{reasoning.effort: high, service_tier: priority}}\n");
@@ -224,6 +224,23 @@ async fn check_claude_model_routes(legacy_marker: Option<&str>) {
         assert_eq!(saved["requests"]["payload"], before["requests"]["payload"]);
     }
     assert_eq!(saved["api-keys"]["codex"][0]["keys"], before["api-keys"]["codex"][0]["keys"]);
+    assert_eq!(saved["oauth"]["providers"], before["oauth"]["providers"]);
+    if legacy_marker.is_none() {
+        assert_eq!(
+            saved["oauth"]["providers"]["antigravity"]["sensitive-words-replace"]["second key"],
+            "val 2"
+        );
+        assert_eq!(
+            saved["oauth"]["providers"]["antigravity"]["antigravity-credits"],
+            true
+        );
+        let persisted: serde_norway::Value =
+            serde_norway::from_str(&fs::read_to_string(&core.config).unwrap()).unwrap();
+        assert_eq!(
+            persisted["oauth"]["providers"]["antigravity"]["sensitive-words-replace"]["second key"],
+            "val 2"
+        );
+    }
     assert!(saved["api-keys"]["codex"][0]["models"].as_array().unwrap().iter()
         .any(|entry| entry["name"] == "model-one" && entry["alias"] == "claude-sonnet-custom"));
 

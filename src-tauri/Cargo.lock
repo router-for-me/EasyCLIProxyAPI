@@ -711,8 +711,7 @@ dependencies = [
  "window-vibrancy",
  "windows",
  "windows-sys 0.59.0",
- "yaml-edit 0.3.6",
- "yaml-serde-edit",
+ "yaml-edit",
  "zip",
 ]
 
@@ -5746,34 +5745,12 @@ dependencies = [
 
 [[package]]
 name = "yaml-edit"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d25d3b32461fbd629221a7356eb48c86ad435356db0bfa93e26e8c1509c1836"
-dependencies = [
- "base64 0.22.1",
- "rowan",
-]
-
-[[package]]
-name = "yaml-edit"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5df55a38673279c691015377f55503186026bc41d448892b01886cb7475cd121"
 dependencies = [
  "base64 0.22.1",
  "rowan",
-]
-
-[[package]]
-name = "yaml-serde-edit"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5bdfd93bdf8b688e9a20708d5eb55faed433eb6286e8f0d5c08ab6f1d32d793"
-dependencies = [
- "serde",
- "serde_norway",
- "thiserror 1.0.69",
- "yaml-edit 0.2.3",
 ]
 
 [[package]]

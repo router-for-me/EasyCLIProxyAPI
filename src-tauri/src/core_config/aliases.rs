@@ -826,10 +826,9 @@ pub(crate) fn assign_available_claude_desktop_aliases(
     if entries.is_empty() {
         return Ok(());
     }
-    let document = yaml_serde_edit::YamlValue::parse(content)
+    let document = serde_norway::from_str::<serde_norway::Value>(content)
         .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
     let sources = document
-        .get()
         .as_mapping()
         .cloned()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
@@ -892,9 +891,8 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_and_rou
     oauth_model_definitions: &[OAuthModelDefinitions],
     routes: [&str; 3],
 ) -> Result<String, String> {
-    let mut document = yaml_serde_edit::YamlValue::parse(content)
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(content)
         .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
-    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
@@ -931,7 +929,7 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_and_rou
         if *root == sources {
             return Ok(content.to_string());
         }
-        return render_updated_core_yaml(&mut document, updated);
+        return render_updated_core_yaml(content, updated);
     }
     for alias in managed_claude_desktop_aliases(&sources) {
         if !is_claude_desktop_route_id(&alias)
@@ -976,7 +974,7 @@ pub(crate) fn ensure_claude_desktop_model_aliases_with_oauth_definitions_and_rou
     if *root == sources {
         return Ok(content.to_string());
     }
-    render_updated_core_yaml(&mut document, updated)
+    render_updated_core_yaml(content, updated)
 }
 
 pub(crate) fn validate_claude_desktop_entries(
@@ -1071,9 +1069,8 @@ pub(crate) fn managed_claude_desktop_aliases(root: &serde_norway::Mapping) -> Ve
 
 #[cfg(test)]
 pub(crate) fn remove_managed_claude_model_aliases_in_yaml(content: &str) -> Result<String, String> {
-    let mut document = yaml_serde_edit::YamlValue::parse(content)
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(content)
         .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
-    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
@@ -1091,7 +1088,7 @@ pub(crate) fn remove_managed_claude_model_aliases_in_yaml(content: &str) -> Resu
     if !changed {
         return Ok(content.to_string());
     }
-    render_updated_core_yaml(&mut document, updated)
+    render_updated_core_yaml(content, updated)
 }
 
 pub(crate) fn remove_managed_claude_model_alias(
@@ -2633,9 +2630,8 @@ pub(crate) fn add_model_alias_with_tier_to_yaml(
     if fast && !alias_source_supports_fast(source) {
         return Err("Fast supports only OpenAI-compatible API, Codex API, or Codex OAuth model sources".to_string());
     }
-    let mut document = yaml_serde_edit::YamlValue::parse(content)
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(content)
         .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
-    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
@@ -2679,7 +2675,7 @@ pub(crate) fn add_model_alias_with_tier_to_yaml(
         append_alias_payload_override(root, alias, &source.source.protocol, params_mapping)?;
     }
 
-    render_updated_core_yaml(&mut document, updated)
+    render_updated_core_yaml(content, updated)
 }
 
 pub(crate) fn append_alias_payload_override(
@@ -2732,9 +2728,8 @@ pub(crate) fn add_speed_alias_to_yaml(
     if !alias_source_supports_fast(source) {
         return Err("Fast supports only OpenAI-compatible API, Codex API, or Codex OAuth model sources".to_string());
     }
-    let mut document = yaml_serde_edit::YamlValue::parse(content)
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(content)
         .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
-    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
@@ -2773,7 +2768,7 @@ pub(crate) fn add_speed_alias_to_yaml(
     );
     append_alias_payload_override(root, alias, &source.source.protocol, params_mapping)?;
 
-    render_updated_core_yaml(&mut document, updated)
+    render_updated_core_yaml(content, updated)
 }
 
 pub(crate) fn append_oauth_model_alias(
@@ -2934,9 +2929,8 @@ pub(crate) fn remove_thinking_alias_from_yaml_for_channel(
     alias: &str,
     oauth_channel: Option<&str>,
 ) -> Result<String, String> {
-    let mut document = yaml_serde_edit::YamlValue::parse(content)
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(content)
         .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
-    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
@@ -2952,7 +2946,7 @@ pub(crate) fn remove_thinking_alias_from_yaml_for_channel(
     }
     let scope = AliasPayloadScope::after_removal(root, alias, oauth_channel);
     remove_alias_payload_options(root, alias, &scope)?;
-    render_updated_core_yaml(&mut document, updated)
+    render_updated_core_yaml(content, updated)
 }
 
 #[cfg(test)]
@@ -2965,9 +2959,8 @@ pub(crate) fn remove_speed_alias_from_yaml_for_channel(
     alias: &str,
     oauth_channel: Option<&str>,
 ) -> Result<String, String> {
-    let mut document = yaml_serde_edit::YamlValue::parse(content)
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(content)
         .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
-    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
@@ -2981,7 +2974,7 @@ pub(crate) fn remove_speed_alias_from_yaml_for_channel(
     }
     let scope = AliasPayloadScope::after_removal(root, alias, oauth_channel);
     remove_alias_payload_options(root, alias, &scope)?;
-    render_updated_core_yaml(&mut document, updated)
+    render_updated_core_yaml(content, updated)
 }
 
 pub(crate) fn remove_oauth_model_alias(
@@ -3296,22 +3289,63 @@ pub(crate) fn remove_alias_payload_options(
 }
 
 pub(crate) fn render_updated_core_yaml(
-    document: &mut yaml_serde_edit::YamlValue,
+    content: &str,
     updated: serde_norway::Value,
 ) -> Result<String, String> {
-    document.set(updated);
-    let rendered = expand_top_level_flow_style_collections(&document.get_string(), document.get())?;
+    let original = serde_norway::from_str::<serde_norway::Value>(content)
+        .map_err(|error| format!("Failed to parse kernel YAML configuration: {error}"))?;
+    let prepared = normalize_nested_yaml_comment_indentation(content);
+    let file = prepared.parse::<yaml_edit::YamlFile>()
+        .map_err(|error| format!("Failed to parse editable kernel configuration: {error}"))?;
+    let document = file.document()
+        .ok_or_else(|| "Kernel configuration has no YAML document".to_string())?;
+    let root = document.as_mapping()
+        .ok_or_else(|| "Kernel configuration root must be a YAML mapping".to_string())?;
+    remove_deleted_yaml_mapping_values(&root, &original, &updated)?;
+    let mut prepared = file.to_string();
+    let mut original = serde_norway::from_str::<serde_norway::Value>(&prepared)
+        .map_err(|error| format!("Failed to parse editable kernel configuration: {error}"))?;
+    if original.is_null() && updated.as_mapping().is_some_and(|mapping| mapping.is_empty()) {
+        prepared.push_str("{}\n");
+        original = serde_norway::Value::Mapping(serde_norway::Mapping::new());
+    }
+    let rendered = render_yaml_value_changes(&prepared, &original, &updated)?;
+    let rendered = expand_top_level_flow_style_collections(&rendered, &updated)?;
     let rendered = indent_indentationless_yaml_sequences(&rendered);
     let validated = serde_norway::from_str::<serde_norway::Value>(&rendered)
         .map_err(|error| format!("Failed to validate updated kernel configuration: {error}"))?;
-    if &validated != document.get() {
-        let path = first_yaml_mismatch_path(document.get(), &validated, &mut Vec::new())
+    if validated != updated {
+        let path = first_yaml_mismatch_path(&updated, &validated, &mut Vec::new())
             .unwrap_or_else(|| "<unknown>".to_string());
         return Err(format!(
             "Updated kernel configuration does not match the expected value (path: {path}); write rejected"
         ));
     }
     Ok(rendered)
+}
+
+fn remove_deleted_yaml_mapping_values(
+    mapping: &yaml_edit::Mapping,
+    original: &serde_norway::Value,
+    updated: &serde_norway::Value,
+) -> Result<(), String> {
+    let (Some(original), Some(updated)) = (original.as_mapping(), updated.as_mapping()) else {
+        return Ok(());
+    };
+    for (key, original_value) in original {
+        let key_name = key.as_str()
+            .ok_or_else(|| "Kernel configuration mapping keys must be strings".to_string())?;
+        if let Some(updated_value) = updated.get(key) {
+            if let Some(child) = mapping.get(key_name) {
+                if let Some(child) = child.as_mapping() {
+                    remove_deleted_yaml_mapping_values(child, original_value, updated_value)?;
+                }
+            }
+        } else {
+            mapping.remove(key_name);
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn expand_top_level_flow_style_collections(

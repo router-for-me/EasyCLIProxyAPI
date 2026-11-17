@@ -419,9 +419,7 @@ where
         .filter(|content| !content.is_empty())
         .map(|_| existing.unwrap_or_default())
         .unwrap_or("{}\n");
-    let mut document = yaml_serde_edit::YamlValue::parse(source)
-        .map_err(|error| format!("Invalid {label} YAML format: {error}"))?;
-    render_updated_core_yaml(&mut document, updated)
+    render_updated_core_yaml(source, updated)
         .map_err(|error| format!("Failed to update {label}: {error}"))
 }
 
@@ -495,12 +493,27 @@ where
         .filter(|content| !content.is_empty())
         .map(|_| existing.unwrap_or_default())
         .unwrap_or("[]\n");
-    if let Ok(mut document) = yaml_serde_edit::YamlValue::parse(source) {
-        document.set(updated.clone());
-        let rendered = document.get_string();
-        if let Ok(validated) = serde_norway::from_str::<serde_norway::Value>(&rendered) {
-            if validated == updated {
-                return Ok(rendered);
+    if let (Ok(file), serde_norway::Value::Sequence(values)) = (source.parse::<yaml_edit::YamlFile>(), &updated) {
+        if let Some(sequence) = file.document().and_then(|document| document.as_sequence()) {
+            if let Ok(nodes) = values.iter().map(yaml_edit_node_from_value).collect::<Result<Vec<_>, _>>() {
+                for (index, node) in nodes.into_iter().enumerate() {
+                    if index < sequence.len() {
+                        if original[index] != values[index] {
+                            sequence.set(index, node);
+                        }
+                    } else {
+                        sequence.push(node);
+                    }
+                }
+                for index in (values.len()..sequence.len()).rev() {
+                    sequence.remove(index);
+                }
+                let rendered = file.to_string();
+                if let Ok(validated) = serde_norway::from_str::<serde_norway::Value>(&rendered) {
+                    if validated == updated {
+                        return Ok(rendered);
+                    }
+                }
             }
         }
     }
@@ -2136,9 +2149,8 @@ pub(crate) fn prepare_hermes_managed_removal(paths: &[PathBuf]) -> Result<Images
     }
     let content = fs::read_to_string(path)
         .map_err(|error| format!("Failed to read Hermes configuration {}: {error}", path_to_string(path)))?;
-    let mut document = yaml_serde_edit::YamlValue::parse(&content)
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(&content)
         .map_err(|error| format!("Failed to parse Hermes configuration: {error}"))?;
-    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or_else(|| "Hermes configuration root must be a mapping".to_string())?;
@@ -2186,7 +2198,7 @@ pub(crate) fn prepare_hermes_managed_removal(paths: &[PathBuf]) -> Result<Images
     let bytes = if root.is_empty() {
         None
     } else {
-        Some(render_updated_core_yaml(&mut document, updated)?.into_bytes())
+        Some(render_updated_core_yaml(&content, updated)?.into_bytes())
     };
     Ok(vec![(path.clone(), bytes)])
 }
@@ -3106,9 +3118,8 @@ pub(crate) fn build_restored_hermes_config(
     current: &str,
     original: Option<&str>,
 ) -> Result<Option<String>, String> {
-    let mut document = yaml_serde_edit::YamlValue::parse(current)
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(current)
         .map_err(|error| format!("Invalid current Hermes configuration format: {error}"))?;
-    let mut updated = document.get().clone();
     let root = updated
         .as_mapping_mut()
         .ok_or_else(|| "Current Hermes configuration root must be a mapping".to_string())?;
@@ -3189,7 +3200,7 @@ pub(crate) fn build_restored_hermes_config(
     if root.is_empty() && original.is_none() {
         return Ok(None);
     }
-    render_updated_core_yaml(&mut document, updated).map(Some)
+    render_updated_core_yaml(current, updated).map(Some)
 }
 
 pub(crate) fn restore_deepseek_harness_provider(
