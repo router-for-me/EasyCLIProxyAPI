@@ -1225,8 +1225,8 @@ mod tests {
         validate_embedded_catalog().unwrap();
         let state = catalog_state().unwrap().read().unwrap();
         let sources = &state.sources;
-        assert_eq!(sources.templates.len(), 11);
-        assert_eq!(sources.revision, 8);
+        assert_eq!(sources.templates.len(), 12);
+        assert_eq!(sources.revision, 9);
         let embedded: Value = serde_json::from_str(MODEL_CATALOG_JSON).unwrap();
         assert!(embedded.get("fallback_model").is_none());
         let fallback: Value = serde_json::from_str(FALLBACK_MODEL_JSON).unwrap();
@@ -1266,6 +1266,7 @@ mod tests {
             "gpt-5.6-terra",
             "gpt-5.6-luna",
             "gpt-5.5",
+            "gpt-oss-120b-medium",
             "codex-auto-review",
         ];
         assert!(official_slugs
