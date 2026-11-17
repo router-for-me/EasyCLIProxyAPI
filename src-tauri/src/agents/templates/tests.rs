@@ -42,14 +42,29 @@ fn core_failure_messages_expose_outcomes_without_secret_source_text() {
     for detail in [
         "YAML source: key: secret-token",
         "Original configuration restored secret-token",
-        "Automatic restoration failed secret-token",
         "Configuration changed secret-token",
     ] {
         let rendered = agent_core_error(detail.into());
         assert!(!rendered.contains("secret-token"));
-        if detail.contains("Automatic restoration failed") {
-            assert!(rendered.contains("rollback also failed"));
-        }
+    }
+}
+
+#[test]
+fn core_write_failure_messages_preserve_the_underlying_cause() {
+    for (detail, expected) in [
+        (
+            "Save failed. Original configuration was restored; you can retry: Management API error (500): write_failed",
+            "Original configuration was restored",
+        ),
+        (
+            "Save failed: Permission denied; automatic restoration failed: file is locked",
+            "rollback also failed",
+        ),
+    ] {
+        let rendered = agent_core_error(detail.into());
+        assert!(rendered.starts_with("Kernel alias or agent configuration write failed"));
+        assert!(rendered.contains(expected), "{rendered}");
+        assert!(rendered.ends_with(detail), "{rendered}");
     }
 }
 

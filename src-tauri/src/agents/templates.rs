@@ -79,9 +79,9 @@ pub(crate) fn agent_core_error(error: String) -> String {
         || normalized.contains("rollback failed")
         || normalized.contains("rollback both failed")
     {
-        "Kernel alias or agent configuration write failed, and rollback also failed. Check the current configuration".into()
+        format!("Kernel alias or agent configuration write failed, and rollback also failed. Check the current configuration: {error}")
     } else if normalized.contains("original configuration was restored") {
-        "Kernel alias or agent configuration write failed. Original configuration was restored. Check the connection and model mapping, then try again".into()
+        format!("Kernel alias or agent configuration write failed. Original configuration was restored. Check the connection and model mapping, then try again: {error}")
     } else if normalized.contains("configuration changed") {
         "Kernel configuration changed. Preview it again and retry".into()
     } else if normalized.contains("already used by another model") {

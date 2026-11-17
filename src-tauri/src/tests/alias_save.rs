@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 const CURRENT: &str = "oauth-model-alias:\n  codex:\n    - name: gpt-test\n      alias: my-alias\n      fork: true\npayload:\n  override:\n    - models: [{name: my-alias, protocol: codex}]\n      params: {reasoning.effort: high}\n";
+const ACP_CURRENT: &str = "openai-compatibility:\n  - name: ecpa-antigravity-acp\n    base-url: http://127.0.0.1:1/v1\n    proxy-url: direct\n    disabled: false\n    api-key-entries: [{api-key: test-bridge-key}]\n    models: [{name: gemini-3.8-flash-high, alias: acp/gemini-3.8-flash-high}]\n";
 
 #[test]
 fn v8_management_yaml_is_projected_to_the_legacy_alias_editor_view() {
@@ -320,10 +321,17 @@ impl MockCore {
                                         }
                                     }
                                 }
-                                persisted[legacy] = serde_json::to_value(
-                                    flatten_v8_provider_groups(provider, &groups).unwrap(),
-                                )
-                                .unwrap();
+                                if provider == "openai-compatibility"
+                                    && groups.as_sequence().unwrap().iter().any(|group| group.get("proxy-url").is_some())
+                                {
+                                    status = "400 Bad Request";
+                                    response = "{\"error\":\"invalid_config: field proxy-url not found in type config.OpenAICompatibility\"}".into();
+                                } else {
+                                    persisted[legacy] = serde_json::to_value(
+                                        flatten_v8_provider_groups(provider, &groups).unwrap(),
+                                    )
+                                    .unwrap();
+                                }
                             }
                             ("DELETE", provider_path)
                                 if provider_path.starts_with("api-keys/") =>
@@ -412,6 +420,99 @@ fn v8_yaml_from_legacy_json(legacy: &serde_json::Value) -> String {
     }
     root.insert("api-keys".into(), serde_json::Value::Object(upstreams));
     serde_norway::to_string(&serde_json::Value::Object(root)).unwrap()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn desktop_acp_alias_save_persists_mapping_and_context() {
+    for v8 in [false, true] {
+        for context_1m in [false, true] {
+            let home = super::support::agent_test_home("desktop-acp-alias");
+            let core = MockCore::with_response_layout(ACP_CURRENT, Failure::None, v8);
+            save_desktop_acp_alias(&core.config, &home, context_1m).await.unwrap();
+            save_desktop_acp_alias(&core.config, &home, context_1m).await.unwrap();
+            let (persisted, _) = core.finish();
+            assert!(persisted["openai-compatibility"][0].get("proxy-url").is_none());
+            assert_eq!(persisted["openai-compatibility"][0]["api-key-entries"][0]["proxy-url"], "direct");
+            let models = persisted["openai-compatibility"][0]["models"].as_array().unwrap();
+            assert_eq!(models.len(), 2);
+            assert_eq!(models[0]["alias"], "acp/gemini-3.8-flash-high");
+            assert_eq!(models[1]["name"], "gemini-3.8-flash-high");
+            assert_eq!(models[1]["alias"], "claude-sonnet-5-5");
+            fs::remove_dir_all(home).unwrap();
+        }
+    }
+}
+
+#[test]
+fn openai_proxy_migration_preserves_explicit_credential_overrides() {
+    let records = serde_norway::from_str("- name: provider\n  proxy-url: direct\n  api-key-entries:\n    - {api-key: inherited-key}\n    - {api-key: overridden-key, proxy-url: 'http://127.0.0.1:8080'}\n").unwrap();
+    let groups = group_legacy_provider_records("openai-compatibility", &records).unwrap();
+    let groups_json = serde_json::to_value(&groups).unwrap();
+    assert!(groups_json[0].get("proxy-url").is_none());
+    assert_eq!(groups_json[0]["keys"][0]["proxy-url"], "direct");
+    assert_eq!(groups_json[0]["keys"][1]["proxy-url"], "http://127.0.0.1:8080");
+    let view = flatten_v8_provider_groups("openai-compatibility", &groups).unwrap();
+    assert_eq!(group_legacy_provider_records("openai-compatibility", &view).unwrap(), groups);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn desktop_acp_alias_write_failure_surfaces_management_error() {
+    for failure in [Failure::YamlBeforeWrite, Failure::YamlAfterWrite] {
+        let home = super::support::agent_test_home("desktop-acp-alias-failure");
+        let core = MockCore::new_v8(ACP_CURRENT, failure);
+        let before = fetch_management_config_yaml(&core.config).await.unwrap();
+        let error = save_desktop_acp_alias(&core.config, &home, true).await.unwrap_err();
+        assert!(error.starts_with("Kernel alias or agent configuration write failed. Original configuration was restored"), "{error}");
+        assert!(error.contains("Management API error (500): write_failed"), "{error}");
+        let restored = fetch_management_config_yaml(&core.config).await.unwrap();
+        assert_eq!(yaml_json(&before), yaml_json(&restored));
+        core.finish();
+        fs::remove_dir_all(home).unwrap();
+    }
+}
+
+async fn save_desktop_acp_alias(config: &GuiConfigFile, home: &Path, context_1m: bool) -> Result<(), String> {
+    let model = "acp/gemini-3.8-flash-high";
+    let models = super::support::test_agent_models(&[model]);
+    let requested: ClaudeDesktopModelMappings = serde_json::from_value(serde_json::json!({
+        "desktopModels": [{"model": model, "alias": "claude-sonnet-5-5", "context1m": context_1m}]
+    })).unwrap();
+    let mappings = resolve_claude_desktop_model_mappings(
+        AgentClient::ClaudeDesktop, &models, model, Some(requested),
+    ).unwrap().unwrap();
+    commit_agent_with_core(config, Some(mappings.clone()), &models, |mappings| {
+        apply_agent_configuration_with_oauth(
+            AgentClient::ClaudeDesktop, home, config.port, "test-client", model,
+            AgentConfigurationOptions {
+                models: &models, codex_catalog: None, oauth_configuration: false,
+                claude_code_model_mappings: None, claude_desktop_model_mappings: mappings,
+            },
+        )
+    }).await?;
+    let paths = config_paths("claude-desktop", home).unwrap();
+    assert_eq!(matching_desktop_mappings(&paths, &config_images(&paths).unwrap()), Some(mappings));
+    let profile: serde_json::Value = serde_json::from_slice(&fs::read(&paths[2]).unwrap()).unwrap();
+    assert_eq!(profile["inferenceModels"][0]["name"], "claude-sonnet-5-5");
+    assert_eq!(profile["inferenceModels"][0]["labelOverride"], model);
+    assert_eq!(profile["inferenceModels"][0]["supports1m"].as_bool().unwrap_or(false), context_1m);
+    assert_eq!(profile["inferenceModels"][0]["prefer1m"].as_bool().unwrap_or(false), context_1m);
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires an isolated CPA_DESKTOP_E2E_CONFIG; never use a production config"]
+async fn desktop_acp_alias_save_with_isolated_kernel() {
+    let path = PathBuf::from(std::env::var_os("CPA_DESKTOP_E2E_CONFIG").expect("set isolated config path"));
+    let native: serde_json::Value = serde_norway::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let port = native["server"]["port"].as_u64().unwrap() as u16;
+    assert_ne!(port, 8317);
+    assert_eq!(native["server"]["host"], "127.0.0.1");
+    assert_eq!(Path::new(native["oauth"]["auth-dir"].as_str().unwrap()), path.parent().unwrap().join("auth"));
+    let config = GuiConfigFile {
+        port, management_secret_key: "isolated-test-secret".into(),
+        ..GuiConfigFile::default()
+    };
+    save_desktop_acp_alias(&config, path.parent().unwrap(), true).await.unwrap();
 }
 
 #[tokio::test(flavor = "current_thread")]

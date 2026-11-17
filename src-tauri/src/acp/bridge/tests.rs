@@ -589,6 +589,8 @@ fn provider_registration_preserves_unrelated_routes_in_both_schemas() {
         };
         assert_eq!(groups.as_sequence().unwrap().len(), 2);
         assert_eq!(groups[0]["name"].as_str(), Some("existing"));
+        assert!(groups[1].get("proxy-url").is_none());
+        assert_eq!(groups[1][if v8 { "keys" } else { "api-key-entries" }][0]["proxy-url"].as_str(), Some("direct"));
         assert_eq!(
             groups[1]["models"][0]["alias"].as_str(),
             Some("acp/test-model")

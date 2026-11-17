@@ -105,10 +105,10 @@ fn provider_entry(
     v8: bool,
 ) -> Result<serde_norway::Value, String> {
     let mut provider = json!({
-        "name": PROVIDER, "base-url": url, "proxy-url": "direct", "disabled": models.is_empty(),
+        "name": PROVIDER, "base-url": url, "disabled": models.is_empty(),
         "models": models.iter().map(|model| json!({"name":model.id,"alias":format!("acp/{}", model.id)})).collect::<Vec<_>>()
     });
-    provider[if v8 { "keys" } else { "api-key-entries" }] = json!([{"api-key":key}]);
+    provider[if v8 { "keys" } else { "api-key-entries" }] = json!([{"api-key":key,"proxy-url":"direct"}]);
     serde_norway::to_value(provider).map_err(|e| e.to_string())
 }
 

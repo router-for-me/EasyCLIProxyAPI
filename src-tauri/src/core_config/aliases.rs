@@ -394,6 +394,23 @@ fn normalize_v8_provider_record(
     if provider == "openai-compatibility" {
         record.remove(yaml_key("test-model"));
         record.remove(yaml_key("testModel"));
+        if let Some(proxy_url) = record.get(yaml_key("proxy-url")).cloned() {
+            let key_field = if record.contains_key(yaml_key("keys")) {
+                "keys"
+            } else {
+                "api-key-entries"
+            };
+            if let Some(keys) = record
+                .get_mut(yaml_key(key_field))
+                .and_then(serde_norway::Value::as_sequence_mut)
+            {
+                for key in keys.iter_mut().filter_map(serde_norway::Value::as_mapping_mut) {
+                    key.entry(yaml_key("proxy-url"))
+                        .or_insert_with(|| proxy_url.clone());
+                }
+                record.remove(yaml_key("proxy-url"));
+            }
+        }
     }
     if let Some(models) = record
         .get_mut(yaml_key("models"))
@@ -630,7 +647,20 @@ pub(crate) async fn put_management_config_value(
     path: &str,
     value: &serde_norway::Value,
 ) -> Result<(), String> {
-    let value = serde_json::to_value(value)
+    let normalized = if path == "api-keys/openai-compatibility" {
+        let groups = value.as_sequence()
+            .ok_or("OpenAI compatibility provider groups must be an array")?;
+        Some(serde_norway::Value::Sequence(groups.iter().map(|group| {
+            let group = group.as_mapping()
+                .ok_or("Invalid OpenAI compatibility provider group")?;
+            Ok(serde_norway::Value::Mapping(normalize_v8_provider_record(
+                "openai-compatibility", group,
+            )))
+        }).collect::<Result<Vec<_>, String>>()?))
+    } else {
+        None
+    };
+    let value = serde_json::to_value(normalized.as_ref().unwrap_or(value))
         .map_err(|error| format!("Failed to serialize kernel configuration value: {error}"))?;
     let client = management_http_client()?;
     let response = client
