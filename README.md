@@ -164,7 +164,9 @@ Manually renamed files without a session ID in their filename or a database path
 
 For a core owned by systemd or another service manager, set `external-core = true`
 in the GUI's `config.toml` before launching it. This is a startup-only setting;
-restart the GUI after changing it. The default is `false`.
+restart the GUI after changing it. The default is `false`. The GUI never rewrites
+the setting in an existing file, so a change made while it is running is kept and
+applies at the next launch.
 
 External mode ignores `start-core-on-launch` and `run-on-startup`, skips bundled
 core installation and process adoption, and never starts, stops, restarts or

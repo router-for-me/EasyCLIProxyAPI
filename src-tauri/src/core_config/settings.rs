@@ -2416,14 +2416,18 @@ pub(crate) fn write_gui_config_to_path(
     }) {
         return Err("Invalid external-core GUI configuration; refusing to overwrite it".to_string());
     }
-    let mut document = existing
+    let saved = existing
         .as_deref()
         .filter(|content| !content.trim().is_empty())
-        .and_then(|content| content.parse::<Document>().ok())
-        .unwrap_or_default();
+        .and_then(|content| content.parse::<Document>().ok());
+    // `external-core` is the operator's startup-only request. Ownership stays latched in
+    // memory until the next launch, so an edit made while the GUI runs must survive
+    // unrelated saves; only a file created here records the active mode.
+    let records_ownership = saved.is_none() && config.external_core;
+    let mut document = saved.unwrap_or_default();
     let root = document.as_table_mut();
-    if config.external_core || root.contains_key("external-core") {
-        set_codex_table_item(root, "external-core", value(config.external_core));
+    if records_ownership {
+        set_codex_table_item(root, "external-core", value(true));
     }
     if config.usage_statistics_disabled == Some(true) {
         set_codex_table_item(root, "usage_statistics_disabled", value(true));

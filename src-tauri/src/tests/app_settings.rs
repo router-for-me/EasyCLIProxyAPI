@@ -464,22 +464,67 @@ fn external_core_startup_errors_latch_ownership_and_preserve_the_file() {
 }
 
 #[test]
-fn external_core_writer_persists_true_and_only_retains_an_explicit_false() {
+fn external_core_writer_records_ownership_only_in_a_file_it_creates() {
     let home = agent_test_home("external-core-config-write");
     let path = home.join("config.toml");
     let mut config = GuiConfigFile::default();
     write_gui_config_to_path(&config, &path).unwrap();
     assert!(!fs::read_to_string(&path).unwrap().contains("external-core"));
-    fs::remove_file(&path).unwrap();
-    config.external_core = true;
-    write_gui_config_to_path(&config, &path).unwrap();
-    assert!(external_core_requested_at(&path));
+    for created_from in [None, Some("\n")] {
+        fs::remove_file(&path).unwrap();
+        if let Some(content) = created_from {
+            fs::write(&path, content).unwrap();
+        }
+        config.external_core = true;
+        write_gui_config_to_path(&config, &path).unwrap();
+        assert!(external_core_requested_at(&path));
+    }
     fs::write(home.join(CORE_CONFIG_FILE), "port: 8317\n").unwrap();
     let loaded = load_external_gui_config_at(&path, &home).unwrap();
     assert!(loaded.external_core);
-    config.external_core = false;
-    write_gui_config_to_path(&config, &path).unwrap();
-    assert!(fs::read_to_string(&path).unwrap().contains("external-core = false"));
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn external_core_edits_made_while_running_survive_unrelated_saves() {
+    let home = agent_test_home("external-core-pending-edit");
+    let path = home.join("config.toml");
+    // Startup mode, the operator's edit while the GUI runs, mode at the next launch.
+    for (latched, edit, requested) in [
+        (false, "external-core = true # the service takes over\n", true),
+        (true, "external-core = false # back to a managed core\n", false),
+        (true, "", false),
+        (false, "external-core = false\n", false),
+        (true, "external-core = true\n", true),
+    ] {
+        let startup = GuiConfigFile { external_core: latched, ..GuiConfigFile::default() };
+        write_gui_config_to_path(&startup, &path).unwrap();
+        assert_eq!(external_core_requested_at(&path), latched);
+        let state = GuiConfigState::new(startup);
+        let saved = fs::read_to_string(&path).unwrap();
+        let edited = saved
+            .lines()
+            .filter(|line| !line.starts_with("external-core"))
+            .fold(edit.to_string(), |content, line| content + line + "\n");
+        fs::write(&path, &edited).unwrap();
+
+        // The watcher reloads the file; ownership stays what it was at startup.
+        state.replace_external(toml::from_str(&edited).unwrap()).unwrap();
+        assert_eq!(state.snapshot().unwrap().external_core, latched);
+        // Window geometry is saved on exit and must not undo the edit.
+        let geometry = GuiConfigFile {
+            window_width: Some(1280),
+            window_height: Some(820),
+            ..state.snapshot().unwrap()
+        };
+        write_gui_config_to_path(&geometry, &path).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(written.contains("window-width = 1280"), "{written}");
+        assert!(written.starts_with(edit), "{written}");
+        assert_eq!(written.contains("external-core"), !edit.is_empty());
+        assert_eq!(external_core_requested_at(&path), requested, "{latched} {edit:?}");
+        fs::remove_file(&path).unwrap();
+    }
     fs::remove_dir_all(home).unwrap();
 }
 
