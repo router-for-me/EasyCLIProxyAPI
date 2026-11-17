@@ -165,7 +165,7 @@ export function AcpAccessPage() {
       </> : <div className="acp-empty-state"><span className="acp-empty-icon"><LockKeyhole size={20} aria-hidden="true" /></span><strong>{t('acp.modelsLocked')}</strong><p>{t('acp.emptyModels')}</p><button type="button" className="secondary-button" disabled><Zap size={15} aria-hidden="true" />{t('acp.test')}</button></div>}
     </section>
 
-    <section className="panel surface-panel acp-model-card acp-api-card" aria-labelledby="acp-api-title">
+    <section className="panel surface-panel acp-model-card acp-api-card" aria-labelledby="acp-api-title" data-enabled={apiEnabled && connected}>
       <div className="acp-section-heading"><div className="acp-section-identity"><span className="acp-section-icon"><Code2 size={17} aria-hidden="true" /></span><div><h2 id="acp-api-title">{t('acp.apiTitle')}</h2><p className="acp-muted">{t('acp.apiDescription')}</p></div></div><span className="acp-connection-status" role="status" data-connected={apiEnabled && connected}><span className="acp-status-dot" data-ready={apiEnabled && connected} aria-hidden="true" />{t(apiEnabled ? connected ? 'acp.apiEnabled' : 'acp.apiWaiting' : 'acp.apiDisabled')}</span></div>
       {connected || apiEnabled ? <><p className="acp-muted">{t(apiEnabled && !connected ? 'acp.apiReconnectHint' : 'acp.apiHint')}</p>
       <div className="acp-api-enable-row">{connected ? <div className="acp-api-summary"><span className="acp-model-total">{status.models.length}</span><div><strong>{t('acp.apiModelsTitle')}</strong><span>{t('acp.apiModelsHint')}</span></div></div> : null}
