@@ -1,7 +1,8 @@
 use chrono::{DateTime, Local, NaiveDate, TimeZone, Timelike};
+use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Map, Value};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -361,11 +362,7 @@ pub(crate) fn source_files(home: &Path, source: &str) -> Vec<PathBuf> {
             roots.push(home.join(".gemini/tmp"));
             extensions.push("json");
         }
-        "antigravity" => {
-            roots.push(home.join(".gemini"));
-            roots.push(home.join(".antigravity-ide"));
-            extensions.push("json");
-        }
+        "antigravity" => return antigravity_source_files(home),
         "pi" | "omp" => {
             roots.push(home.join(format!(".{source}/agent/sessions")));
             roots.push(home.join(format!(".{source}/sessions")));
@@ -470,7 +467,8 @@ pub(crate) fn source_files(home: &Path, source: &str) -> Vec<PathBuf> {
                 .and_then(|ext| ext.to_str())
                 .unwrap_or_default();
             if ext.eq_ignore_ascii_case("sqlite") || ext.eq_ignore_ascii_case("db") {
-                name.eq_ignore_ascii_case("db.sqlite") || name.eq_ignore_ascii_case("model_usage.db")
+                name.eq_ignore_ascii_case("db.sqlite")
+                    || name.eq_ignore_ascii_case("model_usage.db")
             } else {
                 ext.eq_ignore_ascii_case("jsonl")
             }
@@ -479,6 +477,187 @@ pub(crate) fn source_files(home: &Path, source: &str) -> Vec<PathBuf> {
     files.sort();
     files.dedup();
     files
+}
+
+fn antigravity_source_files(home: &Path) -> Vec<PathBuf> {
+    let roots = [
+        home.join(".gemini/antigravity"),
+        home.join(".gemini/antigravity-cli"),
+        home.join(".gemini/antigravity-ide"),
+        home.join(".gemini/antigravity-backup"),
+        home.join(".antigravity-ide"),
+    ];
+    let mut sessions: BTreeMap<String, (usize, Vec<PathBuf>)> = BTreeMap::new();
+    let mut legacy = Vec::new();
+    for (priority, root) in roots.iter().enumerate() {
+        if has_symlink_ancestor(root) || !is_regular_dir(root) {
+            continue;
+        }
+        let brain = root.join("brain");
+        if is_regular_dir(&brain) {
+            if let Ok(entries) = fs::read_dir(&brain) {
+                for entry in entries.flatten() {
+                    if !entry
+                        .file_type()
+                        .is_ok_and(|kind| !kind.is_symlink() && kind.is_dir())
+                    {
+                        continue;
+                    }
+                    let session = entry.file_name().to_string_lossy().to_string();
+                    let candidates =
+                        antigravity_log_candidates(&entry.path().join(".system_generated/logs"));
+                    if candidates.is_empty() {
+                        continue;
+                    }
+                    let replace = sessions
+                        .get(&session)
+                        .is_none_or(|(current, _)| priority < *current);
+                    if replace {
+                        sessions.insert(session, (priority, candidates));
+                    }
+                }
+            }
+        }
+        for name in [
+            "session.jsonl",
+            "session.json",
+            "logs/session.jsonl",
+            "logs/session.json",
+        ] {
+            let path = root.join(name);
+            if is_regular_file(&path) && !has_symlink_ancestor(&path) {
+                legacy.push(path);
+            }
+        }
+    }
+    let mut files: Vec<PathBuf> = sessions
+        .into_values()
+        .flat_map(|(_, paths)| paths)
+        .collect();
+    files.extend(legacy);
+    files.sort();
+    files.dedup();
+    files.truncate(MAX_SCAN_FILES);
+    files
+}
+
+/// Requests covered by a transcript, used to compare mirrored log files. A larger
+/// `step_index` alone is not coverage: a file holding only step 100 must not outrank a
+/// file holding steps 1..100, so the whole set of steps is collected.
+pub(crate) fn antigravity_covered_steps(path: &Path) -> Option<BTreeSet<u64>> {
+    // Only regular files: reading a directory as a file never advances, because every
+    // `lines()` item is an error and the loop would spin without terminating.
+    if !fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file()) {
+        return None;
+    }
+    let file = File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    let mut steps = BTreeSet::new();
+    for line in reader.lines() {
+        let Ok(line) = line else { break };
+        if line.len() > MAX_JSON_LINE_BYTES {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if let Some(step) = value.get("step_index").and_then(Value::as_u64) {
+            steps.insert(step);
+        }
+    }
+    (!steps.is_empty()).then_some(steps)
+}
+
+fn antigravity_log_candidates(logs: &Path) -> Vec<PathBuf> {
+    if has_symlink_ancestor(logs) || !is_regular_dir(logs) {
+        return Vec::new();
+    }
+    // transcript.jsonl and transcript_full.jsonl mirror the same session, but a partial
+    // transcript can coexist with a fuller copy. Compare the requests each file covers
+    // instead of trusting the name; incomparable coverage keeps both, so a wrong choice
+    // can never drop usage.
+    let coverage: Vec<(PathBuf, Option<BTreeSet<u64>>)> =
+        ["transcript.jsonl", "transcript_full.jsonl"]
+            .iter()
+            .map(|name| logs.join(name))
+            .filter(|path| is_non_empty_regular_file(path))
+            .map(|path| {
+                let steps = antigravity_covered_steps(&path);
+                (path, steps)
+            })
+            .collect();
+    match coverage.as_slice() {
+        [] => {}
+        [(path, _)] => return vec![path.clone()],
+        [(left_path, left), (right_path, right), ..] => {
+            match (left, right) {
+                (Some(a), Some(b)) if a.is_superset(b) => return vec![left_path.clone()],
+                (Some(a), Some(b)) if b.is_superset(a) => return vec![right_path.clone()],
+                (Some(_), None) => return vec![left_path.clone()],
+                (None, Some(_)) => return vec![right_path.clone()],
+                // No parseable steps in either mirror: same session, so read one.
+                (None, None) => return vec![left_path.clone()],
+                _ => {}
+            }
+            let mut all: Vec<PathBuf> = coverage.into_iter().map(|(path, _)| path).collect();
+            all.sort();
+            return all;
+        }
+    }
+    let chunks_root = logs.join("chunks");
+    if !is_regular_dir(&chunks_root) {
+        return Vec::new();
+    }
+    for name in ["transcript", "transcript_full"] {
+        let directory = chunks_root.join(name);
+        if !is_regular_dir(&directory) {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&directory) else {
+            continue;
+        };
+        let mut chunks: Vec<PathBuf> = entries
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .file_type()
+                    .is_ok_and(|kind| !kind.is_symlink() && kind.is_file())
+            })
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("jsonl"))
+            })
+            .collect();
+        chunks.sort();
+        if !chunks.is_empty() {
+            return chunks;
+        }
+    }
+    Vec::new()
+}
+
+fn has_symlink_ancestor(path: &Path) -> bool {
+    path.ancestors().any(|ancestor| {
+        fs::symlink_metadata(ancestor).is_ok_and(|metadata| metadata.file_type().is_symlink())
+    })
+}
+
+fn is_regular_dir(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .is_ok_and(|metadata| !metadata.file_type().is_symlink() && metadata.is_dir())
+}
+
+fn is_regular_file(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .is_ok_and(|metadata| !metadata.file_type().is_symlink() && metadata.is_file())
+}
+
+fn is_non_empty_regular_file(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| {
+        !metadata.file_type().is_symlink() && metadata.is_file() && metadata.len() > 0
+    })
 }
 
 fn env_directory(name: &str) -> Option<PathBuf> {
@@ -569,6 +748,11 @@ pub(crate) fn read_usage_file(path: &Path, source: &str, delta: &mut FileDelta) 
         HashMap::new();
     let mut gemini_messages = Vec::new();
     let mut gemini_positions = HashMap::new();
+    let antigravity_models = (source == "antigravity")
+        .then(|| antigravity_model_index(path))
+        .flatten();
+    let mut antigravity_settings_model = None;
+    let mut antigravity_samples = HashSet::new();
     for line in reader.lines() {
         let line = line.map_err(|_| ())?;
         if line.len() > MAX_JSON_LINE_BYTES {
@@ -654,14 +838,40 @@ pub(crate) fn read_usage_file(path: &Path, source: &str, delta: &mut FileDelta) 
             }
             if source == "antigravity" {
                 if let Some(model) = antigravity_model_hint(&value) {
-                    delta.session_model = Some(model);
+                    antigravity_settings_model = Some(model);
                 }
+                let step = value.get("step_index").and_then(Value::as_u64);
+                if let Some(mut sample) = extract_usage(&value, source) {
+                    if sample.model.is_none() {
+                        sample.model = antigravity_models
+                            .as_ref()
+                            .and_then(|index| index.model_for_step(step))
+                            .map(str::to_string)
+                            .or_else(|| antigravity_settings_model.clone())
+                            .or_else(|| delta.session_model.clone());
+                    }
+                    // Identity is computed after attribution: two requests that differ
+                    // only by their resolved model must never be collapsed into one.
+                    if let Some(signature) = antigravity_sample_signature(&value, &sample) {
+                        if !antigravity_samples.insert(signature) {
+                            continue;
+                        }
+                    }
+                    add_sample_usage(sample, &value, path, delta);
+                } else {
+                    add_value_usage(&value, source, path, delta);
+                }
+            } else {
+                add_value_usage(&value, source, path, delta);
             }
-            add_value_usage(&value, source, path, delta);
         }
     }
     if delta.session_model.is_none() {
-        delta.session_model = antigravity_sibling_model(path);
+        delta.session_model = antigravity_models
+            .as_ref()
+            .and_then(|index| index.default.clone())
+            .or(antigravity_settings_model)
+            .or_else(|| antigravity_sibling_model(path));
     }
     if let Some(model) = delta.session_model.clone() {
         reassign_antigravity_models(delta, model);
@@ -783,8 +993,16 @@ fn read_zcode_database(path: &Path, delta: &mut FileDelta) -> Result<(), ()> {
         .map_err(|_| ())?;
 
     for row in rows {
-        let (started_at, model, input, output, cache_read, cache_creation, reasoning, computed_total) =
-            row.map_err(|_| ())?;
+        let (
+            started_at,
+            model,
+            input,
+            output,
+            cache_read,
+            cache_creation,
+            reasoning,
+            computed_total,
+        ) = row.map_err(|_| ())?;
         let Some(timestamp) = Local.timestamp_millis_opt(started_at).single() else {
             continue;
         };
@@ -792,21 +1010,23 @@ fn read_zcode_database(path: &Path, delta: &mut FileDelta) -> Result<(), ()> {
         let hour = timestamp.hour() as u8;
         let model = sanitize_model_name(&model);
 
-        let mut counter = UsageCounter::default();
-        counter.cache_read_tokens = cache_read;
-        counter.cache_creation_tokens = cache_creation;
-        counter.reasoning_tokens = reasoning;
-        counter.output_tokens = output;
-        counter.input_tokens = input.saturating_sub(cache_read);
-        if computed_total > 0 {
-            counter.total_tokens = computed_total;
+        let mut counter = UsageCounter {
+            cache_read_tokens: cache_read,
+            cache_creation_tokens: cache_creation,
+            reasoning_tokens: reasoning,
+            output_tokens: output,
+            input_tokens: input.saturating_sub(cache_read),
+            ..Default::default()
+        };
+        counter.total_tokens = if computed_total > 0 {
+            computed_total
         } else {
-            counter.total_tokens = counter
+            counter
                 .input_tokens
                 .saturating_add(output)
                 .saturating_add(cache_read)
-                .saturating_add(cache_creation);
-        }
+                .saturating_add(cache_creation)
+        };
         counter.samples = 1;
 
         add_counter(
@@ -821,26 +1041,381 @@ fn read_zcode_database(path: &Path, delta: &mut FileDelta) -> Result<(), ()> {
     Ok(())
 }
 
+#[derive(Debug, Default)]
+struct AntigravityGeneratedMeta {
+    model: Option<String>,
+    last_step_index: Option<u64>,
+}
+
+#[derive(Debug, Default)]
+struct AntigravityModelIndex {
+    by_step: BTreeMap<u64, String>,
+    default: Option<String>,
+}
+
+impl AntigravityModelIndex {
+    fn model_for_step(&self, step: Option<u64>) -> Option<&str> {
+        if let Some(step) = step {
+            if let Some((_, model)) = self.by_step.range(..=step).next_back() {
+                return Some(model);
+            }
+            if let Some((_, model)) = self.by_step.iter().next() {
+                return Some(model);
+            }
+        }
+        self.default.as_deref()
+    }
+}
+
+/// Identity of an Antigravity sample for mirror deduplication. Mirrors repeat a request
+/// verbatim, so every identity field must match; a missing field makes the sample unique
+/// instead of collapsing it, and the resolved model is part of the identity.
+fn antigravity_sample_signature(value: &Value, sample: &UsageSample) -> Option<String> {
+    let step = value.get("step_index").and_then(Value::as_u64)?;
+    let created = value.get("created_at").and_then(Value::as_str)?;
+    let kind = value.get("type").and_then(Value::as_str)?;
+    let model = sample
+        .model
+        .as_deref()
+        .or_else(|| value.get("model").and_then(Value::as_str))
+        .unwrap_or_default();
+    Some(format!(
+        "{step}|{created}|{kind}|{model}|{}|{}|{}|{}|{}",
+        sample.counter.input_tokens,
+        sample.counter.output_tokens,
+        sample.counter.cache_read_tokens,
+        sample.counter.cache_creation_tokens,
+        sample.counter.reasoning_tokens
+    ))
+}
+
+fn antigravity_session_root(path: &Path) -> Option<(PathBuf, String)> {
+    let brain = path.ancestors().find(|candidate| {
+        candidate
+            .file_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case("brain"))
+    })?;
+    let root = brain.parent()?.to_path_buf();
+    let rest = path.strip_prefix(brain).ok()?;
+    let session = rest
+        .components()
+        .next()?
+        .as_os_str()
+        .to_string_lossy()
+        .to_string();
+    Some((root, session))
+}
+
+pub(crate) fn antigravity_session_id(path: &Path) -> Option<String> {
+    antigravity_session_root(path).map(|(_, session)| session)
+}
+
+pub(crate) fn antigravity_session_database(path: &Path) -> Option<PathBuf> {
+    let (root, session) = antigravity_session_root(path)?;
+    Some(root.join("conversations").join(format!("{session}.db")))
+}
+
+fn antigravity_model_index(path: &Path) -> Option<AntigravityModelIndex> {
+    let database = antigravity_session_database(path)?;
+    if !is_non_empty_regular_file(&database) {
+        return None;
+    }
+    match antigravity_model_index_from_database(&database) {
+        Ok(index) => index,
+        Err(()) => {
+            let snapshot = copy_antigravity_database(&database)?;
+            let index = antigravity_model_index_from_database(&snapshot)
+                .ok()
+                .flatten();
+            if let Some(directory) = snapshot.parent() {
+                let _ = fs::remove_dir_all(directory);
+            }
+            index
+        }
+    }
+}
+
+fn is_transient_sqlite_error(error: &rusqlite::Error) -> bool {
+    matches!(
+        error.sqlite_error_code(),
+        Some(
+            rusqlite::ErrorCode::DatabaseBusy
+                | rusqlite::ErrorCode::DatabaseLocked
+                | rusqlite::ErrorCode::SystemIoFailure
+                | rusqlite::ErrorCode::CannotOpen
+                | rusqlite::ErrorCode::FileLockingProtocolFailed
+        )
+    )
+}
+
+fn antigravity_model_index_from_database(
+    database: &Path,
+) -> Result<Option<AntigravityModelIndex>, ()> {
+    let connection = match Connection::open_with_flags(database, OpenFlags::SQLITE_OPEN_READ_ONLY) {
+        Ok(connection) => connection,
+        Err(error) if is_transient_sqlite_error(&error) => return Err(()),
+        Err(_) => return Ok(None),
+    };
+    let _ = connection.busy_timeout(std::time::Duration::from_secs(2));
+    let mut statement = match connection.prepare("SELECT data FROM gen_metadata ORDER BY idx") {
+        Ok(statement) => statement,
+        Err(error) if is_transient_sqlite_error(&error) => return Err(()),
+        Err(_) => return Ok(None),
+    };
+    let rows = match statement.query_map([], |row| {
+        Ok(match row.get_ref(0)? {
+            ValueRef::Blob(bytes) | ValueRef::Text(bytes) => bytes.to_vec(),
+            _ => Vec::new(),
+        })
+    }) {
+        Ok(rows) => rows,
+        Err(error) if is_transient_sqlite_error(&error) => return Err(()),
+        Err(_) => return Ok(None),
+    };
+    let mut by_step = BTreeMap::new();
+    let mut counts: BTreeMap<String, u64> = BTreeMap::new();
+    for row in rows {
+        let data = match row {
+            Ok(data) => data,
+            Err(error) if is_transient_sqlite_error(&error) => return Err(()),
+            Err(_) => continue,
+        };
+        let Some(meta) = parse_antigravity_generated_meta(&data) else {
+            continue;
+        };
+        let Some(model) = meta.model else {
+            continue;
+        };
+        *counts.entry(model.clone()).or_default() += 1;
+        if let Some(step) = meta.last_step_index {
+            by_step.insert(step, model);
+        }
+    }
+    let default = counts
+        .into_iter()
+        .max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(&left.0)))
+        .map(|(model, _)| model);
+    if by_step.is_empty() && default.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(AntigravityModelIndex { by_step, default }))
+}
+
+fn copy_antigravity_database(database: &Path) -> Option<PathBuf> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    let directory =
+        std::env::temp_dir().join(format!("cpa-agy-model-{}-{stamp}", std::process::id()));
+    fs::create_dir_all(&directory).ok()?;
+    let target = directory.join(database.file_name()?);
+    fs::copy(database, &target).ok()?;
+    for suffix in ["-wal", "-shm"] {
+        let source = PathBuf::from(format!("{}{suffix}", database.display()));
+        if source.is_file() {
+            let destination = PathBuf::from(format!("{}{suffix}", target.display()));
+            let _ = fs::copy(source, destination);
+        }
+    }
+    Some(target)
+}
+
+fn parse_antigravity_generated_meta(data: &[u8]) -> Option<AntigravityGeneratedMeta> {
+    let mut meta = AntigravityGeneratedMeta::default();
+    antigravity_scan_metadata(data, 0, &mut meta);
+    (meta.model.is_some() || meta.last_step_index.is_some()).then_some(meta)
+}
+
+fn antigravity_scan_metadata(data: &[u8], depth: usize, meta: &mut AntigravityGeneratedMeta) {
+    if depth > 1 {
+        return;
+    }
+    let mut cursor = 0;
+    while cursor < data.len() {
+        let Some((field, wire, payload)) = read_protobuf_field(data, &mut cursor) else {
+            break;
+        };
+        if wire != 2 {
+            continue;
+        }
+        if field == 19 {
+            if meta.model.is_none() {
+                if let Ok(text) = std::str::from_utf8(payload) {
+                    let text = text.trim();
+                    if is_antigravity_model(text) {
+                        meta.model = Some(sanitize_model_name(text));
+                    }
+                }
+            }
+        } else if field == 20 {
+            if let Some((key, value)) = parse_antigravity_map_entry(payload) {
+                if key == "last_step_index" {
+                    meta.last_step_index = value.parse().ok();
+                }
+            }
+        } else if depth == 0 && field == 1 {
+            antigravity_scan_metadata(payload, depth + 1, meta);
+        }
+    }
+}
+
+fn parse_antigravity_map_entry(data: &[u8]) -> Option<(String, String)> {
+    let mut key = None;
+    let mut value = None;
+    let mut cursor = 0;
+    while cursor < data.len() {
+        let (field, wire, payload) = read_protobuf_field(data, &mut cursor)?;
+        if wire != 2 {
+            continue;
+        }
+        if field == 1 {
+            key = std::str::from_utf8(payload).ok().map(str::to_string);
+        } else if field == 2 {
+            value = std::str::from_utf8(payload).ok().map(str::to_string);
+        }
+    }
+    Some((key?, value?))
+}
+
+fn is_antigravity_model(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().count() <= MAX_MODEL_NAME_CHARS
+        && !value.eq_ignore_ascii_case("none")
+        && !value.eq_ignore_ascii_case("unknown")
+        && !value.starts_with("MODEL_PLACEHOLDER_")
+        && value
+            .chars()
+            .any(|character| character.is_ascii_alphabetic())
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(character, '-' | '_' | '.' | '/' | ':' | '@')
+        })
+}
+
+fn read_protobuf_field<'a>(data: &'a [u8], cursor: &mut usize) -> Option<(u64, u8, &'a [u8])> {
+    let key = read_protobuf_varint(data, cursor)?;
+    let field = key >> 3;
+    let wire = (key & 0x07) as u8;
+    let payload = match wire {
+        0 => {
+            read_protobuf_varint(data, cursor)?;
+            &[]
+        }
+        1 => {
+            *cursor = (*cursor).checked_add(8)?;
+            if *cursor > data.len() {
+                return None;
+            }
+            &[]
+        }
+        2 => {
+            let length = read_protobuf_varint(data, cursor)? as usize;
+            let end = (*cursor).checked_add(length)?;
+            let payload = data.get(*cursor..end)?;
+            *cursor = end;
+            payload
+        }
+        5 => {
+            *cursor = (*cursor).checked_add(4)?;
+            if *cursor > data.len() {
+                return None;
+            }
+            &[]
+        }
+        _ => return None,
+    };
+    Some((field, wire, payload))
+}
+
+fn read_protobuf_varint(data: &[u8], cursor: &mut usize) -> Option<u64> {
+    let mut value = 0u64;
+    let mut shift = 0u32;
+    while *cursor < data.len() && shift < 64 {
+        let byte = data[*cursor];
+        *cursor += 1;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Some(value);
+        }
+        shift += 7;
+    }
+    None
+}
+
 const ANTIGRAVITY_MODEL_LABELS: &[(&str, &str)] = &[
+    ("orchestrator", "gemini-pro-orchestrator"),
+    ("carbon (high)", "gemini-4-carbon-high"),
+    ("carbon high", "gemini-4-carbon-high"),
+    ("carbon (medium)", "gemini-4-carbon-medium"),
+    ("carbon medium", "gemini-4-carbon-medium"),
+    ("carbon (low)", "gemini-4-carbon-low"),
+    ("carbon low", "gemini-4-carbon-low"),
+    ("gemini 4 carbon", "gemini-4-carbon"),
+    ("argon (high)", "gemini-4-argon-high"),
+    ("argon high", "gemini-4-argon-high"),
+    ("argon (medium)", "gemini-4-argon-medium"),
+    ("argon medium", "gemini-4-argon-medium"),
+    ("argon (low)", "gemini-4-argon-low"),
+    ("argon low", "gemini-4-argon-low"),
+    ("gemini 4 argon", "gemini-4-argon"),
+    ("hydrogen (high)", "gemini-4-hydrogen-high"),
+    ("hydrogen high", "gemini-4-hydrogen-high"),
+    ("hydrogen (medium)", "gemini-4-hydrogen-medium"),
+    ("hydrogen medium", "gemini-4-hydrogen-medium"),
+    ("hydrogen (low)", "gemini-4-hydrogen-low"),
+    ("hydrogen low", "gemini-4-hydrogen-low"),
+    ("gemini 4 hydrogen", "gemini-4-hydrogen"),
+    ("3.1 flash lite", "gemini-3.1-flash-lite"),
+    ("3.1 flash-lite", "gemini-3.1-flash-lite"),
     ("flash lite", "gemini-3.5-flash-lite"),
     ("flash-lite", "gemini-3.5-flash-lite"),
     ("flash (high)", "gemini-3.8-flash-high"),
     ("flash high", "gemini-3.8-flash-high"),
+    ("flash (medium)", "gemini-3.8-flash-medium"),
+    ("flash medium", "gemini-3.8-flash-medium"),
     ("flash (low)", "gemini-3.8-flash-low"),
     ("flash low", "gemini-3.8-flash-low"),
     ("flash (dynamic)", "gemini-3.8-flash-tiered"),
+    ("flash (tiered)", "gemini-3.8-flash-tiered"),
     ("flash tiered", "gemini-3.8-flash-tiered"),
-    ("pro", "gemini-3-pro"),
+    ("opus 5.5 (max)", "claude-opus-5-5-max"),
+    ("opus 5.5 (high)", "claude-opus-5-5-high"),
+    ("opus 5.5 (medium)", "claude-opus-5-5-medium"),
+    ("opus 5.5 (low)", "claude-opus-5-5-low"),
+    ("claude opus 5.5", "claude-opus-5-5@default"),
+    ("sonnet 5.5 (max)", "claude-sonnet-5-5-max"),
+    ("sonnet 5.5 (high)", "claude-sonnet-5-5-high"),
+    ("sonnet 5.5 (medium)", "claude-sonnet-5-5-medium"),
+    ("sonnet 5.5 (low)", "claude-sonnet-5-5-low"),
+    ("claude sonnet 5.5", "claude-sonnet-5-5@default"),
+    ("3.1 pro", "gemini-3.1-pro-preview"),
+    ("pro", "gemini-3.1-pro-preview"),
 ];
 
 fn antigravity_model_label(value: &str) -> Option<String> {
-    let lowered = value.to_lowercase();
+    let trimmed = value.trim();
+    let lowered = trimmed.to_lowercase();
     for (needle, model) in ANTIGRAVITY_MODEL_LABELS {
         if lowered.contains(needle) {
             return Some((*model).to_string());
         }
     }
-    None
+    is_antigravity_model(trimmed).then(|| sanitize_model_name(trimmed))
+}
+
+fn antigravity_settings_scope(content: &str) -> Option<&str> {
+    if let Some((_, tail)) = content.rsplit_once("<USER_SETTINGS_CHANGE>") {
+        return Some(
+            tail.split_once("</USER_SETTINGS_CHANGE>")
+                .map(|(body, _)| body)
+                .unwrap_or(tail),
+        );
+    }
+    if content.contains("<USER_REQUEST>") {
+        return None;
+    }
+    Some(content)
 }
 
 fn antigravity_model_hint(value: &Value) -> Option<String> {
@@ -850,24 +1425,24 @@ fn antigravity_model_hint(value: &Value) -> Option<String> {
         return None;
     }
     let content = object.get("content")?.as_str()?;
-    for marker in [
-        "changed setting `Model Selection` from None to ",
-        "changed setting `Model Selection` to ",
-    ] {
-        let Some(position) = content.find(marker) else {
-            continue;
-        };
-        let rest = &content[position + marker.len()..];
-        let label = rest
-            .split_once(". ")
-            .map(|(label, _)| label)
-            .unwrap_or(rest)
-            .lines()
-            .next()?
-            .trim_end_matches('.');
-        return antigravity_model_label(label);
-    }
-    None
+    let scope = antigravity_settings_scope(content)?;
+    let marker = "changed setting `Model Selection` ";
+    let position = scope.rfind(marker)?;
+    let line = scope[position + marker.len()..].lines().next()?;
+    let clause = line
+        .split_once(". ")
+        .map(|(head, _)| head)
+        .unwrap_or(line)
+        .trim()
+        .trim_end_matches('.');
+    let label = if let Some(target) = clause.strip_prefix("to ") {
+        target
+    } else if clause.starts_with("from ") {
+        clause.rsplit_once(" to ").map(|(_, target)| target)?
+    } else {
+        return None;
+    };
+    antigravity_model_label(label)
 }
 
 fn antigravity_sibling_model(path: &Path) -> Option<String> {
@@ -2146,5 +2721,433 @@ mod tests {
         assert_eq!(sample.counter.output_tokens, 50);
         assert_eq!(sample.counter.cache_read_tokens, 100);
         assert_eq!(sample.counter.total_tokens, 550);
+    }
+
+    fn pb_varint(mut value: u64) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        loop {
+            let mut byte = (value & 0x7f) as u8;
+            value >>= 7;
+            if value != 0 {
+                byte |= 0x80;
+            }
+            bytes.push(byte);
+            if value == 0 {
+                return bytes;
+            }
+        }
+    }
+
+    fn pb_len(field: u64, payload: &[u8]) -> Vec<u8> {
+        let mut bytes = pb_varint((field << 3) | 2);
+        bytes.extend(pb_varint(payload.len() as u64));
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    fn pb_map_entry(key: &str, value: &str) -> Vec<u8> {
+        let mut bytes = pb_len(1, key.as_bytes());
+        bytes.extend(pb_len(2, value.as_bytes()));
+        bytes
+    }
+
+    fn antigravity_gen_meta(model: &str, step: Option<u64>) -> Vec<u8> {
+        let mut inner = pb_len(19, model.as_bytes());
+        if let Some(step) = step {
+            inner.extend(pb_len(
+                20,
+                &pb_map_entry("last_step_index", &step.to_string()),
+            ));
+        }
+        inner.extend(pb_len(20, &pb_map_entry("cascade_id", "test-session")));
+        pb_len(1, &inner)
+    }
+
+    fn write_antigravity_database(home: &Path, session: &str, rows: &[(Option<u64>, &str)]) {
+        let directory = home.join(".gemini/antigravity/conversations");
+        fs::create_dir_all(&directory).unwrap();
+        let connection = Connection::open(directory.join(format!("{session}.db"))).unwrap();
+        connection
+            .execute(
+                "CREATE TABLE gen_metadata (idx INTEGER PRIMARY KEY, data BLOB NOT NULL)",
+                [],
+            )
+            .unwrap();
+        for (index, (step, model)) in rows.iter().enumerate() {
+            connection
+                .execute(
+                    "INSERT INTO gen_metadata (idx, data) VALUES (?1, ?2)",
+                    rusqlite::params![index as i64, antigravity_gen_meta(model, *step)],
+                )
+                .unwrap();
+        }
+    }
+
+    fn write_antigravity_transcript(home: &Path, session: &str, lines: &[Value]) -> PathBuf {
+        let path = home
+            .join(".gemini/antigravity/brain")
+            .join(session)
+            .join(".system_generated/logs/transcript.jsonl");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let content = lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&path, content.as_bytes()).unwrap();
+        path
+    }
+
+    fn antigravity_usage_line(step: u64, input: u64, output: u64) -> Value {
+        json!({
+            "step_index": step,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "created_at": local_timestamp(2026, 11, 17, 3),
+            "input_tokens": input,
+            "output_tokens": output,
+            "cache_read_tokens": 0
+        })
+    }
+
+    #[test]
+    fn prefers_the_mirror_that_covers_more_steps() {
+        let home = test_directory("agy-coverage");
+        let session = "4b4b4b4b-4b4b-4b4b-4b4b-4b4b4b4b4b4b";
+        let logs = home
+            .join(".gemini/antigravity/brain")
+            .join(session)
+            .join(".system_generated/logs");
+        fs::create_dir_all(&logs).unwrap();
+        let older = antigravity_usage_line(1, 10, 1).to_string();
+        let newer = antigravity_usage_line(2, 500, 50).to_string();
+        fs::write(logs.join("transcript.jsonl"), format!("{older}\n")).unwrap();
+        fs::write(
+            logs.join("transcript_full.jsonl"),
+            format!("{older}\n{newer}\n"),
+        )
+        .unwrap();
+        let files = source_files(&home, "antigravity");
+        assert_eq!(files.len(), 1, "both mirrors were scanned: {files:?}");
+        assert!(files[0].ends_with("transcript_full.jsonl"));
+        let mut delta = FileDelta::default();
+        read_usage_file(&files[0], "antigravity", &mut delta).unwrap();
+        assert_eq!(delta_total(&delta).input_tokens, 510);
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn keeps_samples_that_differ_only_by_model() {
+        let home = test_directory("agy-dedup-model");
+        let session = "3c3c3c3c-3c3c-3c3c-3c3c-3c3c3c3c3c3c";
+        let mut first = antigravity_usage_line(1, 100, 10);
+        first["model"] = json!("gemini-3.8-flash-high");
+        let mut second = antigravity_usage_line(1, 100, 10);
+        second["model"] = json!("gemini-3.8-flash-low");
+        let path = write_antigravity_transcript(&home, session, &[first, second]);
+        let mut delta = FileDelta::default();
+        read_usage_file(&path, "antigravity", &mut delta).unwrap();
+        let total = delta_total(&delta);
+        assert_eq!(total.samples, 2);
+        assert_eq!(total.input_tokens, 200);
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn attributes_each_request_to_the_model_selected_at_that_time() {
+        let home = test_directory("agy-settings-split");
+        let session = "5a5a5a5a-5a5a-5a5a-5a5a-5a5a5a5a5a5a";
+        let settings = |label: &str, second: u32| {
+            json!({
+                "step_index": 0,
+                "source": "USER_EXPLICIT",
+                "type": "USER_INPUT",
+                "created_at": local_timestamp(2026, 11, 17, second),
+                "content": format!("<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` to {label}. No need to comment.\n</USER_SETTINGS_CHANGE>")
+            })
+        };
+        let mut first = antigravity_usage_line(1, 100, 10);
+        first["created_at"] = json!(local_timestamp(2026, 11, 17, 1));
+        let mut second = antigravity_usage_line(2, 200, 20);
+        second["created_at"] = json!(local_timestamp(2026, 11, 17, 4));
+        let path = write_antigravity_transcript(
+            &home,
+            session,
+            &[
+                settings("Gemini 3.8 Flash (High)", 0),
+                first,
+                settings("Gemini 3.8 Flash (Low)", 3),
+                second,
+            ],
+        );
+        let mut delta = FileDelta::default();
+        read_usage_file(&path, "antigravity", &mut delta).unwrap();
+        let mut grouped: Vec<(String, u64)> = delta
+            .daily
+            .iter()
+            .map(|((_, model), counter)| (model.clone(), counter.input_tokens))
+            .collect();
+        grouped.sort();
+        assert_eq!(
+            grouped,
+            vec![
+                ("gemini-3.8-flash-high".to_string(), 100),
+                ("gemini-3.8-flash-low".to_string(), 200),
+            ]
+        );
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn parses_antigravity_generated_metadata_from_nested_envelope() {
+        let meta = parse_antigravity_generated_meta(&antigravity_gen_meta(
+            "gemini-3.8-flash-tiered",
+            Some(6),
+        ))
+        .unwrap();
+        assert_eq!(meta.model.as_deref(), Some("gemini-3.8-flash-tiered"));
+        assert_eq!(meta.last_step_index, Some(6));
+    }
+
+    #[test]
+    fn attributes_antigravity_models_per_step_from_session_database() {
+        let home = test_directory("agy-per-step");
+        let session = "11111111-1111-1111-1111-111111111111";
+        let mut checkpoint = antigravity_usage_line(3, 200, 20);
+        checkpoint["source"] = json!("SYSTEM");
+        checkpoint["type"] = json!("CHECKPOINT");
+        let path = write_antigravity_transcript(
+            &home,
+            session,
+            &[antigravity_usage_line(1, 100, 10), checkpoint],
+        );
+        write_antigravity_database(
+            &home,
+            session,
+            &[
+                (Some(0), "gemini-3.8-flash-high"),
+                (Some(2), "gemini-3.8-flash-low"),
+            ],
+        );
+        let mut delta = FileDelta::default();
+        read_usage_file(&path, "antigravity", &mut delta).unwrap();
+        let mut models: Vec<_> = delta
+            .daily
+            .keys()
+            .map(|(_, model)| model.as_str())
+            .collect();
+        models.sort();
+        assert_eq!(
+            models,
+            vec!["gemini-3.8-flash-high", "gemini-3.8-flash-low"]
+        );
+        let total = delta_total(&delta);
+        assert_eq!(total.input_tokens, 300);
+        assert_eq!(total.output_tokens, 30);
+        assert_eq!(total.samples, 2);
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn uses_antigravity_database_default_when_step_index_is_missing() {
+        let home = test_directory("agy-default");
+        let session = "22222222-2222-2222-2222-222222222222";
+        let path =
+            write_antigravity_transcript(&home, session, &[antigravity_usage_line(1, 50, 5)]);
+        write_antigravity_database(&home, session, &[(None, "gemini-3.8-flash-tiered")]);
+        let mut delta = FileDelta::default();
+        read_usage_file(&path, "antigravity", &mut delta).unwrap();
+        assert!(delta
+            .daily
+            .keys()
+            .all(|(_, model)| model.as_str() == "gemini-3.8-flash-tiered"));
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn falls_back_to_antigravity_settings_label_without_database() {
+        let home = test_directory("agy-settings");
+        let session = "33333333-3333-3333-3333-333333333333";
+        let path = write_antigravity_transcript(
+            &home,
+            session,
+            &[
+                json!({
+                    "step_index": 0,
+                    "source": "USER_EXPLICIT",
+                    "type": "USER_INPUT",
+                    "created_at": local_timestamp(2026, 11, 17, 3),
+                    "content": "<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` from None to Gemini 3.8 Flash (High). No need to comment.\n</USER_SETTINGS_CHANGE>"
+                }),
+                antigravity_usage_line(1, 70, 7),
+            ],
+        );
+        let mut delta = FileDelta::default();
+        read_usage_file(&path, "antigravity", &mut delta).unwrap();
+        assert!(delta
+            .daily
+            .keys()
+            .all(|(_, model)| model.as_str() == "gemini-3.8-flash-high"));
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn deduplicates_identical_antigravity_samples_but_keeps_retries() {
+        let home = test_directory("agy-dedup");
+        let session = "44444444-4444-4444-4444-444444444444";
+        let mut first = antigravity_usage_line(1, 100, 10);
+        first["created_at"] = json!(local_timestamp(2026, 11, 17, 3));
+        let mut retry = antigravity_usage_line(1, 120, 12);
+        retry["created_at"] = json!(local_timestamp(2026, 11, 17, 4));
+        let path = write_antigravity_transcript(&home, session, &[first.clone(), first, retry]);
+        write_antigravity_database(&home, session, &[(Some(0), "gemini-3.8-flash-tiered")]);
+        let mut delta = FileDelta::default();
+        read_usage_file(&path, "antigravity", &mut delta).unwrap();
+        let total = delta_total(&delta);
+        assert_eq!(total.samples, 2);
+        assert_eq!(total.input_tokens, 220);
+        assert_eq!(total.output_tokens, 22);
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn canonical_antigravity_sources_skip_mirrors_chunks_and_backups() {
+        let home = test_directory("agy-sources");
+        let main = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        let ide_only = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+        let chunk_only = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+        let backup_only = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+        let full_fallback = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+        let main_logs = home
+            .join(".gemini/antigravity/brain")
+            .join(main)
+            .join(".system_generated/logs");
+        fs::create_dir_all(main_logs.join("chunks/transcript")).unwrap();
+        fs::create_dir_all(main_logs.join("chunks/transcript_full")).unwrap();
+        fs::write(main_logs.join("transcript.jsonl"), "{}\n").unwrap();
+        fs::write(main_logs.join("transcript_full.jsonl"), "{}\n").unwrap();
+        fs::write(main_logs.join("chunks/transcript/00000000.jsonl"), "{}\n").unwrap();
+        fs::write(
+            main_logs.join("chunks/transcript_full/00000000.jsonl"),
+            "{}\n",
+        )
+        .unwrap();
+        fs::create_dir_all(main_logs.join("../messages")).unwrap();
+        fs::write(main_logs.join("../messages/message.json"), "{}").unwrap();
+        let backup_logs = home
+            .join(".gemini/antigravity-backup/brain")
+            .join(main)
+            .join(".system_generated/logs");
+        fs::create_dir_all(&backup_logs).unwrap();
+        fs::write(backup_logs.join("transcript.jsonl"), "{}\n").unwrap();
+        let ide_logs = home
+            .join(".gemini/antigravity-ide/brain")
+            .join(main)
+            .join(".system_generated/logs");
+        fs::create_dir_all(&ide_logs).unwrap();
+        fs::write(ide_logs.join("transcript.jsonl"), "{}\n").unwrap();
+        let ide_only_logs = home
+            .join(".gemini/antigravity-ide/brain")
+            .join(ide_only)
+            .join(".system_generated/logs");
+        fs::create_dir_all(&ide_only_logs).unwrap();
+        fs::write(ide_only_logs.join("transcript.jsonl"), "{}\n").unwrap();
+        let chunk_logs = home
+            .join(".gemini/antigravity/brain")
+            .join(chunk_only)
+            .join(".system_generated/logs/chunks/transcript");
+        fs::create_dir_all(&chunk_logs).unwrap();
+        fs::write(chunk_logs.join("00000000.jsonl"), "{}\n").unwrap();
+        fs::write(chunk_logs.join("00000001.jsonl"), "{}\n").unwrap();
+        let backup_only_logs = home
+            .join(".gemini/antigravity-backup/brain")
+            .join(backup_only)
+            .join(".system_generated/logs");
+        fs::create_dir_all(&backup_only_logs).unwrap();
+        fs::write(backup_only_logs.join("transcript.jsonl"), "{}\n").unwrap();
+        let full_logs = home
+            .join(".gemini/antigravity/brain")
+            .join(full_fallback)
+            .join(".system_generated/logs");
+        fs::create_dir_all(&full_logs).unwrap();
+        fs::write(full_logs.join("transcript.jsonl"), "").unwrap();
+        fs::write(full_logs.join("transcript_full.jsonl"), "{}\n").unwrap();
+        let legacy = home.join(".antigravity-ide/logs/session.jsonl");
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::write(&legacy, "{}\n").unwrap();
+
+        let files = source_files(&home, "antigravity");
+        assert!(files.contains(&main_logs.join("transcript.jsonl")));
+        assert!(files.contains(&ide_only_logs.join("transcript.jsonl")));
+        assert!(files.contains(&chunk_logs.join("00000000.jsonl")));
+        assert!(files.contains(&chunk_logs.join("00000001.jsonl")));
+        assert!(files.contains(&backup_only_logs.join("transcript.jsonl")));
+        assert!(files.contains(&full_logs.join("transcript_full.jsonl")));
+        assert!(files.contains(&legacy));
+        assert!(!files.contains(&main_logs.join("transcript_full.jsonl")));
+        assert!(!files.iter().any(|path| path.ends_with("message.json")));
+        assert!(!files.contains(&backup_logs.join("transcript.jsonl")));
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn maps_antigravity_client_labels_and_keeps_raw_model_ids() {
+        for (label, expected) in [
+            ("Gemini 3.8 Flash (High)", "gemini-3.8-flash-high"),
+            ("Gemini 3.8 Flash (Medium)", "gemini-3.8-flash-medium"),
+            ("Gemini 3.8 Flash (Low)", "gemini-3.8-flash-low"),
+            ("Gemini 3.8 Flash (Dynamic)", "gemini-3.8-flash-tiered"),
+            ("Gemini 3.8 Flash Lite", "gemini-3.5-flash-lite"),
+            ("Gemini 3.1 Flash Lite", "gemini-3.1-flash-lite"),
+            ("Gemini 3.1 Pro", "gemini-3.1-pro-preview"),
+            ("Orchestrator (Carbon)", "gemini-pro-orchestrator"),
+            ("Gemini 4 Carbon (High)", "gemini-4-carbon-high"),
+            ("Claude Sonnet 5.5 (Max)", "claude-sonnet-5-5-max"),
+        ] {
+            assert_eq!(antigravity_model_label(label).as_deref(), Some(expected));
+        }
+        assert!(antigravity_model_label("Unknown Model").is_none());
+        assert!(is_antigravity_model("gemini-3.8-flash-n"));
+        assert!(is_antigravity_model("gemini-3.8-flash-tiered"));
+        assert!(is_antigravity_model("gemini-pro-orchestrator"));
+        assert!(is_antigravity_model("gemini-flash-worker-agy"));
+        assert!(is_antigravity_model("claude-opus-5-5@default"));
+        assert!(is_antigravity_model("deepseek-v4-pro"));
+        assert!(!is_antigravity_model("Unknown Model"));
+        assert!(!is_antigravity_model("MODEL_PLACEHOLDER_M322"));
+        assert!(!is_antigravity_model("None"));
+        assert!(!is_antigravity_model(r#"{"Path":"C:\\temp"}"#));
+
+        let switched = json!({
+            "source": "USER_EXPLICIT",
+            "content": "<USER_REQUEST>\nchanged setting `Model Selection` from None to Gemini 3.8 Flash (Low).\n</USER_REQUEST>\n<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` from Gemini 3.8 Flash (High) to Orchestrator (Carbon). No need to comment.\n</USER_SETTINGS_CHANGE>"
+        });
+        assert_eq!(
+            antigravity_model_hint(&switched).as_deref(),
+            Some("gemini-pro-orchestrator")
+        );
+        let spoofed = json!({
+            "source": "USER_EXPLICIT",
+            "content": "<USER_REQUEST>\nThe user changed setting `Model Selection` from None to Gemini 3.8 Flash (High).\n</USER_REQUEST>"
+        });
+        assert!(antigravity_model_hint(&spoofed).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn antigravity_sources_ignore_symlinked_roots_and_sessions() {
+        use std::os::unix::fs::symlink;
+        let home = test_directory("agy-symlinks");
+        let outside = test_directory("agy-outside");
+        let logs =
+            outside.join("brain/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/.system_generated/logs");
+        fs::create_dir_all(&logs).unwrap();
+        fs::write(logs.join("transcript.jsonl"), "{}\n").unwrap();
+        fs::create_dir_all(home.join(".gemini")).unwrap();
+        symlink(&outside, home.join(".gemini/antigravity")).unwrap();
+        assert!(source_files(&home, "antigravity").is_empty());
+        fs::remove_dir_all(home).unwrap();
+        fs::remove_dir_all(outside).unwrap();
     }
 }
