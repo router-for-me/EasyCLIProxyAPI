@@ -12,6 +12,7 @@ type Body = http_body_util::combinators::UnsyncBoxBody<Bytes, Infallible>;
 pub(super) type SpawnClient = fn(&Path, &Path, &str) -> Result<rpc::Client, String>;
 
 #[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
 struct Settings {
     enabled: bool,
     port: u16,
@@ -50,12 +51,32 @@ fn read_settings(profile: &Path) -> Result<Settings, String> {
     }
 }
 
+pub(super) fn upstream_enabled(profile: &Path) -> Result<bool, String> {
+    Ok(read_settings(profile)?.enabled)
+}
+
 fn save_settings(profile: &Path, settings: &Settings) -> Result<(), String> {
     prepare_profile(profile)?;
-    crate::write_codex_private_file(
+    save_private_file(
         &settings_path(profile),
         &serde_json::to_vec(settings).map_err(|e| e.to_string())?,
     )
+}
+
+fn save_private_file(path: &Path, content: &[u8]) -> Result<(), String> {
+    let mut temporary = path.as_os_str().to_os_string();
+    temporary.push(".tmp");
+    let temporary = PathBuf::from(temporary);
+    let result = crate::write_codex_private_file(&temporary, content).and_then(|_| {
+        crate::replace_file_atomically(&temporary, path)
+            .map_err(|error| format!("Failed to save ACP configuration: {error}"))
+    });
+    if result.is_err() {
+        let _ = std::fs::remove_file(temporary);
+    } else {
+        crate::remember_software_write(path, content);
+    }
+    result
 }
 
 fn bridge_key(profile: &Path) -> Result<String, String> {
@@ -95,11 +116,29 @@ fn patch_provider(
     document: &mut serde_norway::Value,
     entry: Option<serde_norway::Value>,
 ) -> Result<bool, String> {
+    if entry.is_none() {
+        let mut changed = false;
+        for path in [
+            &["openai-compatibility"][..],
+            &["api-keys", "openai-compatibility"][..],
+        ] {
+            changed |= patch_provider_at(document, path, None)?;
+        }
+        return Ok(changed);
+    }
     let path: &[&str] = if crate::core_config_uses_v8(document) {
         &["api-keys", "openai-compatibility"]
     } else {
         &["openai-compatibility"]
     };
+    patch_provider_at(document, path, entry)
+}
+
+fn patch_provider_at(
+    document: &mut serde_norway::Value,
+    path: &[&str],
+    entry: Option<serde_norway::Value>,
+) -> Result<bool, String> {
     let mut current = document.clone();
     for key in path {
         current = current
@@ -125,49 +164,96 @@ fn patch_provider(
 }
 
 fn register(url: Option<&str>, key: &str, models: &[AcpModel]) -> Result<(), String> {
-    if !crate::core_install_dir()?
-        .join(crate::CORE_CONFIG_FILE)
-        .is_file()
-    {
-        return Err("Start the CPA kernel once to generate its configuration before enabling ACP API access".into());
-    }
-    crate::patch_existing_core_config(|document| {
+    register_at(
+        &crate::core_install_dir()?.join(crate::CORE_CONFIG_FILE),
+        url,
+        key,
+        models,
+    )
+}
+
+fn register_at(
+    config: &Path,
+    url: Option<&str>,
+    key: &str,
+    models: &[AcpModel],
+) -> Result<(), String> {
+    let _guard = crate::lock_core_config_file()?;
+    let content = match std::fs::read_to_string(config) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && url.is_none() => {
+            return Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err("Start the CPA kernel once to generate its configuration before enabling ACP API access".into());
+        }
+        Err(error) => {
+            return Err(format!(
+                "Failed to read ACP provider configuration: {error}"
+            ))
+        }
+    };
+    let updated = crate::patch_core_yaml_document(&content, |document| {
         let entry = url
             .map(|url| provider_entry(url, key, models, crate::core_config_uses_v8(document)))
             .transpose()?;
         patch_provider(document, entry)
-    })
+    })?;
+    if let Some(updated) = updated {
+        save_private_file(config, updated.as_bytes())?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn set_acp_upstream_enabled(
     app: tauri::AppHandle,
     enabled: bool,
 ) -> Result<AcpStatus, String> {
+    let profile = profile(&crate::core_base_dir()?);
+    let config = crate::core_install_dir()?.join(crate::CORE_CONFIG_FILE);
+    set_enabled(&app, &profile, &config, enabled, false).await?;
+    get_acp_status(app.clone(), app.state::<AcpState>())
+}
+
+async fn set_enabled<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    profile: &Path,
+    config: &Path,
+    enabled: bool,
+    restoring: bool,
+) -> Result<AcpStatus, String> {
     let state = app.state::<AcpState>();
     let _transition = state.bridge_transition.lock().await;
-    let _guard = begin(&app, "upstream")?;
-    let profile = profile(&crate::core_base_dir()?);
-    let settings = read_settings(&profile)?;
+    let _guard = begin(app, "upstream")?;
+    let settings = read_settings(profile)?;
+    if restoring && !settings.enabled {
+        drop(_guard);
+        return state.snapshot();
+    }
     if !enabled {
-        state.agents.clear();
-        register(None, "", &[])?;
-        // Keep the listener alive if saving fails, so an already enabled runtime
-        // cannot become an orphaned provider with a closed upstream.
-        save_settings(
-            &profile,
-            &Settings {
-                enabled: false,
-                port: settings.port,
-            },
-        )?;
-        state
+        let mut runtime = state
             .bridge
             .lock()
-            .map_err(|_| "ACP bridge state unavailable")?
-            .take();
+            .map_err(|_| "ACP bridge state unavailable")?;
         let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
+        if settings.enabled || !settings_path(profile).is_file() {
+            save_settings(
+                profile,
+                &Settings {
+                    enabled: false,
+                    port: settings.port,
+                },
+            )?;
+        }
         status.upstream_enabled = false;
         status.upstream_url = None;
+        runtime.take();
+        state.agents.clear();
+        drop(status);
+        drop(runtime);
+        register_at(config, None, "", &[]).map_err(|error| {
+            format!("ACP API access is off, but provider cleanup failed: {error}")
+        })?;
     } else {
         let status = state.snapshot()?;
         if !status.authenticated || status.models.is_empty() {
@@ -180,9 +266,9 @@ pub(crate) async fn set_acp_upstream_enabled(
             .as_ref()
             .map(|runtime| (runtime.url.clone(), runtime.key.clone()));
         if let Some((url, key)) = existing {
-            register(Some(&url), &key, &status.models)?;
+            register_at(config, Some(&url), &key, &status.models)?;
         } else {
-            prepare_profile(&profile)?;
+            prepare_profile(profile)?;
             let listener =
                 match tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, settings.port))
                     .await
@@ -195,24 +281,22 @@ pub(crate) async fn set_acp_upstream_enabled(
                 };
             let port = listener.local_addr().map_err(|e| e.to_string())?.port();
             let url = format!("http://127.0.0.1:{port}/v1");
-            let key = bridge_key(&profile)?;
+            let key = bridge_key(profile)?;
             let stop = CancellationToken::new();
             let runtime = Runtime {
                 stop: stop.clone(),
                 url: url.clone(),
                 key: key.clone(),
             };
-            // Publish only after the socket is bound, and roll back registration
-            // if durable enablement cannot be saved.
-            register(Some(&url), &key, &status.models)?;
+            register_at(config, Some(&url), &key, &status.models)?;
             if let Err(error) = save_settings(
-                &profile,
+                profile,
                 &Settings {
                     enabled: true,
                     port,
                 },
             ) {
-                let rollback = register(None, "", &[]).err();
+                let rollback = register_at(config, None, "", &[]).err();
                 return Err(format!(
                     "{error}{}",
                     rollback
@@ -234,21 +318,23 @@ pub(crate) async fn set_acp_upstream_enabled(
         }
     }
     drop(_guard);
-    let _ = tauri::Emitter::emit(&app, crate::CONFIG_FILES_CHANGED_EVENT, ());
-    get_acp_status(app.clone(), app.state::<AcpState>())
+    let _ = tauri::Emitter::emit(app, crate::CONFIG_FILES_CHANGED_EVENT, ());
+    state.snapshot()
 }
 
 pub(crate) async fn restore(app: tauri::AppHandle) {
     let result: Result<(), String> = async {
         let profile = profile(&crate::core_base_dir()?);
-        if read_settings(&profile)?.enabled {
+        restore_if_enabled(&profile, || async {
             if let Err(error) = super::acp_connect(app.clone(), false).await {
                 register(None, "", &[])?;
                 return Err(error);
             }
-            set_acp_upstream_enabled(app.clone(), true).await?;
-        }
-        Ok(())
+            let config = crate::core_install_dir()?.join(crate::CORE_CONFIG_FILE);
+            set_enabled(&app, &profile, &config, true, true).await?;
+            Ok(())
+        })
+        .await
     }
     .await;
     if let Err(error) = result {
@@ -256,6 +342,16 @@ pub(crate) async fn restore(app: tauri::AppHandle) {
             status.error = Some(error);
         }
     }
+}
+
+async fn restore_if_enabled<F: std::future::Future<Output = Result<(), String>>>(
+    profile: &Path,
+    restore: impl FnOnce() -> F,
+) -> Result<(), String> {
+    if read_settings(profile)?.enabled {
+        restore().await?;
+    }
+    Ok(())
 }
 
 pub(super) fn sync_models(state: &AcpState) -> Result<(), String> {

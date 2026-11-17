@@ -22,6 +22,368 @@ fn request(stream: bool) -> Value {
     json!({"model":"acp/test-model","messages":[{"role":"user","content":"ping"}],"stream":stream})
 }
 
+fn bridge_fixture() -> (tauri::App<tauri::test::MockRuntime>, PathBuf) {
+    let app = tauri::test::mock_app();
+    app.manage(AcpState::default());
+    let directory = crate::unique_test_temp_path("acp-enablement");
+    prepare_profile(&directory).unwrap();
+    mark_session(app.state::<AcpState>().inner(), &fake_session(), &directory).unwrap();
+    (app, directory)
+}
+
+#[test]
+fn fresh_and_existing_login_profiles_default_to_off() {
+    let directory = crate::unique_test_temp_path("acp-default-off");
+    assert!(!upstream_enabled(&directory).unwrap());
+    prepare_profile(&directory).unwrap();
+    std::fs::write(selected_path(&directory), br#""test-model""#).unwrap();
+    assert!(!upstream_enabled(&directory).unwrap());
+    assert!(!AcpState::default().snapshot().unwrap().upstream_enabled);
+    assert!(!settings_path(&directory).exists());
+    std::fs::write(settings_path(&directory), br#"{"port":12345}"#).unwrap();
+    assert!(!upstream_enabled(&directory).unwrap());
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn successful_login_refresh_relogin_and_account_switch_do_not_enable_api() {
+    let directory = crate::unique_test_temp_path("acp-connect-off");
+    prepare_profile(&directory).unwrap();
+    let state = AcpState::default();
+    let cancel = Arc::new(AtomicBool::new(false));
+    for (login, relogin) in [(true, false), (false, false), (true, true)] {
+        let mut client = spawn_fake(Path::new("unused"), &directory, "").unwrap();
+        connect_session(&state, &directory, login, relogin, &cancel, &mut client).unwrap();
+        let status = state.snapshot().unwrap();
+        assert!(status.authenticated);
+        assert!(!status.models.is_empty());
+        assert!(!status.upstream_enabled);
+        assert!(state.bridge.lock().unwrap().is_none());
+        assert!(!upstream_enabled(&directory).unwrap());
+    }
+    let registry = accounts::add(&directory, "Second").unwrap();
+    let account = accounts::active(&directory).unwrap();
+    assert_ne!(account, directory);
+    save_settings(
+        &account,
+        &Settings {
+            enabled: true,
+            port: 0,
+        },
+    )
+    .unwrap();
+    let mut client = spawn_fake(Path::new("unused"), &account, "").unwrap();
+    connect_session(&state, &directory, false, false, &cancel, &mut client).unwrap();
+    assert!(state.snapshot().unwrap().authenticated);
+    assert!(!state.snapshot().unwrap().upstream_enabled);
+    assert!(!upstream_enabled(&directory).unwrap());
+    assert_eq!(accounts::read(&directory).unwrap().active, registry);
+    accounts::select(&directory, "default").unwrap();
+    let mut client = spawn_fake(Path::new("unused"), &directory, "").unwrap();
+    connect_session(&state, &directory, false, false, &cancel, &mut client).unwrap();
+    assert!(state.bridge.lock().unwrap().is_none());
+    assert!(!settings_path(&directory).exists());
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn disable_persists_off_removes_both_schemas_and_stops_the_listener() {
+    for v8 in [false, true] {
+        let (app, directory) = bridge_fixture();
+        let config = directory.join("config.yaml");
+        let original = if v8 {
+            "config-version: 8\napi-keys:\n  openai-compatibility:\n    - name: other\n      base-url: https://example.test\n"
+        } else {
+            "openai-compatibility:\n  - name: other\n    base-url: https://example.test\n"
+        };
+        std::fs::write(&config, original).unwrap();
+        let enabled = set_enabled(app.handle(), &directory, &config, true, false)
+            .await
+            .unwrap();
+        assert!(enabled.upstream_enabled);
+        assert!(read_settings(&directory).unwrap().enabled);
+        let state = app.state::<AcpState>();
+        let stop = state.bridge.lock().unwrap().as_ref().unwrap().stop.clone();
+        let port = read_settings(&directory).unwrap().port;
+        let disabled = set_enabled(app.handle(), &directory, &config, false, false)
+            .await
+            .unwrap();
+        assert!(!disabled.upstream_enabled);
+        assert!(disabled.upstream_url.is_none());
+        assert!(!disabled.busy);
+        assert!(!read_settings(&directory).unwrap().enabled);
+        assert_eq!(read_settings(&directory).unwrap().port, port);
+        assert!(state.bridge.lock().unwrap().is_none());
+        assert!(stop.is_cancelled());
+        let mut client = spawn_fake(Path::new("unused"), &directory, "").unwrap();
+        connect_session(
+            state.inner(),
+            &directory,
+            false,
+            false,
+            &Arc::new(AtomicBool::new(false)),
+            &mut client,
+        )
+        .unwrap();
+        assert!(!state.snapshot().unwrap().upstream_enabled);
+        assert!(state.bridge.lock().unwrap().is_none());
+        let actual: serde_norway::Value =
+            serde_norway::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+        assert_eq!(
+            actual,
+            serde_norway::from_str::<serde_norway::Value>(original).unwrap()
+        );
+        let settings_before = std::fs::metadata(settings_path(&directory))
+            .unwrap()
+            .modified()
+            .unwrap();
+        let config_before = std::fs::metadata(&config).unwrap().modified().unwrap();
+        set_enabled(app.handle(), &directory, &config, false, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            settings_before,
+            std::fs::metadata(settings_path(&directory))
+                .unwrap()
+                .modified()
+                .unwrap()
+        );
+        assert_eq!(
+            config_before,
+            std::fs::metadata(&config).unwrap().modified().unwrap()
+        );
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Ok(listener) =
+                    tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await
+                {
+                    drop(listener);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn disable_is_safe_without_config_runtime_or_provider() {
+    let (app, directory) = bridge_fixture();
+    let config = directory.join("config.yaml");
+    for content in [
+        None,
+        Some("unrelated: true\n"),
+        Some("openai-compatibility: []\n"),
+    ] {
+        if let Some(content) = content {
+            std::fs::write(&config, content).unwrap();
+        }
+        for _ in 0..2 {
+            set_enabled(app.handle(), &directory, &config, false, false)
+                .await
+                .unwrap();
+            assert!(!upstream_enabled(&directory).unwrap());
+        }
+        assert_eq!(std::fs::read_to_string(&config).ok().as_deref(), content);
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn disable_succeeds_after_the_kernel_configuration_is_deleted() {
+    let (app, directory) = bridge_fixture();
+    let config = directory.join("config.yaml");
+    std::fs::write(&config, "openai-compatibility: []\n").unwrap();
+    set_enabled(app.handle(), &directory, &config, true, false)
+        .await
+        .unwrap();
+    std::fs::remove_file(&config).unwrap();
+    set_enabled(app.handle(), &directory, &config, false, false)
+        .await
+        .unwrap();
+    assert!(!upstream_enabled(&directory).unwrap());
+    assert!(app.state::<AcpState>().bridge.lock().unwrap().is_none());
+    assert!(!config.exists());
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn failed_provider_cleanup_cannot_leave_enabled_intent_or_a_live_runtime() {
+    for invalid in ["openai-compatibility: not-a-list\n", "[invalid yaml"] {
+        let (app, directory) = bridge_fixture();
+        let config = directory.join("config.yaml");
+        std::fs::write(&config, "openai-compatibility: []\n").unwrap();
+        set_enabled(app.handle(), &directory, &config, true, false)
+            .await
+            .unwrap();
+        let state = app.state::<AcpState>();
+        let stop = state.bridge.lock().unwrap().as_ref().unwrap().stop.clone();
+        std::fs::write(&config, invalid).unwrap();
+        let error = set_enabled(app.handle(), &directory, &config, false, false)
+            .await
+            .err()
+            .unwrap();
+        assert!(
+            error.contains("access is off, but provider cleanup failed"),
+            "{error}"
+        );
+        assert!(!upstream_enabled(&directory).unwrap());
+        assert!(!state.snapshot().unwrap().upstream_enabled);
+        assert!(state.snapshot().unwrap().upstream_url.is_none());
+        assert!(!state.snapshot().unwrap().busy);
+        assert!(state.bridge.lock().unwrap().is_none());
+        assert!(stop.is_cancelled());
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), invalid);
+        sync_models(state.inner()).unwrap();
+        restore_if_enabled(&directory, || async {
+            panic!("disabled access must not be restored")
+        })
+        .await
+        .unwrap();
+        assert!(
+            !set_enabled(app.handle(), &directory, &config, true, true)
+                .await
+                .unwrap()
+                .upstream_enabled
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn failed_enable_registration_does_not_persist_enabled() {
+    for content in [None, Some("openai-compatibility: not-a-list\n")] {
+        let (app, directory) = bridge_fixture();
+        let config = directory.join("config.yaml");
+        if let Some(content) = content {
+            std::fs::write(&config, content).unwrap();
+        }
+        assert!(set_enabled(app.handle(), &directory, &config, true, false)
+            .await
+            .is_err());
+        assert!(!upstream_enabled(&directory).unwrap());
+        let state = app.state::<AcpState>();
+        assert!(!state.snapshot().unwrap().upstream_enabled);
+        assert!(!state.snapshot().unwrap().busy);
+        assert!(state.bridge.lock().unwrap().is_none());
+        assert_eq!(std::fs::read_to_string(&config).ok().as_deref(), content);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn failed_disable_persistence_leaves_the_previous_state_intact() {
+    let (app, directory) = bridge_fixture();
+    let config = directory.join("config.yaml");
+    std::fs::write(&config, "openai-compatibility: []\n").unwrap();
+    set_enabled(app.handle(), &directory, &config, true, false)
+        .await
+        .unwrap();
+    let previous = std::fs::read(&config).unwrap();
+    let state = app.state::<AcpState>();
+    let stop = state.bridge.lock().unwrap().as_ref().unwrap().stop.clone();
+    std::fs::create_dir(directory.join("bridge.json.tmp")).unwrap();
+    assert!(set_enabled(app.handle(), &directory, &config, false, false)
+        .await
+        .is_err());
+    assert!(upstream_enabled(&directory).unwrap());
+    assert!(state.snapshot().unwrap().upstream_enabled);
+    assert!(!state.snapshot().unwrap().busy);
+    assert!(state.bridge.lock().unwrap().is_some());
+    assert!(!stop.is_cancelled());
+    assert_eq!(std::fs::read(&config).unwrap(), previous);
+    std::fs::remove_dir(directory.join("bridge.json.tmp")).unwrap();
+    set_enabled(app.handle(), &directory, &config, false, false)
+        .await
+        .unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn failed_enable_persistence_rolls_back_provider_registration() {
+    let (app, directory) = bridge_fixture();
+    let config = directory.join("config.yaml");
+    std::fs::write(&config, "openai-compatibility: []\n").unwrap();
+    std::fs::create_dir(directory.join("bridge.json.tmp")).unwrap();
+    assert!(set_enabled(app.handle(), &directory, &config, true, false)
+        .await
+        .is_err());
+    assert!(!upstream_enabled(&directory).unwrap());
+    assert!(app.state::<AcpState>().bridge.lock().unwrap().is_none());
+    assert!(!std::fs::read_to_string(&config).unwrap().contains(PROVIDER));
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn restore_only_runs_for_explicit_saved_enablement() {
+    let directory = crate::unique_test_temp_path("acp-restore-off");
+    restore_if_enabled(&directory, || async {
+        panic!("fresh profile must not reconnect or register")
+    })
+    .await
+    .unwrap();
+    save_settings(
+        &directory,
+        &Settings {
+            enabled: false,
+            port: 12345,
+        },
+    )
+    .unwrap();
+    restore_if_enabled(&directory, || async {
+        panic!("disabled profile must not reconnect or register")
+    })
+    .await
+    .unwrap();
+    save_settings(
+        &directory,
+        &Settings {
+            enabled: true,
+            port: 12345,
+        },
+    )
+    .unwrap();
+    let mut restored = false;
+    restore_if_enabled(&directory, || async {
+        restored = true;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(restored);
+    assert!(upstream_enabled(&directory).unwrap());
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn disable_wins_over_a_restore_that_already_started_connecting() {
+    let (app, directory) = bridge_fixture();
+    let config = directory.join("config.yaml");
+    std::fs::write(&config, "openai-compatibility: []\n").unwrap();
+    save_settings(
+        &directory,
+        &Settings {
+            enabled: true,
+            port: 0,
+        },
+    )
+    .unwrap();
+    restore_if_enabled(&directory, || async {
+        set_enabled(app.handle(), &directory, &config, false, false).await?;
+        let status = set_enabled(app.handle(), &directory, &config, true, true).await?;
+        assert!(!status.upstream_enabled);
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(app.state::<AcpState>().bridge.lock().unwrap().is_none());
+    assert!(!upstream_enabled(&directory).unwrap());
+    assert!(!std::fs::read_to_string(&config).unwrap().contains(PROVIDER));
+    std::fs::remove_dir_all(directory).unwrap();
+}
 #[test]
 fn variant_levels_come_from_protocol_ids_without_replacing_models() {
     let models = models();
@@ -246,6 +608,21 @@ fn provider_registration_preserves_unrelated_routes_in_both_schemas() {
         patch_provider(&mut document, None).unwrap();
         assert_eq!(document, original);
     }
+}
+
+#[test]
+fn disable_removes_stale_provider_entries_from_both_paths_in_a_mixed_config() {
+    let mut document = serde_norway::to_value(json!({
+        "config-version": 8,
+        "openai-compatibility": [{"name": PROVIDER}, {"name": "legacy-other"}],
+        "api-keys": {"openai-compatibility": [{"name": PROVIDER}, {"name": "v8-other"}]}
+    })).unwrap();
+    assert!(patch_provider(&mut document, None).unwrap());
+    assert_eq!(document["openai-compatibility"][0]["name"].as_str(), Some("legacy-other"));
+    assert_eq!(document["openai-compatibility"].as_sequence().unwrap().len(), 1);
+    assert_eq!(document["api-keys"]["openai-compatibility"][0]["name"].as_str(), Some("v8-other"));
+    assert_eq!(document["api-keys"]["openai-compatibility"].as_sequence().unwrap().len(), 1);
+    assert!(!patch_provider(&mut document, None).unwrap());
 }
 
 #[test]
@@ -525,7 +902,7 @@ fn fake_official_server() {
                 assert!(models().iter().any(|model| model.id == selected));
                 json!({})
             }
-            "logout" => json!({}),
+            "logout" | "authenticate" => json!({}),
             "session/prompt" => {
                 assert!(
                     !selected.is_empty(),
@@ -794,6 +1171,22 @@ async fn authenticated_http_bridge_lists_models_completes_streams_and_cancels_di
     })
     .await
     .expect("client disconnect must cancel and release the operation");
+    for (enabled, authenticated) in [(false, true), (true, false)] {
+        {
+            let state = app.state::<AcpState>();
+            let mut status = state.status.lock().unwrap();
+            status.upstream_enabled = enabled;
+            status.authenticated = authenticated;
+        }
+        let response = http
+            .post(format!("{base}/v1/chat/completions"))
+            .bearer_auth("internal-test-key")
+            .json(&request(false))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 503);
+    }
     stop.cancel();
     server.await.unwrap();
     std::fs::remove_dir_all(directory).unwrap();
@@ -987,9 +1380,7 @@ async fn real_cpa_lists_and_routes_registered_acp_models() {
                 if !status.is_success() || !body.contains("CLIENT_TOOL_OK") { return Err(format!("Tool resume {path}: {status}: {body}")); }
             }
         }
-        patch_provider(&mut document, None)?;
-        std::fs::write(&config, serde_norway::to_string(&document).unwrap())
-            .map_err(|e| e.to_string())?;
+        register_at(&config, None, "", &[])?;
         for _ in 0..50 {
             let body: Value = http
                 .get(format!("{base}/v1/models"))

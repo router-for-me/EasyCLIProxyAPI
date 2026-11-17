@@ -203,6 +203,7 @@ pub(crate) fn get_acp_status(
     status.executable =
         crate::find_antigravity_cli(&home).map(|path| path.to_string_lossy().into_owned());
     let root = profile(&crate::core_base_dir()?);
+    status.upstream_enabled = bridge::upstream_enabled(&root)?;
     let accounts = accounts::read(&root)?;
     let profile = accounts::directory(&root, &accounts.active)?;
     status.active_account = accounts.active;
@@ -325,37 +326,15 @@ async fn connect(
         let state = app.state::<AcpState>();
         let result: Result<(), String> = (|| {
             prepare_profile(&profile)?;
-            if login {
-                accounts::set_active_email(&accounts_root, None)?;
-            }
             let mut client = rpc::Client::spawn(&executable, &profile, &proxy)?;
-            client.initialize(&guard.cancel)?;
-            if switch_account {
-                // Replace only this account profile through the official server.
-                client.logout(&guard.cancel)?;
-                {
-                    let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
-                    status.authenticated = false;
-                    status.models.clear();
-                    status.selected_model.clear();
-                }
-                bridge::sync_models(state.inner())?;
-            }
-            if login {
-                // The official server owns the browser callback and credential persistence.
-                client.call(
-                    "authenticate",
-                    json!({"methodId":"oauth-personal"}),
-                    &guard.cancel,
-                    |_| {},
-                )?;
-            }
-            let session = client.session(&profile, &guard.cancel)?;
-            mark_session(state.inner(), &session, &profile)?;
-            // Identity is optional; a CLI log format change must not prevent
-            // otherwise valid model access. Persist only the extracted email.
-            let _ = accounts::set_active_email(&accounts_root, client.account_email(&profile));
-            bridge::sync_models(state.inner())
+            connect_session(
+                state.inner(),
+                &accounts_root,
+                login,
+                switch_account,
+                &guard.cancel,
+                &mut client,
+            )
         })();
         if let Err(error) = &result {
             if let Ok(mut status) = state.status.lock() {
@@ -372,6 +351,43 @@ async fn connect(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+fn connect_session(
+    state: &AcpState,
+    root: &Path,
+    login: bool,
+    switch_account: bool,
+    cancel: &Arc<AtomicBool>,
+    client: &mut rpc::Client,
+) -> Result<(), String> {
+    let profile = accounts::active(root)?;
+    if login {
+        accounts::set_active_email(root, None)?;
+    }
+    client.initialize(cancel)?;
+    if switch_account {
+        client.logout(cancel)?;
+        {
+            let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
+            status.authenticated = false;
+            status.models.clear();
+            status.selected_model.clear();
+        }
+        bridge::sync_models(state)?;
+    }
+    if login {
+        client.call(
+            "authenticate",
+            json!({"methodId":"oauth-personal"}),
+            cancel,
+            |_| {},
+        )?;
+    }
+    let session = client.session(&profile, cancel)?;
+    mark_session(state, &session, &profile)?;
+    let _ = accounts::set_active_email(root, client.account_email(&profile));
+    bridge::sync_models(state)
 }
 
 #[tauri::command]

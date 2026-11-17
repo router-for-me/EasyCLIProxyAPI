@@ -71,6 +71,7 @@ export function AcpAccessPage() {
   const connected = status?.authenticated === true;
   const hasCli = Boolean(status?.executable);
   const apiEnabled = status?.upstreamEnabled === true;
+  const apiReady = apiEnabled && connected && Boolean(status?.upstreamUrl);
   const awaitingFirstConnection = !connected && status?.activeAccount === 'default'
     && status.accounts.length === 1 && status.accounts[0].label === 'Default' && !status.accounts[0].email;
   const shownError = error || status?.error;
@@ -165,9 +166,9 @@ export function AcpAccessPage() {
       </> : <div className="acp-empty-state"><span className="acp-empty-icon"><LockKeyhole size={20} aria-hidden="true" /></span><strong>{t('acp.modelsLocked')}</strong><p>{t('acp.emptyModels')}</p><button type="button" className="secondary-button" disabled><Zap size={15} aria-hidden="true" />{t('acp.test')}</button></div>}
     </section>
 
-    <section className="panel surface-panel acp-model-card acp-api-card" aria-labelledby="acp-api-title" data-enabled={apiEnabled && connected}>
-      <div className="acp-section-heading"><div className="acp-section-identity"><span className="acp-section-icon"><Code2 size={17} aria-hidden="true" /></span><div><h2 id="acp-api-title">{t('acp.apiTitle')}</h2><p className="acp-muted">{t('acp.apiDescription')}</p></div></div><span className="acp-connection-status" role="status" data-connected={apiEnabled && connected}><span className="acp-status-dot" data-ready={apiEnabled && connected} aria-hidden="true" />{t(apiEnabled ? connected ? 'acp.apiEnabled' : 'acp.apiWaiting' : 'acp.apiDisabled')}</span></div>
-      {connected || apiEnabled ? <><p className="acp-muted">{t(apiEnabled && !connected ? 'acp.apiReconnectHint' : 'acp.apiHint')}</p>
+    <section className="panel surface-panel acp-model-card acp-api-card" aria-labelledby="acp-api-title" data-enabled={apiReady}>
+      <div className="acp-section-heading"><div className="acp-section-identity"><span className="acp-section-icon"><Code2 size={17} aria-hidden="true" /></span><div><h2 id="acp-api-title">{t('acp.apiTitle')}</h2><p className="acp-muted">{t('acp.apiDescription')}</p></div></div><span className="acp-connection-status" role="status" data-connected={apiReady}><span className="acp-status-dot" data-ready={apiReady} aria-hidden="true" />{t(apiEnabled ? apiReady ? 'acp.apiEnabled' : 'acp.apiWaiting' : 'acp.apiDisabled')}</span></div>
+      {connected || apiEnabled ? <><p className="acp-muted">{t(apiEnabled && !apiReady ? 'acp.apiReconnectHint' : 'acp.apiHint')}</p>
       <div className="acp-api-enable-row">{connected ? <div className="acp-api-summary"><span className="acp-model-total">{status.models.length}</span><div><strong>{t('acp.apiModelsTitle')}</strong><span>{t('acp.apiModelsHint')}</span></div></div> : null}
       <div className="acp-provider-actions"><button type="button" className={apiEnabled ? 'secondary-button' : 'primary-button'}
         disabled={busy || loading || (!status?.upstreamEnabled && !connected)}
@@ -175,7 +176,7 @@ export function AcpAccessPage() {
         {apiEnabled ? <Unplug size={15} aria-hidden="true" /> : <ArrowRight size={15} aria-hidden="true" />}{t(status?.upstreamEnabled ? 'acp.disableApi' : 'acp.enableApi')}
       </button></div></div>
       </> : <div className="acp-empty-state"><span className="acp-empty-icon"><Code2 size={20} aria-hidden="true" /></span><strong>{t('acp.apiLocked')}</strong><p>{t('acp.apiLockedHint')}</p><button type="button" className="secondary-button" disabled><ArrowRight size={15} aria-hidden="true" />{t('acp.enableApi')}</button></div>}
-      {apiEnabled && connected ? <details className="acp-api-details"><summary>{t('acp.apiUsageTitle')}<ChevronDown size={14} aria-hidden="true" /></summary><div className="acp-api-details-body">
+      {apiReady ? <details className="acp-api-details"><summary>{t('acp.apiUsageTitle')}<ChevronDown size={14} aria-hidden="true" /></summary><div className="acp-api-details-body">
         <p className="acp-muted">{t('acp.apiUsage')}</p>
         <div className="acp-code-example"><div className="acp-code-heading"><span><b>POST</b><code>/v1/chat/completions</code></span>
         <button type="button" className="secondary-button compact-button" onClick={() => void navigator.clipboard.writeText(example).then(() => setCopied(true)).catch(cause => setError(String(cause)))}><Copy size={14} aria-hidden="true" />{t(copied ? 'acp.exampleCopied' : 'common.copy')}</button>
