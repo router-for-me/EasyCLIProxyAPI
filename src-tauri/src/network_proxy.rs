@@ -648,10 +648,16 @@ async fn synchronize(app: &tauri::AppHandle, require_core: bool) -> Result<(), S
     })
     .await
     .map_err(|e| e.to_string())??;
-    if core_running {
+    if should_verify_core_proxy(&config, core_running) {
         verify_core_proxy(&config).await?;
     }
     Ok(())
+}
+
+// Verification repairs a mismatch by writing the GUI's proxy into the running core.
+// An external core's proxy is imported read-only, so there is nothing to push.
+fn should_verify_core_proxy(config: &GuiConfigFile, core_running: bool) -> bool {
+    core_running && !config.external_core
 }
 
 pub(crate) async fn prepare_oauth(app: &tauri::AppHandle) {
@@ -1038,6 +1044,17 @@ mod tests {
         assert!(persisted);
         assert!(current.proxy_override);
     }
+    #[test]
+    fn external_core_proxy_is_never_pushed_through_the_management_api() {
+        let managed = GuiConfigFile::default();
+        let external = GuiConfigFile { external_core: true, ..GuiConfigFile::default() };
+        assert!(should_verify_core_proxy(&managed, true));
+        assert!(!should_verify_core_proxy(&managed, false));
+        // Starting an OAuth login requires the core but must not rewrite its proxy.
+        assert!(!should_verify_core_proxy(&external, true));
+        assert!(!should_verify_core_proxy(&external, false));
+    }
+
     #[test]
     fn external_core_proxy_refresh_and_rollback_never_patch_service_yaml() {
         let root = crate::unique_test_temp_path("external-core-proxy");
