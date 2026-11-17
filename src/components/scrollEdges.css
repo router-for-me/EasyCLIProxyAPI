@@ -1,0 +1,25 @@
+@layer components {
+/* Edge shadow over a horizontal scroller where columns are hidden (scrollEdges.ts). The overlay is a sticky box the size of the
+   visible area, after the table: its negative top margin gives it no room in the flow, and sticky bottom/left keep it over the
+   visible area while the table scrolls, so it stays clear of both scrollbars and never clips the scroller's focus outline. */
+.scroll-edges::after {
+  content: '';
+  position: sticky;
+  z-index: 3;
+  bottom: 0;
+  left: 0;
+  display: block;
+  width: var(--scroll-edge-width, 0px);
+  height: var(--scroll-edge-height, 0px);
+  margin-top: calc(-1 * var(--scroll-edge-height, 0px));
+  pointer-events: none;
+  background:
+    linear-gradient(to right, var(--scroll-edge-line) 0 1px, var(--scroll-edge-shadow) 1px, transparent) var(--scroll-edge-start-inset, 0px) 0 / 0 100% no-repeat,
+    linear-gradient(to left, var(--scroll-edge-line) 0 1px, var(--scroll-edge-shadow) 1px, transparent) 100% 0 / 0 100% no-repeat;
+}
+.scroll-edges[data-scroll-start]::after { background-size: 14px 100%, 0 100%; }
+.scroll-edges[data-scroll-end]::after { background-size: 0 100%, 14px 100%; }
+.scroll-edges[data-scroll-start][data-scroll-end]::after { background-size: 14px 100%, 14px 100%; }
+/* Some focus rings are drawn just inside the box (Request Details, Price Statistics): keep the shadow off them while focused. */
+.scroll-edges:focus-visible::after { clip-path: inset(3px); }
+}

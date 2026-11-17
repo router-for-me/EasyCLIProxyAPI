@@ -1,4 +1,5 @@
 import { pollWhileActive, windowActivity } from '../services/windowActivity';
+import { scrollEdges } from '../components/scrollEdges';
 import { Notice } from '../components/Notice';
 import { EmptyState } from '../components/EmptyState';
 import { Checkbox } from '../components/Checkbox';
@@ -1852,7 +1853,7 @@ function PricingView({
       ) : null}
 
       {visibleRows.length ? (
-        <div className="usage-table-wrap usage-pricing-table-wrap" tabIndex={0} role="region" aria-label={t('usage.tab.pricing')}>
+        <div ref={scrollEdges} className="usage-table-wrap usage-pricing-table-wrap" tabIndex={0} role="region" aria-label={t('usage.tab.pricing')}>
           <table className="usage-pricing-table">
             <thead>
               <tr>

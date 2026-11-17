@@ -162,9 +162,13 @@
   --sidebar-popover-edge: rgba(15, 23, 42, 0.08);
   --sidebar-popover-shadow: 0 12px 32px -8px rgba(15, 23, 42, 0.2), 0 2px 6px rgba(15, 23, 42, 0.06);
   --sidebar-focus: color-mix(in srgb, var(--ui-accent) 70%, transparent);
+  --scroll-edge-shadow: rgba(15, 23, 42, 0.16);
+  --scroll-edge-line: color-mix(in srgb, var(--color-text-muted) 45%, transparent);
 }
 
 :root[data-theme='dark'] {
+  --scroll-edge-shadow: rgba(0, 0, 0, 0.6);
+  --scroll-edge-line: color-mix(in srgb, var(--color-text-muted) 45%, transparent);
   --usage-result-failed-text: #f87171;
   --button-danger-soft-bg: rgba(225, 29, 72, 0.14);
   --button-danger-soft-border: rgba(225, 29, 72, 0.35);
