@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::agent_usage::{
-    antigravity_session_database, antigravity_session_id, proxy_codex_delta, read_usage_file,
-    source_files, FileDelta, UsageCounter, SOURCE_NAMES,
+    antigravity_covered_steps, antigravity_session_database, antigravity_session_id,
+    proxy_codex_delta, read_usage_file, source_files, FileDelta, UsageCounter, SOURCE_NAMES,
 };
 use crate::usage::{load_agent_usage_prices, resolve_agent_usage_price, ModelPrice};
 
@@ -328,27 +328,95 @@ fn antigravity_key_path(key: &str) -> Option<&str> {
         .or_else(|| key.strip_prefix("antigravity:"))
 }
 
+/// Drops rows only when better evidence replaces them. A file whose read failed keeps
+/// its cached rows, so a transient SQLite/IO error can never shrink the reported total,
+/// and a mid-sync batch never treats unscanned files as archived.
+/// True when `path` is no longer selected but a canonical file of the same session was
+/// read and provably covers every request in it. Without that proof the rows stay.
+fn skipped_mirror_is_covered(
+    canonical: &HashMap<String, BTreeSet<String>>,
+    session: &str,
+    path: &str,
+    seen: &BTreeSet<String>,
+) -> bool {
+    if seen
+        .iter()
+        .any(|key| antigravity_key_path(key) == Some(path))
+    {
+        return false;
+    }
+    let Some(own) = antigravity_covered_steps(Path::new(path)) else {
+        return false;
+    };
+    canonical.get(session).is_some_and(|keys| {
+        keys.iter().any(|key| {
+            antigravity_key_path(key)
+                .and_then(|candidate| antigravity_covered_steps(Path::new(candidate)))
+                .is_some_and(|steps| steps.is_superset(&own))
+        })
+    })
+}
+
+/// Removes a legacy-key row set that is superseded by the same path under its v2 key.
+fn retire_legacy_key(transaction: &rusqlite::Transaction<'_>, key: &str) -> Result<(), String> {
+    for table in [
+        "agent_usage_daily",
+        "agent_usage_hourly",
+        "agent_usage_files",
+    ] {
+        transaction
+            .execute(&format!("DELETE FROM {table} WHERE file_key = ?1"), [key])
+            .map_err(|error| format!("Failed to drop retired Agent usage rows: {error}"))?;
+    }
+    Ok(())
+}
+
+fn readable_key_for_path<'a>(
+    path: &str,
+    seen: &'a BTreeSet<String>,
+    ready: &BTreeSet<String>,
+    failed: &BTreeSet<String>,
+) -> Option<&'a String> {
+    seen.iter().find(|key| {
+        antigravity_key_path(key) == Some(path) && ready.contains(*key) && !failed.contains(*key)
+    })
+}
+
 fn remove_antigravity_duplicate_rows(
     transaction: &rusqlite::Transaction<'_>,
     existing: &HashMap<String, (i64, i64, bool)>,
     seen: &BTreeSet<String>,
+    ready: &BTreeSet<String>,
+    failed: &BTreeSet<String>,
+    partial: bool,
 ) -> Result<(), String> {
     let mut canonical: HashMap<String, BTreeSet<String>> = HashMap::new();
     let mut canonical_paths: BTreeSet<&str> = BTreeSet::new();
+    // Sessions that still carry a canonical file this sync could not read.
+    let mut unresolved: BTreeSet<String> = BTreeSet::new();
     for key in seen {
         let Some(path) = antigravity_key_path(key) else {
             continue;
         };
-        canonical_paths.insert(path);
+        let readable = ready.contains(key) && !failed.contains(key);
+        if readable {
+            canonical_paths.insert(path);
+        }
         let Some(session) = antigravity_session_id(Path::new(path)) else {
             continue;
         };
-        canonical.entry(session).or_default().insert(key.clone());
+        if readable {
+            canonical.entry(session).or_default().insert(key.clone());
+        } else {
+            unresolved.insert(session);
+        }
     }
-    if canonical.is_empty() {
+    // Legacy layouts have no session directory, so a readable path alone must still
+    // reach the exact-path retirement below.
+    if canonical.is_empty() && unresolved.is_empty() && canonical_paths.is_empty() {
         return Ok(());
     }
-    let mut old_by_session: HashMap<String, Vec<String>> = HashMap::new();
+    let mut old_by_session: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for key in existing.keys() {
         if seen.contains(key) {
             continue;
@@ -356,13 +424,26 @@ fn remove_antigravity_duplicate_rows(
         let Some(path) = antigravity_key_path(key) else {
             continue;
         };
-        if let Some(session) = antigravity_session_id(Path::new(path)) {
-            old_by_session.entry(session).or_default().push(key.clone());
+        let session = antigravity_session_id(Path::new(path));
+        // A session with any unreadable canonical file keeps every cached row: those
+        // rows are the only remaining record of its usage.
+        if session
+            .as_ref()
+            .is_some_and(|session| unresolved.contains(session))
+        {
+            continue;
         }
-        let exact_path = canonical_paths.contains(path);
-        let same_session = antigravity_session_id(Path::new(path))
-            .is_some_and(|session| canonical.contains_key(&session));
-        if !exact_path && !same_session {
+        // Legacy layouts have no session directory: the exact path is the whole identity.
+        let Some(session) = session else {
+            if readable_key_for_path(path, seen, ready, failed).is_some() {
+                retire_legacy_key(transaction, key)?;
+            }
+            continue;
+        };
+        let superseded = readable_key_for_path(path, seen, ready, failed).is_some()
+            || skipped_mirror_is_covered(&canonical, &session, path, seen);
+        if !superseded {
+            old_by_session.entry(session).or_default().push(key.clone());
             continue;
         }
         transaction
@@ -375,11 +456,50 @@ fn remove_antigravity_duplicate_rows(
             .execute("DELETE FROM agent_usage_files WHERE file_key = ?1", [key])
             .map_err(|error| format!("Failed to drop duplicate Agent usage files: {error}"))?;
     }
+    if partial {
+        // The file list is only partially scanned: a key outside `seen` is not evidence
+        // that its session was archived, so session-level consolidation must wait.
+        return Ok(());
+    }
     for (session, mut keys) in old_by_session {
         if canonical.contains_key(&session) || keys.len() <= 1 {
             continue;
         }
+        // `existing` is a HashMap: a stable order keeps the keeper choice repeatable.
         keys.sort();
+        // Collapse legacy/v2 pairs for the same path: the v2 key is the live copy, and
+        // migrating a legacy keeper onto it would let the deletion below remove both.
+        let mut seen_paths: BTreeSet<String> = BTreeSet::new();
+        let mut survivors = Vec::new();
+        for key in keys
+            .iter()
+            .filter(|key| key.starts_with("antigravity:v2:"))
+            .chain(
+                keys.iter()
+                    .filter(|key| !key.starts_with("antigravity:v2:")),
+            )
+        {
+            let Some(path) = antigravity_key_path(key) else {
+                continue;
+            };
+            if !seen_paths.insert(path.to_string()) {
+                retire_legacy_key(transaction, key)?;
+                continue;
+            }
+            survivors.push(key.clone());
+        }
+        let keys = survivors;
+        if keys.len() <= 1 {
+            continue;
+        }
+        // A chunk-only session is one transcript split over several files: a single
+        // chunk holds just part of it, so it must never become the sole survivor.
+        if keys
+            .iter()
+            .all(|key| antigravity_key_path(key).is_some_and(|path| path.contains("/chunks/")))
+        {
+            continue;
+        }
         let keeper = keys
             .iter()
             .enumerate()
@@ -773,6 +893,7 @@ pub(crate) fn sync(
         };
         let mut seen: BTreeSet<String> = BTreeSet::new();
         let mut ready: BTreeSet<String> = BTreeSet::new();
+        let mut failed: BTreeSet<String> = BTreeSet::new();
         let mut transaction = connection
             .transaction()
             .map_err(|error| format!("Failed to start agent usage transaction: {error}"))?;
@@ -808,9 +929,23 @@ pub(crate) fn sync(
                     changed_files += 1;
                     pending += 1;
                 }
-                Err(()) => {},
+                Err(()) => {
+                    failed.insert(key.clone());
+                }
             }
             if pending >= SYNC_BATCH_FILES {
+                if *source == "antigravity" {
+                    // Retire superseded rows in the same batch that wrote their
+                    // replacements, so an interrupted sync cannot leave both counted.
+                    remove_antigravity_duplicate_rows(
+                        &transaction,
+                        &existing,
+                        &seen,
+                        &ready,
+                        &failed,
+                        true,
+                    )?;
+                }
                 transaction.commit().map_err(|error| {
                     format!("Failed to commit agent usage transaction: {error}")
                 })?;
@@ -835,7 +970,14 @@ pub(crate) fn sync(
         }
 
         if *source == "antigravity" {
-            remove_antigravity_duplicate_rows(&transaction, &existing, &ready)?;
+            remove_antigravity_duplicate_rows(
+                &transaction,
+                &existing,
+                &seen,
+                &ready,
+                &failed,
+                false,
+            )?;
         }
 
         for key in existing.keys() {
@@ -1588,6 +1730,230 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    fn probe_seed(connection: &Connection, keys: &[(String, i64)]) {
+        for (key, tokens) in keys {
+            connection
+                .execute(
+                    "INSERT OR REPLACE INTO agent_usage_files
+                        (file_key, source, path, size, mtime_ns, scanned_at, present)
+                     VALUES (?1, 'antigravity', ?1, 1, 1, 1, 1)",
+                    [key],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO agent_usage_daily
+                        (file_key, source, day, model, input_tokens, output_tokens,
+                         cache_read_tokens, cache_creation_tokens, reasoning_tokens,
+                         total_tokens, samples)
+                     VALUES (?1, 'antigravity', '2026-11-17', 'm', ?2, 0, 0, 0, 0, ?2, 1)",
+                    params![key, tokens],
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn keeps_cached_rows_when_a_canonical_chunk_cannot_be_read() {
+        let root = test_root("agy-unreadable-chunk");
+        let home = root.join("home");
+        let session = "66666666-6666-6666-6666-666666666666";
+        let logs = home
+            .join(".gemini/antigravity/brain")
+            .join(session)
+            .join(".system_generated/logs");
+        let good = logs.join("chunks/transcript/00000000.jsonl");
+        let bad = logs.join("chunks/transcript/00000001.jsonl");
+        fs::create_dir_all(good.parent().unwrap()).unwrap();
+        fs::write(
+            &good,
+            format!(
+                "{}\n",
+                json!({"step_index": 1, "source": "MODEL", "type": "PLANNER_RESPONSE",
+                    "created_at": local_timestamp(2026, 11, 17, 3),
+                    "input_tokens": 10, "output_tokens": 1})
+            ),
+        )
+        .unwrap();
+        // A directory where a file is expected: the read fails deterministically.
+        fs::create_dir_all(&bad).unwrap();
+        let mut connection = open_store_at(&root.join("agent_usage.db")).unwrap();
+        probe_seed(
+            &connection,
+            &[
+                (format!("antigravity:{}", good.display()), 10),
+                (format!("antigravity:{}", bad.display()), 50),
+            ],
+        );
+        sync(&mut connection, &home, None, |_| {}).unwrap();
+        let total: i64 = connection
+            .query_row(
+                "SELECT COALESCE(SUM(total_tokens), 0) FROM agent_usage_daily
+                 WHERE source = 'antigravity'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            total >= 60,
+            "unreadable chunk lost its cached usage: total={total}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn migrates_legacy_only_antigravity_rows_without_double_counting() {
+        let root = test_root("agy-legacy-migration");
+        let home = root.join("home");
+        let legacy = home.join(".antigravity-ide/logs/session.jsonl");
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::write(
+            &legacy,
+            format!(
+                "{}\n",
+                json!({"step_index": 1, "source": "MODEL", "type": "PLANNER_RESPONSE",
+                    "created_at": local_timestamp(2026, 11, 17, 3),
+                    "input_tokens": 40, "output_tokens": 4})
+            ),
+        )
+        .unwrap();
+        let mut connection = open_store_at(&root.join("agent_usage.db")).unwrap();
+        probe_seed(
+            &connection,
+            &[(format!("antigravity:{}", legacy.display()), 44)],
+        );
+        sync(&mut connection, &home, None, |_| {}).unwrap();
+        let total: i64 = connection
+            .query_row(
+                "SELECT COALESCE(SUM(total_tokens), 0) FROM agent_usage_daily
+                 WHERE source = 'antigravity'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(total, 44, "legacy row was counted twice after migration");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn keeps_archived_chunk_sets_instead_of_guessing_a_survivor() {
+        let root = test_root("agy-archived-chunks");
+        let home = root.join("home");
+        let session = "77777777-7777-7777-7777-777777777777";
+        let logs = home
+            .join(".gemini/antigravity/brain")
+            .join(session)
+            .join(".system_generated/logs");
+        let chunk_a = logs.join("chunks/transcript/00000000.jsonl");
+        let chunk_b = logs.join("chunks/transcript/00000001.jsonl");
+        let mut connection = open_store_at(&root.join("agent_usage.db")).unwrap();
+        probe_seed(
+            &connection,
+            &[
+                (format!("antigravity:{}", chunk_a.display()), 10),
+                (format!("antigravity:{}", chunk_b.display()), 20),
+            ],
+        );
+        sync(&mut connection, &home, None, |_| {}).unwrap();
+        let total: i64 = connection
+            .query_row(
+                "SELECT COALESCE(SUM(total_tokens), 0) FROM agent_usage_daily
+                 WHERE source = 'antigravity'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(total, 30, "archived chunk usage was partially dropped");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn archived_legacy_and_v2_pair_keeps_one_complete_copy() {
+        let root = test_root("agy-keeper-pair");
+        let home = root.join("home");
+        let active = home.join(
+            ".gemini/antigravity/brain/aaaaaaaa-1111-1111-1111-111111111111/.system_generated/logs/transcript.jsonl",
+        );
+        fs::create_dir_all(active.parent().unwrap()).unwrap();
+        fs::write(
+            &active,
+            format!(
+                "{}\n",
+                json!({"step_index": 1, "source": "MODEL", "type": "PLANNER_RESPONSE",
+                    "created_at": local_timestamp(2026, 11, 17, 3),
+                    "input_tokens": 5, "output_tokens": 1})
+            ),
+        )
+        .unwrap();
+        let archived = "bbbbbbbb-2222-2222-2222-222222222222";
+        let archived_path = home
+            .join(".gemini/antigravity/brain")
+            .join(archived)
+            .join(".system_generated/logs/transcript.jsonl");
+        let mut connection = open_store_at(&root.join("agent_usage.db")).unwrap();
+        probe_seed(
+            &connection,
+            &[
+                (format!("antigravity:{}", archived_path.display()), 100),
+                (format!("antigravity:v2:{}", archived_path.display()), 100),
+            ],
+        );
+        sync(&mut connection, &home, None, |_| {}).unwrap();
+        let total: i64 = connection
+            .query_row(
+                "SELECT COALESCE(SUM(total_tokens), 0) FROM agent_usage_daily
+                 WHERE source = 'antigravity' AND file_key LIKE ?1",
+                [format!("%{archived}%")],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(total, 100, "archived history must survive as one copy");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn batch_cleanup_never_treats_unscanned_sessions_as_archived() {
+        let root = test_root("agy-batch-unscanned");
+        let home = root.join("home");
+        let mut seeded = Vec::new();
+        for index in 0..40u32 {
+            let session = format!("dddddddd-{index:04}-0000-0000-000000000000");
+            let path = home
+                .join(".gemini/antigravity/brain")
+                .join(&session)
+                .join(".system_generated/logs/transcript.jsonl");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(
+                &path,
+                format!(
+                    "{}\n",
+                    json!({"step_index": 1, "source": "MODEL", "type": "PLANNER_RESPONSE",
+                        "created_at": local_timestamp(2026, 11, 17, 3),
+                        "input_tokens": 10, "output_tokens": 1})
+                ),
+            )
+            .unwrap();
+            seeded.push((format!("antigravity:{}", path.display()), 11));
+        }
+        let mut connection = open_store_at(&root.join("agent_usage.db")).unwrap();
+        probe_seed(&connection, &seeded);
+        sync(&mut connection, &home, None, |_| {}).unwrap();
+        let total: i64 = connection
+            .query_row(
+                "SELECT COALESCE(SUM(total_tokens), 0) FROM agent_usage_daily
+                 WHERE source = 'antigravity'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            total,
+            40 * 11,
+            "a mid-sync batch must not drop sessions it has not scanned yet"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn drops_antigravity_mirror_rows_when_canonical_transcript_exists() {
         let root = test_root("agy-mirror");
@@ -1863,7 +2229,7 @@ mod tests {
     #[test]
     fn buckets_long_ranges_and_filters_by_source() {
         let root = test_root("buckets");
-        let mut connection = open_store_at(&root.join("agent_usage.db")).unwrap();
+        let connection = open_store_at(&root.join("agent_usage.db")).unwrap();
         let today = Local::now().date_naive();
         for offset in [0, 40] {
             let day = (today - Duration::days(offset))
@@ -1899,7 +2265,7 @@ mod tests {
     #[test]
     fn returns_the_hourly_grid_for_day_ranges_within_retention() {
         let root = test_root("hourly-grid");
-        let mut connection = open_store_at(&root.join("agent_usage.db")).unwrap();
+        let connection = open_store_at(&root.join("agent_usage.db")).unwrap();
         let today = Local::now().date_naive();
         let day = today.format("%Y-%m-%d").to_string();
         for hour in [9, 10] {

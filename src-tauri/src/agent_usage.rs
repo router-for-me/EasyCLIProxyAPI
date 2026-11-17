@@ -2,7 +2,7 @@ use chrono::{DateTime, Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::types::ValueRef;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Map, Value};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -467,7 +467,8 @@ pub(crate) fn source_files(home: &Path, source: &str) -> Vec<PathBuf> {
                 .and_then(|ext| ext.to_str())
                 .unwrap_or_default();
             if ext.eq_ignore_ascii_case("sqlite") || ext.eq_ignore_ascii_case("db") {
-                name.eq_ignore_ascii_case("db.sqlite") || name.eq_ignore_ascii_case("model_usage.db")
+                name.eq_ignore_ascii_case("db.sqlite")
+                    || name.eq_ignore_ascii_case("model_usage.db")
             } else {
                 ext.eq_ignore_ascii_case("jsonl")
             }
@@ -510,7 +511,7 @@ fn antigravity_source_files(home: &Path) -> Vec<PathBuf> {
                     }
                     let replace = sessions
                         .get(&session)
-                        .map_or(true, |(current, _)| priority < *current);
+                        .is_none_or(|(current, _)| priority < *current);
                     if replace {
                         sessions.insert(session, (priority, candidates));
                     }
@@ -540,17 +541,68 @@ fn antigravity_source_files(home: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// Requests covered by a transcript, used to compare mirrored log files. A larger
+/// `step_index` alone is not coverage: a file holding only step 100 must not outrank a
+/// file holding steps 1..100, so the whole set of steps is collected.
+pub(crate) fn antigravity_covered_steps(path: &Path) -> Option<BTreeSet<u64>> {
+    // Only regular files: reading a directory as a file never advances, because every
+    // `lines()` item is an error and the loop would spin without terminating.
+    if !fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file()) {
+        return None;
+    }
+    let file = File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    let mut steps = BTreeSet::new();
+    for line in reader.lines() {
+        let Ok(line) = line else { break };
+        if line.len() > MAX_JSON_LINE_BYTES {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if let Some(step) = value.get("step_index").and_then(Value::as_u64) {
+            steps.insert(step);
+        }
+    }
+    (!steps.is_empty()).then_some(steps)
+}
+
 fn antigravity_log_candidates(logs: &Path) -> Vec<PathBuf> {
     if has_symlink_ancestor(logs) || !is_regular_dir(logs) {
         return Vec::new();
     }
-    let transcript = logs.join("transcript.jsonl");
-    if is_non_empty_regular_file(&transcript) {
-        return vec![transcript];
-    }
-    let full = logs.join("transcript_full.jsonl");
-    if is_non_empty_regular_file(&full) {
-        return vec![full];
+    // transcript.jsonl and transcript_full.jsonl mirror the same session, but a partial
+    // transcript can coexist with a fuller copy. Compare the requests each file covers
+    // instead of trusting the name; incomparable coverage keeps both, so a wrong choice
+    // can never drop usage.
+    let coverage: Vec<(PathBuf, Option<BTreeSet<u64>>)> =
+        ["transcript.jsonl", "transcript_full.jsonl"]
+            .iter()
+            .map(|name| logs.join(name))
+            .filter(|path| is_non_empty_regular_file(path))
+            .map(|path| {
+                let steps = antigravity_covered_steps(&path);
+                (path, steps)
+            })
+            .collect();
+    match coverage.as_slice() {
+        [] => {}
+        [(path, _)] => return vec![path.clone()],
+        [(left_path, left), (right_path, right), ..] => {
+            match (left, right) {
+                (Some(a), Some(b)) if a.is_superset(b) => return vec![left_path.clone()],
+                (Some(a), Some(b)) if b.is_superset(a) => return vec![right_path.clone()],
+                (Some(_), None) => return vec![left_path.clone()],
+                (None, Some(_)) => return vec![right_path.clone()],
+                // No parseable steps in either mirror: same session, so read one.
+                (None, None) => return vec![left_path.clone()],
+                _ => {}
+            }
+            let mut all: Vec<PathBuf> = coverage.into_iter().map(|(path, _)| path).collect();
+            all.sort();
+            return all;
+        }
     }
     let chunks_root = logs.join("chunks");
     if !is_regular_dir(&chunks_root) {
@@ -790,10 +842,6 @@ pub(crate) fn read_usage_file(path: &Path, source: &str, delta: &mut FileDelta) 
                 }
                 let step = value.get("step_index").and_then(Value::as_u64);
                 if let Some(mut sample) = extract_usage(&value, source) {
-                    let signature = antigravity_sample_signature(&value, &sample);
-                    if !antigravity_samples.insert(signature) {
-                        continue;
-                    }
                     if sample.model.is_none() {
                         sample.model = antigravity_models
                             .as_ref()
@@ -801,6 +849,13 @@ pub(crate) fn read_usage_file(path: &Path, source: &str, delta: &mut FileDelta) 
                             .map(str::to_string)
                             .or_else(|| antigravity_settings_model.clone())
                             .or_else(|| delta.session_model.clone());
+                    }
+                    // Identity is computed after attribution: two requests that differ
+                    // only by their resolved model must never be collapsed into one.
+                    if let Some(signature) = antigravity_sample_signature(&value, &sample) {
+                        if !antigravity_samples.insert(signature) {
+                            continue;
+                        }
                     }
                     add_sample_usage(sample, &value, path, delta);
                 } else {
@@ -938,8 +993,16 @@ fn read_zcode_database(path: &Path, delta: &mut FileDelta) -> Result<(), ()> {
         .map_err(|_| ())?;
 
     for row in rows {
-        let (started_at, model, input, output, cache_read, cache_creation, reasoning, computed_total) =
-            row.map_err(|_| ())?;
+        let (
+            started_at,
+            model,
+            input,
+            output,
+            cache_read,
+            cache_creation,
+            reasoning,
+            computed_total,
+        ) = row.map_err(|_| ())?;
         let Some(timestamp) = Local.timestamp_millis_opt(started_at).single() else {
             continue;
         };
@@ -947,21 +1010,23 @@ fn read_zcode_database(path: &Path, delta: &mut FileDelta) -> Result<(), ()> {
         let hour = timestamp.hour() as u8;
         let model = sanitize_model_name(&model);
 
-        let mut counter = UsageCounter::default();
-        counter.cache_read_tokens = cache_read;
-        counter.cache_creation_tokens = cache_creation;
-        counter.reasoning_tokens = reasoning;
-        counter.output_tokens = output;
-        counter.input_tokens = input.saturating_sub(cache_read);
-        if computed_total > 0 {
-            counter.total_tokens = computed_total;
+        let mut counter = UsageCounter {
+            cache_read_tokens: cache_read,
+            cache_creation_tokens: cache_creation,
+            reasoning_tokens: reasoning,
+            output_tokens: output,
+            input_tokens: input.saturating_sub(cache_read),
+            ..Default::default()
+        };
+        counter.total_tokens = if computed_total > 0 {
+            computed_total
         } else {
-            counter.total_tokens = counter
+            counter
                 .input_tokens
                 .saturating_add(output)
                 .saturating_add(cache_read)
-                .saturating_add(cache_creation);
-        }
+                .saturating_add(cache_creation)
+        };
         counter.samples = 1;
 
         add_counter(
@@ -1002,28 +1067,26 @@ impl AntigravityModelIndex {
     }
 }
 
-fn antigravity_sample_signature(value: &Value, sample: &UsageSample) -> String {
-    let step = value
-        .get("step_index")
-        .and_then(Value::as_u64)
-        .map(|step| step.to_string())
+/// Identity of an Antigravity sample for mirror deduplication. Mirrors repeat a request
+/// verbatim, so every identity field must match; a missing field makes the sample unique
+/// instead of collapsing it, and the resolved model is part of the identity.
+fn antigravity_sample_signature(value: &Value, sample: &UsageSample) -> Option<String> {
+    let step = value.get("step_index").and_then(Value::as_u64)?;
+    let created = value.get("created_at").and_then(Value::as_str)?;
+    let kind = value.get("type").and_then(Value::as_str)?;
+    let model = sample
+        .model
+        .as_deref()
+        .or_else(|| value.get("model").and_then(Value::as_str))
         .unwrap_or_default();
-    let created = value
-        .get("created_at")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let kind = value
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    format!(
-        "{step}|{created}|{kind}|{}|{}|{}|{}|{}",
+    Some(format!(
+        "{step}|{created}|{kind}|{model}|{}|{}|{}|{}|{}",
         sample.counter.input_tokens,
         sample.counter.output_tokens,
         sample.counter.cache_read_tokens,
         sample.counter.cache_creation_tokens,
         sample.counter.reasoning_tokens
-    )
+    ))
 }
 
 fn antigravity_session_root(path: &Path) -> Option<(PathBuf, String)> {
@@ -2746,6 +2809,94 @@ mod tests {
             "output_tokens": output,
             "cache_read_tokens": 0
         })
+    }
+
+    #[test]
+    fn prefers_the_mirror_that_covers_more_steps() {
+        let home = test_directory("agy-coverage");
+        let session = "4b4b4b4b-4b4b-4b4b-4b4b-4b4b4b4b4b4b";
+        let logs = home
+            .join(".gemini/antigravity/brain")
+            .join(session)
+            .join(".system_generated/logs");
+        fs::create_dir_all(&logs).unwrap();
+        let older = antigravity_usage_line(1, 10, 1).to_string();
+        let newer = antigravity_usage_line(2, 500, 50).to_string();
+        fs::write(logs.join("transcript.jsonl"), format!("{older}\n")).unwrap();
+        fs::write(
+            logs.join("transcript_full.jsonl"),
+            format!("{older}\n{newer}\n"),
+        )
+        .unwrap();
+        let files = source_files(&home, "antigravity");
+        assert_eq!(files.len(), 1, "both mirrors were scanned: {files:?}");
+        assert!(files[0].ends_with("transcript_full.jsonl"));
+        let mut delta = FileDelta::default();
+        read_usage_file(&files[0], "antigravity", &mut delta).unwrap();
+        assert_eq!(delta_total(&delta).input_tokens, 510);
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn keeps_samples_that_differ_only_by_model() {
+        let home = test_directory("agy-dedup-model");
+        let session = "3c3c3c3c-3c3c-3c3c-3c3c-3c3c3c3c3c3c";
+        let mut first = antigravity_usage_line(1, 100, 10);
+        first["model"] = json!("gemini-3.8-flash-high");
+        let mut second = antigravity_usage_line(1, 100, 10);
+        second["model"] = json!("gemini-3.8-flash-low");
+        let path = write_antigravity_transcript(&home, session, &[first, second]);
+        let mut delta = FileDelta::default();
+        read_usage_file(&path, "antigravity", &mut delta).unwrap();
+        let total = delta_total(&delta);
+        assert_eq!(total.samples, 2);
+        assert_eq!(total.input_tokens, 200);
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn attributes_each_request_to_the_model_selected_at_that_time() {
+        let home = test_directory("agy-settings-split");
+        let session = "5a5a5a5a-5a5a-5a5a-5a5a-5a5a5a5a5a5a";
+        let settings = |label: &str, second: u32| {
+            json!({
+                "step_index": 0,
+                "source": "USER_EXPLICIT",
+                "type": "USER_INPUT",
+                "created_at": local_timestamp(2026, 11, 17, second),
+                "content": format!("<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` to {label}. No need to comment.\n</USER_SETTINGS_CHANGE>")
+            })
+        };
+        let mut first = antigravity_usage_line(1, 100, 10);
+        first["created_at"] = json!(local_timestamp(2026, 11, 17, 1));
+        let mut second = antigravity_usage_line(2, 200, 20);
+        second["created_at"] = json!(local_timestamp(2026, 11, 17, 4));
+        let path = write_antigravity_transcript(
+            &home,
+            session,
+            &[
+                settings("Gemini 3.8 Flash (High)", 0),
+                first,
+                settings("Gemini 3.8 Flash (Low)", 3),
+                second,
+            ],
+        );
+        let mut delta = FileDelta::default();
+        read_usage_file(&path, "antigravity", &mut delta).unwrap();
+        let mut grouped: Vec<(String, u64)> = delta
+            .daily
+            .iter()
+            .map(|((_, model), counter)| (model.clone(), counter.input_tokens))
+            .collect();
+        grouped.sort();
+        assert_eq!(
+            grouped,
+            vec![
+                ("gemini-3.8-flash-high".to_string(), 100),
+                ("gemini-3.8-flash-low".to_string(), 200),
+            ]
+        );
+        fs::remove_dir_all(home).unwrap();
     }
 
     #[test]
