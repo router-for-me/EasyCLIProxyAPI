@@ -22,6 +22,71 @@ fn request(stream: bool) -> Value {
     json!({"model":"acp/test-model","messages":[{"role":"user","content":"ping"}],"stream":stream})
 }
 
+fn chat_stream(body: &str, finish: &str) -> Vec<Value> {
+    let mut frames = body.split("\n\n").filter(|frame| !frame.trim().is_empty());
+    let mut chunks = Vec::new();
+    let mut done = false;
+    for frame in frames.by_ref() {
+        assert!(!done, "SSE data after [DONE]: {body}");
+        let data = frame.strip_prefix("data: ").expect("Chat SSE data frame");
+        if data == "[DONE]" {
+            done = true;
+            continue;
+        }
+        let chunk: Value = serde_json::from_str(data).expect("valid Chat chunk JSON");
+        assert_eq!(chunk["object"], "chat.completion.chunk");
+        assert!(chunk["id"].is_string() && chunk["model"].is_string());
+        assert!(chunk["created"].is_u64());
+        assert_eq!(chunk["choices"].as_array().unwrap().len(), 1);
+        assert_eq!(chunk["choices"][0]["index"], 0);
+        assert!(chunk["choices"][0]["delta"].is_object());
+        if let Some(first) = chunks.first() {
+            let first: &Value = first;
+            assert_eq!(chunk["id"], first["id"]);
+            assert_eq!(chunk["model"], first["model"]);
+            assert_eq!(chunk["created"], first["created"]);
+        }
+        chunks.push(chunk);
+    }
+    assert!(done, "missing [DONE]: {body}");
+    assert_eq!(chunks[0]["choices"][0]["delta"]["role"], "assistant");
+    assert_eq!(
+        chunks.last().unwrap()["choices"][0]["finish_reason"],
+        finish
+    );
+    assert!(chunks[..chunks.len() - 1]
+        .iter()
+        .all(|chunk| chunk["choices"][0]["finish_reason"].is_null()));
+    chunks
+}
+
+#[test]
+fn streaming_backpressure_preserves_chunks_and_can_be_cancelled() {
+    for cancel_wait in [false, true] {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        sender.try_send(Ok("queued".into())).unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let events = CompletionStream {
+            sender,
+            cancel: cancel.clone(),
+            id: "test".into(),
+            model: "test".into(),
+            created: 1,
+            started: false,
+        };
+        let worker = std::thread::spawn(move || events.send(Ok("next".into())));
+        if cancel_wait {
+            cancel.store(true, Ordering::Release);
+            assert!(worker.join().unwrap().is_err());
+        } else {
+            assert_eq!(receiver.blocking_recv().unwrap().unwrap(), "queued");
+            assert!(worker.join().unwrap().is_ok());
+            assert_eq!(receiver.blocking_recv().unwrap().unwrap(), "next");
+            assert!(!cancel.load(Ordering::Acquire));
+        }
+    }
+}
+
 fn bridge_fixture() -> (tauri::App<tauri::test::MockRuntime>, PathBuf) {
     let app = tauri::test::mock_app();
     app.manage(AcpState::default());
@@ -590,7 +655,10 @@ fn provider_registration_preserves_unrelated_routes_in_both_schemas() {
         assert_eq!(groups.as_sequence().unwrap().len(), 2);
         assert_eq!(groups[0]["name"].as_str(), Some("existing"));
         assert!(groups[1].get("proxy-url").is_none());
-        assert_eq!(groups[1][if v8 { "keys" } else { "api-key-entries" }][0]["proxy-url"].as_str(), Some("direct"));
+        assert_eq!(
+            groups[1][if v8 { "keys" } else { "api-key-entries" }][0]["proxy-url"].as_str(),
+            Some("direct")
+        );
         assert_eq!(
             groups[1]["models"][0]["name"].as_str(),
             Some("acp/test-model")
@@ -618,12 +686,31 @@ fn disable_removes_stale_provider_entries_from_both_paths_in_a_mixed_config() {
         "config-version": 8,
         "openai-compatibility": [{"name": PROVIDER}, {"name": "legacy-other"}],
         "api-keys": {"openai-compatibility": [{"name": PROVIDER}, {"name": "v8-other"}]}
-    })).unwrap();
+    }))
+    .unwrap();
     assert!(patch_provider(&mut document, None).unwrap());
-    assert_eq!(document["openai-compatibility"][0]["name"].as_str(), Some("legacy-other"));
-    assert_eq!(document["openai-compatibility"].as_sequence().unwrap().len(), 1);
-    assert_eq!(document["api-keys"]["openai-compatibility"][0]["name"].as_str(), Some("v8-other"));
-    assert_eq!(document["api-keys"]["openai-compatibility"].as_sequence().unwrap().len(), 1);
+    assert_eq!(
+        document["openai-compatibility"][0]["name"].as_str(),
+        Some("legacy-other")
+    );
+    assert_eq!(
+        document["openai-compatibility"]
+            .as_sequence()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        document["api-keys"]["openai-compatibility"][0]["name"].as_str(),
+        Some("v8-other")
+    );
+    assert_eq!(
+        document["api-keys"]["openai-compatibility"]
+            .as_sequence()
+            .unwrap()
+            .len(),
+        1
+    );
     assert!(!patch_provider(&mut document, None).unwrap());
 }
 
@@ -921,6 +1008,21 @@ fn fake_official_server() {
                     !selected.is_empty(),
                     "explicit model selection must precede inference"
                 );
+                let prompt = value["params"]["prompt"][0]["text"].as_str().unwrap();
+                if prompt == "fail-before-output" || prompt == "fail-after-output" {
+                    if prompt == "fail-after-output" {
+                        println!(
+                            "{}",
+                            json!({"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"partial"}}}})
+                        );
+                    }
+                    println!(
+                        "{}",
+                        json!({"jsonrpc":"2.0","id":value["id"],"error":{"code":-32603,"message":"simulated upstream failure"}})
+                    );
+                    std::io::stdout().flush().unwrap();
+                    continue;
+                }
                 if value["params"]["prompt"][0]["text"] == "use-client-tool" {
                     let env = tool_config["env"].as_array().unwrap();
                     let port: u16 = env
@@ -1155,16 +1257,43 @@ async fn authenticated_http_bridge_lists_models_completes_streams_and_cancels_di
         if stream {
             assert_eq!(response.headers()["content-type"], "text/event-stream");
             let body = response.text().await.unwrap();
-            assert!(
-                body.contains("ACP_")
-                    && body.contains("OK")
-                    && body.contains("[DONE]")
-                    && body.contains("finish_reason")
-            );
+            let chunks = chat_stream(&body, "stop");
+            let text: String = chunks
+                .iter()
+                .filter_map(|chunk| chunk["choices"][0]["delta"]["content"].as_str())
+                .collect();
+            assert_eq!(text, "ACP_OK");
         } else {
             let body: Value = response.json().await.unwrap();
             assert_eq!(body["model"], advertised_model);
             assert_eq!(body["choices"][0]["message"]["content"], "ACP_OK");
+        }
+    }
+    for after_output in [false, true] {
+        let mut payload = request(true);
+        payload["messages"][0]["content"] = json!(if after_output {
+            "fail-after-output"
+        } else {
+            "fail-before-output"
+        });
+        let response = http
+            .post(format!("{base}/v1/chat/completions"))
+            .bearer_auth("internal-test-key")
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), if after_output { 200 } else { 502 });
+        let body = response.text().await.unwrap();
+        assert!(body.contains("simulated upstream failure"));
+        assert!(
+            !body.contains("[DONE]"),
+            "a failed stream cannot finish successfully: {body}"
+        );
+        if after_output {
+            assert!(body.contains("event: error\n"));
+            assert!(body.contains("partial"));
+            assert!(!body.contains("\"finish_reason\":\"stop\""));
         }
     }
     let mut waiting = request(true);
@@ -1250,7 +1379,8 @@ async fn real_cpa_lists_and_routes_registered_acp_models() {
         "config-version":8,"server":{"host":"127.0.0.1","port":port},
         "management":{"disable-control-panel":true,"disable-auto-update-panel":true},
         "oauth":{"auth-dir":directory.join("auth")},"access":{"api-keys":["isolated-client-key"]},
-        "logging":{"to-file":false},"requests":{"retry":0}
+        "logging":{"to-file":false},"requests":{"retry":0},
+        "api-keys":{"openai-compatibility":[{"name":"unrelated-disabled","disabled":true,"base-url":"http://127.0.0.1:1/v1","keys":[{"api-key":"unused-test-key"}],"models":[{"name":"unused-test-model"}]}]}
     }))
     .unwrap();
     patch_provider(
@@ -1350,8 +1480,10 @@ async fn real_cpa_lists_and_routes_registered_acp_models() {
                         if completed.unwrap()["response"]["status"] != "completed" {
                             return Err(format!("CPA Responses did not complete: {body}"));
                         }
-                    } else if !body.contains("[DONE]") || !body.contains("ACP_") {
-                        return Err(format!("Incomplete CPA Chat SSE: {body}"));
+                    } else {
+                        let chunks = chat_stream(&body, "stop");
+                        let text: String = chunks.iter().filter_map(|chunk|chunk["choices"][0]["delta"]["content"].as_str()).collect();
+                        if text != "ACP_OK" { return Err(format!("Incomplete CPA Chat SSE: {body}")); }
                     }
                 } else {
                     let body: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
@@ -1370,18 +1502,41 @@ async fn real_cpa_lists_and_routes_registered_acp_models() {
         // fake Agent blocks on the internal tool transport until the second
         // HTTP request supplies its result; no prompt restart is involved.
         for responses in [false, true] {
+            for first_stream in [false, true] {
             for stream in [false, true] {
                 let messages = json!([{"role":"user","content":"use-client-tool"}]);
                 let function = json!({"name":"lookup","description":"Look up a value","parameters":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}});
                 let (path, mut first) = if responses {
                     let mut tool = function.clone(); tool["type"] = json!("function");
-                    ("responses",json!({"model":"acp/test-model","input":messages,"tools":[tool],"stream":false,"store":false}))
+                    ("responses",json!({"model":"acp/test-model","input":messages,"tools":[tool],"stream":first_stream,"store":false}))
                 } else {
-                    ("chat/completions",json!({"model":"acp/test-model","messages":messages,"tools":[{"type":"function","function":function}],"stream":false}))
+                    ("chat/completions",json!({"model":"acp/test-model","messages":messages,"tools":[{"type":"function","function":function}],"stream":first_stream}))
                 };
                 let reply = http.post(format!("{base}/v1/{path}")).bearer_auth("isolated-client-key").json(&first).send().await.map_err(|e|e.to_string())?;
-                let status = reply.status(); let body: Value = reply.json().await.map_err(|e|e.to_string())?;
-                if !status.is_success() { return Err(format!("Tool start {path}: {status}: {body}")); }
+                let status = reply.status(); let raw = reply.text().await.map_err(|e|e.to_string())?;
+                if !status.is_success() { return Err(format!("Tool start {path}: {status}: {raw}")); }
+                let body: Value = if first_stream {
+                    if responses {
+                        raw.lines().filter_map(|line|line.strip_prefix("data: ")).filter_map(|data|serde_json::from_str::<Value>(data).ok()).find(|event|event["type"] == "response.completed").ok_or_else(||format!("Tool stream did not complete: {raw}"))?["response"].clone()
+                    } else {
+                        let chunks = chat_stream(&raw, "tool_calls");
+                        let mut calls = Vec::new();
+                        let mut text = String::new();
+                        for chunk in chunks {
+                            let delta = &chunk["choices"][0]["delta"];
+                            if let Some(part) = delta["content"].as_str() { text.push_str(part); }
+                            if let Some(items) = delta["tool_calls"].as_array() {
+                                for item in items {
+                                    assert_eq!(item["index"], calls.len());
+                                    let mut call = item.clone();
+                                    call.as_object_mut().unwrap().remove("index");
+                                    calls.push(call);
+                                }
+                            }
+                        }
+                        json!({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":if text.is_empty() {Value::Null} else {json!(text)},"tool_calls":calls}}]})
+                    }
+                } else { serde_json::from_str(&raw).map_err(|e|e.to_string())? };
                 if responses {
                     let calls = body["output"].as_array().ok_or("Missing Responses output")?;
                     let call = calls.iter().find(|item|item["type"] == "function_call").ok_or_else(||format!("Missing function_call: {body}"))?;
@@ -1400,6 +1555,33 @@ async fn real_cpa_lists_and_routes_registered_acp_models() {
                 let reply = http.post(format!("{base}/v1/{path}")).bearer_auth("isolated-client-key").json(&first).send().await.map_err(|e|e.to_string())?;
                 let status = reply.status(); let body = reply.text().await.map_err(|e|e.to_string())?;
                 if !status.is_success() || !body.contains("CLIENT_TOOL_OK") { return Err(format!("Tool resume {path}: {status}: {body}")); }
+                if stream && !responses { chat_stream(&body, "stop"); }
+            }
+            }
+        }
+        // Verify CPA also handles bridge failures through its own translators.
+        for responses in [false, true] {
+            for after_output in [false, true] {
+                // CPA cools down a model after an upstream error. Use distinct
+                // advertised variants so failure cases remain independent.
+                let model = match (responses, after_output) {
+                    (false, false) => "acp/test-model-low",
+                    (false, true) => "acp/test-model-medium",
+                    (true, false) => "acp/test-model-high",
+                    (true, true) => "acp/test-model-xhigh",
+                };
+                let prompt = if after_output { "fail-after-output" } else { "fail-before-output" };
+                let (path, payload) = if responses {
+                    ("responses", json!({"model":model,"input":prompt,"stream":true}))
+                } else {
+                    ("chat/completions", json!({"model":model,"messages":[{"role":"user","content":prompt}],"stream":true}))
+                };
+                let reply = http.post(format!("{base}/v1/{path}")).bearer_auth("isolated-client-key").json(&payload).send().await.map_err(|e|e.to_string())?;
+                let status = reply.status();
+                let body = reply.text().await.map_err(|e|e.to_string())?;
+                if !body.contains("simulated upstream failure") || body.contains("response.completed") || (!after_output && status.as_u16() != 502) {
+                    return Err(format!("CPA failure {path}: {status}: {body}"));
+                }
             }
         }
         register_at(&config, None, "", &[])?;

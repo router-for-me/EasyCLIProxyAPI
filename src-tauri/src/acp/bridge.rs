@@ -108,7 +108,8 @@ fn provider_entry(
         "name": PROVIDER, "base-url": url, "disabled": models.is_empty(),
         "models": models.iter().map(|model| json!({"name":format!("acp/{}", model.id)})).collect::<Vec<_>>()
     });
-    provider[if v8 { "keys" } else { "api-key-entries" }] = json!([{"api-key":key,"proxy-url":"direct"}]);
+    provider[if v8 { "keys" } else { "api-key-entries" }] =
+        json!([{"api-key":key,"proxy-url":"direct"}]);
     serde_norway::to_value(provider).map_err(|e| e.to_string())
 }
 
@@ -438,6 +439,72 @@ impl Output {
             message["tool_calls"] = json!(self.calls);
         }
         message
+    }
+}
+
+// CPA owns the public protocol translators. This upstream must still produce
+// valid Chat Completions chunks, including the initial assistant role.
+struct CompletionStream {
+    sender: tokio::sync::mpsc::Sender<Result<String, String>>,
+    cancel: Arc<AtomicBool>,
+    id: String,
+    model: String,
+    created: u64,
+    started: bool,
+}
+
+impl CompletionStream {
+    fn send(&self, mut frame: Result<String, String>) -> Result<(), String> {
+        loop {
+            if self.cancel.load(Ordering::Acquire) {
+                return Err("ACP API client disconnected or request cancelled".into());
+            }
+            match self.sender.try_send(frame) {
+                Ok(()) => return Ok(()),
+                Err(tokio::sync::mpsc::error::TrySendError::Full(pending)) => {
+                    frame = pending;
+                    // Apply backpressure without blocking cancellation or
+                    // treating an ordinary burst of tokens as a disconnect.
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    self.cancel.store(true, Ordering::Release);
+                    return Err("ACP API client disconnected".into());
+                }
+            }
+        }
+    }
+
+    fn chunk(&self, delta: Value, finish: Option<&str>) -> Result<(), String> {
+        let value = json!({
+            "id":self.id,"object":"chat.completion.chunk","created":self.created,"model":self.model,
+            "choices":[{"index":0,"delta":delta,"finish_reason":finish,"logprobs":null}]
+        });
+        self.send(Ok(format!("data: {value}\n\n")))
+    }
+
+    fn delta(&mut self, delta: Value) -> Result<(), String> {
+        if !self.started {
+            self.chunk(json!({"role":"assistant","content":""}), None)?;
+            self.started = true;
+        }
+        self.chunk(delta, None)
+    }
+
+    fn finish(&mut self, output: &Output) -> Result<(), String> {
+        if !self.started {
+            self.delta(json!({"content":""}))?;
+        }
+        self.chunk(json!({}), Some(output.finish()))?;
+        self.send(Ok("data: [DONE]\n\n".into()))
+    }
+}
+
+fn upstream_status(message: &str) -> StatusCode {
+    if message.contains("timed out") {
+        StatusCode::GATEWAY_TIMEOUT
+    } else {
+        StatusCode::BAD_GATEWAY
     }
 }
 
@@ -1006,21 +1073,22 @@ async fn handle_inner<R: tauri::Runtime>(
     } else {
         None
     };
-    let (sender, receiver) = tokio::sync::mpsc::channel::<String>(64);
-    let stream_id = id.clone();
-    let stream_model = model.clone();
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
+    let mut events = CompletionStream {
+        sender,
+        cancel: guard.cancel.clone(),
+        id: id.clone(),
+        model: model.clone(),
+        created,
+        started: false,
+    };
     let worker_app = app.clone();
     let worker = tauri::async_runtime::spawn_blocking(move || {
         let _guard = guard;
         let result: Result<Output, String> = (|| {
             let mut send_text = |part: &str| {
                 if stream {
-                    let value = json!({"id":stream_id,"object":"chat.completion.chunk","created":created,"model":stream_model,"choices":[{"index":0,"delta":{"content":part},"finish_reason":null}]});
-                    // Reserve two slots for the terminal error/finish and DONE;
-                    // a stalled client must never block cancellation/cleanup.
-                    if sender.capacity() <= 2
-                        || sender.try_send(format!("data: {value}\n\n")).is_err()
-                    {
+                    if events.delta(json!({"content":part})).is_err() {
                         _guard.cancel.store(true, Ordering::Release);
                     }
                 }
@@ -1053,10 +1121,7 @@ async fn handle_inner<R: tauri::Runtime>(
                             call
                         })
                         .collect();
-                    let value = json!({"id":stream_id,"object":"chat.completion.chunk","created":created,"model":stream_model,"choices":[{"index":0,"delta":{"tool_calls":calls},"finish_reason":null}]});
-                    sender
-                        .try_send(format!("data: {value}\n\n"))
-                        .map_err(|_| "ACP client disconnected before tool call delivery")?;
+                    events.delta(json!({"tool_calls":calls}))?;
                 }
                 Ok(output)
             } else {
@@ -1069,27 +1134,51 @@ async fn handle_inner<R: tauri::Runtime>(
             }
         })();
         if stream {
-            let value = match &result {
+            match &result {
                 Ok(output) => {
-                    json!({"id":stream_id,"object":"chat.completion.chunk","created":created,"model":stream_model,"choices":[{"index":0,"delta":{},"finish_reason":output.finish()}]})
+                    let _ = events.finish(output);
                 }
-                Err(error) => json!({"error":{"message":error,"type":"upstream_error"}}),
-            };
-            let _ = sender.try_send(format!("data: {value}\n\n"));
-            let _ = sender.try_send("data: [DONE]\n\n".into());
+                Err(error) => {
+                    let _ = events.send(Err(error.clone()));
+                }
+            }
         }
         result
     });
     let reply = if stream {
-        let frames =
-            futures_util::stream::unfold((receiver, cancel), |(mut receiver, cancel)| async move {
-                receiver.recv().await.map(|data| {
+        // Do not commit HTTP 200 until the upstream produces its first event.
+        // CPA can then handle startup failures through its existing HTTP error
+        // path rather than trying to translate them as completion chunks.
+        let first = match receiver.recv().await {
+            Some(Ok(frame)) => frame,
+            Some(Err(message)) => return error(upstream_status(&message), message),
+            None => return error(StatusCode::BAD_GATEWAY, "ACP worker exited unexpectedly"),
+        };
+        let frames = futures_util::stream::unfold(
+            (Some(first), receiver, cancel),
+            |(mut first, mut receiver, cancel)| async move {
+                let next = match first.take() {
+                    Some(frame) => Some(Ok(frame)),
+                    None => receiver.recv().await,
+                };
+                next.map(|data| {
+                    let data = match data {
+                        Ok(frame) => frame,
+                        Err(message) => {
+                            // An SSE error terminates the stream; never append
+                            // a success finish_reason or [DONE] after it.
+                            receiver.close();
+                            let value = json!({"error":{"message":message,"type":"upstream_error","code":upstream_status(&message).as_u16()}});
+                            format!("event: error\ndata: {value}\n\n")
+                        }
+                    };
                     (
                         Ok::<_, Infallible>(Frame::data(Bytes::from(data))),
-                        (receiver, cancel),
+                        (None, receiver, cancel),
                     )
                 })
-            });
+            },
+        );
         Response::builder()
             .header("content-type", "text/event-stream")
             .header("cache-control", "no-cache")
@@ -1101,16 +1190,9 @@ async fn handle_inner<R: tauri::Runtime>(
         match result {
             Ok(Ok(output)) => response(
                 StatusCode::OK,
-                json!({"id":id,"object":"chat.completion","created":created,"model":model,"choices":[{"index":0,"message":output.message(),"finish_reason":output.finish()}]}),
+                json!({"id":id,"object":"chat.completion","created":created,"model":model,"choices":[{"index":0,"message":output.message(),"finish_reason":output.finish(),"logprobs":null}]}),
             ),
-            Ok(Err(e)) => error(
-                if e.contains("timed out") {
-                    StatusCode::GATEWAY_TIMEOUT
-                } else {
-                    StatusCode::BAD_GATEWAY
-                },
-                e,
-            ),
+            Ok(Err(e)) => error(upstream_status(&e), e),
             Err(_) => error(StatusCode::BAD_GATEWAY, "ACP worker exited unexpectedly"),
         }
     };

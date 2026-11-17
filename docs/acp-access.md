@@ -41,6 +41,16 @@ Thinking levels are detected from official model ID suffixes (none, minimal, low
 
 One HTTP/native operation runs at a time; concurrent requests return 429. Tool waits release that operation slot while preserving their own CLI execution; at most sixteen pending call IDs are retained. A dropped HTTP/SSE client cancels the operation. Account switching reserves the same slot, clears old capabilities, verifies the selected login and updates models. Saved API enablement restores after app startup by verifying the active account. ECPA must remain running while clients use ACP. Model selection and labels are persisted privately; test results and connection capabilities stay in memory.
 
+## Chat Completions and streaming contract
+
+The public Chat Completions and Responses endpoints continue to use CPA's existing authentication, routing, and protocol translators. The internal ACP listener implements only the OpenAI-compatible upstream contract; it does not add a second public Responses implementation. CPA's Chat-to-Chat response translator passes completion JSON through, so the internal listener must produce complete Chat Completions frames itself.
+
+Successful streams begin with an assistant role delta, followed by text or indexed function tool calls, a single terminal finish reason (`stop` or `tool_calls`), and `[DONE]`. All chunks retain the same completion ID, model, and creation time. Bounded output queues apply backpressure and remain cancellable instead of dropping chunks during a burst. Token usage is omitted when the official CLI does not provide API token counts; `stream_options.include_usage` does not cause fabricated usage.
+
+The listener waits for the first upstream event before committing HTTP 200. Failures before output return an HTTP error through CPA's existing error handling. Failures after output emit a terminal SSE error without a success finish reason or `[DONE]`. This preserves the distinction between an upstream failure and a completed assistant turn. An official CLI quota failure or retry message remains an upstream execution issue; protocol framing cannot restore exhausted model quota.
+
+The isolated CPA contract test checks text replies and tool call/result round trips through both public protocols, including all combinations of streaming and non-streaming tool delivery and continuation. It also checks startup and mid-stream upstream failures. The official ACP process is simulated in this test; no model quota is consumed.
+
 ## Verification
 
 - bun run check and bun run build.
