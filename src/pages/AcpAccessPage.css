@@ -79,7 +79,6 @@
   .acp-model-total { color: var(--text-primary); font-size: 24px; font-weight: 600; letter-spacing: -1px; line-height: 1; font-variant-numeric: tabular-nums; }
   .acp-api-summary strong { display: block; color: var(--text-primary); font-size: 12px; font-weight: 500; line-height: 1.6; }
   .acp-api-summary div > span { display: block; margin-top: 3px; color: var(--acp-muted); font-size: 11px; line-height: 1.6; }
-  .acp-api-limits { padding-top: 14px; margin: 0; border-top: 1px solid var(--acp-border); color: var(--acp-muted); font-size: 11px; line-height: 1.75; }
   .acp-api-details { min-width: 0; padding-top: 14px; border-top: 1px solid var(--acp-border); }
   .acp-access-page summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; line-height: 1.75; }
   .acp-access-page summary:hover { color: var(--text-primary); }

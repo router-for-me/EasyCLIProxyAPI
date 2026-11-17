@@ -182,7 +182,6 @@ export function AcpAccessPage() {
         </div><pre><code>{example}</code></pre></div>
         <details className="acp-api-model-list"><summary>{t('acp.models')} · {status.models.length}</summary><ul className="acp-api-models">{status.models.map(model => <li key={model.id}><code>{`acp/${model.id}`}</code></li>)}</ul></details>
       </div></details> : null}
-      <p className="acp-api-limits">{t('acp.apiLimitsShort')}</p>
     </section></div>
 
     <details className="acp-footnote"><summary><span><Settings2 size={15} aria-hidden="true" />{t('acp.connectionDetails')}</span><ChevronDown size={15} aria-hidden="true" /></summary><div className="acp-footnote-body">
@@ -192,7 +191,6 @@ export function AcpAccessPage() {
       {connected ? <div className="acp-relogin"><p>{t('acp.reloginHint')}</p><button type="button" className="secondary-button" disabled={busy || loading} onClick={() => void run('login', () => acpApi.reloginAccount())}><LogIn size={15} aria-hidden="true" />{t('acp.relogin')}</button></div> : null}
       <h3>{t('acp.profile')}</h3><p>{t('acp.profileHint')}</p>
       {status?.profile ? <code>{privacy.text(status.profile)}</code> : null}
-      <h3>{t('acp.capabilities')}</h3><p>{t('acp.capabilitiesHint')}</p>
     </div></details>
   </div>;
 }
