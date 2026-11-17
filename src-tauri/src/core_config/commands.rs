@@ -256,10 +256,18 @@ pub(crate) fn get_core_config_settings(
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<CoreConfigView, String> {
     let settings = current_core_config_settings(gui_config_state.inner())?;
-    let config = gui_config_state.sync_core_settings(&settings)?;
+    sync_core_config_view(gui_config_state.inner(), &settings, patch_core_api_keys)
+}
+
+pub(crate) fn sync_core_config_view(
+    gui_config_state: &GuiConfigState,
+    settings: &CoreConfigSettings,
+    patch_api_keys: impl FnOnce(&[String]) -> Result<(), String>,
+) -> Result<CoreConfigView, String> {
+    let config = gui_config_state.sync_core_settings(settings)?;
     let api_keys = gui_api_key_values(&config.api_keys);
-    if api_keys != settings.api_keys {
-        patch_core_api_keys(&api_keys)?;
+    if !config.external_core && api_keys != settings.api_keys {
+        patch_api_keys(&api_keys)?;
     }
     Ok(CoreConfigView::from(&config))
 }

@@ -11,6 +11,7 @@ fn windows_tray_presentation_tracks_core_state_and_busy_actions() {
         ready: false,
         starting: false,
         managed: false,
+        external: false,
         process_id: None,
         current_version: None,
         install_dir: String::new(),
@@ -36,6 +37,13 @@ fn windows_tray_presentation_tracks_core_state_and_busy_actions() {
     assert_eq!(running.toggle_text, "停止内核");
     assert!(running.toggle_enabled);
     assert!(running.restart_enabled);
+
+    status.external = true;
+    let external = windows_tray_presentation(&status, false, "zh-CN");
+    assert_eq!(external.status_text, "内核状态：运行中");
+    assert!(!external.toggle_enabled);
+    assert!(!external.restart_enabled);
+    status.external = false;
 
     let busy = windows_tray_presentation(&status, true, "zh-CN");
     assert_eq!(busy.status_text, "内核状态：处理中");

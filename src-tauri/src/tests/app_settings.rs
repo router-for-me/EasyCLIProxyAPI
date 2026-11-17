@@ -432,3 +432,280 @@ fn physical_window_size_uses_display_scale_and_ignores_minimized_sizes() {
     assert!(logical_window_size_from_physical(&tauri::PhysicalSize::new(0, 0), 1.0).is_none());
     assert!(logical_window_size_from_physical(&physical_size, 0.0).is_none());
 }
+
+#[test]
+fn external_core_startup_errors_latch_ownership_and_preserve_the_file() {
+    let home = agent_test_home("external-core-invalid-config");
+    let path = home.join("config.toml");
+    for content in [
+        "external-core = true\nbroken = [\n",
+        "external-core=true # retained\nclose-behavior = 'unknown'\n",
+        "external-core = true\nport = 999999\n",
+        "external-core = true\nport = 0\nauth-dir = '/external/oauth'\n",
+    ] {
+        fs::write(&path, content).unwrap();
+        assert!(external_core_requested_at(&path));
+        assert!(load_external_gui_config_at(&path, &home.join("core")).is_err());
+        let fallback = gui_config_startup_fallback(external_core_requested_at(&path));
+        assert!(fallback.external_core);
+        assert!(!should_start_core_on_launch(&fallback));
+        assert!(CoreProcessState::from_config(&fallback).ensure_managed().is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
+        // Window/settings saves must not destroy a broken external-mode file.
+        assert!(write_gui_config_to_path(&fallback, &path).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
+    }
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    assert!(external_core_requested_at(&path), "unreadable configuration must fail closed");
+    assert!(load_external_gui_config_at(&path, &home).is_err());
+    assert!(gui_config_startup_fallback(external_core_requested_at(&path)).external_core);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn external_core_writer_records_ownership_only_in_a_file_it_creates() {
+    let home = agent_test_home("external-core-config-write");
+    let path = home.join("config.toml");
+    let mut config = GuiConfigFile::default();
+    write_gui_config_to_path(&config, &path).unwrap();
+    assert!(!fs::read_to_string(&path).unwrap().contains("external-core"));
+    for created_from in [None, Some("\n")] {
+        fs::remove_file(&path).unwrap();
+        if let Some(content) = created_from {
+            fs::write(&path, content).unwrap();
+        }
+        config.external_core = true;
+        write_gui_config_to_path(&config, &path).unwrap();
+        assert!(external_core_requested_at(&path));
+    }
+    fs::write(home.join(CORE_CONFIG_FILE), "port: 8317\n").unwrap();
+    let loaded = load_external_gui_config_at(&path, &home).unwrap();
+    assert!(loaded.external_core);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn external_core_edits_made_while_running_survive_unrelated_saves() {
+    let home = agent_test_home("external-core-pending-edit");
+    let path = home.join("config.toml");
+    // Startup mode, the operator's edit while the GUI runs, mode at the next launch.
+    for (latched, edit, requested) in [
+        (false, "external-core = true # the service takes over\n", true),
+        (true, "external-core = false # back to a managed core\n", false),
+        (true, "", false),
+        (false, "external-core = false\n", false),
+        (true, "external-core = true\n", true),
+    ] {
+        let startup = GuiConfigFile { external_core: latched, ..GuiConfigFile::default() };
+        write_gui_config_to_path(&startup, &path).unwrap();
+        assert_eq!(external_core_requested_at(&path), latched);
+        let state = GuiConfigState::new(startup);
+        let saved = fs::read_to_string(&path).unwrap();
+        let edited = saved
+            .lines()
+            .filter(|line| !line.starts_with("external-core"))
+            .fold(edit.to_string(), |content, line| content + line + "\n");
+        fs::write(&path, &edited).unwrap();
+
+        // The watcher reloads the file; ownership stays what it was at startup.
+        state.replace_external(toml::from_str(&edited).unwrap()).unwrap();
+        assert_eq!(state.snapshot().unwrap().external_core, latched);
+        // Window geometry is saved on exit and must not undo the edit.
+        let geometry = GuiConfigFile {
+            window_width: Some(1280),
+            window_height: Some(820),
+            ..state.snapshot().unwrap()
+        };
+        write_gui_config_to_path(&geometry, &path).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(written.contains("window-width = 1280"), "{written}");
+        assert!(written.starts_with(edit), "{written}");
+        assert_eq!(written.contains("external-core"), !edit.is_empty());
+        assert_eq!(external_core_requested_at(&path), requested, "{latched} {edit:?}");
+        fs::remove_file(&path).unwrap();
+    }
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn external_core_keeps_saved_gui_settings_when_the_service_configuration_is_unusable() {
+    let home = agent_test_home("external-core-unusable-service-config");
+    let gui_path = home.join(GUI_CONFIG_FILE);
+    let core_path = home.join(CORE_CONFIG_FILE);
+    let gui = "external-core = true\nlocale = 'ja'\nhost = '127.0.0.2'\nport = 9527\n\
+        management-secret-key = 'gui-credential'\nauth-dir = '/explicit/oauth'\n\
+        proxy-url = 'http://127.0.0.1:9000'\nproxy-override = true\n\
+        run-on-startup = true\nstart-core-on-launch = true\n\
+        api-keys = [{ key = 'saved-client-key', remark = 'laptop' }]\n";
+    fs::write(&gui_path, gui).unwrap();
+    // Missing, malformed, rejected by the importer, and imported but invalid for the GUI.
+    for core in [
+        None,
+        Some("port: [\n"),
+        Some("- not\n- a mapping\n"),
+        Some("port: 0\n"),
+        Some("host: \"127.0.0.3\\a\"\nport: 9999\n"),
+    ] {
+        match core {
+            Some(content) => fs::write(&core_path, content).unwrap(),
+            None => assert!(!core_path.exists()),
+        }
+        let config = load_external_gui_config_at(&gui_path, &home).unwrap();
+        assert!(config.external_core);
+        assert!(!should_start_core_on_launch(&config));
+        assert!(CoreProcessState::from_config(&config).ensure_managed().is_err());
+        assert_eq!(config.locale, "ja");
+        assert_eq!((config.host.as_str(), config.port), ("127.0.0.2", 9527));
+        assert_eq!(config.management_secret_key, "gui-credential");
+        assert_eq!(config.auth_dir, "/explicit/oauth");
+        assert_eq!(config.proxy_url, "http://127.0.0.1:9000");
+        assert_eq!(effective_agent_api_key(&config), "saved-client-key");
+        assert_eq!(config.api_keys[0].remark, "laptop");
+
+        // The exit-time geometry save keeps every setting and the ownership request.
+        let state = GuiConfigState::new(config);
+        let geometry = GuiConfigFile {
+            window_width: Some(1280),
+            window_height: Some(820),
+            ..state.snapshot().unwrap()
+        };
+        write_gui_config_to_path(&geometry, &gui_path).unwrap();
+        let saved: GuiConfigFile = toml::from_str(&fs::read_to_string(&gui_path).unwrap()).unwrap();
+        assert!(external_core_requested_at(&gui_path));
+        assert_eq!(saved.window_width, Some(1280));
+        assert_eq!(saved.locale, "ja");
+        assert_eq!((saved.host.as_str(), saved.port), ("127.0.0.2", 9527));
+        assert_eq!(saved.management_secret_key, "gui-credential");
+        assert_eq!(saved.auth_dir, "/explicit/oauth");
+        assert_eq!(effective_agent_api_key(&saved), "saved-client-key");
+        assert_eq!(core.map(str::to_string), fs::read_to_string(&core_path).ok());
+        fs::write(&gui_path, gui).unwrap();
+    }
+
+    // Without a saved OAuth directory the core's own default is used, never a GUI one.
+    fs::remove_file(&core_path).unwrap();
+    fs::write(&gui_path, "external-core = true\n").unwrap();
+    let config = load_external_gui_config_at(&gui_path, &home).unwrap();
+    assert!(Path::new(&config.auth_dir).is_absolute());
+    assert!(config.auth_dir.ends_with(".cli-proxy-api"), "{}", config.auth_dir);
+    assert!(config.auth_dir_user_selected);
+    assert_eq!(effective_agent_api_key(&config), "");
+    assert!(config.management_secret_key.is_empty());
+    assert_eq!(fs::read_to_string(&gui_path).unwrap(), "external-core = true\n");
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn external_core_startup_and_sanitize_preserve_server_secret_and_auth_directory() {
+    let home = agent_test_home("external-core-config-readonly");
+    let real = home.join("service/core");
+    fs::create_dir_all(&real).unwrap();
+    let link = home.join("cpa-core");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let yaml = "host: 127.0.0.1\nport: 8317\nauth-dir: ../oauth\nremote-management:\n  secret-key: '$2a$fixture-hash'\n";
+    fs::write(real.join(CORE_CONFIG_FILE), yaml).unwrap();
+    let path = home.join("config.toml");
+    let content = "external-core = true\n";
+    fs::write(&path, content).unwrap();
+    let mut config = load_external_gui_config_at(&path, &link).unwrap();
+    assert!(config.management_secret_key.is_empty(), "must not invent a cleartext service key");
+    assert_eq!(PathBuf::from(&config.auth_dir), home.join("service/oauth"));
+    config.auth_dir_user_selected = false;
+    sanitize_gui_config_at(&mut config, &link, &home.join("gui-oauth")).unwrap();
+    assert_eq!(fs::read_to_string(real.join(CORE_CONFIG_FILE)).unwrap(), yaml);
+    assert_eq!(fs::read_to_string(&path).unwrap(), content);
+    assert!(!home.join("gui-oauth").exists());
+    assert!(!home.join("service/oauth").exists());
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn external_core_reload_keeps_startup_ownership_in_both_directions() {
+    for external_core in [false, true] {
+        let config = GuiConfigFile { external_core, ..GuiConfigFile::default() };
+        let process = CoreProcessState::from_config(&config);
+        let state = GuiConfigState::new(config.clone());
+        let changed = GuiConfigFile { external_core: !external_core, port: 12345, ..config };
+        state.replace_external(changed).unwrap();
+        let loaded = state.snapshot().unwrap();
+        assert_eq!(loaded.external_core, external_core);
+        assert_eq!(loaded.external_core, process.external_core);
+        assert_eq!(loaded.port, 12345);
+        assert_eq!(should_start_core_on_launch(&loaded), !external_core);
+    }
+}
+
+#[test]
+fn external_core_startup_imports_service_connection_without_writes_in_both_layouts() {
+    let home = agent_test_home("external-core-readonly-import");
+    let gui_path = home.join(GUI_CONFIG_FILE);
+    let core_path = home.join(CORE_CONFIG_FILE);
+    let gui = "external-core = true\nmanagement-secret-key = 'gui-credential'\n";
+    fs::write(&gui_path, gui).unwrap();
+    for core in [
+        "host: 127.0.0.2\nport: 9527\nauth-dir: ../oauth\napi-keys: [service-client-key]\nproxy-url: http://127.0.0.1:9000\n",
+        "config-version: 8\nserver: {host: 127.0.0.2, port: 9527}\noauth: {auth-dir: ../oauth}\naccess: {api-keys: [service-client-key]}\nrequests: {proxy-url: http://127.0.0.1:9000}\n",
+    ] {
+        fs::write(&core_path, core).unwrap();
+        let config = load_external_gui_config_at(&gui_path, &home).unwrap();
+        assert_eq!(config.host, "127.0.0.2");
+        assert_eq!(config.port, 9527);
+        assert_eq!(effective_agent_api_key(&config), "service-client-key");
+        assert_eq!(config.management_secret_key, "gui-credential");
+        assert_eq!(config.proxy_url, "http://127.0.0.1:9000");
+        assert!(config.proxy_override);
+        assert!(Path::new(&config.auth_dir).is_absolute());
+        assert_eq!(fs::read_to_string(&core_path).unwrap(), core);
+        assert_eq!(fs::read_to_string(&gui_path).unwrap(), gui);
+    }
+    fs::write(&core_path, "port: 9527\n").unwrap();
+    assert_eq!(effective_agent_api_key(&load_external_gui_config_at(&gui_path, &home).unwrap()), "");
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn external_core_settings_reads_preserve_auth_directory_and_both_configuration_files() {
+    let home = agent_test_home("external-core-settings-read");
+    let gui_path = home.join(GUI_CONFIG_FILE);
+    let core_path = home.join(CORE_CONFIG_FILE);
+    let gui = "external-core = true\nauth-dir = '/explicit/oauth'\n";
+    let core = "port: 9527\nauth-dir: ../relative-oauth\napi-keys: [' client-key ', client-key]\n";
+    fs::write(&gui_path, gui).unwrap();
+    fs::write(&core_path, core).unwrap();
+    let config = load_external_gui_config_at(&gui_path, &home).unwrap();
+    let state = GuiConfigState::new(config);
+    let settings = core_config_settings_from_value(&serde_norway::from_str(core).unwrap()).unwrap();
+    let mut patched = false;
+    sync_core_config_view(&state, &settings, |_| {
+        patched = true;
+        fs::write(&core_path, "read path must not normalize keys").unwrap();
+        Ok(())
+    }).unwrap();
+    assert!(!patched);
+    state.sync_core_settings_external(&settings).unwrap();
+    state.replace_core_settings_external(&settings).unwrap();
+    let synced = state.snapshot().unwrap();
+    assert_eq!(synced.auth_dir, "/explicit/oauth");
+    assert_eq!(effective_agent_api_key(&synced), "client-key");
+    assert_eq!(fs::read_to_string(&core_path).unwrap(), core);
+    assert_eq!(fs::read_to_string(&gui_path).unwrap(), gui);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn external_core_startup_fallback_is_valid_and_never_invents_a_client_key() {
+    let config = gui_config_startup_fallback(true);
+    assert!(!config.auth_dir.trim().is_empty());
+    validate_gui_config(&config).unwrap();
+    assert_eq!(effective_agent_api_key(&config), "");
+    let state = GuiConfigState::new(config);
+    let mut settings = CoreConfigSettings::from(&state.snapshot().unwrap());
+    settings.auth_dir.clear();
+    state.sync_core_settings_external(&settings).unwrap();
+    validate_gui_config(&state.snapshot().unwrap()).unwrap();
+    let managed = gui_config_startup_fallback(false);
+    assert_eq!(managed.auth_dir, DEFAULT_AUTH_DIR);
+    assert_eq!(effective_agent_api_key(&managed), DEFAULT_API_KEY);
+}

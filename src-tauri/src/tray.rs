@@ -284,8 +284,9 @@ pub(crate) fn windows_tray_presentation(
     WindowsTrayPresentation {
         status_text: status_text.to_string(),
         toggle_text: toggle_text.to_string(),
-        toggle_enabled: status.installed && !busy,
-        restart_enabled: status.installed && status.running && !busy,
+        // An external core is started and stopped by its own service manager.
+        toggle_enabled: status.installed && !busy && !status.external,
+        restart_enabled: status.installed && status.running && !busy && !status.external,
         tooltip: tooltip.to_string(),
     }
 }

@@ -1730,3 +1730,89 @@ fn macos_core_child_has_private_process_group() {
     assert_ne!(group, parent_group);
     assert!(!is_process_alive(pid as u32));
 }
+
+#[test]
+fn external_core_mode_defaults_off_and_overrides_startup_preferences() {
+    let default: GuiConfigFile = toml::from_str("").unwrap();
+    assert!(!default.external_core);
+    assert!(should_start_core_on_launch(&default));
+    let config: GuiConfigFile = toml::from_str(
+        "external-core = true\nstart-core-on-launch = true\nrun-on-startup = true\n",
+    ).unwrap();
+    assert!(toml::to_string(&config).unwrap().contains("external-core = true"));
+    assert!(!should_start_core_on_launch(&config));
+    assert!(!should_restore_core_after_install(true, &config, false));
+    assert!(!CoreProcessState::from_config(&config).is_starting());
+}
+
+#[test]
+fn external_core_rejects_lifecycle_and_install_before_side_effects() {
+    let config = GuiConfigFile { external_core: true, ..GuiConfigFile::default() };
+    let state = CoreProcessState::from_config(&config);
+    let gui = GuiConfigState::new(config.clone());
+    assert!(lock_core_operation(&state).unwrap_err().contains("externally managed"));
+    assert!(start_core_process_inner(&state, &config).unwrap_err().contains("externally managed"));
+    assert!(stop_core_process_with_state(&state, &gui).err().unwrap().contains("externally managed"));
+    assert!(restart_core_process_with_state(&state, &gui).err().unwrap().contains("externally managed"));
+    assert!(pause_core_process_for_install(&state).unwrap_err().contains("externally managed"));
+    assert!(state.ensure_app_update_allowed().unwrap_err().contains("update the application manually"));
+    assert!(state.adopt_process_ids(Path::new("unused"), vec![std::process::id()])
+        .unwrap_err().contains("externally managed"));
+    assert!(adopt_existing_core_processes(&state, &config, false).unwrap().is_empty());
+    prepare_core_for_app_update(&state).unwrap();
+    shutdown_managed_core(&state, &gui);
+    assert!(state.managed_pid().is_none());
+    assert!(!state.recovery.wants_running());
+    assert_eq!(gui.snapshot().unwrap().run_on_startup, config.run_on_startup);
+}
+
+#[test]
+fn external_core_status_tracks_reachability_without_adopting_a_process() {
+    let config = GuiConfigFile { external_core: true, ..GuiConfigFile::default() };
+    let state = CoreProcessState::from_config(&config);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let online = current_core_status(Some(&state), Some(port)).unwrap();
+    assert!(online.running && online.ready);
+    assert!(!online.managed);
+    assert!(online.process_id.is_none() && online.recovery.is_none());
+    drop(listener);
+    let offline = current_core_status(Some(&state), Some(port)).unwrap();
+    assert!(!offline.running && !offline.ready);
+    assert!(offline.message.contains("External core is down"));
+    assert!(!state.recovery.wants_running());
+}
+
+#[test]
+fn external_core_status_shows_the_reported_version_instead_of_stale_install_metadata() {
+    let install_dir = agent_test_home("external-core-reported-version");
+    fs::create_dir_all(&install_dir).unwrap();
+    write_core_metadata(
+        &install_dir,
+        &CoreMetadata {
+            version: "v8.0.45+left-by-an-older-gui-install".to_string(),
+            asset_name: "installed-core.tar.gz".to_string(),
+            installed_at_unix: 0,
+        },
+    )
+    .unwrap();
+    let mut headers = reqwest::header::HeaderMap::new();
+    for ignored in ["", " ", "8.0.76 with spaces", &"9".repeat(65)] {
+        headers.insert("X-CPA-VERSION", ignored.parse().unwrap());
+        management_api::record_reported_core_version(&headers);
+    }
+    headers.insert("X-CPA-VERSION", " 8.0.76-reported ".parse().unwrap());
+    management_api::record_reported_core_version(&headers);
+    management_api::record_reported_core_version(&reqwest::header::HeaderMap::new());
+
+    let online = external_core_status(&install_dir, None, true);
+    assert_eq!(online.current_version.as_deref(), Some("8.0.76-reported"));
+    assert!(online.external && online.running && !online.managed && !online.installed);
+    // An unreachable core has no version to show; the metadata file is never a fallback.
+    assert!(external_core_status(&install_dir, None, false).current_version.is_none());
+    assert_eq!(
+        read_core_metadata(&install_dir).unwrap().version,
+        "v8.0.45+left-by-an-older-gui-install"
+    );
+    fs::remove_dir_all(install_dir).unwrap();
+}

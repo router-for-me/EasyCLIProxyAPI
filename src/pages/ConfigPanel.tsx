@@ -814,7 +814,7 @@ export function ConfigPanelPage() {
       });
       loggingDraftDirtyRef.current = false;
       applySettings(result, 'preserve');
-      if (commercialModeChanged && coreStatus?.running) {
+      if (commercialModeChanged && coreStatus?.running && !coreStatus.external) {
         const status = await restartCoreProcess();
         publishStatus(status);
         loggingFeedback.showNotice({ key: 'config.diagnostics.notice.savedAndRestarted' }, 'success');
@@ -916,7 +916,7 @@ export function ConfigPanelPage() {
       setTlsEnabledDraft(result.enabled);
       setTlsCertDraft(result.cert);
       setTlsKeyDraft(result.key);
-      if (coreStatus?.running) {
+      if (coreStatus?.running && !coreStatus.external) {
         const status = await restartCoreProcess();
         publishStatus(status);
         tlsFeedback.showNotice({ key: 'config.tls.notice.savedAndRestarted' }, 'success');
@@ -1012,7 +1012,7 @@ export function ConfigPanelPage() {
       applySettings(result, 'preserve');
       setLoadError('');
 
-      if (networkChanged && coreStatus?.running) {
+      if (networkChanged && coreStatus?.running && !coreStatus.external) {
         try {
           const status = await restartCoreProcess();
           publishStatus(status);

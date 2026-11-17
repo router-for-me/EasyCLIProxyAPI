@@ -160,7 +160,7 @@ fn recover(app: &tauri::AppHandle, generation: u64) {
         return;
     };
     let state = app.state::<CoreProcessState>();
-    if state.is_shutting_down() {
+    if state.external_core || state.is_shutting_down() {
         return;
     }
     let begin = state
@@ -196,7 +196,7 @@ pub(crate) fn start(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let state = app.state::<CoreProcessState>();
         loop {
-            if state.is_shutting_down() {
+            if state.external_core || state.is_shutting_down() {
                 return;
             }
             if let Some((generation, due)) = state.recovery.plan() {
