@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 const PROVIDER: &str = "ecpa-antigravity-acp";
 const MAX_BODY: usize = 1024 * 1024;
 type Body = http_body_util::combinators::UnsyncBoxBody<Bytes, Infallible>;
-type SpawnClient = fn(&Path, &Path, &str) -> Result<rpc::Client, String>;
+pub(super) type SpawnClient = fn(&Path, &Path, &str) -> Result<rpc::Client, String>;
 
 #[derive(Default, Serialize, Deserialize)]
 struct Settings {
@@ -149,6 +149,7 @@ pub(crate) async fn set_acp_upstream_enabled(
     let profile = profile(&crate::core_base_dir()?);
     let settings = read_settings(&profile)?;
     if !enabled {
+        state.agents.clear();
         register(None, "", &[])?;
         // Keep the listener alive if saving fails, so an already enabled runtime
         // cannot become an orphaned provider with a closed upstream.
@@ -311,22 +312,94 @@ fn error(status: StatusCode, message: impl AsRef<str>) -> Response<Body> {
     )
 }
 
-struct Completion {
-    model: String,
-    alias: String,
-    text: String,
-    system: String,
-    stream: bool,
+pub(super) struct Completion {
+    pub model: String,
+    pub alias: String,
+    pub text: String,
+    pub system: String,
+    pub stream: bool,
+    pub ignored_parameters: Vec<&'static str>,
+    pub tools: Vec<Value>,
+    pub messages: Vec<Value>,
+    pub results: Vec<Value>,
 }
 
-fn message_text(message: &Value, role: &str) -> Result<String, String> {
+pub(super) struct Output {
+    pub text: String,
+    pub calls: Vec<Value>,
+}
+impl Output {
+    pub fn finish(&self) -> &'static str {
+        if self.calls.is_empty() {
+            "stop"
+        } else {
+            "tool_calls"
+        }
+    }
+    pub fn message(&self) -> Value {
+        let mut message = json!({"role":"assistant","content":if self.text.is_empty() && !self.calls.is_empty() { Value::Null } else { json!(self.text) }});
+        if !self.calls.is_empty() {
+            message["tool_calls"] = json!(self.calls);
+        }
+        message
+    }
+}
+
+// ACP exposes no sampling or exact token-budget controls. Chat applications
+// commonly send these even when using an agent-backed model. Validate the
+// values and report that they are not applied instead of rejecting the chat.
+fn compatibility_parameters(value: &Value) -> Result<Vec<&'static str>, String> {
+    let mut ignored = Vec::new();
+    for key in ["max_tokens", "max_completion_tokens"] {
+        if let Some(limit) = value.get(key).filter(|v| !v.is_null()) {
+            if !limit.as_u64().is_some_and(|n| n > 0) {
+                return Err(format!("{key} must be a positive integer"));
+            }
+            ignored.push(key);
+        }
+    }
+    for (key, maximum) in [("temperature", 2.0), ("top_p", 1.0)] {
+        if let Some(option) = value.get(key).filter(|v| !v.is_null()) {
+            if !option
+                .as_f64()
+                .is_some_and(|n| n.is_finite() && n >= 0.0 && n <= maximum)
+            {
+                return Err(format!("{key} must be a number between 0 and {maximum}"));
+            }
+            ignored.push(key);
+        }
+    }
+    Ok(ignored)
+}
+
+fn compatibility_headers(mut response: Response<Body>, ignored: &[&str]) -> Response<Body> {
+    if !ignored.is_empty() {
+        response.headers_mut().insert(
+            "x-ecpa-ignored-parameters",
+            ignored
+                .join(", ")
+                .parse()
+                .expect("static parameter names are valid HTTP header values"),
+        );
+    }
+    response
+}
+
+pub(super) fn message_text(message: &Value, role: &str) -> Result<String, String> {
     let message = message
         .as_object()
         .ok_or_else(|| format!("Invalid {role} message"))?;
-    if message
-        .keys()
-        .any(|key| !["role", "content", "name"].contains(&key.as_str()))
-    {
+    if message.keys().any(|key| {
+        ![
+            "role",
+            "content",
+            "name",
+            "tool_calls",
+            "tool_call_id",
+            "reasoning_content",
+        ]
+        .contains(&key.as_str())
+    }) {
         return Err("Unsupported ACP message fields".into());
     }
     if message
@@ -335,7 +408,7 @@ fn message_text(message: &Value, role: &str) -> Result<String, String> {
     {
         return Err("Message name must be a string".into());
     }
-    let text = match &message["content"] {
+    let text = match message.get("content").unwrap_or(&Value::Null) {
         Value::String(text) => text.clone(),
         Value::Array(parts) => {
             let mut text = String::new();
@@ -347,9 +420,13 @@ fn message_text(message: &Value, role: &str) -> Result<String, String> {
             }
             text
         }
+        Value::Null if role == "assistant" && message.get("tool_calls").is_some() => String::new(),
         _ => return Err("ACP accepts text content only".into()),
     };
-    if text.trim().is_empty() {
+    if text.trim().is_empty()
+        && role != "tool"
+        && !(role == "assistant" && message.get("tool_calls").is_some())
+    {
         return Err(format!("A non-empty {role} message is required"));
     }
     Ok(text)
@@ -359,10 +436,11 @@ fn message_text(message: &Value, role: &str) -> Result<String, String> {
 // into the single prompt text block instead of a server-side conversation.
 fn prompt_text(messages: &[Value]) -> Result<String, String> {
     let mut turns = Vec::new();
+    let mut pending = std::collections::BTreeSet::new();
     for message in messages {
         let role = message["role"].as_str().unwrap_or("");
         let label = match role {
-            "system" | "developer" | "user" | "assistant" => role,
+            "system" | "developer" | "user" | "assistant" | "tool" => role,
             "" => return Err("Invalid message role".into()),
             role => {
                 return Err(format!(
@@ -370,17 +448,65 @@ fn prompt_text(messages: &[Value]) -> Result<String, String> {
                 ))
             }
         };
-        let text = message_text(message, label)?;
+        let mut text = message_text(message, label)?;
+        if role == "tool" {
+            let id = message["tool_call_id"]
+                .as_str()
+                .ok_or("role 'tool' requires tool_call_id")?;
+            if !pending.remove(id) {
+                return Err("role 'tool' references an unknown or duplicate tool_call_id".into());
+            }
+            text = json!({"tool_call_id":id,"output":text}).to_string();
+        } else if !pending.is_empty() {
+            return Err("Missing results for preceding tool calls".into());
+        }
+        if let Some(calls) = message.get("tool_calls") {
+            if role != "assistant" {
+                return Err("tool_calls requires assistant role".into());
+            }
+            let calls = calls
+                .as_array()
+                .filter(|calls| !calls.is_empty())
+                .ok_or("tool_calls must be a nonempty array")?;
+            for call in calls {
+                let id = call["id"]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .ok_or("Tool call id required")?;
+                let arguments = call["function"]["arguments"]
+                    .as_str()
+                    .ok_or("Tool arguments must be a JSON string")?;
+                let arguments: Value =
+                    serde_json::from_str(arguments).map_err(|_| "Invalid tool argument JSON")?;
+                if call["type"] != "function"
+                    || call["function"]["name"].as_str().is_none()
+                    || !arguments.is_object()
+                    || !pending.insert(id.to_string())
+                {
+                    return Err("Invalid assistant tool call".into());
+                }
+            }
+            text.push_str(&format!("\nTool calls: {}", json!(calls)));
+        }
         if role != "system" && role != "developer" {
-            let label = if role == "user" { "User" } else { "Assistant" };
+            let label = match role {
+                "user" => "User",
+                "tool" => "Tool result",
+                _ => "Assistant",
+            };
             turns.push((label, text));
         }
     }
     if messages.is_empty() {
         return Err("A non-empty user message is required".into());
     }
-    if messages[messages.len() - 1]["role"] != "user" {
-        return Err("the last message must be from the user".into());
+    if !pending.is_empty() {
+        return Err("Missing results for assistant tool calls".into());
+    }
+    if messages[messages.len() - 1]["role"] != "user"
+        && messages[messages.len() - 1]["role"] != "tool"
+    {
+        return Err("the last message must be from the user or a tool result".into());
     }
     if turns.len() == 1 {
         let text = turns.remove(0).1;
@@ -399,7 +525,7 @@ fn prompt_text(messages: &[Value]) -> Result<String, String> {
     Ok(text)
 }
 
-fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, String> {
+pub(super) fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, String> {
     let object = value.as_object().ok_or("Request body must be an object")?;
     for key in object.keys() {
         if key == "service_tier" {
@@ -423,6 +549,10 @@ fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, St
             "response_format",
             "prompt_cache_key",
             "safety_identifier",
+            "max_tokens",
+            "max_completion_tokens",
+            "temperature",
+            "top_p",
         ]
         .contains(&key.as_str())
         {
@@ -431,15 +561,37 @@ fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, St
             ));
         }
     }
-    let tools = match value.get("tools") {
+    let ignored_parameters = compatibility_parameters(value)?;
+    let mut tools = match value.get("tools") {
         None | Some(Value::Null) => &[][..],
         Some(Value::Array(tools)) => tools.as_slice(),
         _ => return Err("tools must be an array".into()),
     };
     let choice = value.get("tool_choice").filter(|choice| !choice.is_null());
     let disabled = choice.is_some_and(|choice| choice == "none");
-    if !tools.is_empty() && !disabled {
-        return Err("ACP client-executed tool calls are not available in this CLI integration. For text chat, disable tools (tool_choice: 'none') or send tools: []. Tool definitions were not discarded.".into());
+    if disabled {
+        tools = &[];
+    }
+    let mut names = std::collections::BTreeSet::new();
+    for tool in tools {
+        let f = &tool["function"];
+        let name = f["name"].as_str().ok_or("Tool function name required")?;
+        if tool["type"] != "function"
+            || name.is_empty()
+            || name.len() > 64
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            || !names.insert(name)
+        {
+            return Err("Invalid or duplicate function tool".into());
+        }
+        if f.get("parameters").is_some_and(|v| !v.is_object()) {
+            return Err("Tool parameters must be a schema object".into());
+        }
+        if f["strict"] == true {
+            return Err("ACP does not enforce strict tool schemas".into());
+        }
     }
     if choice.is_some_and(|choice| choice != "none" && choice != "auto") {
         return Err("tool_choice requires a supported client tool; ACP currently accepts only 'none' or 'auto' with no tools".into());
@@ -528,6 +680,15 @@ fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, St
         .as_array()
         .ok_or("messages must be an array")?;
     let text = prompt_text(messages)?;
+    let results: Vec<_> = messages
+        .iter()
+        .rev()
+        .take_while(|message| message["role"] == "tool")
+        .cloned()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     let system = messages
         .iter()
         .filter(|message| message["role"] == "system" || message["role"] == "developer")
@@ -563,6 +724,10 @@ fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, St
         text,
         system,
         stream,
+        ignored_parameters,
+        tools: tools.to_vec(),
+        messages: messages.clone(),
+        results,
     })
 }
 
@@ -720,6 +885,13 @@ async fn handle_inner<R: tauri::Runtime>(
     };
     let cancel = CancelOnDrop(guard.cancel.clone());
     let stream = request.stream;
+    let ignored_parameters = request.ignored_parameters.clone();
+    if !ignored_parameters.is_empty() {
+        eprintln!(
+            "ACP compatibility: CLI defaults used; parameters not applied: {}",
+            ignored_parameters.join(", ")
+        );
+    }
     let model = request.alias.clone();
     let created = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -729,14 +901,23 @@ async fn handle_inner<R: tauri::Runtime>(
         "chatcmpl-acp-{created}-{}",
         NEXT_ID.fetch_add(1, Ordering::Relaxed)
     );
+    let agent_identity = json!({"profile":profile,"model":request.model,"system":request.system,"tools":request.tools});
+    let resumed = if !request.results.is_empty() {
+        match state.agents.resume(&request, &agent_identity) {
+            Ok(session) => session,
+            Err(error_message) => return error(StatusCode::BAD_REQUEST, error_message),
+        }
+    } else {
+        None
+    };
     let (sender, receiver) = tokio::sync::mpsc::channel::<String>(64);
     let stream_id = id.clone();
     let stream_model = model.clone();
+    let worker_app = app.clone();
     let worker = tauri::async_runtime::spawn_blocking(move || {
         let _guard = guard;
-        let result = (|| {
-            let mut client = spawn(&executable, &profile, &proxy)?;
-            complete(&mut client, &profile, &request, &_guard.cancel, |part| {
+        let result: Result<Output, String> = (|| {
+            let mut send_text = |part: &str| {
                 if stream {
                     let value = json!({"id":stream_id,"object":"chat.completion.chunk","created":created,"model":stream_model,"choices":[{"index":0,"delta":{"content":part},"finish_reason":null}]});
                     // Reserve two slots for the terminal error/finish and DONE;
@@ -747,12 +928,54 @@ async fn handle_inner<R: tauri::Runtime>(
                         _guard.cancel.store(true, Ordering::Release);
                     }
                 }
-            })
+            };
+            if !request.tools.is_empty() || resumed.is_some() {
+                let state = worker_app.state::<AcpState>();
+                let session = match resumed {
+                    Some(session) => session,
+                    None => state.agents.start(
+                        &request,
+                        agent_identity,
+                        &executable,
+                        &profile,
+                        &proxy,
+                        spawn,
+                    )?,
+                };
+                let output =
+                    state
+                        .agents
+                        .collect(&session, &request, &_guard.cancel, &mut send_text)?;
+                if stream && !output.calls.is_empty() {
+                    let calls: Vec<_> = output
+                        .calls
+                        .iter()
+                        .enumerate()
+                        .map(|(index, call)| {
+                            let mut call = call.clone();
+                            call["index"] = json!(index);
+                            call
+                        })
+                        .collect();
+                    let value = json!({"id":stream_id,"object":"chat.completion.chunk","created":created,"model":stream_model,"choices":[{"index":0,"delta":{"tool_calls":calls},"finish_reason":null}]});
+                    sender
+                        .try_send(format!("data: {value}\n\n"))
+                        .map_err(|_| "ACP client disconnected before tool call delivery")?;
+                }
+                Ok(output)
+            } else {
+                let mut client = spawn(&executable, &profile, &proxy)?;
+                let text = complete(&mut client, &profile, &request, &_guard.cancel, send_text)?;
+                Ok(Output {
+                    text,
+                    calls: Vec::new(),
+                })
+            }
         })();
         if stream {
             let value = match &result {
-                Ok(_) => {
-                    json!({"id":stream_id,"object":"chat.completion.chunk","created":created,"model":stream_model,"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]})
+                Ok(output) => {
+                    json!({"id":stream_id,"object":"chat.completion.chunk","created":created,"model":stream_model,"choices":[{"index":0,"delta":{},"finish_reason":output.finish()}]})
                 }
                 Err(error) => json!({"error":{"message":error,"type":"upstream_error"}}),
             };
@@ -761,7 +984,7 @@ async fn handle_inner<R: tauri::Runtime>(
         }
         result
     });
-    if stream {
+    let reply = if stream {
         let frames =
             futures_util::stream::unfold((receiver, cancel), |(mut receiver, cancel)| async move {
                 receiver.recv().await.map(|data| {
@@ -780,9 +1003,9 @@ async fn handle_inner<R: tauri::Runtime>(
         let result = worker.await;
         drop(cancel);
         match result {
-            Ok(Ok(text)) => response(
+            Ok(Ok(output)) => response(
                 StatusCode::OK,
-                json!({"id":id,"object":"chat.completion","created":created,"model":model,"choices":[{"index":0,"message":{"role":"assistant","content":text},"finish_reason":"stop"}]}),
+                json!({"id":id,"object":"chat.completion","created":created,"model":model,"choices":[{"index":0,"message":output.message(),"finish_reason":output.finish()}]}),
             ),
             Ok(Err(e)) => error(
                 if e.contains("timed out") {
@@ -794,7 +1017,8 @@ async fn handle_inner<R: tauri::Runtime>(
             ),
             Err(_) => error(StatusCode::BAD_GATEWAY, "ACP worker exited unexpectedly"),
         }
-    }
+    };
+    compatibility_headers(reply, &ignored_parameters)
 }
 
 static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);

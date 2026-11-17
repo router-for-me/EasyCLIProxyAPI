@@ -20,6 +20,7 @@ pub(super) struct Client {
     next_id: u64,
     supports_logout: bool,
     system_prompt: SystemPromptSupport,
+    api_tools: Vec<String>,
     started: std::time::SystemTime,
 }
 
@@ -158,6 +159,7 @@ impl Client {
             next_id: 0,
             supports_logout: false,
             system_prompt: SystemPromptSupport::default(),
+            api_tools: Vec::new(),
             started,
         })
     }
@@ -199,6 +201,21 @@ impl Client {
         F: FnMut(Value),
     {
         self.call_with_timeout(method, params, cancel, request_timeout(method), update)
+    }
+
+    pub(super) fn agent_prompt<F: FnMut(Value)>(
+        &mut self,
+        params: Value,
+        cancel: &Arc<std::sync::atomic::AtomicBool>,
+        update: F,
+    ) -> Result<Value, String> {
+        self.call_with_timeout(
+            "session/prompt",
+            params,
+            cancel,
+            Duration::from_secs(720),
+            update,
+        )
     }
 
     fn call_with_timeout<F>(
@@ -266,7 +283,26 @@ impl Client {
             if message.get("method").is_some() {
                 if let Some(request_id) = message.get("id") {
                     let response = if message["method"] == "session/request_permission" {
-                        json!({"jsonrpc":"2.0", "id":request_id, "result":{"outcome":{"outcome":"cancelled"}}})
+                        let tool = &message["params"]["toolCall"];
+                        let permitted = self.api_tools.iter().any(|name| {
+                            [tool["name"].as_str(), tool["title"].as_str()]
+                                .into_iter()
+                                .flatten()
+                                .any(|label| {
+                                    label == name
+                                        || label == format!("api_client/{name}")
+                                        || label == format!("api_client__{name}")
+                                        || label == format!("mcp_api_client_{name}")
+                                        || label == format!("mcp__api_client__{name}")
+                                })
+                        });
+                        let option = message["params"]["options"].as_array().and_then(|options| {
+                            options
+                                .iter()
+                                .find(|option| permitted && option["kind"] == "allow_once")
+                        });
+                        let outcome = option.map(|option| json!({"outcome":"selected","optionId":option["optionId"]})).unwrap_or_else(||json!({"outcome":"cancelled"}));
+                        json!({"jsonrpc":"2.0", "id":request_id, "result":{"outcome":outcome}})
                     } else {
                         json!({"jsonrpc":"2.0", "id":request_id, "error":{"code":-32601,"message":"ACP client capability disabled"}})
                     };
@@ -333,6 +369,16 @@ impl Client {
         system: &str,
         cancel: &Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<Value, String> {
+        self.api_session(profile, system, &[], cancel)
+    }
+
+    pub(super) fn api_session(
+        &mut self,
+        profile: &Path,
+        system: &str,
+        servers: &[Value],
+        cancel: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Value, String> {
         let mut params = json!({"cwd":profile.join("workspace"),"mcpServers":[]});
         if !system.is_empty() {
             match self.system_prompt {
@@ -345,7 +391,33 @@ impl Client {
                 SystemPromptSupport::Unavailable => return Err("The installed ACP CLI does not advertise system instructions support; update Antigravity CLI".into()),
             }
         }
+        if !servers.is_empty() {
+            params["mcpServers"] = json!(servers);
+            params["_meta"]["antigravity"]["eagerMcpServers"] = json!(true);
+            params["_meta"]["agy"]["disabledTools"] = json!([
+                "list_directory",
+                "search_directory",
+                "find_file",
+                "view_file",
+                "create_file",
+                "edit_file",
+                "run_command",
+                "ask_question",
+                "start_subagent",
+                "invoke_subagent",
+                "generate_image",
+                "search_web",
+                "read_url_content"
+            ]);
+        }
         self.call("session/new", params, cancel, |_| {})
+    }
+
+    pub(super) fn allow_api_tools(&mut self, tools: &[Value]) {
+        self.api_tools = tools
+            .iter()
+            .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_owned))
+            .collect();
     }
 
     pub(super) fn model(

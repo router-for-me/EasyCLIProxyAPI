@@ -1,6 +1,9 @@
 mod accounts;
 mod bridge;
 mod rpc;
+mod agent;
+mod tool_transport;
+pub(crate) use tool_transport::run_helper as run_mcp_helper;
 pub(crate) use bridge::restore;
 
 #[tauri::command]
@@ -55,6 +58,7 @@ pub(crate) struct AcpState {
     cancel: Mutex<Option<Arc<AtomicBool>>>,
     bridge: Mutex<Option<bridge::Runtime>>,
     bridge_transition: tokio::sync::Mutex<()>,
+    agents: agent::Sessions,
 }
 
 impl AcpState {
@@ -68,6 +72,7 @@ impl AcpState {
 
     pub(crate) fn shutdown(&self) {
         self.cancel();
+        self.agents.clear();
         if let Ok(mut runtime) = self.bridge.lock() {
             runtime.take();
         }
@@ -290,6 +295,7 @@ pub(crate) async fn relogin_acp_account(app: tauri::AppHandle) -> Result<AcpStat
 
 fn clear_account(app: &tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<AcpState>();
+    state.agents.clear();
     {
         let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
         status.authenticated = false;

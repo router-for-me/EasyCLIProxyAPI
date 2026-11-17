@@ -2542,6 +2542,11 @@ struct GithubAsset {
 
 fn main() {
     let helper_args = env::args_os().collect::<Vec<_>>();
+    if helper_args.get(1).is_some_and(|arg| arg == "--cpa-acp-tools") {
+        let result = acp::run_mcp_helper();
+        if let Err(error) = result { eprintln!("{error}"); std::process::exit(1); }
+        return;
+    }
     if helper_args.get(1).is_some_and(|a| a == "--cpa-copilot-cli") {
         let code = run_copilot_helper(&helper_args).unwrap_or_else(|error| { eprintln!("{error}"); 1 });
         std::process::exit(code);

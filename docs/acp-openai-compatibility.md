@@ -2,6 +2,23 @@
 
 评审日期：2026-11-17。代码基线：`dev` 的 `a0fa48e5`；本机官方 Antigravity CLI `1.4.12`，CPA 内核 `8.0.63`。本文件记录验证结果和实现边界，不代表通用工具调用已经实现。
 
+## 后续修复与验收（2026-11-17）
+
+本分支已实现内部 MCP 工具传输与等待状态。它不要求用户安装 MCP，也不会取消 ACP prompt 来模拟正常工具结束。返回工具调用后保留原 CLI 执行，客户端下一次回传结果时交回原 MCP 请求。
+
+已在用户提供的本机 8317 端点、CPA 8.0.75、官方 gemini-3.8-flash-high 实测：
+
+- 历史记录中的真实三工具请求不再报 tools 400。
+- Chat Completions 与 Responses 均完成真实工具发起、随机结果回传和最终回复。
+- 使用历史记录内 automation_repl、automation_repl_reset、fs_read 定义，完成 automation_repl 的流式调用和结果续接；未执行用户的真实自动化操作，结果由测试客户端提供。
+- 连续调用 lookup(alpha)、回传、lookup(beta)、回传，最终回复正确包含两个随机结果。
+- max_tokens/max_completion_tokens/temperature/top_p 作为兼容参数接受，类型错误仍拒绝，未应用项有响应头与诊断；精确预算和采样仍由 CLI 默认行为决定。
+- Responses 省略助手 content 时不再 panic；未知/重复调用 ID、身份或历史不匹配拒绝，等待取消有测试。
+
+构建必须使用 `bunx tauri build --no-bundle`，直接 `cargo build --release` 未启用 Tauri custom-protocol 时会让 GUI 访问开发地址 localhost:1420。此前为验证临时部署的构建造成过此错误，已恢复原 GUI 并改用正式构建流程。
+
+以下是改造前的研究记录，不应当作本分支最终功能说明；当前范围见 acp-access.md。
+
 ## 结论
 
 基线 ACP 接入是一个文本请求桥接，尚不满足通用 OpenAI Chat Completions / Responses 客户端的使用要求。截图中的 `tools` 报错来自 ECPA 的请求字段白名单，基线中甚至 `tools: []` 也会触发；本分支已修复空或明确禁用工具的情况，非空启用工具仍不支持。`dev` 已有的多轮处理是把历史拼进一次用户输入，不是复用官方会话。

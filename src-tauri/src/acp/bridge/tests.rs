@@ -252,12 +252,7 @@ fn provider_registration_preserves_unrelated_routes_in_both_schemas() {
 fn unsupported_inputs_are_rejected_without_dropping_parameters() {
     assert!(parse_completion(&request(false), &models()).is_ok());
     for (key, value) in [
-        (
-            "tools",
-            json!([{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]),
-        ),
-        ("temperature", json!(0.5)),
-        ("max_tokens", json!(64)),
+        ("tools", json!([{"type":"unsupported"}])),
         ("response_format", json!({"type":"json_object"})),
     ] {
         let mut value_request = request(false);
@@ -286,6 +281,53 @@ fn single_user_message_is_passed_through_unchanged() {
     value["messages"] =
         json!([{"role":"user","content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}]);
     assert_eq!(parse_completion(&value, &models()).unwrap().text, "ab");
+}
+
+#[test]
+fn client_generation_options_are_validated_and_reported_as_unapplied() {
+    let mut value = request(false);
+    value["max_tokens"] = json!(1024);
+    value["max_completion_tokens"] = json!(2048);
+    value["temperature"] = json!(0.7);
+    value["top_p"] = json!(1);
+    let parsed = parse_completion(&value, &models()).unwrap();
+    assert_eq!(parsed.text, "ping");
+    assert_eq!(
+        parsed.ignored_parameters,
+        [
+            "max_tokens",
+            "max_completion_tokens",
+            "temperature",
+            "top_p"
+        ]
+    );
+    for key in [
+        "max_tokens",
+        "max_completion_tokens",
+        "temperature",
+        "top_p",
+    ] {
+        value[key] = Value::Null;
+    }
+    assert!(parse_completion(&value, &models())
+        .unwrap()
+        .ignored_parameters
+        .is_empty());
+    for (key, invalid) in [
+        ("max_tokens", json!(0)),
+        ("max_tokens", json!(-1)),
+        ("max_tokens", json!(1.5)),
+        ("max_completion_tokens", json!("1024")),
+        ("temperature", json!(-0.1)),
+        ("temperature", json!(2.1)),
+        ("top_p", json!(1.1)),
+        ("top_p", json!(false)),
+    ] {
+        let mut value = request(false);
+        value[key] = invalid;
+        let error = parse_completion(&value, &models()).err().unwrap();
+        assert!(error.contains(key), "{key}: {error}");
+    }
 }
 
 #[test]
@@ -460,6 +502,7 @@ fn fake_official_server() {
     }
     let mut selected = String::new();
     let mut system = String::new();
+    let mut tool_config = Value::Null;
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else { break };
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
@@ -470,6 +513,7 @@ fn fake_official_server() {
                 json!({"protocolVersion":1,"agentCapabilities":{"auth":{"logout":{}},"_meta":{"antigravity":{"systemPrompt":{"append":true}}}}})
             }
             "session/new" => {
+                tool_config = value["params"]["mcpServers"][0].clone();
                 system = value["params"]["_meta"]["antigravity"]["systemPrompt"]["append"]
                     .as_str()
                     .unwrap_or("")
@@ -487,6 +531,41 @@ fn fake_official_server() {
                     !selected.is_empty(),
                     "explicit model selection must precede inference"
                 );
+                if value["params"]["prompt"][0]["text"] == "use-client-tool" {
+                    let env = tool_config["env"].as_array().unwrap();
+                    let port: u16 = env
+                        .iter()
+                        .find(|v| v["name"] == "ECPA_ACP_TOOL_PORT")
+                        .unwrap()["value"]
+                        .as_str()
+                        .unwrap()
+                        .parse()
+                        .unwrap();
+                    let key = &env
+                        .iter()
+                        .find(|v| v["name"] == "ECPA_ACP_TOOL_KEY")
+                        .unwrap()["value"];
+                    let mut socket =
+                        std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))
+                            .unwrap();
+                    writeln!(socket,"{}",json!({"key":key,"request":{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"lookup","arguments":{"key":"alpha"}}}})).unwrap();
+                    let mut line = String::new();
+                    std::io::BufReader::new(socket)
+                        .read_line(&mut line)
+                        .unwrap();
+                    let result: Value = serde_json::from_str(&line).unwrap();
+                    let text = result["result"]["content"][0]["text"].as_str().unwrap();
+                    println!(
+                        "{}",
+                        json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"isolated-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":text}}}})
+                    );
+                    println!(
+                        "{}",
+                        json!({"jsonrpc":"2.0","id":value["id"],"result":{"stopReason":"end_turn"}})
+                    );
+                    std::io::stdout().flush().unwrap();
+                    continue;
+                }
                 if value["params"]["prompt"][0]["text"] == "verify-system" {
                     assert_eq!(system, "be brief\n\nuse plain language");
                 }
@@ -547,6 +626,68 @@ fn reauthentication_uses_official_advertised_logout() {
     client.logout(&cancel).unwrap();
 }
 
+#[test]
+#[ignore = "requires official authenticated profile; verifies real client tool round trip"]
+fn official_agent_waits_for_client_tool_and_continues() {
+    let profile = PathBuf::from(std::env::var_os("ECPA_ACP_PROBE_PROFILE").expect("Set profile"));
+    let executable = PathBuf::from(std::env::var_os("ECPA_ACP_PROBE_CLI").expect("Set CLI"));
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut discovery = rpc::Client::spawn(&executable, &profile, "").unwrap();
+    discovery.initialize(&cancel).unwrap();
+    let models = model_list(&discovery.session(&profile, &cancel).unwrap());
+    drop(discovery);
+    let mut value = json!({"model":"acp/gemini-3.8-flash-high","messages":[{"role":"user","content":"Call lookup with key alpha. Wait for its returned secret and reply with the secret. Do not guess."}],"tools":[{"type":"function","function":{"name":"lookup","description":"Look up a secret. The API client executes this.","parameters":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}}}]});
+    let request = parse_completion(&value, &models).unwrap();
+    let identity = json!({"test":"native"});
+    let sessions = super::super::agent::Sessions::default();
+    let session = sessions
+        .start(
+            &request,
+            identity.clone(),
+            &executable,
+            &profile,
+            "",
+            rpc::Client::spawn,
+        )
+        .unwrap();
+    let output = sessions
+        .collect(&session, &request, &cancel, |_| {})
+        .unwrap();
+    assert!(
+        !output.calls.is_empty(),
+        "Official Agent did not call provided tool; text: {}",
+        output.text
+    );
+    assert_eq!(output.calls[0]["function"]["name"], "lookup");
+    let marker = format!(
+        "TOOL_SECRET_{}",
+        super::super::tool_transport::secret().unwrap()
+    );
+    value["messages"]
+        .as_array_mut()
+        .unwrap()
+        .push(output.message());
+    for call in &output.calls {
+        value["messages"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"role":"tool","tool_call_id":call["id"],"content":marker}));
+    }
+    let request = parse_completion(&value, &models).unwrap();
+    let session = sessions.resume(&request, &identity).unwrap().unwrap();
+    let output = sessions
+        .collect(&session, &request, &cancel, |_| {})
+        .unwrap();
+    assert!(
+        output.calls.is_empty(),
+        "Agent unexpectedly called another tool"
+    );
+    assert!(
+        output.text.contains(&marker),
+        "Agent did not receive client result"
+    );
+}
+
 #[tokio::test]
 async fn authenticated_http_bridge_lists_models_completes_streams_and_cancels_disconnects() {
     let app = tauri::test::mock_app();
@@ -597,14 +738,22 @@ async fn authenticated_http_bridge_lists_models_completes_streams_and_cancels_di
         .unwrap();
     assert_eq!(listing["data"][0]["id"], "acp/test-model");
     for stream in [false, true] {
+        let mut payload = request(stream);
+        payload["max_tokens"] = json!(1024);
+        payload["temperature"] = json!(0.7);
+        payload["top_p"] = json!(1);
         let response = http
             .post(format!("{base}/v1/chat/completions"))
             .bearer_auth("internal-test-key")
-            .json(&request(stream))
+            .json(&payload)
             .send()
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
+        assert_eq!(
+            response.headers()["x-ecpa-ignored-parameters"],
+            "max_tokens, temperature, top_p"
+        );
         if stream {
             assert_eq!(response.headers()["content-type"], "text/event-stream");
             let body = response.text().await.unwrap();
@@ -746,12 +895,15 @@ async fn real_cpa_lists_and_routes_registered_acp_models() {
         for responses in [false, true] {
             for stream in [false, true] {
                 let (path, payload) = if responses {
-                    ("responses", json!({"model":"acp/test-model","input":[{"role":"developer","content":"use plain language"},{"role":"user","content":"verify-system"}],"instructions":"be brief","tools":[],"tool_choice":"auto","parallel_tool_calls":true,"stream":stream,"store":false}))
+                    ("responses", json!({"model":"acp/test-model","input":[{"role":"developer","content":"use plain language"},{"role":"user","content":"verify-system"}],"instructions":"be brief","tools":[],"tool_choice":"auto","parallel_tool_calls":true,"stream":stream,"store":false,"max_output_tokens":1024,"temperature":0.7,"top_p":1}))
                 } else {
                     let mut value = request(stream);
                     value["messages"] = json!([{"role":"system","content":"be brief"},{"role":"developer","content":"use plain language"},{"role":"user","content":"verify-system"}]);
                     value["tools"] = json!([]);
                     value["tool_choice"] = json!("auto");
+                    value["max_tokens"] = json!(1024);
+                    value["temperature"] = json!(0.7);
+                    value["top_p"] = json!(1);
                     ("chat/completions", value)
                 };
                 let response = http
@@ -797,6 +949,42 @@ async fn real_cpa_lists_and_routes_registered_acp_models() {
                         return Err(format!("Unexpected CPA Chat response: {body}"));
                     }
                 }
+            }
+        }
+        // A real client round trip through both CPA public protocols. The
+        // fake Agent blocks on the internal tool transport until the second
+        // HTTP request supplies its result; no prompt restart is involved.
+        for responses in [false, true] {
+            for stream in [false, true] {
+                let messages = json!([{"role":"user","content":"use-client-tool"}]);
+                let function = json!({"name":"lookup","description":"Look up a value","parameters":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}});
+                let (path, mut first) = if responses {
+                    let mut tool = function.clone(); tool["type"] = json!("function");
+                    ("responses",json!({"model":"acp/test-model","input":messages,"tools":[tool],"stream":false,"store":false}))
+                } else {
+                    ("chat/completions",json!({"model":"acp/test-model","messages":messages,"tools":[{"type":"function","function":function}],"stream":false}))
+                };
+                let reply = http.post(format!("{base}/v1/{path}")).bearer_auth("isolated-client-key").json(&first).send().await.map_err(|e|e.to_string())?;
+                let status = reply.status(); let body: Value = reply.json().await.map_err(|e|e.to_string())?;
+                if !status.is_success() { return Err(format!("Tool start {path}: {status}: {body}")); }
+                if responses {
+                    let calls = body["output"].as_array().ok_or("Missing Responses output")?;
+                    let call = calls.iter().find(|item|item["type"] == "function_call").ok_or_else(||format!("Missing function_call: {body}"))?;
+                    if call["name"] != "lookup" { return Err(format!("Wrong Responses tool: {call}")); }
+                    first["input"] = json!([
+                        {"role":"user","content":"use-client-tool"},
+                        call,
+                        {"type":"function_call_output","call_id":call["call_id"],"output":"CLIENT_TOOL_OK"}
+                    ]);
+                } else {
+                    if body["choices"][0]["finish_reason"] != "tool_calls" { return Err(format!("Missing tool finish: {body}")); }
+                    let message = &body["choices"][0]["message"];
+                    first["messages"] = json!([{"role":"user","content":"use-client-tool"},message,{"role":"tool","tool_call_id":message["tool_calls"][0]["id"],"content":"CLIENT_TOOL_OK"}]);
+                }
+                first["stream"] = json!(stream);
+                let reply = http.post(format!("{base}/v1/{path}")).bearer_auth("isolated-client-key").json(&first).send().await.map_err(|e|e.to_string())?;
+                let status = reply.status(); let body = reply.text().await.map_err(|e|e.to_string())?;
+                if !status.is_success() || !body.contains("CLIENT_TOOL_OK") { return Err(format!("Tool resume {path}: {status}: {body}")); }
             }
         }
         patch_provider(&mut document, None)?;
