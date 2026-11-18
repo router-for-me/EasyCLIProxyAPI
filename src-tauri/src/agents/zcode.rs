@@ -156,6 +156,8 @@ pub(crate) struct ZCodeModelConfig {
     pub reasoning_levels: Vec<String>,
     pub reasoning_map: Option<String>,
     pub is_manual: bool,
+    #[serde(default)]
+    pub system_prompt: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -192,6 +194,8 @@ pub(crate) struct ZCodeSubagentItem {
     pub model: Option<String>,
     pub thought_level: Option<String>,
     pub tools: Vec<String>,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -386,6 +390,7 @@ pub(crate) fn zcode_editor_snapshot(
 
     let mut editor_models = Vec::new();
     let mut seen_ids = std::collections::HashSet::new();
+    let (default_system_prompt, model_prompt_overrides) = zcode_model_system_prompts_for_editor(home);
 
     let catalog = crate::usage::load_model_capabilities_snapshot();
     for option in available_models {
@@ -396,6 +401,11 @@ pub(crate) fn zcode_editor_snapshot(
             Some(500_000) | None => inferred_cw.or(option.context_window),
             Some(cw) => Some(cw).or(inferred_cw),
         };
+
+        let model_system_prompt = model_prompt_overrides
+            .get(&option.name)
+            .cloned()
+            .unwrap_or_else(|| default_system_prompt.clone());
 
         let default_config = ZCodeModelConfig {
             context_window: effective_default_cw,
@@ -409,6 +419,7 @@ pub(crate) fn zcode_editor_snapshot(
             reasoning_levels: if inferred_rl.is_empty() { option.reasoning_levels.clone() } else { inferred_rl },
             reasoning_map: Some(ZCODE_CPA_REASONING_MAP.to_string()),
             is_manual: false,
+            system_prompt: default_system_prompt.clone(),
         };
 
         let configuration = if let Some(manual_rule) = manual_rules.get(&option.name) {
@@ -427,6 +438,7 @@ pub(crate) fn zcode_editor_snapshot(
                 reasoning_map: if rl.is_some() { map } else { default_config.reasoning_map.clone() },
                 reasoning_levels: rl.unwrap_or_else(|| default_config.reasoning_levels.clone()),
                 is_manual: true,
+                system_prompt: model_system_prompt,
             }
         } else if let Some(prov_rule) = provider_rules.get(&option.name) {
             let (cw, mot, img, pdf, vid, json_out, search, sys) = parse_zcode_rule_properties(prov_rule);
@@ -444,9 +456,13 @@ pub(crate) fn zcode_editor_snapshot(
                 reasoning_map: if rl.is_some() { map } else { default_config.reasoning_map.clone() },
                 reasoning_levels: rl.unwrap_or_else(|| default_config.reasoning_levels.clone()),
                 is_manual: false,
+                system_prompt: model_system_prompt,
             }
         } else {
-            default_config.clone()
+            ZCodeModelConfig {
+                system_prompt: model_system_prompt,
+                ..default_config.clone()
+            }
         };
 
         let enabled = if !has_personal_model_ids {
@@ -467,6 +483,10 @@ pub(crate) fn zcode_editor_snapshot(
         if !seen_ids.contains(mid) {
             let (cw, mot, img, pdf, vid, json_out, search, sys) = parse_zcode_rule_properties(manual_rule);
             let (rl, map) = parse_zcode_rule_reasoning(manual_rule);
+            let model_prompt = model_prompt_overrides
+                .get(mid)
+                .cloned()
+                .unwrap_or_else(|| default_system_prompt.clone());
             let cfg = ZCodeModelConfig {
                 context_window: cw,
                 max_output_tokens: mot,
@@ -479,13 +499,18 @@ pub(crate) fn zcode_editor_snapshot(
                 reasoning_levels: rl.unwrap_or_default(),
                 reasoning_map: map.clone(),
                 is_manual: true,
+                system_prompt: model_prompt,
+            };
+            let defaults_cfg = ZCodeModelConfig {
+                system_prompt: default_system_prompt.clone(),
+                ..cfg.clone()
             };
             let enabled = personal_model_ids.contains(mid);
             editor_models.push(ZCodeCatalogEditorModel {
                 id: mid.clone(),
                 enabled,
-                configuration: cfg.clone(),
-                defaults: cfg,
+                configuration: cfg,
+                defaults: defaults_cfg,
             });
         }
     }
@@ -639,12 +664,29 @@ pub(crate) fn save_zcode_editor(
 
 fn parse_subagent_markdown(file_path: &Path) -> Option<ZCodeSubagentItem> {
     let content = fs::read_to_string(file_path).ok()?;
-    if !content.starts_with("---\n") && !content.starts_with("---\r\n") {
+    let prefix_len = if content.starts_with("---\r\n") {
+        5
+    } else if content.starts_with("---\n") {
+        4
+    } else {
         return None;
-    }
-    let rest = &content[4..];
-    let end_idx = rest.find("\n---").or_else(|| rest.find("\r\n---"))?;
+    };
+    let rest = &content[prefix_len..];
+    let (end_idx, sep_len) = if let Some(idx) = rest.find("\r\n---") {
+        (idx, 5)
+    } else if let Some(idx) = rest.find("\n---") {
+        (idx, 4)
+    } else {
+        return None;
+    };
     let frontmatter = &rest[..end_idx];
+    let after_sep = &rest[end_idx + sep_len..];
+    let body_text = after_sep
+        .strip_prefix("\r\n")
+        .or_else(|| after_sep.strip_prefix('\n'))
+        .unwrap_or(after_sep)
+        .trim()
+        .to_string();
 
     let mut name = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
     let mut description = String::new();
@@ -679,6 +721,7 @@ fn parse_subagent_markdown(file_path: &Path) -> Option<ZCodeSubagentItem> {
         model,
         thought_level,
         tools,
+        system_prompt: Some(body_text),
     })
 }
 
@@ -818,11 +861,25 @@ pub(crate) fn save_zcode_subagent_config_inner(
     fs::write(&settings_path, rendered)
         .map_err(|e| format!("Failed to write ZCode settings: {e}"))?;
 
+    let existing_snapshot = zcode_subagent_snapshot(home)?;
+    let allowed_paths: std::collections::HashSet<PathBuf> = existing_snapshot
+        .subagents
+        .iter()
+        .map(|item| PathBuf::from(&item.file_path))
+        .collect();
+
     for sub in &request.subagents {
         let p = Path::new(&sub.file_path);
-        if !p.is_file() { continue; }
+        if !allowed_paths.contains(p) || !p.is_file() {
+            continue;
+        }
         if let Ok(content) = fs::read_to_string(p) {
-            if let Some(updated) = update_subagent_frontmatter(&content, sub.model.as_deref(), sub.thought_level.as_deref()) {
+            if let Some(updated) = update_subagent_frontmatter(
+                &content,
+                sub.model.as_deref(),
+                sub.thought_level.as_deref(),
+                sub.system_prompt.as_deref(),
+            ) {
                 fs::write(p, updated)
                     .map_err(|e| format!("Failed to write ZCode subagent {}: {e}", p.display()))?;
             }
@@ -832,14 +889,29 @@ pub(crate) fn save_zcode_subagent_config_inner(
     zcode_subagent_snapshot(home)
 }
 
-fn update_subagent_frontmatter(content: &str, model: Option<&str>, thought_level: Option<&str>) -> Option<String> {
-    if !content.starts_with("---\n") && !content.starts_with("---\r\n") {
+fn update_subagent_frontmatter(
+    content: &str,
+    model: Option<&str>,
+    thought_level: Option<&str>,
+    system_prompt: Option<&str>,
+) -> Option<String> {
+    let prefix_len = if content.starts_with("---\r\n") {
+        5
+    } else if content.starts_with("---\n") {
+        4
+    } else {
         return None;
-    }
-    let rest = &content[4..];
-    let end_idx = rest.find("\n---").or_else(|| rest.find("\r\n---"))?;
+    };
+    let rest = &content[prefix_len..];
+    let (end_idx, _sep_len) = if let Some(idx) = rest.find("\r\n---") {
+        (idx, 5)
+    } else if let Some(idx) = rest.find("\n---") {
+        (idx, 4)
+    } else {
+        return None;
+    };
     let frontmatter = &rest[..end_idx];
-    let body = &rest[end_idx..];
+    let original_tail = &rest[end_idx..];
 
     let mut lines: Vec<String> = frontmatter.lines().map(String::from).collect();
     let mut has_model = false;
@@ -875,7 +947,15 @@ fn update_subagent_frontmatter(content: &str, model: Option<&str>, thought_level
         }
     }
 
-    Some(format!("---\n{}{}", lines.join("\n"), body))
+    if let Some(next_prompt) = system_prompt {
+        let normalized = next_prompt.replace("\r\n", "\n");
+        if normalized.trim().is_empty() {
+            return Some(format!("---\n{}\n---\n", lines.join("\n")));
+        }
+        return Some(format!("---\n{}\n---\n\n{}\n", lines.join("\n"), normalized.trim()));
+    }
+
+    Some(format!("---\n{}{}", lines.join("\n"), original_tail))
 }
 
 #[tauri::command]
@@ -909,13 +989,20 @@ pub(crate) async fn get_zcode_model_catalog_editor_in_directories(
 pub(crate) async fn save_zcode_model_catalog_editor(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
+    status_cache: tauri::State<'_, AgentConfigStatusCache>,
     request: ZCodeCatalogEditorSaveRequest,
     config_directories: Option<AgentConfigDirectories>,
 ) -> Result<ZCodeCatalogEditorSnapshot, String> {
     let directories = validate_agent_config_directories(config_directories)?;
     AGENT_CONFIG_DIRECTORIES
         .scope(directories, async move {
-            save_zcode_model_catalog_editor_in_directories(app, gui_config_state, request).await
+            save_zcode_model_catalog_editor_in_directories(
+                app,
+                gui_config_state,
+                status_cache,
+                request,
+            )
+            .await
         })
         .await
 }
@@ -923,15 +1010,35 @@ pub(crate) async fn save_zcode_model_catalog_editor(
 pub(crate) async fn save_zcode_model_catalog_editor_in_directories(
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
+    status_cache: tauri::State<'_, AgentConfigStatusCache>,
     request: ZCodeCatalogEditorSaveRequest,
 ) -> Result<ZCodeCatalogEditorSnapshot, String> {
     let config = gui_config_state.snapshot()?;
     let models = fetch_prepared_agent_models(AgentClient::ZCode, &config).await?;
     let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
+    let model_prompts: Vec<(String, Option<String>)> = request
+        .models
+        .iter()
+        .map(|m| {
+            let prompt = m.configuration.system_prompt.trim();
+            (
+                m.id.clone(),
+                (!prompt.is_empty()).then(|| m.configuration.system_prompt.clone()),
+            )
+        })
+        .collect();
+    {
+        let _guard = crate::AGENT_CONFIG_FILE_LOCK
+            .lock()
+            .map_err(|_| "Agent configuration file lock is poisoned")?;
+        save_zcode_editor(&home, &models.models, request)?;
+    }
+    sync_zcode_catalog_model_prompts(&app, &home, config.port, model_prompts).await?;
+    let _ = status_cache.clear();
     let _guard = crate::AGENT_CONFIG_FILE_LOCK
         .lock()
         .map_err(|_| "Agent configuration file lock is poisoned")?;
-    save_zcode_editor(&home, &models.models, request)
+    zcode_editor_snapshot(&home, &models.models)
 }
 
 #[tauri::command]

@@ -1,6 +1,7 @@
 import { routingZhTW } from './locales/routing';
 import { createTraditionalMessages } from './traditional';
 import { themeDiyZhTW } from './themeDiy';
+import { agentSystemPromptsZhTW } from './agentSystemPrompts';
 import { authFileTagsZhTW } from './authFileList';
 import { jaOverrides } from './ja';
 import { en } from './locales/en';
@@ -33,6 +34,7 @@ export const zhTW: Record<MessageKey, string> = {
   'home.catalog.codexSyncFailed': '核心模型目錄已重新整理，但 Codex 模型目錄同步失敗：{error}',
   ...routingZhTW,
   ...themeDiyZhTW,
+  ...agentSystemPromptsZhTW,
   ...authFileTagsZhTW,
   'app.nav.mcpSkills': 'MCP 與技能',
   'quota.service.cloud.label': '雲端工作階段額度',

@@ -672,7 +672,7 @@ pub(crate) fn fresh_agent_contents_with_oauth(
         claude_desktop_model_mappings,
         ..
     } = options;
-    let root_base = managed_core_loopback_origin(port);
+    let root_base = agent_effective_loopback_origin(client.id(), port);
     let openai_base = format!("{root_base}/v1");
     match client {
         AgentClient::ClaudeCode => Ok(vec![build_claude_agent_config(
@@ -1548,16 +1548,16 @@ pub(crate) fn build_agent_template_updates(
         claude_desktop_model_mappings,
     } = request;
     if matches!(client, AgentClient::CopilotCli | AgentClient::VscodeCopilot) {
-        return build_copilot_updates(client, home, &format!("{}/v1", managed_core_loopback_origin(port)), api_key, model, models, true);
+        return build_copilot_updates(client, home, &format!("{}/v1", agent_effective_loopback_origin(client.id(), port)), api_key, model, models, true);
     }
     if client == AgentClient::AntigravityCli {
-        return build_antigravity_updates(client, home, &managed_core_loopback_origin(port), api_key, model, true);
+        return build_antigravity_updates(client, home, &agent_effective_loopback_origin("antigravity-cli", port), api_key, model, true);
     }
     let paths = agent_config_paths(client, home);
     let contents = if client == AgentClient::DeepSeekHarness
         && paths.first().is_some_and(|path| is_cordis_patch_path(path))
     {
-        let openai_base = format!("{}/v1", managed_core_loopback_origin(port));
+        let openai_base = format!("{}/v1", agent_effective_loopback_origin("deepseek-harness", port));
         vec![
             build_deepseek_harness_cordis_patch_template(&openai_base, model, models)?,
             build_deepseek_harness_credentials(None, api_key)?,

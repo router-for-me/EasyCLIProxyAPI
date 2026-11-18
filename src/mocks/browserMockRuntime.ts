@@ -2006,6 +2006,53 @@ export function createBrowserMockRuntime(
         return clone(state.speedAliases);
       }
 
+      case 'get_agent_system_prompt_editor': {
+        const client = readString(payload.client) || 'zcode';
+        const defaultPrompt = `You are ${client}, a coding assistant.`;
+        return {
+          client,
+          defaultPrompt,
+          builtinDefaultPrompt: defaultPrompt,
+          defaultSource: 'template',
+          defaultCustomized: false,
+          defaultMode: 'replace',
+          defaultPreserveDynamicContext: true,
+          proxyActive: false,
+          proxyPort: null,
+          models: [
+            { id: 'gpt-5.2-codex', customized: false, prompt: defaultPrompt, defaultPrompt, mode: 'replace', preserveDynamicContext: true },
+            { id: 'claude-sonnet-4-6', customized: false, prompt: defaultPrompt, defaultPrompt, mode: 'replace', preserveDynamicContext: true },
+          ],
+        };
+      }
+      case 'save_agent_system_prompt_editor': {
+        const req = asObject(payload.request);
+        const client = readString(req.client) || 'zcode';
+        const builtinDefaultPrompt = `You are ${client}, a coding assistant.`;
+        const defaultCustomized = Boolean(req.defaultCustomized);
+        const defaultPrompt = defaultCustomized ? readString(req.defaultPrompt) : builtinDefaultPrompt;
+        const models = asArray(req.models).map(asObject).map((m) => ({
+          id: readString(m.id),
+          customized: Boolean(m.customized),
+          prompt: Boolean(m.customized) ? readString(m.prompt) : defaultPrompt,
+          defaultPrompt,
+          mode: readString(m.mode) || 'replace',
+          preserveDynamicContext: m.preserveDynamicContext !== false,
+        }));
+        const anyActive = defaultCustomized || models.some((m) => m.customized);
+        return {
+          client,
+          defaultPrompt,
+          builtinDefaultPrompt,
+          defaultSource: 'template',
+          defaultCustomized,
+          defaultMode: readString(req.defaultMode) || 'replace',
+          defaultPreserveDynamicContext: req.defaultPreserveDynamicContext !== false,
+          proxyActive: anyActive,
+          proxyPort: anyActive ? 18331 : null,
+          models,
+        };
+      }
       case 'get_codex_model_catalog_editor': return clone(state.codexCatalog);
       case 'get_codex_subagent_config': return clone(state.codexSubagents);
       case 'save_codex_subagent_config': {

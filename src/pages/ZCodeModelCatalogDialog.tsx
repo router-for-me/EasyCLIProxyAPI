@@ -37,6 +37,7 @@ function sameZCodeModelConfiguration(
   if (a.supportsNativeWebSearch !== b.supportsNativeWebSearch) return false;
   if (a.supportsMidConversationSystem !== b.supportsMidConversationSystem) return false;
   if (a.isManual !== b.isManual) return false;
+  if ((a.systemPrompt ?? "") !== (b.systemPrompt ?? "")) return false;
   if (a.reasoningMap !== b.reasoningMap) return false;
   if (a.reasoningLevels.length !== b.reasoningLevels.length) return false;
   const setA = new Set(a.reasoningLevels);
@@ -180,8 +181,27 @@ export function ZCodeModelCatalogDialog({
     onClose();
   };
 
+  const updateSelectedSystemPrompt = (systemPrompt: string) => {
+    if (!selectedModel) return;
+    setModels((prev) =>
+      prev.map((m) =>
+        m.id === selectedId
+          ? { ...m, configuration: { ...m.configuration, systemPrompt } }
+          : m
+      )
+    );
+    setError("");
+    setNotice("");
+  };
+
   const save = async () => {
     if (!snapshot || !dirty || loading || saving) return;
+    const emptyPromptModel = models.find((m) => !(m.configuration.systemPrompt ?? "").trim());
+    if (emptyPromptModel) {
+      setSelectedId(emptyPromptModel.id);
+      setError(t("agents.catalog.invalidPrompt"));
+      return;
+    }
     setSaving(true);
     setError("");
     setNotice("");
@@ -427,6 +447,21 @@ export function ZCodeModelCatalogDialog({
                   </label>
                 </div>
               </fieldset>
+
+              <label className="wide">
+                <span>{t("agents.catalog.systemPrompt")}</span>
+                <textarea
+                  className="codex-catalog-system-prompt"
+                  rows={12}
+                  spellCheck={false}
+                  value={selectedModel.configuration.systemPrompt ?? ""}
+                  onChange={(e) => updateSelectedSystemPrompt(e.currentTarget.value)}
+                  aria-describedby="zcode-catalog-prompt-hint"
+                />
+                <small id="zcode-catalog-prompt-hint">
+                  {t("agents.zcode.catalog.systemPromptHint")}
+                </small>
+              </label>
             </div>
           ) : (
             <div className="codex-catalog-state">{t("agents.catalog.empty")}</div>

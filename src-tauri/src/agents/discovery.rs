@@ -524,7 +524,7 @@ pub(crate) fn inspect_pi_provider_status_with_executable(
                 let object = root
                     .as_object()
                     .ok_or_else(|| "Pi CLIProxyAPI configuration root must be a JSON object".to_string())?;
-                let expected_base_url = managed_core_loopback_origin(port);
+                let expected_base_url = agent_effective_loopback_origin(PI_AGENT_ID, port);
                 credentials_match = object
                     .get("baseUrl")
                     .and_then(serde_json::Value::as_str)
@@ -709,7 +709,7 @@ pub(crate) fn repair_pi_provider_inner(
     } else {
         None
     };
-    let base_url = managed_core_loopback_origin(port);
+    let base_url = agent_effective_loopback_origin(PI_AGENT_ID, port);
     let rendered = build_pi_provider_config(existing.as_deref(), &base_url, api_key)?;
     let settings = fs::read_to_string(&settings_path).map_err(|error| {
         format!(
@@ -3291,7 +3291,7 @@ pub(crate) fn inspect_claude_agent_config(
     )
     .map_err(|error| format!("Failed to parse Claude Code configuration: {error}"))?;
     let env = root.get("env").and_then(serde_json::Value::as_object);
-    let expected_base = managed_core_loopback_origin(port);
+    let expected_base = agent_effective_loopback_origin("claude-code", port);
     let configured = env
         .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
         .and_then(serde_json::Value::as_str)
@@ -3693,7 +3693,7 @@ pub(crate) fn inspect_claude_desktop_agent_config(
     let threep = read_agent_json_or_empty(&paths[1], "Claude Desktop 3P configuration")?;
     let profile = read_agent_json_or_empty(&paths[2], "Claude Desktop gateway configuration")?;
     let meta = read_agent_json_or_empty(&paths[3], "Claude Desktop configuration index")?;
-    let expected_base = managed_core_loopback_origin(port);
+    let expected_base = agent_effective_loopback_origin("claude-desktop", port);
     let configured = claude_desktop_profile_uses_local_gateway(&profile)
         && !claude_desktop_has_hybrid_pointer(&meta)
         && normal
@@ -3879,7 +3879,7 @@ pub(crate) fn inspect_opencode_agent_config(
     let provider = root
         .get("provider")
         .and_then(|providers| providers.get(MANAGED_AGENT_PROVIDER_ID));
-    let expected_base = format!("{}/v1", managed_core_loopback_origin(port));
+    let expected_base = format!("{}/v1", agent_effective_loopback_origin("opencode", port));
     let configured = provider
         .and_then(|provider| provider.get("options"))
         .and_then(|options| options.get("baseURL"))
@@ -3935,7 +3935,7 @@ pub(crate) fn inspect_zcode_agent_config(
         .and_then(|selection| selection.get("modelId"))
         .and_then(serde_json::Value::as_str)
         .map(str::to_string);
-    let expected_origin = managed_core_loopback_origin(port);
+    let expected_origin = agent_effective_loopback_origin("zcode", port);
     let expected_base = format!("{expected_origin}/v1");
     let provider_base = provider
         .and_then(|provider| provider.pointer("/config/api/baseUrl"))
@@ -4002,7 +4002,7 @@ pub(crate) fn inspect_omp_agent_config(
     let settings = read_agent_yaml_mapping_or_empty(&paths[1], "Oh My Pi config.yml")?;
     let provider = omp_provider_mapping(&models);
     let model = omp_selected_model(&settings);
-    let expected = format!("{}/v1", managed_core_loopback_origin(port));
+    let expected = format!("{}/v1", agent_effective_loopback_origin("omp", port));
     let configured = provider
         .and_then(|provider| yaml_mapping_value(provider, "baseUrl"))
         .and_then(serde_norway::Value::as_str)
@@ -4057,7 +4057,7 @@ pub(crate) fn inspect_kimi_code_agent_config(
         &fs::read_to_string(path).map_err(|error| format!("Failed to read Kimi Code configuration: {error}"))?,
     )
     .map_err(|error| format!("Failed to parse Kimi Code configuration: {error}"))?;
-    let expected_base = format!("{}/v1", managed_core_loopback_origin(port));
+    let expected_base = format!("{}/v1", agent_effective_loopback_origin("kimi-code", port));
     let provider = root
         .get("providers")
         .and_then(toml::Value::as_table)
@@ -4114,7 +4114,7 @@ pub(crate) fn inspect_grok_build_agent_config(
         &fs::read_to_string(path).map_err(|error| format!("Failed to read Grok Build configuration: {error}"))?,
     )
     .map_err(|error| format!("Failed to parse Grok Build configuration: {error}"))?;
-    let expected_base = format!("{}/v1", managed_core_loopback_origin(port));
+    let expected_base = format!("{}/v1", agent_effective_loopback_origin("grok-build", port));
     let prefix = format!("{MANAGED_AGENT_PROVIDER_ID}/");
     let selected = root
         .get("models")
@@ -4168,7 +4168,7 @@ pub(crate) fn inspect_openclaw_agent_config(
         .get("models")
         .and_then(|models| models.get("providers"))
         .and_then(|providers| providers.get(MANAGED_AGENT_PROVIDER_ID));
-    let expected_base = format!("{}/v1", managed_core_loopback_origin(port));
+    let expected_base = format!("{}/v1", agent_effective_loopback_origin("openclaw", port));
     let configured = provider
         .and_then(|provider| provider.get("baseUrl"))
         .and_then(serde_json::Value::as_str)
@@ -4204,7 +4204,7 @@ pub(crate) fn inspect_hermes_agent_config(
     )
     .map_err(|error| format!("Failed to parse Hermes YAML configuration: {error}"))?;
     let provider = hermes_managed_provider(&root);
-    let expected_base = format!("{}/v1", managed_core_loopback_origin(port));
+    let expected_base = format!("{}/v1", agent_effective_loopback_origin("hermes", port));
     let configured = provider
         .and_then(|provider| provider.get("base_url").or_else(|| provider.get("baseUrl")))
         .and_then(serde_yaml::Value::as_str)
@@ -4258,9 +4258,9 @@ pub(crate) fn inspect_deepseek_harness_config(
         .and_then(serde_norway::Value::as_str)
         == Some("anthropic-messages")
     {
-        managed_core_loopback_origin(port)
+        agent_effective_loopback_origin("deepseek-harness", port)
     } else {
-        format!("{}/v1", managed_core_loopback_origin(port))
+        format!("{}/v1", agent_effective_loopback_origin("deepseek-harness", port))
     };
     let credentials_layout_supported = deepseek_harness_credentials_layout_supported(&credentials);
     let credential = yaml_mapping_value(&credentials, "refs")
