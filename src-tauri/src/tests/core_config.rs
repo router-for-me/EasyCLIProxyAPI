@@ -2274,6 +2274,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
         transient_error_cooldown_seconds: 30,
         streaming_bootstrap_retries: 1,
         reverse_proxy: None,
+        auto_update: crate::auto_update::AutoUpdateSettings::default(),
     };
     let merged = merge_core_config_yaml(template, Some(current), &config).unwrap();
     let current_document = serde_norway::from_str::<serde_norway::Value>(current).unwrap();

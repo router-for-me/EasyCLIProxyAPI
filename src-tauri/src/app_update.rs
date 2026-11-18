@@ -269,7 +269,7 @@ pub(crate) async fn check_app_update(
     Ok(info)
 }
 
-async fn resolve_app_update(
+pub(crate) async fn resolve_app_update(
     config: &GuiConfigFile,
 ) -> Result<(AppUpdateInfo, Option<PendingAppUpdate>), String> {
     let _detection_guard = VERSION_SOURCE_DETECTION_LOCK.lock().await;
@@ -1047,7 +1047,8 @@ pub(crate) fn validate_local_portable_app_manifest(expected_arch: &str) -> Resul
 
 #[tauri::command]
 pub(crate) fn get_app_update_task(state: tauri::State<'_, AppUpdateState>) -> AppUpdateTask {
-    state.snapshot()
+    let task = state.snapshot();
+    if task.automatic { AppUpdateTask::default() } else { task }
 }
 
 #[tauri::command]
@@ -1067,6 +1068,7 @@ pub(crate) async fn start_app_update(
     preserve_core: Option<bool>,
 ) -> Result<(), String> {
     let preserve_core = preserve_core.unwrap_or(false);
+    let update_operation = app.state::<auto_update::AutoUpdateState>().try_operation()?;
     if preserve_core && !cfg!(any(windows, target_os = "macos")) {
         return Err("Updating without restarting the kernel is not supported on this platform".to_string());
     }
@@ -1080,6 +1082,7 @@ pub(crate) async fn start_app_update(
     let _ = app.emit(APP_UPDATE_PROGRESS_EVENT, task);
     let update_app = app.clone();
     tauri::async_runtime::spawn(async move {
+        let _update_operation = update_operation;
         let outcome = async {
             let state = update_app.state::<AppUpdateState>();
             let gui_config_state = update_app.state::<GuiConfigState>();
@@ -1107,6 +1110,7 @@ pub(crate) async fn start_app_update(
                 &config.proxy_url,
                 config.selected_download_candidate(),
                 preserve_core,
+                None,
             )
             .await
         }
@@ -1152,247 +1156,172 @@ pub(crate) async fn download_and_stage_portable_app_update(
     proxy_url: &str,
     download_source: VersionDownloadCandidate,
     preserve_core: bool,
+    automatic_config: Option<&GuiConfigFile>,
 ) -> Result<(), String> {
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
-        let _ = (app, pending, token, proxy_url, download_source, preserve_core);
+        let _ = (
+            app,
+            pending,
+            token,
+            proxy_url,
+            download_source,
+            preserve_core,
+            automatic_config,
+        );
         Err("The current platform does not support in-app automatic upgrades".to_string())
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     {
         validate_portable_update_asset(&pending.asset)?;
-        let work_dir = env::temp_dir().join(format!(
-            "EasyCLIProxyAPI-update-{}-{}-{}",
-            pending.version,
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&work_dir)
-            .map_err(|error| format!("Failed to create temporary application update directory: {error}"))?;
-        let archive_path = work_dir.join("update.zip");
+        let work = portable_update_work_dir(&pending.version);
+        fs::create_dir_all(&work).map_err(|error| {
+            format!("Failed to create temporary application update directory: {error}")
+        })?;
+        let archive = work.join(match env::consts::OS {
+            "windows" => "update.zip",
+            "macos" => "update.dmg",
+            _ => "update.tar.gz",
+        });
         let result = async {
             download_portable_update_archive(
                 app,
                 pending,
                 token,
-                &archive_path,
+                &archive,
                 proxy_url,
                 &download_source,
             )
             .await?;
-            if token.is_cancelled() {
-                return Err("Application update download canceled".to_string());
-            }
-
             update_app_task(app, |task| {
                 task.cancellable = false;
-                task.phase = "verifying".to_string();
-                task.message = Some("Verifying application update package".to_string());
+                task.phase = "verifying".into();
+                task.message = Some("Verifying application update package".into());
             });
-            let actual_sha256 = sha256_file(&archive_path)?;
-            if actual_sha256 != pending.asset.sha256.trim().to_ascii_lowercase() {
-                return Err("Application update package SHA-256 verification failed".to_string());
-            }
-
+            ensure_portable_update_download(token, &archive, pending)?;
             update_app_task(app, |task| {
-                task.phase = "staging".to_string();
-                task.message = Some("Preparing application update".to_string());
+                task.phase = "staging".into();
+                task.message = Some("Preparing application update".into());
             });
-            let staging_dir = work_dir.join("staging");
-            let package = extract_portable_update_archive(&archive_path, &staging_dir)?;
-            if normalize_version(&package.manifest.version) != normalize_version(&pending.version)
-                || package.manifest.platform != "windows"
-                || package.manifest.arch != pending.arch
-            {
-                return Err("Application update package version or architecture mismatch".to_string());
+            let current_exe = env::current_exe()
+                .map_err(|error| format!("Failed to read current executable path: {error}"))?;
+            let descriptor =
+                stage_portable_update(&work, &archive, pending, current_exe, preserve_core)?;
+            if let Some(config) = automatic_config {
+                return auto_update::cache_application(app, &descriptor, config, token);
             }
-
-            let current_exe =
-                env::current_exe().map_err(|error| format!("Failed to read current executable path: {error}"))?;
-            let app_dir = current_exe
-                .parent()
-                .ok_or_else(|| "Current executable path has no parent directory".to_string())?;
-            preflight_portable_update_directory(app_dir)?;
-            let core_archive_name = match package.core_archive_name {
-                Some(name) => name,
-                None => stage_current_portable_core_payload(app_dir, &staging_dir, &pending.arch)?,
-            };
-            let helper_path = work_dir.join("EasyCLIProxyAPI-updater.exe");
-            fs::copy(&current_exe, &helper_path)
-                .map_err(|error| format!("Failed to prepare application update helper: {error}"))?;
-
-            let descriptor = PortableUpdateDescriptor {
-                parent_pid: std::process::id(),
-                current_exe: current_exe.clone(),
-                staged_exe: staging_dir.join(PORTABLE_APP_BINARY),
-                current_manifest: app_dir.join(PORTABLE_APP_MANIFEST_FILE),
-                staged_manifest: staging_dir.join(PORTABLE_APP_MANIFEST_FILE),
-                backup_exe: app_dir.join(".EasyCLIProxyAPI.exe.update-backup"),
-                backup_manifest: app_dir.join(".portable-app.json.update-backup"),
-                current_core_version: app_dir.join(CORE_VERSION_FILE),
-                staged_core_version: staging_dir.join(CORE_VERSION_FILE),
-                backup_core_version: app_dir.join(".core-version.txt.update-backup"),
-                staged_core_archive: staging_dir.join("cpa-core").join(&core_archive_name),
-                target_core_archive: app_dir.join("cpa-core").join(&core_archive_name),
-                install_core_archive: !app_dir.join("cpa-core").join(&core_archive_name).is_file(),
-                ack_path: work_dir.join("update-started.ack"),
-                work_dir: work_dir.clone(),
-                target_version: pending.version.clone(),
-                preserve_core,
-            };
-            launch_portable_update_helper(app, &helper_path, &work_dir, &descriptor, preserve_core).await
-        }
-        .await;
-
-        if result.is_err() {
-            let _ = fs::remove_dir_all(&work_dir);
-        }
-        result
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        validate_portable_update_asset(&pending.asset)?;
-        let work_dir = portable_update_work_dir(&pending.version);
-        fs::create_dir_all(&work_dir)
-            .map_err(|error| format!("Failed to create temporary application update directory: {error}"))?;
-        let archive_path = work_dir.join("update.tar.gz");
-        let result = async {
-            download_portable_update_archive(
-                app,
-                pending,
-                token,
-                &archive_path,
-                proxy_url,
-                &download_source,
-            )
-            .await?;
-            ensure_portable_update_download(token, &archive_path, pending)?;
-            update_app_task(app, |task| {
-                task.cancellable = false;
-                task.phase = "staging".to_string();
-                task.message = Some("Preparing application update".to_string());
-            });
-
-            let staging_dir = work_dir.join("staging");
-            let package = extract_portable_update_tar_gz(&archive_path, &staging_dir)?;
-            if normalize_version(&package.manifest.version) != normalize_version(&pending.version)
-                || package.manifest.platform != "linux"
-                || package.manifest.arch != pending.arch
-            {
-                return Err("Application update package version or architecture mismatch".to_string());
-            }
-            let core_archive_name = package
-                .core_archive_name
-                .ok_or_else(|| "Linux application update package is missing the bundled kernel".to_string())?;
-            let current_exe =
-                env::current_exe().map_err(|error| format!("Failed to read current executable path: {error}"))?;
-            let app_dir = current_exe
-                .parent()
-                .ok_or_else(|| "Current executable path has no parent directory".to_string())?;
-            preflight_portable_update_directory(app_dir)?;
-            let helper_path = work_dir.join("EasyCLIProxyAPI-updater");
-            fs::copy(&current_exe, &helper_path)
-                .map_err(|error| format!("Failed to prepare application update helper: {error}"))?;
-
-            let descriptor = PortableUpdateDescriptor {
-                parent_pid: std::process::id(),
-                current_exe: current_exe.clone(),
-                staged_exe: staging_dir.join(PORTABLE_APP_BINARY),
-                current_manifest: app_dir.join(PORTABLE_APP_MANIFEST_FILE),
-                staged_manifest: staging_dir.join(PORTABLE_APP_MANIFEST_FILE),
-                backup_exe: app_dir.join(".EasyCLIProxyAPI.update-backup"),
-                backup_manifest: app_dir.join(".portable-app.json.update-backup"),
-                current_core_version: app_dir.join(CORE_VERSION_FILE),
-                staged_core_version: staging_dir.join(CORE_VERSION_FILE),
-                backup_core_version: app_dir.join(".core-version.txt.update-backup"),
-                staged_core_archive: staging_dir.join("cpa-core").join(&core_archive_name),
-                target_core_archive: app_dir.join("cpa-core").join(&core_archive_name),
-                install_core_archive: !app_dir.join("cpa-core").join(&core_archive_name).is_file(),
-                ack_path: work_dir.join("update-started.ack"),
-                work_dir: work_dir.clone(),
-                target_version: pending.version.clone(),
-                preserve_core,
-            };
-            launch_portable_update_helper(app, &helper_path, &work_dir, &descriptor, preserve_core).await
+            launch_prepared_portable_update(app, &descriptor).await
         }
         .await;
         if result.is_err() {
-            let _ = fs::remove_dir_all(&work_dir);
-        }
-        result
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        validate_portable_update_asset(&pending.asset)?;
-        let work_dir = portable_update_work_dir(&pending.version);
-        fs::create_dir_all(&work_dir)
-            .map_err(|error| format!("Failed to create temporary application update directory: {error}"))?;
-        let archive_path = work_dir.join("update.dmg");
-        let result = async {
-            download_portable_update_archive(
-                app,
-                pending,
-                token,
-                &archive_path,
-                proxy_url,
-                &download_source,
-            )
-            .await?;
-            ensure_portable_update_download(token, &archive_path, pending)?;
-            update_app_task(app, |task| {
-                task.cancellable = false;
-                task.phase = "staging".to_string();
-                task.message = Some("Preparing application update".to_string());
-            });
-
-            let staged_app = work_dir.join("staging").join("EasyCLIProxyAPI.app");
-            stage_macos_application_from_dmg(&archive_path, &work_dir, &staged_app)?;
-            validate_macos_staged_application(&staged_app, pending)?;
-            let current_exe =
-                env::current_exe().map_err(|error| format!("Failed to read current executable path: {error}"))?;
-            let current_app = macos_application_bundle_from_executable(&current_exe)?;
-            preflight_macos_update_directory(&current_app)?;
-            let executable_relative_path = current_exe
-                .strip_prefix(&current_app)
-                .map_err(|_| "Invalid macOS application path".to_string())?
-                .to_path_buf();
-            let backup_app = current_app
-                .parent()
-                .ok_or_else(|| "macOS application path has no parent directory".to_string())?
-                .join(".EasyCLIProxyAPI.app.update-backup");
-            let descriptor = MacosUpdateDescriptor {
-                parent_pid: std::process::id(),
-                current_app,
-                staged_app,
-                backup_app,
-                executable_relative_path,
-                ack_path: work_dir.join("update-started.ack"),
-                work_dir: work_dir.clone(),
-                target_version: pending.version.clone(),
-                preserve_core,
-            };
-            let helper_path = macos_update_helper_path(&current_exe);
-            launch_portable_update_helper(app, &helper_path, &work_dir, &descriptor, preserve_core).await
-        }
-        .await;
-        // A busy DMG may still be mounted here. Never recursively clean its mount point.
-        if result.is_err() {
-            cleanup_macos_update_dmg(&work_dir);
-            if !work_dir.join("mount").exists() {
-                let _ = fs::remove_dir_all(&work_dir);
+            #[cfg(target_os = "macos")]
+            cleanup_macos_update_dmg(&work);
+            if !cfg!(target_os = "macos") || !work.join("mount").exists() {
+                let _ = fs::remove_dir_all(&work);
             }
         }
         result
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(windows, target_os = "linux"))]
+pub(crate) type UpdateDescriptor = PortableUpdateDescriptor;
+#[cfg(target_os = "macos")]
+pub(crate) type UpdateDescriptor = MacosUpdateDescriptor;
+
+#[cfg(any(windows, target_os = "linux"))]
+pub(super) fn stage_portable_update(
+    work: &Path,
+    archive: &Path,
+    pending: &PendingAppUpdate,
+    current_exe: PathBuf,
+    preserve_core: bool,
+) -> Result<UpdateDescriptor, String> {
+    let staging = work.join("staging");
+    #[cfg(windows)]
+    let package = extract_portable_update_archive(archive, &staging)?;
+    #[cfg(target_os = "linux")]
+    let package = extract_portable_update_tar_gz(archive, &staging)?;
+    if normalize_version(&package.manifest.version) != normalize_version(&pending.version)
+        || package.manifest.platform != env::consts::OS
+        || package.manifest.arch != pending.arch
+    {
+        return Err("Application update package version or architecture mismatch".into());
+    }
+    let app_dir = current_exe
+        .parent()
+        .ok_or("Current executable path has no parent directory")?;
+    preflight_portable_update_directory(app_dir)?;
+    let core_archive = match package.core_archive_name {
+        Some(name) => name,
+        #[cfg(windows)]
+        None => stage_current_portable_core_payload(app_dir, &staging, &pending.arch)?,
+        #[cfg(target_os = "linux")]
+        None => {
+            return Err("Linux application update package is missing the bundled kernel".into())
+        }
+    };
+    let target_core_archive = app_dir.join("cpa-core").join(&core_archive);
+    let descriptor = UpdateDescriptor {
+        parent_pid: std::process::id(),
+        staged_exe: staging.join(PORTABLE_APP_BINARY),
+        current_manifest: app_dir.join(PORTABLE_APP_MANIFEST_FILE),
+        staged_manifest: staging.join(PORTABLE_APP_MANIFEST_FILE),
+        backup_exe: app_dir.join(portable_update_backup_executable_name()),
+        backup_manifest: app_dir.join(".portable-app.json.update-backup"),
+        current_core_version: app_dir.join(CORE_VERSION_FILE),
+        staged_core_version: staging.join(CORE_VERSION_FILE),
+        backup_core_version: app_dir.join(".core-version.txt.update-backup"),
+        staged_core_archive: staging.join("cpa-core").join(core_archive),
+        install_core_archive: !target_core_archive.is_file(),
+        target_core_archive,
+        ack_path: work.join("update-started.ack"),
+        work_dir: work.into(),
+        target_version: pending.version.clone(),
+        current_exe,
+        preserve_core,
+    };
+    fs::copy(&descriptor.current_exe, descriptor.helper_path())
+        .map_err(|error| format!("Failed to prepare application update helper: {error}"))?;
+    Ok(descriptor)
+}
+
+#[cfg(target_os = "macos")]
+fn stage_portable_update(
+    work: &Path,
+    archive: &Path,
+    pending: &PendingAppUpdate,
+    current_exe: PathBuf,
+    preserve_core: bool,
+) -> Result<UpdateDescriptor, String> {
+    let staged_app = work.join("staging/EasyCLIProxyAPI.app");
+    stage_macos_application_from_dmg(archive, work, &staged_app)?;
+    validate_macos_staged_application(&staged_app, pending)?;
+    let current_app = macos_application_bundle_from_executable(&current_exe)?;
+    preflight_macos_update_directory(&current_app)?;
+    let executable_relative_path = current_exe
+        .strip_prefix(&current_app)
+        .map_err(|_| "Invalid macOS application path")?
+        .to_path_buf();
+    let backup_app = current_app
+        .parent()
+        .ok_or("macOS application path has no parent directory")?
+        .join(".EasyCLIProxyAPI.app.update-backup");
+    Ok(UpdateDescriptor {
+        parent_pid: std::process::id(),
+        current_app,
+        staged_app,
+        backup_app,
+        executable_relative_path,
+        ack_path: work.join("update-started.ack"),
+        work_dir: work.into(),
+        target_version: pending.version.clone(),
+        preserve_core,
+    })
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn portable_update_work_dir(version: &str) -> PathBuf {
     env::temp_dir().join(format!(
         "EasyCLIProxyAPI-update-{}-{}-{}",
@@ -1405,7 +1334,7 @@ fn portable_update_work_dir(version: &str) -> PathBuf {
     ))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn ensure_portable_update_download(
     token: &CancellationToken,
     archive_path: &Path,
@@ -1427,23 +1356,21 @@ pub(crate) fn macos_update_helper_path(current_exe: &Path) -> PathBuf {
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-async fn launch_portable_update_helper<T: Serialize>(
+pub(crate) async fn launch_prepared_portable_update(
     app: &tauri::AppHandle,
-    helper_path: &Path,
-    work_dir: &Path,
-    descriptor: &T,
-    preserve_core: bool,
+    descriptor: &UpdateDescriptor,
 ) -> Result<(), String> {
+    let work_dir = &descriptor.work_dir;
     let descriptor_path = work_dir.join("update-descriptor.json");
-    fs::write(
+    write_bytes_atomically(
         &descriptor_path,
-        serde_json::to_vec_pretty(descriptor)
-            .map_err(|error| format!("Failed to serialize application update descriptor: {error}"))?,
-    )
-    .map_err(|error| format!("Failed to write application update descriptor: {error}"))?;
+        &serde_json::to_vec(descriptor).map_err(|error| {
+            format!("Failed to serialize application update descriptor: {error}")
+        })?,
+    )?;
     let helper_ack_path = portable_update_helper_ack_path(work_dir);
     let _ = fs::remove_file(&helper_ack_path);
-    let mut command = portable_update_helper_command(helper_path, &descriptor_path);
+    let mut command = portable_update_helper_command(&descriptor.helper_path(), &descriptor_path);
     let mut child = command
         .spawn()
         .map_err(|error| format!("Failed to start application update helper: {error}"))?;
@@ -1458,8 +1385,9 @@ async fn launch_portable_update_helper<T: Serialize>(
         task.phase = "restarting".to_string();
         task.message = Some("Update is ready. The application will restart shortly".to_string());
     });
-    if preserve_core {
-        if let Err(error) = prepare_core_for_app_update(app.state::<CoreProcessState>().inner()) {
+    if descriptor.preserve_core {
+        let process_state = app.state::<CoreProcessState>();
+        if let Err(error) = prepare_core_for_app_update(process_state.inner()) {
             let _ = child.kill();
             let _ = child.wait();
             return Err(error);
@@ -1485,6 +1413,98 @@ pub(crate) fn portable_update_helper_command(helper_path: &Path, descriptor_path
     }
     configure_background_command(&mut command);
     command
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+impl UpdateDescriptor {
+    fn helper_path(&self) -> PathBuf {
+        #[cfg(any(windows, target_os = "linux"))]
+        return self.work_dir.join(if cfg!(windows) {
+            "EasyCLIProxyAPI-updater.exe"
+        } else {
+            "EasyCLIProxyAPI-updater"
+        });
+        #[cfg(target_os = "macos")]
+        return macos_update_helper_path(&self.current_app.join(&self.executable_relative_path));
+    }
+
+    pub(crate) fn protected_files(&self) -> Vec<PathBuf> {
+        #[cfg(any(windows, target_os = "linux"))]
+        return vec![
+            self.helper_path(),
+            self.staged_exe.clone(),
+            self.staged_manifest.clone(),
+            self.staged_core_version.clone(),
+            self.staged_core_archive.clone(),
+        ];
+        #[cfg(target_os = "macos")]
+        return vec![
+            self.helper_path(),
+            self.staged_app.join(&self.executable_relative_path),
+            self.staged_app.join("Contents/Info.plist"),
+        ];
+    }
+
+    pub(crate) fn refresh(&mut self) {
+        self.parent_pid = std::process::id();
+        #[cfg(any(windows, target_os = "linux"))]
+        {
+            self.install_core_archive = !self.target_core_archive.is_file();
+        }
+    }
+
+    pub(crate) fn validate_cached(&self, executable: &Path) -> Result<(), String> {
+        let work = validated_update_work_dir(&self.work_dir)?;
+        #[cfg(any(windows, target_os = "linux"))]
+        let target = &self.current_exe;
+        #[cfg(target_os = "macos")]
+        let target = &self.helper_path();
+        if fs::canonicalize(target).map_err(|error| error.to_string())?
+            != fs::canonicalize(executable).map_err(|error| error.to_string())?
+        {
+            return Err("Prepared application target changed".into());
+        }
+        let mut descriptor = self.clone();
+        descriptor.refresh();
+        #[cfg(any(windows, target_os = "linux"))]
+        {
+            let helper = self.helper_path();
+            if fs::canonicalize(&helper).map_err(|error| error.to_string())?
+                != work.join(helper.file_name().unwrap())
+            {
+                return Err("Prepared application helper is out of bounds".into());
+            }
+            validate_portable_update_payload(&descriptor, &work)
+        }
+        #[cfg(target_os = "macos")]
+        validate_macos_update_payload(&descriptor, &work)
+    }
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+fn validated_update_work_dir(work_dir: &Path) -> Result<PathBuf, String> {
+    let work = fs::canonicalize(work_dir)
+        .map_err(|error| format!("Failed to read application update temporary directory: {error}"))?;
+    let temp = fs::canonicalize(env::temp_dir()).map_err(|error| error.to_string())?;
+    if !work.starts_with(temp)
+        || !work
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("EasyCLIProxyAPI-update-"))
+    {
+        return Err("Invalid application update working directory".into());
+    }
+    Ok(work)
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+fn validate_descriptor_location(path: &Path, work: &Path) -> Result<(), String> {
+    if fs::canonicalize(path).map_err(|error| error.to_string())?
+        != work.join("update-descriptor.json")
+    {
+        return Err("Application update descriptor path is out of bounds".into());
+    }
+    Ok(())
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -1675,7 +1695,9 @@ where
 {
     let state = app.state::<AppUpdateState>();
     let task = state.update_task(update);
-    let _ = app.emit(APP_UPDATE_PROGRESS_EVENT, task);
+    if !task.automatic {
+        let _ = app.emit(APP_UPDATE_PROGRESS_EVENT, task);
+    }
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -2145,6 +2167,16 @@ pub(crate) fn validate_portable_update_descriptor(
     descriptor_path: &Path,
     descriptor: &PortableUpdateDescriptor,
 ) -> Result<(), String> {
+    let work = validated_update_work_dir(&descriptor.work_dir)?;
+    validate_descriptor_location(descriptor_path, &work)?;
+    validate_portable_update_payload(descriptor, &work)
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn validate_portable_update_payload(
+    descriptor: &PortableUpdateDescriptor,
+    work: &Path,
+) -> Result<(), String> {
     if descriptor.parent_pid == 0
         || semver::Version::parse(descriptor.target_version.trim().trim_start_matches('v')).is_err()
     {
@@ -2179,28 +2211,8 @@ pub(crate) fn validate_portable_update_descriptor(
     {
         return Err("Invalid application update bundled kernel target path".to_string());
     }
-    let canonical_work_dir = fs::canonicalize(&descriptor.work_dir)
-        .map_err(|error| format!("Failed to read application update temporary directory: {error}"))?;
-    let canonical_temp_dir = fs::canonicalize(env::temp_dir())
-        .map_err(|error| format!("Failed to read system temporary directory: {error}"))?;
-    if !canonical_work_dir.starts_with(&canonical_temp_dir)
-        || !canonical_work_dir
-            .file_name()
-            .and_then(|value| value.to_str())
-            .is_some_and(|value| value.starts_with("EasyCLIProxyAPI-update-"))
-    {
-        return Err("Invalid application update working directory".to_string());
-    }
-    let canonical_descriptor = fs::canonicalize(descriptor_path)
-        .map_err(|error| format!("Failed to read application update descriptor path: {error}"))?;
-    if canonical_descriptor.parent() != Some(canonical_work_dir.as_path())
-        || canonical_descriptor
-            .file_name()
-            .and_then(|value| value.to_str())
-            != Some("update-descriptor.json")
-        || descriptor.ack_path != descriptor.work_dir.join("update-started.ack")
-    {
-        return Err("Application update descriptor path is out of bounds".to_string());
+    if descriptor.ack_path != descriptor.work_dir.join("update-started.ack") {
+        return Err("Application update acknowledgement path is out of bounds".into());
     }
     for staged in [
         &descriptor.staged_exe,
@@ -2210,7 +2222,7 @@ pub(crate) fn validate_portable_update_descriptor(
     ] {
         let canonical = fs::canonicalize(staged)
             .map_err(|error| format!("Failed to read application update staging file: {error}"))?;
-        if !canonical.starts_with(&canonical_work_dir) {
+        if !canonical.starts_with(work) {
             return Err("Application update staging path is out of bounds".to_string());
         }
     }
@@ -2863,6 +2875,13 @@ pub(crate) fn validate_macos_update_descriptor(
     descriptor_path: &Path,
     descriptor: &MacosUpdateDescriptor,
 ) -> Result<(), String> {
+    let work = validated_update_work_dir(&descriptor.work_dir)?;
+    validate_descriptor_location(descriptor_path, &work)?;
+    validate_macos_update_payload(descriptor, &work)
+}
+
+#[cfg(target_os = "macos")]
+fn validate_macos_update_payload(descriptor: &MacosUpdateDescriptor, work: &Path) -> Result<(), String> {
     if descriptor.parent_pid == 0
         || semver::Version::parse(descriptor.target_version.trim().trim_start_matches('v')).is_err()
         || !descriptor.current_app.is_absolute()
@@ -2890,33 +2909,14 @@ pub(crate) fn validate_macos_update_descriptor(
     {
         return Err("Invalid macOS application update target path".to_string());
     }
-    let canonical_work_dir = fs::canonicalize(&descriptor.work_dir)
-        .map_err(|error| format!("Failed to read application update temporary directory: {error}"))?;
-    let canonical_temp_dir = fs::canonicalize(env::temp_dir())
-        .map_err(|error| format!("Failed to read system temporary directory: {error}"))?;
-    if !canonical_work_dir.starts_with(&canonical_temp_dir)
-        || !canonical_work_dir
-            .file_name()
-            .and_then(|value| value.to_str())
-            .is_some_and(|value| value.starts_with("EasyCLIProxyAPI-update-"))
-    {
-        return Err("Invalid application update working directory".to_string());
-    }
-    let canonical_descriptor = fs::canonicalize(descriptor_path)
-        .map_err(|error| format!("Failed to read application update descriptor path: {error}"))?;
     let canonical_staged_app = fs::canonicalize(&descriptor.staged_app)
         .map_err(|error| format!("Failed to read new macOS application path: {error}"))?;
-    if canonical_descriptor.parent() != Some(canonical_work_dir.as_path())
-        || canonical_descriptor
-            .file_name()
-            .and_then(|value| value.to_str())
-            != Some("update-descriptor.json")
-        || descriptor.staged_app
+    if descriptor.staged_app
             != descriptor
                 .work_dir
                 .join("staging")
                 .join("EasyCLIProxyAPI.app")
-        || !canonical_staged_app.starts_with(&canonical_work_dir)
+        || !canonical_staged_app.starts_with(work)
         || descriptor.ack_path != descriptor.work_dir.join("update-started.ack")
     {
         return Err("macOS application update staging path is out of bounds".to_string());

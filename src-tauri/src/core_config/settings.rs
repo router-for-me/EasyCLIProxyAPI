@@ -2156,6 +2156,10 @@ pub(crate) fn sanitize_gui_config_at(
 ) -> Result<bool, String> {
     let mut changed = false;
     let normalized_locale = normalize_app_locale(&config.locale);
+    if config.auto_update.validate().is_err() {
+        config.auto_update = crate::auto_update::AutoUpdateSettings::default();
+        changed = true;
+    }
     if config.locale != normalized_locale {
         config.locale = normalized_locale.to_string();
         changed = true;
@@ -2304,6 +2308,7 @@ pub(crate) fn write_gui_config_to_path(
         .and_then(|content| content.parse::<Document>().ok())
         .unwrap_or_default();
     let root = document.as_table_mut();
+    crate::auto_update::write_settings(root, &config.auto_update);
     if config.usage_statistics_disabled == Some(true) {
         set_codex_table_item(root, "usage_statistics_disabled", value(true));
     } else {
@@ -2530,6 +2535,7 @@ pub(crate) fn validate_gui_config(config: &GuiConfigFile) -> Result<(), String> 
         validate_strong_management_secret_key(&config.management_secret_key)?;
     }
     validate_routing_strategy(config.routing_strategy.trim())?;
+    config.auto_update.validate()?;
     if config.proxy_override {
         network_proxy::normalize_optional_proxy_url(&config.proxy_url)?;
     } else if config.proxy_url.chars().any(char::is_control) {

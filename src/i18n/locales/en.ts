@@ -3,10 +3,12 @@ import type { MessageKey } from './zh-CN';
 import { easyModeEn } from '../easyMode';
 import { homeEn } from '../home';
 import { authFileListEn } from '../authFileList';
+import { autoUpdateEn } from '../autoUpdate';
 import { themeDiyEn } from '../themeDiy';
 
 import { acpEn } from '../acp';
 export const en: Record<MessageKey, string> = {
+  ...autoUpdateEn,
   ...acpEn,
   'agents.responseLanguage.label': 'Response language',
   'agents.responseLanguage.unmanaged': 'Keep existing setting (unmanaged)',

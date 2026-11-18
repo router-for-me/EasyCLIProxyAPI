@@ -1,5 +1,6 @@
 import { isThemeSelection, type ThemeSelection } from '../themes/types';
 import type { AppUpdateInfo } from '../services/appUpdates';
+import { defaultAutoUpdateSettings, validateAutoUpdateSettings, type AutoUpdateStatus, type AutoUpdateSettings } from '../services/autoUpdate';
 import { applyTemplateChanges, readTemplatePath, sameTemplateValue, type TemplateConfigChange } from '../services/templateConfig';
 import { requestBucketRangeLabel } from '../services/authFileRequests';
 import { createPluginMock, type PluginWebviewMockState } from './pluginMock';
@@ -550,6 +551,8 @@ function createState(scenario: BrowserMockScenario) {
       result: null,
     },
     versionSource: { source: 'github', gitcodeAvailable: true, customMirrors: ['https://gh-proxy.example.com/'] },
+    autoUpdate: { settings: { ...defaultAutoUpdateSettings }, phase: 'disabled',
+      target: null, version: null, error: null } as AutoUpdateStatus,
     // Native groups are authoritative; legacy routes only adapt their own view.
     providerConfig: Object.fromEntries(PROVIDER_SECTIONS.map((section) => [
       section, scenario === 'empty' ? [] : groupProviderRecords(section, legacyProviderConfig[section]),
@@ -1529,6 +1532,22 @@ export function createBrowserMockRuntime(
         return clone(state.coreConfig);
       }
 
+      case 'get_auto_update_status': return clone(state.autoUpdate);
+      case 'set_auto_update_settings': {
+        const settings = asObject(payload.settings) as AutoUpdateSettings;
+        const invalid = validateAutoUpdateSettings(settings);
+        if (invalid) throw new Error(invalid);
+        if (state.autoUpdate.phase === 'installing') throw new Error('An update is being installed');
+        state.autoUpdate.settings = clone(settings);
+        state.autoUpdate.phase = settings.enabled ? 'waiting-update' : 'disabled';
+        return clone(state.autoUpdate);
+      }
+      case 'retry_auto_update': {
+        if (state.autoUpdate.phase === 'installing') throw new Error('An update is being installed');
+        state.autoUpdate.error = null;
+        state.autoUpdate.phase = 'waiting-update';
+        return clone(state.autoUpdate);
+      }
       case 'check_app_update': return clone(state.appUpdateInfo);
       case 'refresh_managed_codex_model_catalog': return false;
       case 'get_app_update_task': return clone(state.appUpdateTask);

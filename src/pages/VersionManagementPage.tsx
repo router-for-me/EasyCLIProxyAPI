@@ -38,6 +38,7 @@ import { useAppUpdate } from '../appUpdate';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { createVersionManagementVisitTracker } from '../services/versionManagementVisits';
 import { AppReleaseNotes } from '../components/AppReleaseNotes';
+import { AutoUpdatePanel } from '../components/AutoUpdatePanel';
 import { Dialog } from '../components/Dialog';
 import { SelectMenu, type SelectMenuOption } from '../components/SelectMenu';
 
@@ -698,6 +699,7 @@ export function VersionManagementPage() {
           </div>
         </div>
 
+        <AutoUpdatePanel />
         <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
         <div className="version-card-grid">
         <article className="version-list-item app-module-card surface-panel">
