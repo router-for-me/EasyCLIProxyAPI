@@ -43,7 +43,7 @@ fn saving_canonicalizes_accepted_config_aliases_without_duplicate_fields() {
             .parse()
             .unwrap();
     let config: GuiConfigFile = toml::from_str(&document.to_string()).unwrap();
-    write_settings(document.as_table_mut(), &config.auto_update);
+    write_settings(document.as_table_mut(), &config.auto_update).unwrap();
     let saved = document.to_string();
     let restored: GuiConfigFile = toml::from_str(&saved).unwrap();
     assert_eq!(restored.auto_update, config.auto_update);
@@ -219,4 +219,62 @@ fn failed_install_blocks_only_the_same_target_and_version_after_restart() {
     assert!(blocked(&reopened, "core", "8.0.99"));
     assert!(!blocked(&reopened, "core", "8.0.100"));
     assert!(!blocked(&reopened, "app", "8.0.99"));
+}
+
+#[test]
+fn enabling_without_a_target_is_normalized_without_erasing_the_record() {
+    let mut config: GuiConfigFile =
+        toml::from_str("[auto-update]\nenabled = true\nupdate-app = false\n").unwrap();
+    assert!(config.auto_update.validate().is_err());
+    let dir = unique_test_temp_path("automatic-update-normalize");
+    let auth = dir.join("auth");
+    fs::create_dir_all(&auth).unwrap();
+    let install = dir.join("install");
+    fs::create_dir_all(&install).unwrap();
+
+    let changed = sanitize_gui_config_at(&mut config, &install, &auth).unwrap();
+    assert!(changed, "an unreachable selection is reported as normalized");
+    assert!(!config.auto_update.enabled);
+    assert!(!config.auto_update.update_app && !config.auto_update.update_core);
+
+    // Sanitizing a coherent record stays a no-op, so the loader does not
+    // rewrite the file on every launch.
+    config.auto_update.enabled = true;
+    config.auto_update.update_core = true;
+    assert!(!sanitize_gui_config_at(&mut config, &install, &auth).unwrap());
+    assert_eq!(
+        config.auto_update,
+        AutoUpdateSettings {
+            enabled: true,
+            update_app: false,
+            update_core: true,
+        }
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_selection_without_a_target_downloads_nothing() {
+    let inert = AutoUpdateSettings {
+        enabled: true,
+        update_app: false,
+        update_core: false,
+    };
+    for target in TARGETS {
+        assert!(!inert.includes(target), "{target} must not be downloaded");
+    }
+}
+
+#[test]
+fn saving_settings_never_panics_on_a_hand_edited_section() {
+    let mut document: toml_edit::Document = "auto-update = 5\nport = 8317\n".parse().unwrap();
+    let settings = AutoUpdateSettings {
+        enabled: true,
+        update_app: true,
+        update_core: false,
+    };
+    write_settings(document.as_table_mut(), &settings).unwrap();
+    let restored: GuiConfigFile = toml::from_str(&document.to_string()).unwrap();
+    assert_eq!(restored.auto_update, settings);
+    assert_eq!(restored.port, 8317);
 }

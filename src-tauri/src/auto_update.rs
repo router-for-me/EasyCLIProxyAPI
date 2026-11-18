@@ -26,6 +26,23 @@ impl AutoUpdateSettings {
         Ok(())
     }
 
+    /// Disarms a selection that can never approve anything: updating is on but
+    /// no target is chosen, so `includes()` is false everywhere.
+    ///
+    /// The load path used to reset such a record wholesale to defaults. That
+    /// erased which targets the user had considered and, because the loader
+    /// writes the sanitized config back, made the reset permanent. Reporting
+    /// the disarm as a normalization keeps the record self-describing.
+    pub(crate) fn without_unreachable_target(&self) -> Option<Self> {
+        if !self.enabled || self.update_app || self.update_core {
+            return None;
+        }
+        Some(Self {
+            enabled: false,
+            ..self.clone()
+        })
+    }
+
     fn includes(&self, target: &str) -> bool {
         self.enabled
             && if target == "core" {
@@ -36,7 +53,10 @@ impl AutoUpdateSettings {
     }
 }
 
-pub(crate) fn write_settings(root: &mut toml_edit::Table, settings: &AutoUpdateSettings) {
+pub(crate) fn write_settings(
+    root: &mut toml_edit::Table,
+    settings: &AutoUpdateSettings,
+) -> Result<(), String> {
     use toml_edit::{value, Item, Table};
     let section = root
         .entry("auto-update")
@@ -44,7 +64,18 @@ pub(crate) fn write_settings(root: &mut toml_edit::Table, settings: &AutoUpdateS
     if !section.is_table() {
         *section = Item::Table(Table::new());
     }
-    let section = section.as_table_mut().unwrap();
+    // Only a hand-edited document could produce a value that reports as a
+    // table yet holds no table body. Replacing it keeps an unrelated settings
+    // save from failing on input that proves nothing about the settings.
+    let section = match section.as_table_mut() {
+        Some(section) => section,
+        None => {
+            *section = Item::Table(Table::new());
+            section
+                .as_table_mut()
+                .ok_or("Automatic update settings could not be written")?
+        }
+    };
     for key in [
         "updateApp",
         "updateCore",
@@ -66,6 +97,7 @@ pub(crate) fn write_settings(root: &mut toml_edit::Table, settings: &AutoUpdateS
     section.insert("enabled", value(settings.enabled));
     section.insert("update-app", value(settings.update_app));
     section.insert("update-core", value(settings.update_core));
+    Ok(())
 }
 
 pub(crate) fn newer(current: &str, candidate: &str) -> bool {

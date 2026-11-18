@@ -2156,8 +2156,12 @@ pub(crate) fn sanitize_gui_config_at(
 ) -> Result<bool, String> {
     let mut changed = false;
     let normalized_locale = normalize_app_locale(&config.locale);
-    if config.auto_update.validate().is_err() {
-        config.auto_update = crate::auto_update::AutoUpdateSettings::default();
+    if let Some(disarmed) = config.auto_update.without_unreachable_target() {
+        // Narrow the record to the part that is coherent rather than rewriting
+        // the whole section. The loader persists this sanitized config, so a
+        // wholesale reset would silently turn the feature off after a
+        // half-finished hand edit and leave nothing to explain the change.
+        config.auto_update = disarmed;
         changed = true;
     }
     if config.locale != normalized_locale {
@@ -2308,7 +2312,7 @@ pub(crate) fn write_gui_config_to_path(
         .and_then(|content| content.parse::<Document>().ok())
         .unwrap_or_default();
     let root = document.as_table_mut();
-    crate::auto_update::write_settings(root, &config.auto_update);
+    crate::auto_update::write_settings(root, &config.auto_update)?;
     if config.usage_statistics_disabled == Some(true) {
         set_codex_table_item(root, "usage_statistics_disabled", value(true));
     } else {
