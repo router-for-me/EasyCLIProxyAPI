@@ -1,10 +1,12 @@
 mod accounts;
-mod bridge;
-mod rpc;
 mod agent;
+mod bridge;
+#[cfg(test)]
+mod lifecycle_tests;
+mod rpc;
 mod tool_transport;
-pub(crate) use tool_transport::run_helper as run_mcp_helper;
 pub(crate) use bridge::restore;
+pub(crate) use tool_transport::run_helper as run_mcp_helper;
 
 #[tauri::command]
 pub(crate) async fn set_acp_upstream_enabled(
@@ -91,6 +93,10 @@ fn profile(base: &Path) -> PathBuf {
 }
 
 fn prepare_profile(profile: &Path) -> Result<(), String> {
+    accounts::safe_path(profile)?;
+    for name in ["workspace", ".gemini", "selected-model.json"] {
+        accounts::safe_path(&profile.join(name))?;
+    }
     std::fs::create_dir_all(profile.join("workspace")).map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
@@ -106,6 +112,7 @@ fn selected_path(profile: &Path) -> PathBuf {
 }
 
 fn read_selected(profile: &Path) -> Result<String, String> {
+    accounts::safe_path(&selected_path(profile))?;
     match std::fs::read(selected_path(profile)) {
         Ok(bytes) => serde_json::from_slice::<String>(&bytes)
             .map_err(|_| "Invalid ACP model settings".into()),
@@ -209,7 +216,7 @@ pub(crate) fn get_acp_status(
     status.active_account = accounts.active;
     status.accounts = accounts.accounts;
     status.profile = profile.to_string_lossy().into_owned();
-    if status.selected_model.is_empty() {
+    if !status.authenticated && !status.busy {
         status.selected_model = read_selected(&profile)?;
     }
     Ok(status.clone())
@@ -261,7 +268,7 @@ fn begin<R: tauri::Runtime>(
 #[tauri::command]
 pub(crate) async fn acp_connect(app: tauri::AppHandle, login: bool) -> Result<AcpStatus, String> {
     let guard = begin(&app, if login { "login" } else { "refresh" })?;
-    connect(app, login, false, guard).await
+    connect(app, login, false, None, guard).await
 }
 
 #[tauri::command]
@@ -271,9 +278,10 @@ pub(crate) async fn switch_acp_account(
 ) -> Result<AcpStatus, String> {
     let guard = begin(&app, "refresh")?;
     let root = profile(&crate::core_base_dir()?);
-    accounts::select(&root, &account_id)?;
-    clear_account(&app)?;
-    connect(app, false, false, guard).await
+    select_account_local(app.state::<AcpState>().inner(), &root, &account_id)?;
+    // Verification proceeds even if provider maintenance later fails. The
+    // requested selection remains persisted and old capabilities stay retired.
+    connect(app, false, false, None, guard).await
 }
 
 #[tauri::command]
@@ -282,68 +290,79 @@ pub(crate) async fn add_acp_account(
     label: String,
 ) -> Result<AcpStatus, String> {
     let guard = begin(&app, "login")?;
-    let root = profile(&crate::core_base_dir()?);
-    accounts::add(&root, &label)?;
-    clear_account(&app)?;
-    connect(app, true, false, guard).await
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    if crate::find_antigravity_cli(&home).is_none() {
+        return Err("Install official Antigravity CLI before adding an account".into());
+    }
+    let pending = accounts::PendingAccount::new(&profile(&crate::core_base_dir()?), &label)?;
+    connect(app, true, false, Some(pending), guard).await
 }
 
 #[tauri::command]
 pub(crate) async fn relogin_acp_account(app: tauri::AppHandle) -> Result<AcpStatus, String> {
     let guard = begin(&app, "login")?;
-    connect(app, true, true, guard).await
+    clear_account(&app)?;
+    connect(app, true, true, None, guard).await
 }
 
-fn clear_account(app: &tauri::AppHandle) -> Result<(), String> {
-    let state = app.state::<AcpState>();
-    state.agents.clear();
-    {
-        let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
-        status.authenticated = false;
-        status.models.clear();
-        status.selected_model.clear();
-        status.latest_probe = None;
-        status.profile = accounts::active(&profile(&crate::core_base_dir()?))?
-            .to_string_lossy()
-            .into_owned();
-    }
-    bridge::sync_models(state.inner())
-}
-
-async fn connect(
+#[tauri::command]
+pub(crate) fn rename_acp_account(
     app: tauri::AppHandle,
-    login: bool,
-    switch_account: bool,
-    guard: OperationGuard,
+    account_id: String,
+    label: String,
 ) -> Result<AcpStatus, String> {
+    let guard = begin(&app, "rename")?;
+    accounts::rename(&profile(&crate::core_base_dir()?), &account_id, &label)?;
+    drop(guard);
+    get_acp_status(app.clone(), app.state::<AcpState>())
+}
+
+#[tauri::command]
+pub(crate) fn remove_acp_account(
+    app: tauri::AppHandle,
+    account_id: String,
+) -> Result<AcpStatus, String> {
+    let guard = begin(&app, "remove")?;
+    let root = profile(&crate::core_base_dir()?);
+    remove_account_local(app.state::<AcpState>().inner(), &root, &account_id)?;
+    drop(guard);
+    get_acp_status(app.clone(), app.state::<AcpState>())
+}
+
+#[tauri::command]
+pub(crate) async fn logout_acp_account(app: tauri::AppHandle) -> Result<AcpStatus, String> {
+    let guard = begin(&app, "logout")?;
+    clear_account(&app)?;
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    let executable = crate::find_antigravity_cli(&home)
-        .ok_or("Install official Antigravity CLI before connecting")?;
-    let accounts_root = profile(&crate::core_base_dir()?);
-    let profile = accounts::active(&accounts_root)?;
+    let executable = match crate::find_antigravity_cli(&home) {
+        Some(executable) => executable,
+        None => {
+            let state = app.state::<AcpState>();
+            let result = combine_account_errors(Err("Install official Antigravity CLI to sign out. You can still remove the local account record.".into()), sync_account_models(state.inner()));
+            if let Err(error) = &result {
+                record_error(state.inner(), error);
+            }
+            return result;
+        }
+    };
+    let root = profile(&crate::core_base_dir()?);
+    let profile = accounts::active(&root)?;
     let proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AcpState>();
-        let result: Result<(), String> = (|| {
+        let mut result = (|| {
             prepare_profile(&profile)?;
             let mut client = rpc::Client::spawn(&executable, &profile, &proxy)?;
-            connect_session(
-                state.inner(),
-                &accounts_root,
-                login,
-                switch_account,
+            logout_session(
+                app.state::<AcpState>().inner(),
+                &root,
                 &guard.cancel,
                 &mut client,
             )
         })();
-        if let Err(error) = &result {
-            if let Ok(mut status) = state.status.lock() {
-                status.error = Some(error.clone());
-                // Do not retain stale account capabilities after any failed refresh.
-                status.authenticated = false;
-                status.models.clear();
-            }
-            let _ = bridge::sync_models(state.inner());
+        if result.is_err() {
+            let state = app.state::<AcpState>();
+            result = combine_account_errors(result, sync_account_models(state.inner()));
+            record_error(state.inner(), result.as_ref().unwrap_err());
         }
         drop(guard);
         result?;
@@ -353,41 +372,287 @@ async fn connect(
     .map_err(|e| e.to_string())?
 }
 
+fn reset_account(state: &AcpState) -> Result<(), String> {
+    state.agents.clear();
+    let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
+    status.authenticated = false;
+    status.models.clear();
+    status.selected_model.clear();
+    status.latest_probe = None;
+    Ok(())
+}
+
+fn refresh_account_identity(state: &AcpState, root: &Path) -> Result<(), String> {
+    let registry = accounts::read(root)?;
+    let directory = accounts::directory(root, &registry.active)?;
+    let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
+    status.active_account = registry.active;
+    status.profile = directory.to_string_lossy().into_owned();
+    Ok(())
+}
+
+fn clear_account(app: &tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<AcpState>();
+    reset_account(state.inner())?;
+    // Clearing local state is independent of CPA provider-file maintenance.
+    refresh_account_identity(state.inner(), &profile(&crate::core_base_dir()?))
+}
+
+fn sync_account_models(state: &AcpState) -> Result<(), String> {
+    bridge::sync_models(state)
+        .map_err(|error| format!("ACP API provider configuration sync failed: {error}"))
+}
+
+fn combine_account_errors<T>(
+    result: Result<T, String>,
+    maintenance: Result<(), String>,
+) -> Result<T, String> {
+    match (result, maintenance) {
+        (result, Ok(())) => result,
+        (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(maintenance)) if error.contains(&maintenance) => Err(error),
+        (Err(error), Err(maintenance)) => Err(format!("{error}; {maintenance}")),
+    }
+}
+
+fn select_account_local(state: &AcpState, root: &Path, id: &str) -> Result<(), String> {
+    if !accounts::read(root)?
+        .accounts
+        .iter()
+        .any(|account| account.id == id)
+    {
+        return Err("Unknown ACP account".into());
+    }
+    reset_account(state)?;
+    let result = accounts::select(root, id).and_then(|_| refresh_account_identity(state, root));
+    if result.is_err() {
+        let result = combine_account_errors(result, sync_account_models(state));
+        if let Err(error) = &result {
+            record_error(state, error);
+        }
+        return result;
+    }
+    Ok(())
+}
+
+fn remove_account_local(state: &AcpState, root: &Path, id: &str) -> Result<(), String> {
+    let current = accounts::read(root)?.active == id;
+    if current {
+        reset_account(state)?;
+    }
+    // Never let a damaged/unwritable CPA provider config prevent isolating an
+    // account. Apply local mutation first, then report both independent errors.
+    let mut result = accounts::remove(root, id).map(|_| ());
+    if current {
+        result = combine_account_errors(result, refresh_account_identity(state, root));
+        result = combine_account_errors(result, sync_account_models(state));
+    }
+    if let Err(error) = &result {
+        record_error(state, error);
+    }
+    result
+}
+
+fn record_error(state: &AcpState, error: &str) {
+    if let Ok(mut status) = state.status.lock() {
+        status.error = Some(error.into());
+    }
+}
+
+async fn connect(
+    app: tauri::AppHandle,
+    login: bool,
+    relogin: bool,
+    mut pending: Option<accounts::PendingAccount>,
+    guard: OperationGuard,
+) -> Result<AcpStatus, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let executable = match crate::find_antigravity_cli(&home) {
+        Some(executable) => executable,
+        None => {
+            clear_account(&app)?;
+            let state = app.state::<AcpState>();
+            let result = combine_account_errors(
+                Err("Install official Antigravity CLI before connecting".into()),
+                sync_account_models(state.inner()),
+            );
+            if let Err(error) = &result {
+                record_error(state.inner(), error);
+            }
+            return result;
+        }
+    };
+    let root = profile(&crate::core_base_dir()?);
+    let directory = match pending.as_ref() {
+        Some(pending) => pending.directory()?,
+        None => accounts::active(&root)?,
+    };
+    let proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AcpState>();
+        let mut result: Result<(), String> = (|| {
+            prepare_profile(&directory)?;
+            let mut client = rpc::Client::spawn(&executable, &directory, &proxy)?;
+            connect_profile(
+                state.inner(),
+                &root,
+                &directory,
+                login,
+                relogin,
+                &guard.cancel,
+                &mut client,
+                pending.as_mut(),
+            )
+        })();
+        if result.is_err() {
+            if let Some(pending) = pending.as_mut() {
+                if let Err(cleanup) = pending.rollback() {
+                    result = Err(format!(
+                        "{}; pending login data could not be isolated: {cleanup}",
+                        result.unwrap_err()
+                    ));
+                }
+            }
+            // A failed provisional login never changed the active account.
+            // A committed new login or ordinary refresh must retire stale models.
+            if pending.as_ref().is_none_or(|pending| {
+                accounts::read(&root).is_ok_and(|registry| registry.active == pending.id)
+            }) {
+                result = combine_account_errors(result, reset_account(state.inner()));
+                result = combine_account_errors(result, sync_account_models(state.inner()));
+            }
+            record_error(state.inner(), result.as_ref().unwrap_err());
+        }
+        drop(guard);
+        result?;
+        get_acp_status(app.clone(), app.state::<AcpState>())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn logout_session(
+    state: &AcpState,
+    root: &Path,
+    cancel: &Arc<AtomicBool>,
+    client: &mut rpc::Client,
+) -> Result<(), String> {
+    // Invalidation is local and immediate even when official logout is missing.
+    // Never silently substitute deleting credentials for the official method.
+    reset_account(state)?;
+    let maintenance = sync_account_models(state);
+    let action = (|| {
+        client.initialize(cancel)?;
+        client.logout(cancel)?;
+        accounts::set_active_email(root, None)
+    })();
+    let result = combine_account_errors(action, maintenance);
+    if let Err(error) = &result {
+        record_error(state, error);
+    }
+    result
+}
+
+#[cfg(test)]
 fn connect_session(
     state: &AcpState,
     root: &Path,
     login: bool,
-    switch_account: bool,
+    relogin: bool,
     cancel: &Arc<AtomicBool>,
     client: &mut rpc::Client,
 ) -> Result<(), String> {
-    let profile = accounts::active(root)?;
-    if login {
-        accounts::set_active_email(root, None)?;
-    }
-    client.initialize(cancel)?;
-    if switch_account {
-        client.logout(cancel)?;
-        {
-            let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
-            status.authenticated = false;
-            status.models.clear();
-            status.selected_model.clear();
+    connect_profile(
+        state,
+        root,
+        &accounts::active(root)?,
+        login,
+        relogin,
+        cancel,
+        client,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn connect_profile(
+    state: &AcpState,
+    root: &Path,
+    profile: &Path,
+    login: bool,
+    relogin: bool,
+    cancel: &Arc<AtomicBool>,
+    client: &mut rpc::Client,
+    mut pending: Option<&mut accounts::PendingAccount>,
+) -> Result<(), String> {
+    let mut touches_current = pending.is_none();
+    let mut maintenance = Ok(());
+    let action = (|| {
+        if touches_current {
+            reset_account(state)?;
+            maintenance = combine_account_errors(
+                std::mem::replace(&mut maintenance, Ok(())),
+                sync_account_models(state),
+            );
         }
-        bridge::sync_models(state)?;
+        client.initialize(cancel)?;
+        if relogin {
+            // A provider-file error cannot skip official logout. Conversely, an
+            // actual logout failure MUST stop before any authenticate request.
+            client.logout(cancel)?;
+            accounts::set_active_email(root, None)?;
+        }
+        if login {
+            client.call(
+                "authenticate",
+                json!({"methodId":"oauth-personal"}),
+                cancel,
+                |_| {},
+            )?;
+            if let Some(pending) = pending.as_mut() {
+                // Official success is the commit point even if model discovery
+                // or independent provider-file maintenance later fails.
+                pending.commit(client.account_email(profile))?;
+                touches_current = true;
+                reset_account(state)?;
+                maintenance = combine_account_errors(
+                    std::mem::replace(&mut maintenance, Ok(())),
+                    sync_account_models(state),
+                );
+            } else {
+                accounts::mark_saved(root)?;
+            }
+        }
+        let session = client.session(profile, cancel).map_err(|error| {
+            if pending.is_some() {
+                format!("Account saved; connection not verified: {error}")
+            } else {
+                error
+            }
+        })?;
+        refresh_account_identity(state, root)?;
+        mark_session(state, &session, profile)?;
+        accounts::mark_saved(root)?;
+        if let Some(email) = client.account_email(profile) {
+            accounts::set_active_email(root, Some(email))?;
+        }
+        maintenance = combine_account_errors(
+            std::mem::replace(&mut maintenance, Ok(())),
+            sync_account_models(state),
+        );
+        Ok(())
+    })();
+    let mut result = combine_account_errors(action, maintenance);
+    if result.is_err() && touches_current {
+        // Fail closed locally even when the stale provider file cannot be
+        // updated. Bridge HTTP requests consult this in-memory gate first.
+        result = combine_account_errors(result, reset_account(state));
+        result = combine_account_errors(result, sync_account_models(state));
     }
-    if login {
-        client.call(
-            "authenticate",
-            json!({"methodId":"oauth-personal"}),
-            cancel,
-            |_| {},
-        )?;
+    if let Err(error) = &result {
+        record_error(state, error);
     }
-    let session = client.session(&profile, cancel)?;
-    mark_session(state, &session, &profile)?;
-    let _ = accounts::set_active_email(root, client.account_email(&profile));
-    bridge::sync_models(state)
+    result
 }
 
 #[tauri::command]
