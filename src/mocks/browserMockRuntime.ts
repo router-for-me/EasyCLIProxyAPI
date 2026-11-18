@@ -1258,10 +1258,29 @@ export function createBrowserMockRuntime(
   const acp: AcpStatus = {
     executable: 'C:/Users/demo/AppData/Local/agy/bin/agy.exe', profile: 'C:/ECPA/acp/antigravity',
     authenticated: false, busy: false, operation: '', models: [], selectedModel: '', error: null, latestProbe: null, upstreamEnabled: false, upstreamUrl: null,
-    accounts: [{ id: 'default', label: 'Default', email: null as string | null }], activeAccount: 'default',
+    accounts: [{ id: 'default', label: 'Default', email: null as string | null, saved: false }], activeAccount: 'default',
   };
   const acpAccountModels = new Map<string, string>();
   let acpCancelled = false;
+  let acpSequence = 0;
+  const mockAcpModels = [{ id: 'gemini-4-argon-medium', name: 'Gemini 4 Argon (Medium)' }, { id: 'gemini-3.8-flash-low', name: 'Gemini 3.8 Flash (Low)' }];
+  const validateAcpLabel = (value: unknown) => {
+    const raw = readString(value); const label = raw.trim();
+    if (!label || [...label].length > 80 || /[\u0000-\u001f\u007f-\u009f]/u.test(raw)) throw new Error('Enter an ACP account label of 1–80 characters without control characters');
+    return label;
+  };
+  const clearMockAcp = () => Object.assign(acp, { authenticated: false, models: [], selectedModel: '', latestProbe: null });
+  const mockAcpOperation = async (operation: string, action: () => void) => {
+    if (acp.busy) throw new Error('An ACP operation is already running');
+    acp.busy = true; acp.operation = operation; acp.error = null; acpCancelled = false;
+    try {
+      await sleep(Math.max(delayMs, 250));
+      if (acpCancelled) throw new Error('ACP request cancelled');
+      action();
+    } catch (cause) { acp.error = cause instanceof Error ? cause.message : String(cause); throw cause; }
+    finally { acp.busy = false; acp.operation = ''; }
+    return clone(acp);
+  };
   const applyMockUpdateChannel = (channel: string) => {
     const normalized = channel.trim() || 'stable';
     state.appUpdateInfo.updateChannel = normalized;
@@ -1670,35 +1689,55 @@ export function createBrowserMockRuntime(
         return clone(acp);
       }
       case 'add_acp_account': {
-        if (acp.busy) throw new Error('An ACP operation is already running');
-        const id = 'mock-account-' + acp.accounts.length;
-        acpAccountModels.set(acp.activeAccount, acp.selectedModel);
-        acp.accounts.push({ id, label: readString(payload.label).trim(), email: 'work.acp@example.test' });
-        acp.activeAccount = id; acp.selectedModel = '';
-        acp.latestProbe = null;
-        acp.authenticated = true;
-        acp.selectedModel = acp.models[0]?.id || 'gemini-4-argon-medium';
-        return clone(acp);
+        const label = validateAcpLabel(payload.label);
+        if (!acp.executable) throw new Error('Install official Antigravity CLI before adding an account');
+        if (acp.accounts.filter(a => a.saved).length >= 32) throw new Error('Up to 32 ACP accounts can be saved');
+        return mockAcpOperation('login', () => {
+          const id = (++acpSequence).toString(16).padStart(32, '0');
+          acpAccountModels.set(acp.activeAccount, acp.selectedModel);
+          acp.accounts = acp.accounts.filter(a => a.id !== 'default' || a.saved);
+          acp.accounts.push({ id, label, email: 'work.acp@example.test', saved: true });
+          acp.activeAccount = id;
+          Object.assign(acp, { authenticated: true, models: clone(mockAcpModels), selectedModel: mockAcpModels[0].id, latestProbe: null });
+        });
       }
+      case 'rename_acp_account': {
+        const label = validateAcpLabel(payload.label);
+        return mockAcpOperation('rename', () => {
+          const account = acp.accounts.find(a => a.id === payload.accountId);
+          if (!account) throw new Error('Unknown ACP account');
+          account.label = label;
+        });
+      }
+      case 'remove_acp_account': return mockAcpOperation('remove', () => {
+        const id = readString(payload.accountId);
+        if (!acp.accounts.some(a => a.id === id)) throw new Error('Unknown ACP account');
+        acp.accounts = acp.accounts.filter(a => a.id !== id);
+        acpAccountModels.delete(id);
+        if (!acp.accounts.length) acp.accounts = [{ id: 'default', label: 'Default', email: null, saved: false }];
+        if (acp.activeAccount === id) { acp.activeAccount = acp.accounts[0].id; clearMockAcp(); }
+      });
+      case 'logout_acp_account': return mockAcpOperation('logout', () => {
+        clearMockAcp();
+        const account = acp.accounts.find(a => a.id === acp.activeAccount);
+        if (account) account.email = null;
+      });
       case 'switch_acp_account': {
-        if (acp.busy) throw new Error('An ACP operation is already running');
         const id = readString(payload.accountId);
         if (!acp.accounts.some(account => account.id === id)) throw new Error('Unknown ACP account');
-        acpAccountModels.set(acp.activeAccount, acp.selectedModel);
-        acp.activeAccount = id; acp.selectedModel = acpAccountModels.get(id) || acp.models[0]?.id || '';
-        acp.latestProbe = null;
-        return clone(acp);
+        return mockAcpOperation('refresh', () => {
+          acpAccountModels.set(acp.activeAccount, acp.selectedModel);
+          acp.activeAccount = id;
+          Object.assign(acp, { authenticated: true, models: clone(mockAcpModels), selectedModel: acpAccountModels.get(id) || mockAcpModels[0].id, latestProbe: null });
+        });
       }
       case 'relogin_acp_account':
-      case 'acp_connect': {
-        if (acp.busy) throw new Error('An ACP operation is already running');
+      case 'acp_connect': return mockAcpOperation('login', () => {
         const account = acp.accounts.find(account => account.id === acp.activeAccount);
-        if (account) account.email = account.id === 'default' ? 'personal.acp@example.test' : 'work.acp@example.test';
-        Object.assign(acp, { authenticated: true, error: null, latestProbe: null,
-          models: [{ id: 'gemini-4-argon-medium', name: 'Gemini 4 Argon (Medium)' }, { id: 'gemini-3.8-flash-low', name: 'Gemini 3.8 Flash (Low)' }] });
+        if (account) { account.saved = true; account.email = account.id === 'default' ? 'personal.acp@example.test' : 'work.acp@example.test'; }
+        Object.assign(acp, { authenticated: true, error: null, latestProbe: null, models: clone(mockAcpModels) });
         if (!acp.models.some(model => model.id === acp.selectedModel)) acp.selectedModel = acp.models[0].id;
-        return clone(acp);
-      }
+      });
       case 'select_acp_model': {
         if (acp.busy) throw new Error('Wait for the current ACP operation to finish');
         if (!acp.models.some(model => model.id === payload.model)) throw new Error('Refresh available ACP models first');

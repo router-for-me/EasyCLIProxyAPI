@@ -126,7 +126,9 @@ fn successful_login_refresh_relogin_and_account_switch_do_not_enable_api() {
         assert!(state.bridge.lock().unwrap().is_none());
         assert!(!upstream_enabled(&directory).unwrap());
     }
-    let registry = accounts::add(&directory, "Second").unwrap();
+    let mut pending = accounts::PendingAccount::new(&directory, "Second").unwrap();
+    pending.commit(None).unwrap();
+    let registry = pending.id.clone();
     let account = accounts::active(&directory).unwrap();
     assert_ne!(account, directory);
     save_settings(
@@ -1692,4 +1694,190 @@ async fn http_bridge_flattens_multi_turn_history_into_the_prompt() {
     stop.cancel();
     server.await.unwrap();
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+// Real Some(Runtime) with a task-local registration path. Never patch global
+// config/env or assume a mock state's absent runtime exercises sync failure.
+async fn damaged_account_runtime(
+    kind: &str,
+) -> (tauri::App<tauri::test::MockRuntime>, PathBuf, PathBuf) {
+    let (app, root) = bridge_fixture();
+    accounts::mark_saved(&root).unwrap();
+    accounts::set_active_email(&root, Some("saved@example.test".into())).unwrap();
+    let config_directory = root.join("owned-core");
+    std::fs::create_dir(&config_directory).unwrap();
+    let config = config_directory.join("config.yaml");
+    std::fs::write(&config, "openai-compatibility: []\n").unwrap();
+    set_enabled(app.handle(), &root, &config, true, false)
+        .await
+        .unwrap();
+    assert!(app.state::<AcpState>().bridge.lock().unwrap().is_some());
+    if kind == "malformed" {
+        std::fs::write(&config, "openai-compatibility: not-a-list\n").unwrap();
+    } else {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&config_directory, std::fs::Permissions::from_mode(0o500))
+                .unwrap();
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::remove_file(&config).unwrap();
+            std::fs::create_dir(&config).unwrap();
+        }
+    }
+    (app, root, config)
+}
+
+fn cleanup_account_runtime_fixture(root: PathBuf) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            root.join("owned-core"),
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn provider_sync_failure_does_not_skip_official_logout_or_drop_saved_records() {
+    for kind in ["malformed", "unwritable"] {
+        let (app, root, _config) = damaged_account_runtime(kind).await;
+        let calls = root.join("official-calls.log");
+        let state = app.state::<AcpState>();
+        let error = logout_session(
+            state.inner(),
+            &root,
+            &Arc::new(AtomicBool::new(false)),
+            &mut super::super::lifecycle_tests::tracked_client("ok", Some(&calls)),
+        )
+        .unwrap_err();
+        assert_eq!(
+            std::fs::read_to_string(&calls)
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            ["initialize", "logout"]
+        );
+        assert!(
+            error.contains("provider configuration sync failed"),
+            "{error}"
+        );
+        assert_eq!(
+            state.snapshot().unwrap().error.as_deref(),
+            Some(error.as_str())
+        );
+        let registry = accounts::read(&root).unwrap();
+        assert_eq!(registry.accounts.len(), 1);
+        assert!(registry.accounts[0].saved);
+        assert!(registry.accounts[0].email.is_none());
+        let status = state.snapshot().unwrap();
+        assert!(!status.authenticated);
+        assert!(status.models.is_empty());
+        assert!(status.selected_model.is_empty());
+        assert!(status.upstream_enabled);
+        assert!(upstream_enabled(&root).unwrap());
+        assert!(state.bridge.lock().unwrap().is_some());
+        let (url, key) = {
+            let runtime = state.bridge.lock().unwrap();
+            let runtime = runtime.as_ref().unwrap();
+            (runtime.url.clone(), runtime.key.clone())
+        };
+        let reply = reqwest::Client::builder().no_proxy().build().unwrap()
+            .post(format!("{url}/chat/completions")).bearer_auth(key)
+            .json(&request(false)).send().await.unwrap();
+        assert_eq!(reply.status().as_u16(), 503, "live bridge must gate stale provider requests after logout");
+        drop(state);
+        drop(app);
+        cleanup_account_runtime_fixture(root);
+    }
+}
+
+#[tokio::test]
+async fn reauthorization_runs_after_successful_logout_despite_provider_error_but_never_after_logout_failure(
+) {
+    for (mode, expected) in [
+        (
+            "ok",
+            vec!["initialize", "logout", "authenticate", "session/new"],
+        ),
+        ("logout-fails", vec!["initialize", "logout"]),
+    ] {
+        let (app, root, _) = damaged_account_runtime("malformed").await;
+        let calls = root.join("reauth-calls.log");
+        let state = app.state::<AcpState>();
+        let error = connect_session(
+            state.inner(),
+            &root,
+            true,
+            true,
+            &Arc::new(AtomicBool::new(false)),
+            &mut super::super::lifecycle_tests::tracked_client(mode, Some(&calls)),
+        )
+        .unwrap_err();
+        assert_eq!(
+            std::fs::read_to_string(&calls)
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert!(
+            error.contains("provider configuration sync failed"),
+            "{error}"
+        );
+        if mode == "logout-fails" {
+            assert!(error.contains("official logout failed"), "{error}");
+        }
+        let registry = accounts::read(&root).unwrap();
+        assert_eq!(registry.accounts.len(), 1);
+        assert!(registry.accounts[0].saved);
+        let status = state.snapshot().unwrap();
+        assert!(!status.authenticated);
+        assert!(status.models.is_empty());
+        assert!(status.upstream_enabled);
+        assert!(upstream_enabled(&root).unwrap());
+        drop(state);
+        drop(app);
+        cleanup_account_runtime_fixture(root);
+    }
+}
+
+#[tokio::test]
+async fn damaged_provider_does_not_prevent_selection_or_current_local_removal() {
+    let (app, root, _) = damaged_account_runtime("malformed").await;
+    let mut pending = accounts::PendingAccount::new(&root, "Second").unwrap();
+    pending.commit(None).unwrap();
+    accounts::select(&root, "default").unwrap();
+    let state = app.state::<AcpState>();
+    select_account_local(state.inner(), &root, &pending.id).unwrap();
+    assert_eq!(accounts::read(&root).unwrap().active, pending.id);
+    let error = connect_session(
+        state.inner(),
+        &root,
+        false,
+        false,
+        &Arc::new(AtomicBool::new(false)),
+        &mut super::super::lifecycle_tests::client("ok"),
+    )
+    .unwrap_err();
+    assert!(error.contains("provider configuration sync failed"));
+    assert_eq!(accounts::read(&root).unwrap().active, pending.id);
+    let error = remove_account_local(state.inner(), &root, &pending.id).unwrap_err();
+    assert!(error.contains("provider configuration sync failed"));
+    let registry = accounts::read(&root).unwrap();
+    assert_eq!(registry.active, "default");
+    assert_eq!(registry.accounts.len(), 1);
+    assert!(root.join("removed-accounts").is_dir());
+    assert!(!state.snapshot().unwrap().authenticated);
+    assert!(state.snapshot().unwrap().models.is_empty());
+    assert!(state.snapshot().unwrap().upstream_enabled);
+    assert!(upstream_enabled(&root).unwrap());
+    drop(state);
+    drop(app);
+    cleanup_account_runtime_fixture(root);
 }
