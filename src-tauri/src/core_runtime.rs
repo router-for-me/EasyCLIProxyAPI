@@ -3308,9 +3308,9 @@ pub(crate) fn copy_core_file_replace(source_path: &Path, target_path: &Path) -> 
 
     let replace_result = (|| -> io::Result<()> {
         fs::copy(source_path, &temporary_path)?;
-        let temporary_file = File::options().write(true).open(&temporary_path)?;
-        temporary_file.sync_all()?;
-        drop(temporary_file);
+        #[cfg(unix)]
+        restore_owner_write_for_replacement(&temporary_path)?;
+        sync_copied_file(&temporary_path)?;
         replace_file_atomically(&temporary_path, target_path)
     })();
 
@@ -3323,6 +3323,29 @@ pub(crate) fn copy_core_file_replace(source_path: &Path, target_path: &Path) -> 
     }
 
     Ok(())
+}
+
+/// `fs::copy` reproduces the source permission bits, so copying a read-only kernel
+/// binary yields a read-only temporary file. Replacements must stay writable or the
+/// next update is denied, so keep the owner write bit and preserve every other bit.
+#[cfg(unix)]
+fn restore_owner_write_for_replacement(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let permissions = fs::metadata(path)?.permissions();
+    fs::set_permissions(path, fs::Permissions::from_mode(permissions.mode() | 0o600))
+}
+
+/// Flush the copied bytes without needing write access; only Windows requires a
+/// write-opened handle because `FlushFileBuffers` rejects a read-only one.
+#[cfg(not(windows))]
+fn sync_copied_file(path: &Path) -> io::Result<()> {
+    File::open(path)?.sync_all()
+}
+
+#[cfg(windows)]
+fn sync_copied_file(path: &Path) -> io::Result<()> {
+    File::options().write(true).open(path)?.sync_all()
 }
 
 #[cfg(any(target_os = "macos", test))]
