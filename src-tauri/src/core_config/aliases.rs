@@ -3318,7 +3318,49 @@ pub(crate) fn remove_alias_payload_options(
     Ok(())
 }
 
+/// The lossless editor refuses a document followed by content it cannot attach
+/// to it, while the kernel's own reader stops at the end of the document and
+/// ignores the rest. Keep that trailing text verbatim instead of failing the
+/// save: only the document is edited, the tail is appended back unchanged.
+fn split_trailing_undocumentable_yaml(content: &str) -> Option<(usize, &str)> {
+    const MARKER: &str = "Content after the document could not be parsed";
+    let parse = yaml_edit::Parse::parse_yaml(content);
+    let stray = parse
+        .positioned_errors()
+        .iter()
+        .find(|error| error.message.contains(MARKER))?;
+    // The reported range covers the stray tokens, not the whitespace and
+    // comments in front of them; walk back to the start of that line so the
+    // trailer is preserved byte for byte.
+    let mut offset = stray.range.start as usize;
+    while offset > 0 && !content.as_bytes()[offset - 1].eq(&b'\n') {
+        offset -= 1;
+    }
+    if offset == 0 || !content.is_char_boundary(offset) {
+        return None;
+    }
+    let tail = &content[offset..];
+    let head = &content[..offset];
+    if tail.trim().is_empty() || serde_norway::from_str::<serde_norway::Value>(head).is_err() {
+        return None;
+    }
+    Some((offset, tail))
+}
+
 pub(crate) fn render_updated_core_yaml(
+    content: &str,
+    updated: serde_norway::Value,
+) -> Result<String, String> {
+    let (content, trailing) = match split_trailing_undocumentable_yaml(content) {
+        Some((offset, tail)) => (&content[..offset], tail),
+        None => (content, ""),
+    };
+
+    let rendered = render_updated_core_yaml_document(content, updated)?;
+    Ok(format!("{rendered}{trailing}"))
+}
+
+fn render_updated_core_yaml_document(
     content: &str,
     updated: serde_norway::Value,
 ) -> Result<String, String> {

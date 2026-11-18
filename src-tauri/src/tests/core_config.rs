@@ -2531,3 +2531,48 @@ fn explicitly_selected_auth_directory_is_not_moved_on_restart() {
     assert!(selected.join("account.json").exists());
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn render_updated_core_yaml_tolerates_content_after_the_document() {
+    let content = "port: 8317\ncodex-api-key:\n  - name: provider\n    models: [deepseek-v4-flash, {name: deepseek-v4.1-flash, alias: deepseek-flash-fl}]\n[";
+    let document = "port: 8317\ncodex-api-key:\n  - name: provider\n    models: [deepseek-v4-flash, {name: deepseek-v4.1-flash, alias: deepseek-flash-fl}]\n";
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(document).unwrap();
+    remove_config_model_alias(
+        updated.as_mapping_mut().unwrap(),
+        "codex-api-key",
+        "deepseek-flash-fl",
+    )
+    .unwrap();
+    let rendered = render_updated_core_yaml(content, updated.clone()).unwrap();
+    let head = rendered.strip_suffix('[').expect("trailing text is preserved verbatim");
+    let saved = serde_norway::from_str::<serde_norway::Value>(head).unwrap();
+    assert_eq!(saved, updated);
+}
+
+#[test]
+fn render_updated_core_yaml_keeps_comments_and_indentation_of_stray_trailer() {
+    let trailer = "\n# keep me exactly\n  [draft, note]\n";
+    let content = format!("port: 8317\nopenai-compatibility:\n  - name: provider\n    models: [a, {{name: b, alias: old}}]\n{trailer}");
+    let document = content.strip_suffix(trailer).unwrap();
+    let mut updated = serde_norway::from_str::<serde_norway::Value>(document).unwrap();
+    remove_config_model_alias(
+        updated.as_mapping_mut().unwrap(),
+        "openai-compatibility",
+        "old",
+    )
+    .unwrap();
+    let rendered = render_updated_core_yaml(&content, updated.clone()).unwrap();
+    assert!(rendered.ends_with(trailer), "{rendered:?}");
+    let saved = serde_norway::from_str::<serde_norway::Value>(
+        rendered.strip_suffix(trailer).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved, updated);
+}
+
+#[test]
+fn render_updated_core_yaml_does_not_swallow_stray_content_for_the_wrong_document() {
+    let content = "port: 8317\nmodels: [a\n";
+    let updated = serde_norway::from_str::<serde_norway::Value>("port: 8317\n").unwrap();
+    assert!(render_updated_core_yaml(content, updated).is_err());
+}
