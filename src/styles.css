@@ -471,23 +471,23 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: 1160px;
+  max-width: 1440px;
   margin: 0 auto;
 }
 
 .version-list {
   display: grid;
-  gap: 20px;
+  gap: 12px;
   padding: 0;
 }
 
 .version-source-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  min-height: 84px;
+  min-height: 68px;
   align-items: center;
   gap: 24px;
-  padding: 20px 24px;
+  padding: 16px 20px;
 }
 
 .version-source-copy {
@@ -562,15 +562,15 @@ textarea:focus-visible {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: stretch;
-  gap: 20px;
+  gap: 12px;
 }
 
 .version-list-item {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  min-height: 280px;
-  padding: 24px;
+  min-height: 0;
+  padding: 20px;
 }
 
 .version-item-content {
@@ -633,7 +633,7 @@ textarea:focus-visible {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   min-width: 0;
   gap: 12px;
-  margin: 18px 0 0;
+  margin: 12px 0 0;
 }
 
 .version-metrics-comparison.single {
@@ -654,7 +654,7 @@ textarea:focus-visible {
   display: grid;
   min-width: 0;
   gap: 5px;
-  padding: 14px 16px;
+  padding: 10px 12px;
   border-radius: var(--radius-md);
 }
 
@@ -683,13 +683,12 @@ textarea:focus-visible {
 
 .app-version-info-section,
 .core-version-picker {
-  margin-top: 18px;
-  padding-top: 18px;
+  margin-top: 12px;
+  padding-top: 12px;
   border-top: 1px solid var(--color-border-subtle);
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  flex: 1;
+  justify-content: flex-start;
 }
 
 .app-version-info-section {
@@ -812,7 +811,7 @@ textarea:focus-visible {
 .version-card-actions {
   display: grid;
   gap: 10px;
-  margin-top: 20px;
+  margin-top: 12px;
   align-items: center;
 }
 

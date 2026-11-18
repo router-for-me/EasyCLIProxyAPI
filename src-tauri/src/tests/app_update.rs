@@ -1328,6 +1328,23 @@ fn portable_update_zip_accepts_the_complete_release_package() {
         extracted.core_archive_name,
         Some("CLIProxyAPI_7.2.109_windows_amd64.zip".to_string())
     );
+    let app_dir = root.join("app");
+    fs::create_dir_all(app_dir.join("cpa-core")).unwrap();
+    fs::write(app_dir.join(CORE_VERSION_FILE), b"7.2.100\n").unwrap();
+    let executable = app_dir.join(PORTABLE_APP_BINARY);
+    fs::write(&executable, b"old executable").unwrap();
+    let work = root.join("EasyCLIProxyAPI-update-test");
+    let pending = PendingAppUpdate {
+        version: "1.2.3".into(),
+        asset: portable_update_test_asset("1.2.3", "amd64"),
+        arch: "amd64".into(),
+    };
+    let staged = crate::app_update::stage_portable_update(
+        &work, &valid_zip, &pending, executable.clone(), true,
+    ).unwrap();
+    staged.validate_cached(&executable).unwrap();
+    assert_eq!(fs::read(staged.staged_exe).unwrap(), b"new executable");
+    assert!(staged.preserve_core);
 
     let legacy_zip = root.join("legacy.zip");
     write_portable_update_zip(

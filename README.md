@@ -162,6 +162,9 @@ Manually renamed files without a session ID in their filename or a database path
 
 ## Upgrading
 
+Optional [background downloads and updates on the next launch](docs/automatic-updates.md)
+can be configured in **Version Management**. They are disabled by default.
+
 Behind an enterprise proxy, administrators should install the corporate root CA
 in the OS trust store, not disable TLS validation. See
 [enterprise proxy certificates and regression testing](docs/enterprise-proxy.md).

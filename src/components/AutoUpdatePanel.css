@@ -1,0 +1,24 @@
+@layer components {
+  .auto-update-panel { display: grid; gap: 12px; min-width: 0; padding: 16px 20px; }
+  .auto-update-heading, .auto-update-controls, .auto-update-actions, .auto-update-status, .auto-update-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-width: 0; }
+  .auto-update-heading { justify-content: space-between; }
+  .auto-update-title { display: flex; align-items: center; gap: 8px; }
+  .auto-update-title h2 { margin: 0; font-size: var(--font-size-panel-title); font-weight: var(--font-weight-semibold); line-height: var(--line-height-body); }
+  .auto-update-fields { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; min-width: 0; margin: 0; padding: 0; border: 0; }
+  .auto-update-fields legend { margin: 0; padding: 0; }
+  .auto-update-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; max-width: 100%; }
+  .auto-update-label { font-weight: 500; }
+  .auto-update-explanation { margin: 0; color: var(--text-secondary); font-size: var(--font-size-caption); }
+  .auto-update-status { font-size: var(--font-size-caption); }
+  .auto-update-status span, .auto-update-actions > span { color: var(--text-secondary); font-size: var(--font-size-caption); }
+  .auto-update-actions { justify-content: flex-end; }
+  .auto-update-meta { column-gap: 20px; }
+  .auto-update-meta:empty { display: none; }
+  @media (max-width: 640px) {
+    .auto-update-panel { padding: 14px 16px; }
+    .auto-update-title { flex-wrap: wrap; }
+    .auto-update-actions { margin-left: auto; }
+    .auto-update-row { gap: 8px; }
+    .auto-update-controls { gap: 8px; }
+  }
+}

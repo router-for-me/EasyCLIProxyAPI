@@ -6186,6 +6186,7 @@ mod tests {
             transient_error_cooldown_seconds: crate::DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS,
             streaming_bootstrap_retries: crate::DEFAULT_STREAMING_BOOTSTRAP_RETRIES,
             reverse_proxy: None,
+            auto_update: crate::auto_update::AutoUpdateSettings::default(),
         };
         let record = normalize_usage_record(
             serde_json::json!({

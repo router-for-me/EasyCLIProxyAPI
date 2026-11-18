@@ -2,10 +2,12 @@ import { routingZhCN } from './routing';
 import { easyModeZhCN } from '../easyMode';
 import { homeZhCN } from '../home';
 import { authFileListZhCN } from '../authFileList';
+import { autoUpdateZhCN } from '../autoUpdate';
 import { themeDiyZhCN } from '../themeDiy';
 
 import { acpZhCN } from '../acp';
 export const zhCN: Record<string, string> = {
+  ...autoUpdateZhCN,
   ...acpZhCN,
   'agents.responseLanguage.label': '回复语言',
   'agents.responseLanguage.unmanaged': '保留现有设置（不管理）',
