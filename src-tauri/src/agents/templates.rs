@@ -39,7 +39,7 @@ pub(crate) fn build_pi_template_updates(
     Ok(vec![
         AgentFileUpdate {
             path: pi_provider_config_path(home),
-            after: build_pi_provider_config(None, &managed_core_loopback_origin(port), api_key)?,
+            after: build_pi_provider_config(None, &agent_effective_loopback_origin(PI_AGENT_ID, port), api_key)?,
         },
         AgentFileUpdate {
             path: pi_provider_settings_path(home),

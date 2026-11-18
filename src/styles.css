@@ -7074,6 +7074,15 @@ textarea:focus-visible {
    heading child rule below otherwise gives this container grid layout. */
 .agent-section-heading > .agent-section-heading-actions {
   display: flex;
+  flex-wrap: wrap;
+}
+
+.agent-section-heading-actions .agent-codex-catalog-button {
+  width: auto;
+  min-height: 32px;
+  height: 32px;
+  padding: 0 12px;
+  white-space: nowrap;
 }
 
 .agent-claude-desktop-mapping-filter {
@@ -7384,6 +7393,30 @@ textarea:focus-visible {
 
 .agent-codex-tool-buttons .agent-codex-catalog-button {
   min-width: 0;
+}
+
+.agent-codex-tool-buttons-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+}
+
+.agent-codex-tool-buttons-row .agent-codex-catalog-button {
+  width: 100%;
+  min-width: 0;
+  padding: 0 12px;
+  font-size: inherit;
+  white-space: nowrap;
+  gap: 8px;
+}
+
+@media (max-width: 560px) {
+  .agent-codex-tool-buttons-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .codex-catalog-backdrop {

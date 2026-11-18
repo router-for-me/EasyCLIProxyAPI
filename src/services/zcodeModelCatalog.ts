@@ -12,6 +12,7 @@ export interface ZCodeModelConfig {
   reasoningLevels: string[];
   reasoningMap?: string;
   isManual: boolean;
+  systemPrompt: string;
 }
 
 export interface ZCodeCatalogEditorModel {

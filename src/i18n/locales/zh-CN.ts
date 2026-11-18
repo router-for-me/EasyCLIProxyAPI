@@ -6,9 +6,11 @@ import { autoUpdateZhCN } from '../autoUpdate';
 import { themeDiyZhCN } from '../themeDiy';
 
 import { acpZhCN } from '../acp';
+import { agentSystemPromptsZhCN } from '../agentSystemPrompts';
 export const zhCN: Record<string, string> = {
   ...autoUpdateZhCN,
   ...acpZhCN,
+  ...agentSystemPromptsZhCN,
   'agents.responseLanguage.label': '回复语言',
   'agents.responseLanguage.unmanaged': '保留现有设置（不管理）',
   'agents.responseLanguage.default': 'Claude 默认（移除覆盖）',

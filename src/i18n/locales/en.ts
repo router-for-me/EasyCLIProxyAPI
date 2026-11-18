@@ -7,9 +7,11 @@ import { autoUpdateEn } from '../autoUpdate';
 import { themeDiyEn } from '../themeDiy';
 
 import { acpEn } from '../acp';
+import { agentSystemPromptsEn } from '../agentSystemPrompts';
 export const en: Record<MessageKey, string> = {
   ...autoUpdateEn,
   ...acpEn,
+  ...agentSystemPromptsEn,
   'agents.responseLanguage.label': 'Response language',
   'agents.responseLanguage.unmanaged': 'Keep existing setting (unmanaged)',
   'agents.responseLanguage.default': 'Claude default (remove override)',

@@ -256,7 +256,7 @@ pub(crate) fn inspect_copilot_config(
     key: &str,
 ) -> Result<(bool, Option<String>), String> {
     let content = read_optional_text(&paths[0])?;
-    let base = format!("{}/v1", managed_core_loopback_origin(port));
+    let base = format!("{}/v1", agent_effective_loopback_origin(client.id(), port));
     if client == AgentClient::CopilotCli {
         let root = parse(&paths[0], content.as_deref())?;
         let model = root

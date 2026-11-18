@@ -426,7 +426,7 @@ impl AgentConfigStatusCache {
         Ok(())
     }
 
-    fn clear(&self) -> Result<(), String> {
+    pub(crate) fn clear(&self) -> Result<(), String> {
         let mut current = self
             .entry
             .lock()
@@ -2773,6 +2773,10 @@ fn main() {
             if let Err(error) = load_codex_model_customizations(app.handle()) {
                 eprintln!("Failed to load Codex custom model configuration: {error}");
             }
+            if let Err(error) = load_agent_system_prompts(app.handle()) {
+                eprintln!("Failed to load agent system prompt configuration: {error}");
+            }
+            restore_agent_prompt_proxies(app.handle().clone());
             if let Err(error) = restore_main_window_geometry(app.handle()) {
                 eprintln!("{error}");
             }
@@ -3058,6 +3062,8 @@ fn main() {
             save_codex_subagent_config,
             get_zcode_subagent_config,
             save_zcode_subagent_config,
+            get_agent_system_prompt_editor,
+            save_agent_system_prompt_editor,
             close_codex_config_modification,
             set_agent_config_enabled,
             update_agent_config,
