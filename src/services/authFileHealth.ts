@@ -145,10 +145,13 @@ export function authFileHealth(file: Record<string, unknown>): AuthFileHealth {
   const disabled = readBoolean(file, 'disabled') || status === 'disabled';
   const base = { status, message, disabled };
   if (disabled) {
+    // The core reports the suspension in memory as a status marker, and persists
+    // the appeal link on the credential file, so either signal identifies it.
+    // Ordinary disables keep their neutral state.
     const suspension = suspensionReasons[message.toLowerCase()];
-    // Only a core-reported upstream suspension gets its own label and hides the
-    // internal marker; an ordinary disabled credential keeps the neutral state.
-    if (suspension) return { ...base, message: '', label: 'authFiles.health.reason.tosViolation', tone: 'warning', suspension };
+    if (suspension || authFileAppeal(file)) {
+      return { ...base, message: '', label: 'authFiles.health.reason.tosViolation', tone: 'warning', suspension: suspension ?? 'tos' };
+    }
     return { ...base, label: 'authFiles.status.disabled', tone: 'neutral' };
   }
   if (readBoolean(file, 'unavailable') || status === 'error') {

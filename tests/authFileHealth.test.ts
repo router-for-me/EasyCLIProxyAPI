@@ -41,6 +41,15 @@ describe('upstream TOS suspension', () => {
     }
   });
 
+  it('still reports a suspension after a restart kept only the persisted appeal link', () => {
+    // The core keeps the marker in memory, so a reloaded credential carries the
+    // appeal link but no status message. It must not degrade to a plain disable.
+    const reloaded = authFileHealth({ status: 'disabled', tos_appeal_url: 'https://example.com/appeal' });
+    expect(reloaded).toMatchObject({ disabled: true, suspension: 'tos', label: 'authFiles.health.reason.tosViolation', tone: 'warning', message: '' });
+    expect(render({ status: 'disabled', tos_appeal_url: 'https://example.com/appeal' }))
+      .toContain('Suspended by upstream terms-of-service violation');
+  });
+
   it('renders the TOS reason with an appeal link and leaves other disables neutral', () => {
     const suspended = render({ status: 'disabled', status_message: 'tos_violation', tos_appeal_url: 'https://example.com/appeal', tos_appeal_url_text: 'Appeal now' });
     expect(suspended).toContain('Suspended by upstream terms-of-service violation');
