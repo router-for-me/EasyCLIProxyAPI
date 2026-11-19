@@ -514,6 +514,10 @@ function createState(scenario: BrowserMockScenario) {
         'zh-CN': '## Browser Mock 更新示例\n\n- 新增界面调试模式\n- 改进启动体验',
         en: '## Browser Mock release\n\n- Added UI mock mode',
       },
+      skippedReleaseNotes: [{ version: '0.2.98', releaseNotes: {
+        'zh-CN': '## 修复\n\n- 改进版本检查的稳定性',
+        en: '## Fixed\n\n- Improved update check reliability',
+      } }],
       publishedAt: isoHoursAgo(18),
       currentBuildAt: null,
       autoUpdateSupported: true,
@@ -1567,7 +1571,12 @@ export function createBrowserMockRuntime(
         state.autoUpdate.phase = 'waiting-update';
         return clone(state.autoUpdate);
       }
-      case 'check_app_update': return clone(state.appUpdateInfo);
+      case 'check_app_update': return clone({
+        ...state.appUpdateInfo,
+        skippedReleaseNotes: state.appUpdateInfo.updateChannel === 'stable' && state.appUpdateInfo.updateAvailable
+          ? state.appUpdateInfo.skippedReleaseNotes
+          : [],
+      });
       case 'refresh_managed_codex_model_catalog': return false;
       case 'get_app_update_task': return clone(state.appUpdateTask);
       case 'get_update_channel': return state.appUpdateInfo.updateChannel ?? 'stable';

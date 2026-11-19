@@ -486,6 +486,7 @@ struct AppUpdateInfo {
     update_available: bool,
     release_url: String,
     release_notes: HashMap<String, String>,
+    skipped_release_notes: Vec<SkippedReleaseNotes>,
     published_at: String,
     current_build_at: Option<String>,
     auto_update_supported: bool,
@@ -497,6 +498,13 @@ struct AppUpdateInfo {
     update_channel: String,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkippedReleaseNotes {
+    version: String,
+    release_notes: HashMap<String, String>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PortableUpdateManifest {
@@ -506,6 +514,8 @@ struct PortableUpdateManifest {
     release_url: String,
     #[serde(default, deserialize_with = "deserialize_release_notes")]
     release_notes: HashMap<String, String>,
+    #[serde(default)]
+    release_notes_history: serde_json::Value,
     assets: std::collections::HashMap<String, PortableUpdateAsset>,
     #[serde(default)]
     full_assets: Option<std::collections::HashMap<String, PortableUpdateAsset>>,

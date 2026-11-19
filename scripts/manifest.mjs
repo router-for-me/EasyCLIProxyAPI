@@ -3,7 +3,7 @@ import { readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readAppVersion, validateAppVersion } from './version.mjs';
-import { validateReleaseNotes } from './release-notes.mjs';
+import { resolveReleaseNotesHistory, validateReleaseNotes } from './release-notes.mjs';
 
 export function portableUpdateManifestName(platform) {
   const normalizedPlatform = String(platform).trim().toLowerCase();
@@ -34,6 +34,7 @@ export async function generatePortableUpdateManifest({
   version: requestedVersion,
   publishedAt = new Date().toISOString(),
   releaseNotes,
+  releaseNotesHistory,
 }) {
   const resolvedDirectory = resolve(directory ?? 'artifacts');
   const platformSpecs = {
@@ -109,6 +110,7 @@ export async function generatePortableUpdateManifest({
     publishedAt,
     releaseUrl: `https://github.com/${resolvedRepository}/releases/tag/${tag}`,
     ...(releaseNotes === undefined ? {} : { releaseNotes }),
+    ...(releaseNotesHistory && Object.keys(releaseNotesHistory).length ? { releaseNotesHistory } : {}),
     assets,
   };
 
@@ -137,6 +139,9 @@ async function main() {
   const releaseNotes = args.has('--release-notes')
     ? JSON.parse(await readFile(resolve(args.get('--release-notes')), 'utf8'))
     : undefined;
+  const releaseNotesHistory = releaseNotes === undefined
+    ? undefined
+    : await resolveReleaseNotesHistory({ tag: args.get('--tag') });
   let manifest;
   for (const output of outputs) {
     manifest = await generatePortableUpdateManifest({
@@ -149,6 +154,7 @@ async function main() {
       version: args.get('--version'),
       publishedAt,
       releaseNotes,
+      releaseNotesHistory,
     });
   }
   console.log(

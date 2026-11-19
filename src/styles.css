@@ -911,6 +911,10 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.app-release-notes-previous {
+  margin-top: 24px;
+}
+
 .app-release-notes-latest {
   padding: 2px 7px;
   border-radius: var(--radius-md);
