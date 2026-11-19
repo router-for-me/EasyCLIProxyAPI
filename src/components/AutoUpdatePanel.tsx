@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useI18n } from '../i18n';
 import { InlineNotice } from '../appNotice';
 import { Switch } from './Switch';
 import { Checkbox } from './Checkbox';
-import { Check } from 'lucide-react';
 import { pollWhileActive } from '../services/windowActivity';
 import {
   getAutoUpdateStatus, saveAutoUpdateSettings, retryAutoUpdate,
@@ -28,6 +27,7 @@ export function AutoUpdatePanel({ embedded = false, enabled, unavailableHint, un
   const [error, setError] = useState('');
   const [readError, setReadError] = useState('');
   const [saving, setSaving] = useState(false);
+  const switchId = useId();
   const revision = useRef(0);
   const mounted = useRef(false);
   const mutating = useRef(false);
@@ -79,23 +79,24 @@ export function AutoUpdatePanel({ embedded = false, enabled, unavailableHint, un
   const unavailable = !enabled;
   const disabled = busy || unavailable;
   return <section className={`auto-update-panel${embedded ? ' auto-update-panel-inset' : ' surface-panel'}`} aria-label={t('autoUpdate.title')}>
-    <div className="auto-update-heading">
-      <h2 className="auto-update-title">{t('autoUpdate.title')}</h2>
-      <Switch checked={draft?.enabled ?? false} onChange={event => change({ enabled: event.target.checked })}
+    {/* Off is the common state, so the card shows only the label and its switch. */}
+    <div className="auto-update-row">
+      <label className="auto-update-title" htmlFor={switchId}>{t('autoUpdate.title')}</label>
+      <Switch id={switchId} size="sm" checked={draft?.enabled ?? false} onChange={event => change({ enabled: event.target.checked })}
         aria-label={t('autoUpdate.enabled')} title={t('autoUpdate.enabled')} disabled={Boolean(disabled)} />
-      {draft ? <fieldset disabled={Boolean(disabled) || !draft.enabled} className="auto-update-fields">
+      {draft?.enabled ? <fieldset disabled={Boolean(disabled)} className="auto-update-fields">
         <legend className="sr-only">{t('autoUpdate.settings')}</legend>
         <div className="auto-update-targets">
           <Checkbox className="auto-update-checkbox" checked={draft.updateApp} onChange={event => change({ updateApp: event.target.checked })} label={t('autoUpdate.app')} />
           <Checkbox className="auto-update-checkbox" checked={draft.updateCore} onChange={event => change({ updateCore: event.target.checked })} label={t('autoUpdate.core')} />
         </div>
       </fieldset> : null}
-      <div className="auto-update-actions">
-        {dirty ? <span>{t('autoUpdate.unsaved')}</span> : null}
-        {status?.phase === 'failed' ? <button type="button" className="link-button" disabled={Boolean(disabled)}
-          onClick={() => void action(retryAutoUpdate)}>{t('autoUpdate.retry')}</button> : null}
-        <button type="button" className="primary-button compact-button" disabled={Boolean(disabled) || !dirty} onClick={save}><Check size={15} aria-hidden="true" />{t('common.save')}</button>
-      </div>
+      {status?.phase === 'failed' && draft?.enabled ? <button type="button" className="link-button" disabled={Boolean(disabled)}
+        onClick={() => void action(retryAutoUpdate)}>{t('autoUpdate.retry')}</button> : null}
+      {/* Save follows the dirty state, so switching the master toggle off can still be committed. */}
+      {dirty ? <div className="auto-update-actions">
+        <button type="button" className="primary-button compact-button" disabled={Boolean(disabled)} onClick={save}>{t('common.save')}</button>
+      </div> : null}
     </div>
     {unavailable ? <p className="auto-update-note">{unsupportedReason || unavailableHint}</p> : null}
     <InlineNotice notice={error || readError ? { owner: 'auto-update-settings', message: error || readError, tone: 'error' } : null} onDismiss={() => { setError(''); setReadError(''); }} />
