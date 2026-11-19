@@ -592,7 +592,6 @@ export function UsageRecordsPage() {
 
       {activeTab === 'live-routing' ? (
         <div className="usage-live-routing-layout">
-          <UsageStatGrid overview={overview ?? emptyOverview} />
           <RoutingPanel />
         </div>
       ) : null}

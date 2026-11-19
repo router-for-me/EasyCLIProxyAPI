@@ -13,12 +13,15 @@ export type UsageEventPage = {
 export type UsageRecord = {
   id: string;
   row_id: string;
+  request_id?: string;
   timestamp: string;
   latency_ms: number;
   ttft_ms: number | null;
   source: string;
   source_display: string;
   auth_index?: string;
+  /** Allowlisted product id derived from the inbound request UA; self-reported, not verified. */
+  client_agent?: string | null;
   failed: boolean;
   canceled: boolean;
   failure_status: number;

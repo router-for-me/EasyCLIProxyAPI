@@ -23,7 +23,7 @@ describe('live routing telemetry', () => {
     const view = buildLiveRouting([first, first, second, canceled,
       request('old', { timestamp: new Date(now - 61_000).toISOString() })], [], now);
     expect(view.metrics).toEqual({ flows: 2, requests: 3, latency: 200, qps: .05, failures: 1, ready: 0, cooling: 0 });
-    expect(view.targets.find(target => target.id === 'auth:main')?.provider).toBe('openai');
+    expect(view.targets.find(target => target.credentialId === 'auth:main')?.provider).toBe('openai');
   });
 
   it('reads configured credentials without inventing ready counts for disabled or unhealthy targets', () => {
@@ -55,13 +55,13 @@ describe('live routing telemetry', () => {
     expect(expired.targets).toHaveLength(0);
   });
 
-  it('keeps all flows in telemetry even when the visual topology is capped', () => {
-    const records = Array.from({ length: 8 }, (_, index) => request(`request-${index}`, { model: `model-${index}`, auth_index: `target-${index}` }));
+  it('keeps every observed route available instead of silently capping credential rows', () => {
+    const records = Array.from({ length: 10 }, (_, index) => request(`request-${index}`, { model: `model-${index}`, auth_index: `target-${index}` }));
     const view = buildLiveRouting(records, [], now);
-    expect(view.models).toHaveLength(6);
-    expect(view.targets).toHaveLength(6);
-    expect(view.metrics.flows).toBe(8);
-    expect(view.hidden).toBe(true);
+    expect(view.agents).toHaveLength(1);
+    expect(view.targets).toHaveLength(10);
+    expect(view.metrics.flows).toBe(10);
+    expect(view.hidden).toBe(false);
     expect(buildLiveRouting([], [], now).metrics.latency).toBeNull();
   });
 
