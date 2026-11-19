@@ -20,13 +20,18 @@ import {
 } from '../services/codexModelCatalog';
 import { MessageNotice } from '../appNotice';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, ChevronDown, ChevronUp, LoaderCircle, RefreshCw, Search, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, LoaderCircle, RefreshCw, RotateCcw, Search, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { Dialog } from '../components/Dialog';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { Select } from '../components/Select';
+import { Tabs } from '../components/Tabs';
+import { SystemPromptField } from './SystemPromptField';
+
+type CatalogSection = 'catalog' | 'prompt';
 
 type CodexModelCatalogDialogProps = {
+  initialSection?: CatalogSection;
   onClose: () => void;
   onSaved: () => void | Promise<void>;
 };
@@ -39,9 +44,10 @@ const cloneModel = (model: CodexCatalogEditorModel): CodexCatalogEditorModel => 
 
 const cloneModels = (snapshot: CodexCatalogEditorSnapshot) => snapshot.models.map(cloneModel);
 
-export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogDialogProps) {
+export function CodexModelCatalogDialog({ initialSection = 'catalog', onClose, onSaved }: CodexModelCatalogDialogProps) {
   const { t } = useI18n();
   const { askConfirmation, confirmationDialog } = useConfirmation();
+  const [section, setSection] = useState<CatalogSection>(initialSection);
   const [snapshot, setSnapshot] = useState<CodexCatalogEditorSnapshot | null>(null);
   const [models, setModels] = useState<CodexCatalogEditorModel[]>([]);
   const [selectedSlug, setSelectedSlug] = useState('');
@@ -157,7 +163,7 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
     if (saving) return;
     if (dirty && !await askConfirmation({
       title: t('agents.catalog.unsaved'),
-      message: t('agents.catalog.discardHint'),
+      message: t('agents.systemPrompt.discardHint'),
       confirmText: t('agents.catalog.discard'),
       cancelText: t('agents.catalog.keepEditing'),
       variant: 'danger',
@@ -176,6 +182,7 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
       const validationKey = validateCodexModelConfiguration(model.configuration);
       if (validationKey) {
         setSelectedSlug(model.slug);
+        setSection(validationKey === 'agents.catalog.invalidPrompt' ? 'prompt' : 'catalog');
         setError(t(validationKey));
         setNotice('');
         return;
@@ -214,19 +221,59 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
   };
 
   return (
-    <Dialog className="config-dialog codex-catalog-dialog" backdropClassName="codex-catalog-backdrop" labelledBy="codex-catalog-title"
+    <Dialog className="config-dialog codex-catalog-dialog agent-prompt-dialog codex-prompt-dialog" backdropClassName="codex-catalog-backdrop" labelledBy="codex-catalog-title"
       onClose={() => void requestClose()} closeDisabled={saving} dismissOnBackdrop>
-      <header className="config-dialog-heading codex-catalog-heading">
+      <header className="config-dialog-heading agent-prompt-heading">
         <div>
-          <h2 id="codex-catalog-title">{t('agents.catalog.title')}</h2>
-          <p>{t('agents.catalog.subtitle')}</p>
+          <h2 id="codex-catalog-title">{t('agents.systemPrompt.codexEntry')}</h2>
         </div>
         <button type="button" className="icon-button quiet" onClick={() => void requestClose()} disabled={saving} aria-label={t('common.close')}>
           <X size={18} aria-hidden="true" />
         </button>
       </header>
 
-      <div className="surface-section codex-catalog-body">
+      <Tabs<CatalogSection> className="agent-prompt-tabs" aria-label={t('agents.systemPrompt.codexEntry')}
+        value={section} onChange={setSection} disabled={saving} items={[
+          { value: 'prompt', id: 'codex-prompt-tab', panelId: 'codex-prompt-panel', label: t('agents.systemPrompt.button') },
+          { value: 'catalog', id: 'codex-settings-tab', panelId: 'codex-settings-panel', label: t('agents.catalog.button') },
+        ]} />
+
+      {section === 'prompt' ? (
+        <div className="agent-prompt-body" id="codex-prompt-panel" role="tabpanel" aria-labelledby="codex-prompt-tab">
+          {loading ? (
+            <div className="codex-catalog-state" role="status">
+              <LoaderCircle size={18} className="spin" aria-hidden="true" />{t('agents.catalog.loading')}
+            </div>
+          ) : activeModel ? (
+            <>
+              <div className="agent-prompt-scope surface-section">
+                <div className="agent-prompt-select">
+                  <label htmlFor="codex-prompt-model">{t('agents.systemPrompt.scope')}</label>
+                  <Select id="codex-prompt-model" value={selectedSlug} disabled={saving}
+                    onChange={(event) => setSelectedSlug(event.currentTarget.value)}>
+                    {models.map(({ slug, configuration }) => (
+                      <option key={slug} value={slug}>
+                        {configuration.display_name === slug ? slug : `${configuration.display_name} (${slug})`}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+              <SystemPromptField value={activeModel.configuration.base_instructions} disabled={saving}
+                hint={t('agents.systemPrompt.codexFieldHint')}
+                invalid={error === t('agents.catalog.invalidPrompt') && !activeModel.configuration.base_instructions.trim()}
+                onChange={(value) => updateField('base_instructions', value)} />
+              <div className="agent-prompt-tools">
+                <button type="button" className="secondary-button" disabled={saving || activeModel.configuration.base_instructions === activeModel.defaults.base_instructions}
+                  onClick={() => updateField('base_instructions', activeModel.defaults.base_instructions)}>
+                  <RotateCcw size={14} aria-hidden="true" />{t('agents.systemPrompt.resetDefault')}
+                </button>
+              </div>
+            </>
+          ) : <div className="codex-catalog-state">{t('agents.catalog.empty')}</div>}
+        </div>
+      ) : (
+      <div id="codex-settings-panel" role="tabpanel" aria-labelledby="codex-settings-tab" className="surface-section codex-catalog-body">
         <aside className="codex-catalog-sidebar">
           <div className="codex-catalog-search search-control" data-size="default">
             <Search size={15} aria-hidden />
@@ -356,7 +403,6 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
                 <label className="codex-catalog-option"><Switch checked={activeModel.configuration.visibility === 'list'} onChange={(event) => updateField('visibility', event.currentTarget.checked ? 'list' : 'hide')} /><span>{t('agents.catalog.visible')}</span></label>
                 <label className="codex-catalog-option"><Checkbox checked={activeModel.configuration.supports_parallel_tool_calls} onChange={(event) => updateField('supports_parallel_tool_calls', event.currentTarget.checked)} /><span>{t('agents.catalog.parallel')}</span></label>
                 <label className="codex-catalog-option"><Checkbox checked={activeModel.configuration.supports_search_tool} onChange={(event) => updateField('supports_search_tool', event.currentTarget.checked)} /><span>{t('agents.catalog.toolSearch')}</span></label>
-                <label className="wide"><span>{t('agents.catalog.systemPrompt')}</span><textarea className="codex-catalog-system-prompt" rows={12} spellCheck={false} value={activeModel.configuration.base_instructions} onChange={(event) => updateField('base_instructions', event.currentTarget.value)} aria-describedby="codex-catalog-prompt-hint" /><small id="codex-catalog-prompt-hint">{t('agents.catalog.systemPromptHint')}</small></label>
               </div>
               <p className="codex-catalog-hint" role="note">{t(codexContextSourceHint(activeModel))}</p>
               <p className="codex-catalog-hint">{t('agents.catalog.toolSearchHint')}</p>
@@ -366,32 +412,38 @@ export function CodexModelCatalogDialog({ onClose, onSaved }: CodexModelCatalogD
         </main>
       </div>
 
-      <footer className="codex-catalog-footer">
-        <div className="codex-catalog-footer-sidebar">
-          <button type="button" className="secondary-button codex-catalog-reload" onClick={() => void load()} disabled={loading || saving || dirty}>
-            <RefreshCw size={15} className={loading ? 'spin' : ''} />
-            {t('agents.catalog.reload')}
-          </button>
-          <button type="button" className="secondary-button codex-catalog-reset-order" onClick={resetOrder} disabled={loading || saving || !snapshot}>
-            {t('agents.catalog.resetOrder')}
-          </button>
-        </div>
-        <div className="codex-catalog-footer-hint">
+      )}
+
+      <footer className="agent-prompt-footer">
+        <div className="agent-prompt-status">
           {error ? <MessageNotice message={error} onDismiss={() => setError('')} /> : null}
           <MessageNotice tone="success" message={!error ? notice : null} onDismiss={() => setNotice('')} />
-          <span>{dirty ? t('agents.catalog.unsaved') : t('agents.catalog.saveHint')}</span>
+          {dirty ? <div role="status">{t('agents.catalog.unsaved')}</div> : null}
         </div>
-        <div className="codex-catalog-footer-actions">
-          <button type="button" className="secondary-button" onClick={() => void restoreAll()} disabled={loading || saving}>
-            {t('agents.catalog.resetAll')}
-          </button>
-          <button type="button" className="secondary-button" onClick={() => void requestClose()} disabled={saving}>{t('common.cancel')}</button>
-          <button type="button" className="primary-button" onClick={() => void save()} disabled={!snapshot || !dirty || loading || saving}>
-            {saving ? <LoaderCircle size={16} className="spin" /> : null}{saving ? t('common.saving') : t('common.save')}
-          </button>
+        <div className="agent-prompt-footer-row">
+          <div className="agent-prompt-tools">
+            <button type="button" className="secondary-button" onClick={() => void load()} disabled={loading || saving || dirty}>
+              <RefreshCw size={15} aria-hidden="true" />{t('agents.catalog.reload')}
+            </button>
+            {section === 'catalog' ? (
+              <>
+                <button type="button" className="secondary-button" onClick={resetOrder} disabled={loading || saving || !snapshot}>
+                  {t('agents.catalog.resetOrder')}
+                </button>
+                <button type="button" className="secondary-button" onClick={() => void restoreAll()} disabled={loading || saving}>
+                  {t('agents.systemPrompt.codexResetCatalog')}
+                </button>
+              </>
+            ) : null}
+          </div>
+          <div className="agent-prompt-actions">
+            <button type="button" className="secondary-button" onClick={() => void requestClose()} disabled={saving}>{t('common.cancel')}</button>
+            <button type="button" className="primary-button" onClick={() => void save()} disabled={!snapshot || !dirty || loading || saving}>
+              {saving ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : null}{t(saving ? 'common.saving' : 'common.save')}
+            </button>
+          </div>
         </div>
       </footer>
-
       {confirmationDialog}
     </Dialog>
   );

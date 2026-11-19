@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { LoaderCircle, RefreshCw, RotateCcw, Search, X } from 'lucide-react';
+import { LoaderCircle, RefreshCw, RotateCcw, X } from 'lucide-react';
 import { Dialog } from '../components/Dialog';
+import { SystemPromptField } from './SystemPromptField';
 import { Checkbox } from '../components/Checkbox';
 import { Select } from '../components/Select';
 import { Switch } from '../components/Switch';
@@ -16,7 +17,9 @@ import {
   type PromptRewriteMode,
 } from '../services/agentSystemPrompts';
 
-const DEFAULT_TARGET_ID = '__default__';
+// Model IDs are prefixed in the picker so they cannot collide with the agent scope.
+const DEFAULT_TARGET_ID = '';
+const modelTarget = (id: string) => `model:${id}`;
 
 type DraftState = {
   overridesEnabled: boolean | null;
@@ -113,7 +116,6 @@ export function AgentSystemPromptDialog({
   const [snapshot, setSnapshot] = useState<AgentSystemPromptEditorSnapshot | null>(null);
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [selectedTarget, setSelectedTarget] = useState<string>(DEFAULT_TARGET_ID);
-  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -128,7 +130,7 @@ export function AgentSystemPromptDialog({
       setSnapshot(next);
       setDraft(snapshotToDraft(next));
       setSelectedTarget((current) => (
-        current === DEFAULT_TARGET_ID || next.models.some((m) => m.id === current)
+        current === DEFAULT_TARGET_ID || next.models.some((m) => modelTarget(m.id) === current)
           ? current
           : DEFAULT_TARGET_ID
       ));
@@ -147,16 +149,9 @@ export function AgentSystemPromptDialog({
 
   const dirty = useMemo(() => !sameDraftAndSnapshot(draft, snapshot), [draft, snapshot]);
 
-  const filteredModels = useMemo(() => {
-    if (!draft) return [];
-    const query = search.trim().toLowerCase();
-    if (!query) return draft.models;
-    return draft.models.filter((item) => item.id.toLowerCase().includes(query));
-  }, [draft, search]);
-
   const isDefaultSelected = selectedTarget === DEFAULT_TARGET_ID;
   const activeModel = useMemo(
-    () => (isDefaultSelected || !draft ? null : draft.models.find((m) => m.id === selectedTarget) ?? null),
+    () => (isDefaultSelected || !draft ? null : draft.models.find((m) => modelTarget(m.id) === selectedTarget) ?? null),
     [draft, isDefaultSelected, selectedTarget],
   );
 
@@ -231,7 +226,7 @@ export function AgentSystemPromptDialog({
       if (!prev) return prev;
       return {
         ...prev,
-        models: prev.models.map((item) => (item.id === selectedTarget ? updater(item) : item)),
+        models: prev.models.map((item) => (modelTarget(item.id) === selectedTarget ? updater(item) : item)),
       };
     });
     setError('');
@@ -301,7 +296,7 @@ export function AgentSystemPromptDialog({
     if (dirty) {
       const confirmed = await askConfirmation({
         title: t('agents.catalog.unsaved'),
-        message: t('agents.catalog.discardHint'),
+        message: t('agents.systemPrompt.discardHint'),
         confirmText: t('agents.catalog.discard'),
         cancelText: t('agents.catalog.keepEditing'),
         variant: 'danger',
@@ -314,14 +309,16 @@ export function AgentSystemPromptDialog({
   const save = async () => {
     if (!draft || !snapshot || saving) return;
     if (draft.defaultCustomized && !draft.defaultPrompt.trim()) {
+      setNotice('');
       setError(t('agents.systemPrompt.emptyError'));
       setSelectedTarget(DEFAULT_TARGET_ID);
       return;
     }
     const invalidModel = draft.models.find((item) => item.customized && !item.prompt.trim());
     if (invalidModel) {
+      setNotice('');
       setError(t('agents.systemPrompt.emptyError'));
-      setSelectedTarget(invalidModel.id);
+      setSelectedTarget(modelTarget(invalidModel.id));
       return;
     }
 
@@ -368,7 +365,8 @@ export function AgentSystemPromptDialog({
     ? Boolean(draft?.defaultCustomized)
     : Boolean(activeModel?.customized);
 
-  const hasClaudeDefaultOverride = uncapturedClaude && Boolean(draft?.defaultCustomized && draft.defaultPrompt.trim());
+  const supportsSwitch = supportsOverrideSwitch(client);
+  const hasClaudeDefaultOverride = supportsSwitch && Boolean(draft?.defaultCustomized && draft.defaultPrompt.trim());
   const inheritsClaudeOverride = hasClaudeDefaultOverride && !isDefaultSelected && !currentCustomized;
 
   const currentMode: PromptRewriteMode = isDefaultSelected || inheritsClaudeOverride
@@ -383,20 +381,16 @@ export function AgentSystemPromptDialog({
     ? (draft?.defaultPrompt ?? '')
     : (activeModel?.prompt ?? '');
 
-  const hasSavedModelOverride = Boolean(snapshot?.models.find((item) => item.id === selectedTarget)?.customized);
-  const supportsSwitch = supportsOverrideSwitch(client);
+  const hasSavedModelOverride = Boolean(snapshot?.models.find((item) => modelTarget(item.id) === selectedTarget)?.customized);
   const hasSavedRules = Boolean(snapshot?.defaultCustomized || snapshot?.models.some((item) => item.customized));
   const savedSwitchOn = snapshot?.overridesEnabled ?? hasSavedRules;
   const switchOn = draft?.overridesEnabled ?? draftKeepsOverrides(draft);
-  const hasSavedOverride = Boolean(snapshot?.defaultCustomized || (!isDefaultSelected && hasSavedModelOverride));
+  const hasSavedOverride = Boolean(snapshot?.defaultCustomized || hasSavedModelOverride);
   const showRewriteOptions = !uncapturedClaude || Boolean(currentPromptValue.trim());
   const showBlankHint = uncapturedClaude && !currentCustomized && !inheritsClaudeOverride;
   const inheritedLabelKey = hasClaudeDefaultOverride
     ? 'agents.systemPrompt.inheritedOverride'
     : 'agents.systemPrompt.inherited';
-  const currentLabel = isDefaultSelected
-    ? t(sourceLabelKey)
-    : uncapturedClaude && currentCustomized ? '' : t(inheritedLabelKey);
 
   const updateCurrentPrompt = (value: string) => {
     if (!draft) return;
@@ -411,8 +405,8 @@ export function AgentSystemPromptDialog({
           ...item,
           customized,
           prompt: value,
-          mode: uncapturedClaude ? (customized ? currentMode : 'replace') : item.mode,
-          preserveDynamicContext: uncapturedClaude
+          mode: supportsSwitch ? (customized ? currentMode : 'replace') : item.mode,
+          preserveDynamicContext: supportsSwitch
             ? (customized ? currentPreserveDynamic : true)
             : item.preserveDynamicContext,
         };
@@ -424,295 +418,161 @@ export function AgentSystemPromptDialog({
     draft?.defaultCustomized || draft?.models.some((item) => item.customized),
   );
 
+  const scopeHint = isDefaultSelected
+    ? t('agents.systemPrompt.defaultScopeHint')
+    : currentCustomized ? t('agents.systemPrompt.modelScopeHint') : t(inheritedLabelKey);
+  const invalid = error === t('agents.systemPrompt.emptyError') && !currentPromptValue.trim();
+
   return (
     <Dialog
-      className="config-dialog codex-catalog-dialog"
+      className="config-dialog agent-prompt-dialog"
       backdropClassName="codex-catalog-backdrop"
       labelledBy="agent-system-prompt-title"
       onClose={() => void requestClose()}
       closeDisabled={saving}
       dismissOnBackdrop
     >
-      <header className="config-dialog-heading codex-catalog-heading">
+      <header className="config-dialog-heading agent-prompt-heading">
         <div>
-          <h2 id="agent-system-prompt-title">
-            {t('agents.systemPrompt.title', { name: clientName })}
-          </h2>
-          <p>{t(uncapturedClaude ? 'agents.systemPrompt.subtitle.uncaptured' : 'agents.systemPrompt.subtitle', { name: clientName })}</p>
+          <h2 id="agent-system-prompt-title">{t('agents.systemPrompt.title', { name: clientName })}</h2>
+          {uncapturedClaude ? <p>{t('agents.systemPrompt.subtitle.uncaptured', { name: clientName })}</p> : null}
         </div>
-        <button
-          type="button"
-          className="icon-button quiet"
-          onClick={() => void requestClose()}
-          disabled={saving}
-          aria-label={t('common.close')}
-        >
+        <button type="button" className="icon-button quiet" onClick={() => void requestClose()}
+          disabled={saving} aria-label={t('common.close')}>
           <X size={18} aria-hidden="true" />
         </button>
       </header>
 
-      <div className="surface-section codex-catalog-body">
-        <aside className="codex-catalog-sidebar">
-          <div className="codex-catalog-search search-control" data-size="default">
-            <Search size={15} aria-hidden />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.currentTarget.value)}
-              placeholder={t('agents.catalog.search')}
-            />
+      <div className="agent-prompt-body">
+        {loading ? (
+          <div className="codex-catalog-state" role="status">
+            <LoaderCircle size={18} className="spin" aria-hidden="true" />{t('agents.catalog.loading')}
           </div>
-
-          <div
-            className="codex-catalog-models"
-            role="listbox"
-            aria-label={t('agents.systemPrompt.title', { name: clientName })}
-          >
-            {loading ? (
-              <div className="codex-catalog-state">
-                <LoaderCircle size={18} className="spin" />
-                {t('agents.catalog.loading')}
-              </div>
-            ) : draft ? (
-              <>
-                <div className="codex-catalog-row">
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={isDefaultSelected}
-                    className={isDefaultSelected ? 'active' : ''}
-                    onClick={() => setSelectedTarget(DEFAULT_TARGET_ID)}
-                  >
-                    <div className="codex-catalog-model-row-top">
-                      <strong>{t('agents.systemPrompt.defaultTarget')}</strong>
-                    </div>
-                    <span>{t('agents.systemPrompt.defaultScopeHint')}</span>
-                    <small>
-                      {t(sourceLabelKey)}
-                      {draft.defaultCustomized ? ` · ${t('agents.catalog.customized')}` : ''}
-                    </small>
-                  </button>
-                </div>
-
-                {filteredModels.map((model) => (
-                  <div className="codex-catalog-row" key={model.id}>
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={selectedTarget === model.id}
-                      className={selectedTarget === model.id ? 'active' : ''}
-                      onClick={() => setSelectedTarget(model.id)}
-                    >
-                      <div className="codex-catalog-model-row-top">
-                        <strong>{model.id}</strong>
-                      </div>
-                      <small>
-                        {model.customized
-                          ? t('agents.catalog.customized')
-                          : t(inheritedLabelKey)}
-                      </small>
-                    </button>
-                  </div>
-                ))}
-              </>
-            ) : (
-              <div className="codex-catalog-state">{t('agents.catalog.empty')}</div>
-            )}
-          </div>
-        </aside>
-
-        <main className="codex-catalog-editor">
-          {draft && !loading && (isDefaultSelected || activeModel) ? (
-            <>
-              <div className="codex-catalog-model-heading">
-                <div>
-                  <h3>
-                    {isDefaultSelected
-                      ? t('agents.systemPrompt.defaultTarget')
-                      : activeModel?.id}
-                  </h3>
-                  <span className={currentCustomized ? 'customized' : ''}>
-                    {currentCustomized
-                      ? [currentLabel, t('agents.catalog.customized')].filter(Boolean).join(' · ')
-                      : currentLabel}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  className="secondary-button small-button"
-                  onClick={resetCurrentTarget}
-                  disabled={saving || !currentCustomized}
-                >
-                  <RotateCcw size={14} />
-                  {t('agents.systemPrompt.resetCurrent')}
-                </button>
-              </div>
-
-              {supportsSwitch ? (
-                <div className="codex-catalog-hint">
-                  <Switch
-                    label={t('agents.systemPrompt.overridesEnabled')}
-                    checked={switchOn}
-                    disabled={saving}
-                    aria-describedby="agent-system-prompt-switch-hint"
-                    onChange={(event) => {
-                      const overridesEnabled = event.currentTarget.checked;
-                      setDraft((previous) => previous && { ...previous, overridesEnabled });
-                      setError('');
-                      setNotice('');
-                    }}
-                  />
-                  <p id="agent-system-prompt-switch-hint">{t('agents.systemPrompt.overridesEnabledHint')}</p>
-                  {savedSwitchOn !== switchOn ? (
-                    <p role="status">{t(savedSwitchOn ? 'agents.systemPrompt.pendingPause' : 'agents.systemPrompt.pendingEnable')}</p>
+        ) : draft && snapshot ? (
+          <>
+            <div className="agent-prompt-scope surface-section">
+              <div className="agent-prompt-select">
+                <label htmlFor="agent-prompt-scope">{t('agents.systemPrompt.scope')}</label>
+                <Select id="agent-prompt-scope" value={selectedTarget} disabled={saving}
+                  aria-describedby="agent-prompt-scope-hint"
+                  onChange={(event) => {
+                    setSelectedTarget(event.currentTarget.value);
+                    if (error === t('agents.systemPrompt.emptyError')) setError('');
+                  }}>
+                  <option value={DEFAULT_TARGET_ID}>{t('agents.systemPrompt.defaultTarget')}</option>
+                  {draft.models.length ? (
+                    <optgroup label={t('agents.systemPrompt.modelsHeader')}>
+                      {draft.models.map((model) => (
+                        <option key={model.id} value={modelTarget(model.id)}>
+                          {model.id}{model.customized ? ` · ${t('agents.catalog.customized')}` : ''}
+                        </option>
+                      ))}
+                    </optgroup>
                   ) : null}
-                </div>
+                </Select>
+              </div>
+              {supportsSwitch ? (
+                <Switch label={t('agents.systemPrompt.overridesEnabled')} checked={switchOn} disabled={saving}
+                  aria-describedby="agent-prompt-switch-hint" onChange={(event) => {
+                    const overridesEnabled = event.currentTarget.checked;
+                    setDraft((prev) => prev && { ...prev, overridesEnabled });
+                    setError('');
+                    setNotice('');
+                  }} />
               ) : null}
-              {uncapturedClaude && !hasSavedOverride ? (
-                <p className="codex-catalog-hint">{t('agents.systemPrompt.overrideInactive')}</p>
-              ) : null}
-
-              <div className="codex-catalog-form">
-                {showRewriteOptions ? (
-                  <label className="wide">
-                    <span>{t('agents.systemPrompt.mode')}</span>
-                    <Select
-                      value={currentMode}
-                      onChange={(event) => {
-                        const nextMode = event.currentTarget.value as PromptRewriteMode;
-                        if (isDefaultSelected) {
-                          updateDefaultMode(nextMode);
-                        } else if (activeModel) {
-                          updateActiveModel((item) => ({
-                            ...item,
-                            customized: true,
-                            mode: nextMode,
-                            preserveDynamicContext: currentPreserveDynamic,
-                          }));
-                        }
-                      }}
-                    >
-                      <option value="replace">{t('agents.systemPrompt.mode.replace')}</option>
-                      <option value="prepend">{t('agents.systemPrompt.mode.prepend')}</option>
-                      <option value="append">{t('agents.systemPrompt.mode.append')}</option>
-                    </Select>
-                  </label>
+              <small id="agent-prompt-scope-hint">
+                <span>{scopeHint}</span>
+                {isDefaultSelected && !currentCustomized ? ` · ${t(sourceLabelKey)}` : ''}
+                {uncapturedClaude && !hasSavedOverride ? (
+                  <span className="agent-prompt-inline-status">{t('agents.systemPrompt.overrideInactive')}</span>
                 ) : null}
+              </small>
+              {supportsSwitch ? (
+                <small id="agent-prompt-switch-hint">{t('agents.systemPrompt.overridesEnabledHint')}</small>
+              ) : null}
+            </div>
 
-                {showRewriteOptions && currentMode === 'replace' ? (
-                  <label className="wide codex-catalog-option">
-                    <Checkbox
-                      checked={currentPreserveDynamic}
-                      onChange={(event) => {
-                        const checked = event.currentTarget.checked;
-                        if (isDefaultSelected) {
-                          updateDefaultPreserveDynamic(checked);
-                        } else if (activeModel) {
-                          updateActiveModel((item) => ({
-                            ...item,
-                            customized: true,
-                            mode: currentMode,
-                            preserveDynamicContext: checked,
-                          }));
-                        }
-                      }}
-                    />
+            <SystemPromptField value={currentPromptValue} disabled={saving} invalid={invalid}
+              hint={t(showBlankHint ? 'agents.systemPrompt.fieldHintUncaptured' : 'agents.systemPrompt.resetHint')}
+              onChange={updateCurrentPrompt} />
+
+            {showRewriteOptions ? (
+              <div className="agent-prompt-options surface-section">
+                <div className="agent-prompt-select">
+                  <label htmlFor="agent-prompt-mode">{t('agents.systemPrompt.mode')}</label>
+                  <Select id="agent-prompt-mode" value={currentMode} disabled={saving} onChange={(event) => {
+                    const mode = event.currentTarget.value as PromptRewriteMode;
+                    if (isDefaultSelected) updateDefaultMode(mode);
+                    else if (activeModel) updateActiveModel((item) => ({ ...item, customized: true, mode, preserveDynamicContext: currentPreserveDynamic }));
+                  }}>
+                    <option value="replace">{t('agents.systemPrompt.mode.replace')}</option>
+                    <option value="prepend">{t('agents.systemPrompt.mode.prepend')}</option>
+                    <option value="append">{t('agents.systemPrompt.mode.append')}</option>
+                  </Select>
+                </div>
+                {currentMode === 'replace' ? (
+                  <label className="agent-prompt-context">
+                    <Checkbox checked={currentPreserveDynamic} disabled={saving} onChange={(event) => {
+                      const preserveDynamicContext = event.currentTarget.checked;
+                      if (isDefaultSelected) updateDefaultPreserveDynamic(preserveDynamicContext);
+                      else if (activeModel) updateActiveModel((item) => ({ ...item, customized: true, mode: currentMode, preserveDynamicContext }));
+                    }} />
                     <span>{t('agents.systemPrompt.preserveDynamic')}</span>
                   </label>
                 ) : null}
-
-                <label className="wide">
-                  <span>{t('agents.systemPrompt.fieldLabel')}</span>
-                  <textarea
-                    className="codex-catalog-system-prompt"
-                    rows={14}
-                    spellCheck={false}
-                    value={currentPromptValue}
-                    onChange={(event) => updateCurrentPrompt(event.currentTarget.value)}
-                    aria-describedby="agent-system-prompt-hint"
-                  />
-                  <small id="agent-system-prompt-hint">
-                    {showBlankHint
-                      ? t('agents.systemPrompt.fieldHintUncaptured')
-                      : isDefaultSelected
-                        ? t('agents.systemPrompt.fieldHintDefault', { name: clientName })
-                        : t('agents.systemPrompt.fieldHintModel', { model: activeModel?.id ?? '' })}
-                  </small>
-                </label>
               </div>
-
-              {showRewriteOptions && currentMode === 'replace' ? (
-                <p className="codex-catalog-hint">
-                  {t('agents.systemPrompt.preserveDynamicHint')}
-                </p>
-              ) : null}
-              <p className="codex-catalog-hint" role="note">
-                {snapshot?.coreTlsEnabled
-                  ? t(supportsSwitch ? 'agents.systemPrompt.claudeTlsNotice' : 'agents.systemPrompt.tlsBlockedNotice')
-                  : snapshot?.proxyActive && snapshot.proxyPort
-                    ? t('agents.systemPrompt.proxyActiveNotice', { port: snapshot.proxyPort })
-                    : supportsSwitch && !savedSwitchOn && hasSavedRules
-                      ? t('agents.systemPrompt.overridesPaused')
-                      : t('agents.systemPrompt.proxyInactiveNotice')}
-              </p>
-            </>
-          ) : !loading ? (
-            <div className="codex-catalog-state">{t('agents.catalog.empty')}</div>
-          ) : null}
-        </main>
+            ) : null}
+            <div className="agent-prompt-tools">
+              <button type="button" className="secondary-button" onClick={resetCurrentTarget}
+                disabled={saving || !currentCustomized}>
+                <RotateCcw size={14} aria-hidden="true" />
+                {t(isDefaultSelected ? 'agents.systemPrompt.resetDefault' : 'agents.systemPrompt.resetModel')}
+              </button>
+              <button type="button" className="secondary-button" onClick={resetAllTargets}
+                disabled={saving || !hasAnyCustomization}>
+                {t('agents.systemPrompt.resetAll')}
+              </button>
+            </div>
+          </>
+        ) : null}
       </div>
 
-      <footer className="codex-catalog-footer">
-        <div className="codex-catalog-footer-sidebar">
-          <button
-            type="button"
-            className="secondary-button codex-catalog-reload"
-            onClick={() => void load()}
-            disabled={loading || saving || dirty}
-          >
-            <RefreshCw size={15} className={loading ? 'spin' : ''} />
-            {t('agents.catalog.reload')}
-          </button>
-        </div>
-        <div className="codex-catalog-footer-hint">
+      <footer className="agent-prompt-footer">
+        <div className="agent-prompt-status">
           {error ? <MessageNotice message={error} onDismiss={() => setError('')} /> : null}
           <MessageNotice tone="success" message={!error ? notice : null} onDismiss={() => setNotice('')} />
-          <span>{dirty ? t('agents.catalog.unsaved') : t('agents.catalog.saveHint')}</span>
+          {snapshot?.coreTlsEnabled ? (
+            <div role="note">{t(supportsSwitch ? 'agents.systemPrompt.claudeTlsNotice' : 'agents.systemPrompt.tlsBlockedNotice')}</div>
+          ) : snapshot?.proxyActive ? (
+            <div role="note">{t('agents.systemPrompt.proxyActiveNotice')}</div>
+          ) : supportsSwitch && snapshot ? (
+            <div role="note">{t(!savedSwitchOn && hasSavedRules
+              ? 'agents.systemPrompt.overridesPaused' : 'agents.systemPrompt.proxyInactiveNotice')}</div>
+          ) : null}
+          {supportsSwitch && savedSwitchOn !== switchOn ? (
+            <div role="status">{t(savedSwitchOn ? 'agents.systemPrompt.pendingPause' : 'agents.systemPrompt.pendingEnable')}</div>
+          ) : null}
+          {dirty ? <div role="status">{t('agents.catalog.unsaved')}</div> : null}
         </div>
-        <div className="codex-catalog-footer-actions">
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={resetAllTargets}
-            disabled={loading || saving || !hasAnyCustomization}
-          >
-            {t('agents.systemPrompt.resetAll')}
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => void requestClose()}
-            disabled={saving}
-          >
-            {t('common.cancel')}
-          </button>
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => void save()}
-            disabled={
-              !snapshot ||
-              !dirty ||
-              loading ||
-              saving ||
-              (Boolean(snapshot.coreTlsEnabled) && draftKeepsOverrides(draft))
-            }
-          >
-            {saving ? <LoaderCircle size={16} className="spin" /> : null}
-            {saving ? t('common.saving') : t('common.save')}
-          </button>
+        <div className="agent-prompt-footer-row">
+          <div className="agent-prompt-tools">
+            <button type="button" className="secondary-button" onClick={() => void load()}
+              disabled={loading || saving || dirty}>
+              <RefreshCw size={15} aria-hidden="true" />{t('agents.catalog.reload')}
+            </button>
+          </div>
+          <div className="agent-prompt-actions">
+            <button type="button" className="secondary-button" onClick={() => void requestClose()} disabled={saving}>
+              {t('common.cancel')}
+            </button>
+            <button type="button" className="primary-button" onClick={() => void save()}
+              disabled={!snapshot || !dirty || loading || saving || (snapshot.coreTlsEnabled && draftKeepsOverrides(draft))}>
+              {saving ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : null}
+              {saving ? t('common.saving') : t('common.save')}
+            </button>
+          </div>
         </div>
       </footer>
-
       {confirmationDialog}
     </Dialog>
   );

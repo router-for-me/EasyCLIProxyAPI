@@ -7,12 +7,13 @@ const assert = require('node:assert/strict');
   await page.route('**/*', route => route.request().url().startsWith('http://127.0.0.1:1421/') ? route.continue() : route.abort());
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
-  const dialog = () => page.getByRole('dialog', { name: 'Codex 模型列表' });
+  const dialog = () => page.getByRole('dialog', { name: '模型列表与提示词', exact: true });
   const rows = () => dialog().locator('.codex-catalog-row');
   const readOrder = () => dialog().locator('.codex-catalog-row strong').allTextContents();
   const openDialog = async () => {
-    await page.getByRole('button', { name: '模型列表设置', exact: true }).click();
+    await page.getByRole('button', { name: '模型列表与提示词', exact: true }).click();
     await dialog().waitFor();
+    await dialog().getByRole('tab', { name: '模型列表设置', exact: true }).click();
     await rows().first().waitFor();
   };
   const save = async () => {

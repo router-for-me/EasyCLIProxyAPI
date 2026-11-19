@@ -2137,17 +2137,25 @@ fn build_editor_snapshot(
     let mut seen = std::collections::HashSet::new();
     let mut models = Vec::new();
 
-    for option in available_models {
-        if !seen.insert(option.name.clone()) {
+    // ZCode can also edit managed manual models that are no longer in the core's list.
+    let zcode_catalog = (client_id == "zcode")
+        .then(|| zcode_editor_snapshot(home, available_models).ok())
+        .flatten();
+    let ids: Vec<_> = match &zcode_catalog {
+        Some(catalog) => catalog.models.iter().map(|model| &model.id).collect(),
+        None => available_models.iter().map(|model| &model.name).collect(),
+    };
+    for id in ids {
+        if !seen.insert(id.clone()) {
             continue;
         }
         if let Some(rule) = cfg
             .models
-            .get(&option.name)
+            .get(id)
             .filter(|r| !r.prompt.trim().is_empty())
         {
             models.push(AgentSystemPromptEditorModel {
-                id: option.name.clone(),
+                id: id.clone(),
                 customized: true,
                 prompt: rule.prompt.clone(),
                 default_prompt: default_prompt.clone(),
@@ -2156,7 +2164,7 @@ fn build_editor_snapshot(
             });
         } else {
             models.push(AgentSystemPromptEditorModel {
-                id: option.name.clone(),
+                id: id.clone(),
                 customized: false,
                 prompt: default_prompt.clone(),
                 default_prompt: default_prompt.clone(),

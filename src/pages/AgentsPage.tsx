@@ -1882,10 +1882,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     </>
   ) : oauthLoginRequiredAction ? t(`agents.oauthLoginRequired.${oauthLoginRequiredAction}Description`) : '';
 
-  const codexCatalogButton = selected === 'codex' ? (
-    <button type="button" className="secondary-button agent-codex-catalog-button" onClick={() => setCodexCatalogDialogOpen(true)} disabled={busy}><SlidersHorizontal size={16} />{t('agents.catalog.button')}</button>
-  ) : null;
-
   const codexSubagentButton = selected === 'codex' ? (
     <button type="button" className="secondary-button agent-codex-catalog-button" onClick={() => setCodexSubagentDialogOpen(true)} disabled={busy}><Users size={16} />{t('agents.subagents.button')}</button>
   ) : null;
@@ -1905,12 +1901,19 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     </button>
   ) : null;
 
-  const systemPromptButton = selected !== 'codex' ? (
-    <button type="button" className="secondary-button agent-codex-catalog-button"
-      onClick={() => setSystemPromptDialogOpen(true)} disabled={busy}>
-      <FileText size={16} />{t('agents.systemPrompt.button')}
-    </button>
-  ) : null;
+  const systemPromptSetting = (
+    <section className="agent-system-prompt-setting surface-section" aria-labelledby="agent-system-prompt-setting-title">
+      <div>
+        <h3 id="agent-system-prompt-setting-title">{t('agents.systemPrompt.button')}</h3>
+        <p>{t(selected === 'codex' ? 'agents.systemPrompt.codexSubtitle' : 'agents.systemPrompt.subtitle')}</p>
+      </div>
+      <button type="button" className="secondary-button" aria-haspopup="dialog" disabled={busy}
+        onClick={() => selected === 'codex' ? setCodexCatalogDialogOpen(true) : setSystemPromptDialogOpen(true)}>
+        <FileText size={16} aria-hidden="true" />
+        {t(selected === 'codex' ? 'agents.systemPrompt.codexEntry' : 'agents.systemPrompt.edit')}
+      </button>
+    </section>
+  );
 
   const closeConfigurationButton = canCloseConfiguration ? (
     <button type="button" className="secondary-button agent-close-configuration"
@@ -1970,7 +1973,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
             <span>{t('agents.claudeDesktopMapping.customMapping')}</span>
             <Switch checked={claudeCustomMapping} onChange={(event) => changeClaudeCustomMapping(event.currentTarget.checked)} disabled={busy || loading || modelLoading} />
           </label>
-          {systemPromptButton}
           <button type="button" className="secondary-button compact-button" onClick={() => setDesktopHelpOpen(true)}>
             {t('agents.claudeDesktopMapping.help')}
           </button>
@@ -2096,6 +2098,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
                 <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join('；')} tone={activeStatus?.error ? 'error' : 'info'} />
                 {activeStatus && !activeStatus.installed ? <Notice tone="warn" variant="text" className="agent-detection-help" action={<button type="button" className="link-button" onClick={() => setActiveSubpage('management')}>{t('agents.executablePath.openManagement')}</button>}>{t('agents.executablePath.notDetected')}</Notice> : null}
+              {systemPromptSetting}
               {selected === 'claude-desktop' ? desktopModelEditor : <div className="agent-minimal-field">
                 <label htmlFor="embedded-agent-model">{t(isDeepSeekHarnessClient ? 'agents.harness.defaultModel' : 'agents.useModel')}</label>
                 <AgentModelPicker
@@ -2108,7 +2111,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   onChange={selectEmbeddedModel}
                   onRefresh={refreshModels}
                 />
-                {codexCatalogButton}{codexSubagentButton}{zcodeCatalogButton}{zcodeSubagentButton}{harnessCatalogButton}
+                {codexSubagentButton}{zcodeCatalogButton}{zcodeSubagentButton}{harnessCatalogButton}
                 {!isClaudeModelMappingClient && missingModelHint ? <span className="agent-model-hint" role="status">{missingModelHint}</span> : null}
               </div>}
 
@@ -2198,6 +2201,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
               <MessageNotice message={activeStatus?.error || activeStatus?.warnings.join('；')} tone={activeStatus?.error ? 'error' : 'info'} />
               {activeStatus && !activeStatus.installed ? <Notice tone="warn" variant="text" className="agent-detection-help" action={<button type="button" className="link-button" onClick={() => setActiveSubpage('management')}>{t('agents.executablePath.openManagement')}</button>}>{t('agents.executablePath.notDetected')}</Notice> : null}
+              {systemPromptSetting}
 
               {!isClaudeModelMappingClient ? (
                 <section className="agent-core-setting-section agent-model-section surface-section">
@@ -2219,7 +2223,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   {isDeepSeekHarnessClient ? <p className="agent-model-hint">{t('agents.harness.defaultHint')}</p> : null}
                   {isDeepSeekHarnessClient ? (
                     <div className="agent-codex-options">
-                      <div className="agent-codex-tool-buttons">{harnessCatalogButton}{systemPromptButton}</div>
+                      <div className="agent-codex-tool-buttons">{harnessCatalogButton}</div>
                     </div>
                   ) : null}
                   {selected === 'codex' ? (
@@ -2243,7 +2247,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                           ]} />
                       </div>
 
-                      <div className="agent-codex-tool-buttons">{codexCatalogButton}{codexSubagentButton}</div>
+                      <div className="agent-codex-tool-buttons">{codexSubagentButton}</div>
                       <div id="agent-signin-hint" className="agent-signin-explanation" hidden={!connectionHelpOpen}>
                         <dl>
                           <div><dt>{t('agents.modify.authApiKey')}</dt><dd>{t('agents.modify.authApiKeyHint')}</dd></div>
@@ -2254,11 +2258,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   ) : null}
                   {selected === 'zcode' ? (
                     <div className="agent-codex-options">
-                      <div className="agent-codex-tool-buttons agent-codex-tool-buttons-row">{zcodeCatalogButton}{systemPromptButton}{zcodeSubagentButton}</div>
-                    </div>
-                  ) : selected !== 'codex' && !isDeepSeekHarnessClient ? (
-                    <div className="agent-codex-options">
-                      <div className="agent-codex-tool-buttons">{systemPromptButton}</div>
+                      <div className="agent-codex-tool-buttons agent-codex-tool-buttons-row">{zcodeCatalogButton}{zcodeSubagentButton}</div>
                     </div>
                   ) : null}
                 </section>
@@ -2282,7 +2282,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                         <span>{t('agents.claudeDesktopMapping.customMapping')}</span>
                         <Switch checked={claudeCustomMapping} onChange={(event) => changeClaudeCustomMapping(event.currentTarget.checked)} disabled={busy || loading || modelLoading} />
                       </label>
-                      {systemPromptButton}
                     </div>
                   </div>
                   <ClaudeResponseLanguage
@@ -2548,6 +2547,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       ) : null}
       {codexCatalogDialogOpen ? (
         <CodexModelCatalogDialog
+          initialSection="prompt"
           onClose={() => setCodexCatalogDialogOpen(false)}
           onSaved={() => loadModels('codex', selectedModel)}
         />
@@ -2563,6 +2563,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       {zcodeSubagentDialogOpen ? <ZCodeSubagentConfigDialog onClose={() => setZcodeSubagentDialogOpen(false)} onSaved={() => undefined} /> : null}
       {systemPromptDialogOpen && selected !== 'codex' ? (
         <AgentSystemPromptDialog
+          key={selected}
           client={selected}
           clientName={activeDefinition.name}
           onClose={() => setSystemPromptDialogOpen(false)}

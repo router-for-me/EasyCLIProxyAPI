@@ -1099,6 +1099,7 @@ pub(crate) async fn save_zcode_model_catalog_editor(
     status_cache: tauri::State<'_, AgentConfigStatusCache>,
     request: ZCodeCatalogEditorSaveRequest,
     config_directories: Option<AgentConfigDirectories>,
+    preserve_system_prompts: Option<bool>,
 ) -> Result<ZCodeCatalogEditorSnapshot, String> {
     let directories = validate_agent_config_directories(config_directories)?;
     AGENT_CONFIG_DIRECTORIES
@@ -1108,6 +1109,7 @@ pub(crate) async fn save_zcode_model_catalog_editor(
                 gui_config_state,
                 status_cache,
                 request,
+                preserve_system_prompts.unwrap_or(false),
             )
             .await
         })
@@ -1119,28 +1121,35 @@ pub(crate) async fn save_zcode_model_catalog_editor_in_directories(
     gui_config_state: tauri::State<'_, GuiConfigState>,
     status_cache: tauri::State<'_, AgentConfigStatusCache>,
     request: ZCodeCatalogEditorSaveRequest,
+    preserve_system_prompts: bool,
 ) -> Result<ZCodeCatalogEditorSnapshot, String> {
     let config = gui_config_state.snapshot()?;
     let models = fetch_prepared_agent_models(AgentClient::ZCode, &config).await?;
     let home = app.path().home_dir().map_err(|_| "Failed to get user directory")?;
-    let model_prompts: Vec<(String, Option<String>)> = request
-        .models
-        .iter()
-        .map(|m| {
-            let prompt = m.configuration.system_prompt.trim();
-            (
-                m.id.clone(),
-                (!prompt.is_empty()).then(|| m.configuration.system_prompt.clone()),
-            )
-        })
-        .collect();
+    // The model settings dialog no longer edits prompts. A stale catalog snapshot
+    // (including a reset to recommended model settings) must not overwrite their rules.
+    let model_prompts = (!preserve_system_prompts).then(|| {
+        request
+            .models
+            .iter()
+            .map(|m| {
+                let prompt = m.configuration.system_prompt.trim();
+                (
+                    m.id.clone(),
+                    (!prompt.is_empty()).then(|| m.configuration.system_prompt.clone()),
+                )
+            })
+            .collect()
+    });
     {
         let _guard = crate::AGENT_CONFIG_FILE_LOCK
             .lock()
             .map_err(|_| "Agent configuration file lock is poisoned")?;
         save_zcode_editor(&home, &models.models, request)?;
     }
-    sync_zcode_catalog_model_prompts(&app, &home, config.port, model_prompts).await?;
+    if let Some(model_prompts) = model_prompts {
+        sync_zcode_catalog_model_prompts(&app, &home, config.port, model_prompts).await?;
+    }
     let _ = status_cache.clear();
     let _guard = crate::AGENT_CONFIG_FILE_LOCK
         .lock()

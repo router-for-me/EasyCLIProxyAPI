@@ -1,168 +1,166 @@
-// Run against Vite (port 1420 by default). Optional PLAYWRIGHT_MODULE / CHROMIUM_EXECUTABLE overrides.
-const assert = require('node:assert/strict');
+// Run Vite on port 1421, then node tests/agent-system-prompt-ui.cjs.
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const assert = require('node:assert/strict');
+const base = 'http://127.0.0.1:1421';
+const saveCommand = 'save_agent_system_prompt_editor';
 
 (async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_EXECUTABLE });
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_EXECUTABLE, args: ['--no-proxy-server'] });
   try {
-    const page = await browser.newPage();
+    const page = await browser.newPage({ viewport: { width: 1280, height: 760 }, reducedMotion: 'reduce' });
+    page.setDefaultTimeout(5000);
     const errors = [];
     page.on('pageerror', error => errors.push(String(error)));
-    const editor = page.locator('.codex-catalog-editor');
-    const field = editor.getByRole('textbox', { name: '系统提示词内容' });
-    const mode = editor.getByRole('combobox', { name: '应用方式' });
-    const preserve = editor.getByRole('checkbox', { name: /保留动态运行上下文/ });
-    const inactive = editor.getByText('未启用覆盖', { exact: true });
-    const toggle = editor.getByRole('switch', { name: '启用系统提示词覆盖' });
-    const reset = editor.getByRole('button', { name: '恢复此项默认值' });
-    const resetAll = page.getByRole('button', { name: '全部恢复默认' });
-    const save = page.getByRole('button', { name: '保存', exact: true });
-    const reload = page.locator('.codex-catalog-reload');
-    const selectDefault = () => page.getByRole('option', { name: /默认系统提示词（全部模型）/ }).click();
-    const selectModel = (n) => page.getByRole('option', { name: new RegExp(`^model-${n}`) }).click();
-    const payloads = () => page.evaluate(() => window.fixtureSaves);
-    const goto = async (client, source = 'template', extra = '') => {
-      await page.goto(`${process.env.AGENT_PROMPT_TEST_URL || 'http://127.0.0.1:1420'}/tests/fixtures/agent-system-prompt.html?client=${client}&source=${source}${extra}`);
-      await field.waitFor();
+    await page.route('**/*', route => route.request().url().startsWith(base + '/') ? route.continue() : route.abort());
+    const open = (client, query = '') => page.goto(`${base}/tests/fixtures/agent-backups.html?locale=en&client=${client}&system-prompt-fixture&reset-selections&${query}`);
+    const callArgs = cmd => page.evaluate(cmd => window.fixtureCalls.filter(call => call.cmd === cmd).map(call => call.args), cmd);
+    const entry = page.getByRole('region', { name: 'System prompt', exact: true });
+    const openEntry = async (client, query, name = 'Edit prompt') => {
+      await open(client, query);
+      const button = page.getByRole('button', { name, exact: true });
+      await button.waitFor();
+      assert.equal(await button.count(), 1);
+      assert.equal(await entry.getByRole('button', { name, exact: true }).count(), 1);
+      assert.equal(await entry.evaluate(el => el.closest('[role="tabpanel"]').id), 'agent-subpage-panel-core');
+      await button.focus();
+      await page.keyboard.press('Enter');
     };
-    const assertBlank = async () => {
-      await field.waitFor();
-      assert.equal(await field.inputValue(), '');
-      assert.equal(await mode.count(), 0);
-      assert.equal(await preserve.count(), 0);
-      assert.equal(await editor.getByRole('button', { name: '使用示例', exact: true }).count(), 0);
-    };
+    const dialog = () => page.locator('.agent-prompt-dialog');
+    const scope = () => dialog().getByLabel('Scope', { exact: true });
+    const prompt = () => dialog().getByRole('textbox', { name: 'Prompt text', exact: true });
+    const button = name => dialog().getByRole('button', { name, exact: true });
+    const save = () => button('Save');
+    const cancel = () => button('Cancel');
+    const close = async () => { await cancel().click(); await dialog().waitFor({ state: 'detached' }); };
+    const confirm = () => page.getByRole('alertdialog');
 
-    const apply = async () => {
-      await save.click();
-      await page.getByText('系统提示词设置已保存；若客户端已配置接入，连接地址已自动同步。', { exact: true }).waitFor();
-      assert.equal(await save.isDisabled(), true);
-    };
-
-    for (const client of ['claude-code', 'claude-desktop']) {
-      await goto(client);
-      await assertBlank();
-      assert.equal(await editor.getByText('未获取客户端原始提示词', { exact: true }).isVisible(), true);
-      assert.equal(await inactive.isVisible(), true);
-      assert.equal(await save.isDisabled(), true);
-      await selectModel('one');
-      await assertBlank();
-      assert.equal(await inactive.isVisible(), true);
-      assert.deepEqual(await payloads(), []);
-
-      assert.equal(await toggle.isChecked(), false);
-      await selectDefault();
-      await field.fill('Transient draft');
-      assert.equal(await toggle.isChecked(), true);
-      await preserve.uncheck();
-      await mode.selectOption('prepend');
-      assert.deepEqual(await payloads(), []);
-      await field.fill('');
-      await assertBlank();
-      assert.equal(await toggle.isChecked(), false);
-      assert.equal(await save.isDisabled(), true);
-      await reload.click();
-      await assertBlank();
-      assert.deepEqual(await payloads(), []);
-
-      await field.fill('Explicit aggregate override');
-      await mode.selectOption('append');
-      await selectModel('one');
-      assert.equal(await field.inputValue(), 'Explicit aggregate override');
-      assert.equal(await mode.inputValue(), 'append');
-      assert.equal(await editor.getByText('跟随默认覆盖', { exact: true }).isVisible(), true);
-      assert.equal(await inactive.isVisible(), true); // Draft only.
-      await apply();
-      assert.equal(await inactive.count(), 0);
-      const [aggregate] = await payloads();
-      assert.equal(aggregate.overridesEnabled, null); // First explicit save automatically activates a fresh client's rules.
-      assert.equal(aggregate.defaultCustomized, true);
-      assert.equal(aggregate.defaultPrompt, 'Explicit aggregate override');
-      assert.equal(aggregate.defaultMode, 'append');
-      assert.equal(aggregate.models.some(item => item.customized), false);
-
-      await field.fill('Explicit model override');
-      await apply();
-      const [, perModel] = await payloads();
-      assert.deepEqual(perModel.models[0], {
-        id: 'model-one', customized: true, prompt: 'Explicit model override', mode: 'append', preserveDynamicContext: true,
-      });
-      assert.equal(await toggle.isChecked(), true);
-      await toggle.uncheck();
-      assert.equal(await editor.getByText('保存后将停用覆盖。', { exact: true }).isVisible(), true);
-      assert.equal((await payloads()).length, 2);
-      await apply();
-      const paused = (await payloads()).at(-1);
-      assert.equal(paused.overridesEnabled, false);
-      assert.equal(paused.defaultMode, 'append');
-      assert.equal(paused.defaultPrompt, 'Explicit aggregate override');
-      assert.deepEqual(paused.models[0], perModel.models[0]);
-      assert.equal(await editor.getByText('覆盖已关闭；已保存的规则仍保留。', { exact: true }).isVisible(), true);
-      await reload.click();
-      await field.waitFor();
-      assert.equal(await toggle.isChecked(), false);
-      assert.equal(await field.inputValue(), 'Explicit model override');
-      await selectModel('two');
-      assert.equal(await toggle.isChecked(), false);
-      await toggle.check();
-      assert.equal(await editor.getByText('保存后将启用覆盖。', { exact: true }).isVisible(), true);
-      await apply();
-      const resumed = (await payloads()).at(-1);
-      assert.deepEqual(resumed, { ...paused, overridesEnabled: true });
-      assert.equal(await editor.getByText(/本地系统提示词改写端点已启用/).isVisible(), true);
-
-      await selectDefault();
-      await reset.click();
-      await assertBlank();
-      await apply();
-      assert.equal(await inactive.isVisible(), true); // The separate model rule remains active.
-      const clearedDefault = (await payloads()).at(-1);
-      assert.equal(clearedDefault.defaultCustomized, false);
-      assert.equal(clearedDefault.defaultPrompt, '');
-      assert.deepEqual(clearedDefault.models[0], perModel.models[0]);
-      await selectModel('one');
-      assert.equal(await field.inputValue(), 'Explicit model override');
-      await selectModel('two');
-      await assertBlank();
-      assert.equal(await inactive.isVisible(), true);
-      await resetAll.click();
-      await apply();
-      assert.equal((await payloads()).at(-1).models.some(item => item.customized), false);
-      await reload.click();
-      await assertBlank();
-      await selectDefault();
-      await assertBlank();
-
-      await goto(client, 'template', '&legacy&tls');
-      assert.equal(await toggle.isChecked(), true);
-      assert.equal(await field.inputValue(), 'Legacy default');
-      await toggle.uncheck();
-      assert.equal(await save.isEnabled(), true);
-      await apply();
-      assert.equal((await payloads())[0].models[0].prompt, 'Legacy model');
-      await toggle.check();
-      assert.equal(await save.isDisabled(), true);
-
+    // One entry in normal and embedded agent configuration, including special clients.
+    for (const client of ['claude-code', 'claude-desktop', 'deepseek-harness', 'opencode']) {
+      for (const query of ['', 'embedded']) {
+        await openEntry(client, query);
+        await prompt().waitFor();
+        assert.equal((await callArgs('get_agent_system_prompt_editor'))[0].client, client);
+        await close();
+      }
     }
 
-    await goto('claude-desktop', 'observed');
-    assert.equal(await field.inputValue(), 'Captured prompt');
-    assert.equal(await editor.getByText('已捕获客户端原始提示词', { exact: true }).isVisible(), true);
-    assert.equal(await mode.inputValue(), 'replace');
-    assert.equal(await toggle.count(), 1);
-    await field.fill('Observed prompt edit');
-    await reset.click();
-    assert.equal(await field.inputValue(), 'Captured prompt');
+    await openEntry('zcode', 'embedded');
+    await prompt().waitFor();
+    assert.equal(await scope().inputValue(), '');
+    assert.equal(await scope().locator('optgroup').getAttribute('label'), 'Model overrides');
+    assert.match(await prompt().inputValue(), /You are zcode/);
+    assert.equal(await save().isDisabled(), true);
+    await prompt().fill('Agent prompt\n\nSecond paragraph.');
+    await scope().selectOption('model:gpt-5.2-codex');
+    assert.match(await dialog().getByText('Inherits agent default', { exact: true }).innerText(), /Inherits/);
+    assert.equal(await prompt().inputValue(), 'Agent prompt\n\nSecond paragraph.');
+    await prompt().fill('');
+    await scope().selectOption('');
+    await save().click();
+    await page.getByRole('alert').filter({ hasText: 'Prompt text cannot be empty' }).waitFor();
+    assert.equal(await scope().inputValue(), 'model:gpt-5.2-codex');
+    assert.equal(await prompt().getAttribute('aria-invalid'), 'true');
+    assert.equal((await callArgs(saveCommand)).length, 0);
+    await prompt().fill('Model override\nAnother line.');
+    await dialog().getByLabel('Rewrite mode').selectOption('append');
+    await page.keyboard.press('Escape');
+    await confirm().getByRole('button', { name: 'Keep editing' }).click();
+    assert.equal(await prompt().inputValue(), 'Model override\nAnother line.');
 
-    for (const source of ['template', 'installed']) {
-      await goto('zcode', source);
-      assert.equal(await field.inputValue(), 'Built-in example for zcode');
-      assert.equal(await mode.inputValue(), 'replace');
-      assert.equal(await preserve.isChecked(), true);
-      assert.equal(await toggle.count(), 0);
+    await page.evaluate(() => { window.fixtureFailPromptSave = true; });
+    await save().click();
+    await page.getByRole('alert').filter({ hasText: 'Prompt save failed (fixture)' }).waitFor();
+    assert.equal(await prompt().inputValue(), 'Model override\nAnother line.');
+    await page.evaluate(() => { window.fixtureFailPromptSave = false; });
+    await save().click();
+    await page.getByText('System prompts saved.', { exact: true }).waitFor();
+    let request = (await callArgs(saveCommand)).at(-1).request;
+    assert.equal(request.client, 'zcode');
+    assert.equal(request.defaultPrompt, 'Agent prompt\n\nSecond paragraph.');
+    assert.deepEqual(request.models[0], { id: 'gpt-5.2-codex', customized: true, prompt: 'Model override\nAnother line.', mode: 'append', preserveDynamicContext: true });
+    assert.equal(request.models[1].customized, false);
+    await button('Inherit default').click();
+    assert.equal(await prompt().inputValue(), request.defaultPrompt);
+    await save().click();
+    await page.getByText('System prompts saved.', { exact: true }).waitFor();
+    request = (await callArgs(saveCommand)).at(-1).request;
+    assert.equal(request.models[0].customized, false);
+    await prompt().fill('Discard this draft');
+    await cancel().click();
+    await confirm().getByRole('button', { name: 'Discard changes' }).click();
+    await dialog().waitFor({ state: 'detached' });
+    assert.equal((await callArgs(saveCommand)).length, 3);
+    await entry.getByRole('button').click();
+    await prompt().waitFor();
+    assert.equal(await prompt().inputValue(), request.defaultPrompt);
+    await close();
+
+    // ZCode model parameters no longer expose or overwrite the same prompt;
+    // its separate native subagent Markdown field remains available.
+    await page.getByRole('button', { name: 'Model list settings', exact: true }).click();
+    const catalog = page.getByRole('dialog', { name: /ZCode Model List/ });
+    await catalog.getByText(/Restoring model settings leaves them unchanged/).waitFor();
+    assert.equal(await catalog.locator('textarea').count(), 0);
+    await catalog.locator('input[type=number]').first().fill('2048');
+    await catalog.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.waitForFunction(() => window.fixtureCalls.some(call => call.cmd === 'save_zcode_model_catalog_editor'));
+    assert.equal((await callArgs('save_zcode_model_catalog_editor'))[0].preserveSystemPrompts, true);
+    await catalog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.getByRole('button', { name: 'Subagent settings', exact: true }).click();
+    const subagent = page.getByRole('dialog');
+    await subagent.getByRole('button', { name: 'Edit system prompt', exact: true }).click();
+    assert.equal(await subagent.getByRole('textbox', { name: /Subagent system prompt/ }).inputValue(), 'Review the patch.');
+
+    // Codex retains native per-model prompts and catalog drafts, not agent-level rewriting.
+    await openEntry('codex', '', 'Model list and prompts');
+    await prompt().waitFor();
+    assert.equal(await scope().locator('optgroup').count(), 0);
+    assert.ok(await scope().inputValue());
+    const original = await prompt().inputValue();
+    await prompt().fill('Codex native prompt');
+    await dialog().getByRole('tab', { name: 'Model list settings', exact: true }).click();
+    assert.equal(await prompt().count(), 0);
+    await page.keyboard.press('ArrowLeft');
+    assert.equal(await prompt().inputValue(), 'Codex native prompt');
+    await button('Restore original prompt').click();
+    assert.equal(await prompt().inputValue(), original);
+    await prompt().fill('Codex native prompt');
+    await save().click();
+    await page.getByText(/Managed catalogs are synchronized/).waitFor();
+    assert.equal((await callArgs('save_codex_model_catalog_editor'))[0].request.models[0].configuration.base_instructions, 'Codex native prompt');
+    assert.equal((await callArgs(saveCommand)).length, 0);
+
+    // Check actual control geometry at the native minimum and a narrower browser viewport.
+    for (const [width, height, theme] of [[640, 600, 'light'], [430, 540, 'dark']]) {
+      await page.setViewportSize({ width, height });
+      await openEntry('zcode', `theme=${theme}&tls`);
+      await prompt().waitFor();
+      await prompt().fill('TLS must block this override');
+      assert.equal(await save().isDisabled(), true);
+      await dialog().getByRole('note').filter({ hasText: 'Turn off kernel TLS' }).waitFor();
+      const layout = await dialog().evaluate((root) => {
+        const field = root.querySelector('textarea');
+        const fieldRect = field.getBoundingClientRect();
+        const body = root.querySelector('.agent-prompt-body');
+        const bodyRect = body.getBoundingClientRect();
+        const inViewport = node => {
+          const r = node.getBoundingClientRect();
+          return r.x >= 0 && r.y >= 0 && r.right <= innerWidth && r.bottom <= innerHeight;
+        };
+        return {
+          inside: inViewport(root) && [...root.querySelectorAll('.agent-prompt-actions button')].every(inViewport),
+          noOverflow: root.scrollWidth <= root.clientWidth && body.scrollWidth <= body.clientWidth,
+          visibleEditorHeight: Math.min(bodyRect.bottom, fieldRect.bottom) - Math.max(bodyRect.top, fieldRect.top),
+          foreground: getComputedStyle(field).color,
+          background: getComputedStyle(field).backgroundColor,
+        };
+      });
+      assert.equal(layout.inside && layout.noOverflow, true, JSON.stringify(layout));
+      assert.ok(layout.visibleEditorHeight >= 160, JSON.stringify(layout));
+      assert.notEqual(layout.foreground, layout.background);
     }
     assert.deepEqual(errors, []);
-    console.log('PASS: Claude Code and Desktop empty defaults, pause/resume and retained rules, TLS guard, resets/reload; observed Claude and ZCode compatibility');
+    console.log('System prompt UI: consistent entry, distinct native scopes, validation, failed and successful save, reset, discard, keyboard and narrow layout passed.');
   } finally {
     await browser.close();
   }

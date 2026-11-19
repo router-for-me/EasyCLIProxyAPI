@@ -23,20 +23,27 @@ describe('i18n', () => {
         'agents.systemPrompt.pendingEnable',
         'agents.systemPrompt.overridesPaused',
         'agents.systemPrompt.claudeTlsNotice',
+        'agents.systemPrompt.edit',
+        'agents.systemPrompt.codexEntry',
+        'agents.systemPrompt.codexFieldHint',
+        'agents.systemPrompt.scope',
         'agents.systemPrompt.defaultTarget',
+        'agents.systemPrompt.modelScopeHint',
         'agents.systemPrompt.mode.replace',
         'agents.systemPrompt.preserveDynamic',
-        'agents.systemPrompt.resetCurrent',
+        'agents.systemPrompt.resetDefault',
+        'agents.systemPrompt.resetModel',
+        'agents.systemPrompt.resetHint',
         'agents.systemPrompt.resetAll',
         'agents.systemPrompt.saved',
-        'agents.zcode.catalog.systemPromptHint',
+        'agents.systemPrompt.zcodeCatalogHint',
       ] as const) {
-        expect(translate(locale, key, { name: 'ZCode', model: 'glm-5.3', port: 18331 })).not.toBe(key);
-        expect(translate(locale, key, { name: 'ZCode', model: 'glm-5.3', port: 18331 })).not.toBe('');
+        expect(translate(locale, key, { name: 'ZCode' })).not.toBe(key);
+        expect(translate(locale, key, { name: 'ZCode' })).not.toBe('');
       }
     }
-    expect(translate('zh-CN', 'agents.systemPrompt.button')).toBe('系统提示词设置');
-    expect(translate('zh-TW', 'agents.systemPrompt.button')).toBe('系統提示詞設定');
+    expect(translate('zh-CN', 'agents.systemPrompt.button')).toBe('系统提示词');
+    expect(translate('zh-TW', 'agents.systemPrompt.button')).toBe('系統提示詞');
     expect(translate('en', 'agents.systemPrompt.button')).toBe('System prompt');
   });
   it('localizes the probe-budget state, explanation and summary in every locale', () => {
