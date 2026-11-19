@@ -758,6 +758,10 @@ fn is_short_toolless_helper_call(client_id: &str, root: &Map<String, Value>) -> 
 }
 
 fn primary_system_text(root: &Map<String, Value>) -> Option<String> {
+    // Responses puts the instructions in a top-level string rather than in a message list.
+    if let Some(instructions) = root.get("instructions").and_then(Value::as_str) {
+        return Some(instructions.to_string());
+    }
     if let Some(system) = root.get("system") {
         if let Some(text) = system.as_str() {
             return Some(text.to_string());
@@ -2312,6 +2316,29 @@ mod tests {
         .expect("a short chat turn must still be rewritten");
         let parsed: Value = serde_json::from_slice(&rewritten).unwrap();
         assert_eq!(parsed["system"][0]["text"], "Custom Prompt");
+    }
+
+    #[test]
+    fn skips_responses_instruction_helpers() {
+        let cfg = sample_cfg(
+            Some(("Custom Prompt", PromptRewriteMode::Replace, true)),
+            &[],
+        );
+        let helper = serde_json::to_vec(&json!({
+            "model": "glm-5.3",
+            "max_output_tokens": 64,
+            "instructions": "Name this chat",
+            "input": [{ "role": "user", "content": "hi" }]
+        }))
+        .unwrap();
+        assert!(rewrite_inference_body_with_config(
+            "opencode",
+            InferenceWireKind::OpenAiResponses,
+            "/v1/responses",
+            &cfg,
+            &helper,
+        )
+        .is_none());
     }
 
     #[test]
