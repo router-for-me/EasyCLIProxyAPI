@@ -1882,6 +1882,10 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     </>
   ) : oauthLoginRequiredAction ? t(`agents.oauthLoginRequired.${oauthLoginRequiredAction}Description`) : '';
 
+  const codexCatalogButton = selected === 'codex' ? (
+    <button type="button" className="secondary-button agent-codex-catalog-button" onClick={() => setCodexCatalogDialogOpen(true)} disabled={busy}><SlidersHorizontal size={16} />{t('agents.catalog.button')}</button>
+  ) : null;
+
   const codexSubagentButton = selected === 'codex' ? (
     <button type="button" className="secondary-button agent-codex-catalog-button" onClick={() => setCodexSubagentDialogOpen(true)} disabled={busy}><Users size={16} />{t('agents.subagents.button')}</button>
   ) : null;
@@ -1901,19 +1905,19 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     </button>
   ) : null;
 
-  const systemPromptSetting = (
+  const systemPromptSetting = selected !== 'codex' ? (
     <section className="agent-system-prompt-setting surface-section" aria-labelledby="agent-system-prompt-setting-title">
       <div>
         <h3 id="agent-system-prompt-setting-title">{t('agents.systemPrompt.button')}</h3>
-        <p>{t(selected === 'codex' ? 'agents.systemPrompt.codexSubtitle' : 'agents.systemPrompt.subtitle')}</p>
+        <p>{t('agents.systemPrompt.subtitle')}</p>
       </div>
       <button type="button" className="secondary-button" aria-haspopup="dialog" disabled={busy}
-        onClick={() => selected === 'codex' ? setCodexCatalogDialogOpen(true) : setSystemPromptDialogOpen(true)}>
+        onClick={() => setSystemPromptDialogOpen(true)}>
         <FileText size={16} aria-hidden="true" />
-        {t(selected === 'codex' ? 'agents.systemPrompt.codexEntry' : 'agents.systemPrompt.edit')}
+        {t('agents.systemPrompt.edit')}
       </button>
     </section>
-  );
+  ) : null;
 
   const closeConfigurationButton = canCloseConfiguration ? (
     <button type="button" className="secondary-button agent-close-configuration"
@@ -2111,7 +2115,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                   onChange={selectEmbeddedModel}
                   onRefresh={refreshModels}
                 />
-                {codexSubagentButton}{zcodeCatalogButton}{zcodeSubagentButton}{harnessCatalogButton}
+                {codexCatalogButton}{codexSubagentButton}{zcodeCatalogButton}{zcodeSubagentButton}{harnessCatalogButton}
                 {!isClaudeModelMappingClient && missingModelHint ? <span className="agent-model-hint" role="status">{missingModelHint}</span> : null}
               </div>}
 
@@ -2247,7 +2251,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                           ]} />
                       </div>
 
-                      <div className="agent-codex-tool-buttons">{codexSubagentButton}</div>
+                      <div className="agent-codex-tool-buttons">{codexCatalogButton}{codexSubagentButton}</div>
                       <div id="agent-signin-hint" className="agent-signin-explanation" hidden={!connectionHelpOpen}>
                         <dl>
                           <div><dt>{t('agents.modify.authApiKey')}</dt><dd>{t('agents.modify.authApiKeyHint')}</dd></div>
@@ -2547,7 +2551,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       ) : null}
       {codexCatalogDialogOpen ? (
         <CodexModelCatalogDialog
-          initialSection="prompt"
           onClose={() => setCodexCatalogDialogOpen(false)}
           onSaved={() => loadModels('codex', selectedModel)}
         />

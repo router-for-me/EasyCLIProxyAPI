@@ -111,24 +111,40 @@ const saveCommand = 'save_agent_system_prompt_editor';
     await subagent.getByRole('button', { name: 'Edit system prompt', exact: true }).click();
     assert.equal(await subagent.getByRole('textbox', { name: /Subagent system prompt/ }).inputValue(), 'Review the patch.');
 
-    // Codex retains native per-model prompts and catalog drafts, not agent-level rewriting.
-    await openEntry('codex', '', 'Model list and prompts');
-    await prompt().waitFor();
-    assert.equal(await scope().locator('optgroup').count(), 0);
-    assert.ok(await scope().inputValue());
-    const original = await prompt().inputValue();
-    await prompt().fill('Codex native prompt');
-    await dialog().getByRole('tab', { name: 'Model list settings', exact: true }).click();
-    assert.equal(await prompt().count(), 0);
-    await page.keyboard.press('ArrowLeft');
-    assert.equal(await prompt().inputValue(), 'Codex native prompt');
-    await button('Restore original prompt').click();
-    assert.equal(await prompt().inputValue(), original);
-    await prompt().fill('Codex native prompt');
-    await save().click();
-    await page.getByText(/Managed catalogs are synchronized/).waitFor();
-    assert.equal((await callArgs('save_codex_model_catalog_editor'))[0].request.models[0].configuration.base_instructions, 'Codex native prompt');
-    assert.equal((await callArgs(saveCommand)).length, 0);
+    // Before the shared editor, Codex exposed only its catalog and inline per-model field.
+    for (const query of ['', 'embedded']) {
+      await open('codex', query);
+      assert.equal(await entry.count(), 0);
+      const modelList = page.getByRole('button', { name: 'Model list settings', exact: true });
+      assert.equal(await modelList.count(), 1);
+      assert.equal(await modelList.evaluate((el) => el.parentElement.className),
+        query ? 'agent-minimal-field' : 'agent-codex-tool-buttons');
+      await modelList.press('Enter');
+      const catalog = page.getByRole('dialog', { name: 'Codex model catalog', exact: true });
+      const rows = catalog.getByRole('listbox').getByRole('option');
+      await rows.nth(1).waitFor();
+      assert.equal(await catalog.getByRole('tab').count(), 0);
+      assert.equal(await catalog.getByRole('button', { name: 'Edit prompt', exact: true }).count(), 0);
+      await rows.nth(1).press('Enter');
+      assert.equal(await rows.nth(1).getAttribute('aria-selected'), 'true');
+      const selected = await catalog.locator('.codex-catalog-model-heading h3').textContent();
+      const inlinePrompt = catalog.locator('.codex-catalog-system-prompt');
+      await inlinePrompt.fill('Codex native prompt');
+      await rows.first().press('Enter');
+      const otherPrompt = await inlinePrompt.inputValue();
+      assert.notEqual(otherPrompt, 'Codex native prompt');
+      await rows.nth(1).press('Enter');
+      assert.equal(await inlinePrompt.inputValue(), 'Codex native prompt');
+      await catalog.getByRole('button', { name: 'Save', exact: true }).click();
+      await page.getByText(/Managed catalogs are synchronized/).waitFor();
+      const { models } = (await callArgs('save_codex_model_catalog_editor'))[0].request;
+      assert.equal(models[1].slug, selected);
+      assert.equal(models[1].configuration.base_instructions, 'Codex native prompt');
+      assert.equal(models[0].configuration.base_instructions, otherPrompt);
+      assert.equal((await callArgs(saveCommand)).length, 0);
+      await catalog.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await catalog.waitFor({ state: 'detached' });
+    }
 
     // Check actual control geometry at the native minimum and a narrower browser viewport.
     for (const [width, height, theme] of [[640, 600, 'light'], [430, 540, 'dark']]) {
