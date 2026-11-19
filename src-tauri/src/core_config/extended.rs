@@ -378,6 +378,8 @@ const FIELD_GROUPS: &[(&str, &str, &str)] = &[
     ("oauth/providers/claude/header-defaults", "bool", "stabilize-device-profile"),
     ("oauth/providers/antigravity", "bool", "antigravity-credits signature-cache-enabled signature-bypass-strict"),
     ("oauth/providers/antigravity", "strings", "sensitive-words"),
+    ("oauth/providers/antigravity", "string", "tos-pause-window"),
+    ("oauth/providers/antigravity", "sensitive-patterns", "sensitive-patterns-replace"),
     ("oauth/providers/antigravity/connection-pool", "bool", "enabled"),
     ("oauth/providers/antigravity/connection-pool", "string", "idle-conn-timeout"),
     ("oauth/providers/antigravity/connection-pool", "uint", "max-idle-conns-per-host"),
@@ -550,6 +552,17 @@ fn validate_string(path: &[String], value: &str) -> bool {
     }
     let key = path.join("/");
     let leaf = path.last().map(String::as_str).unwrap_or_default();
+    if leaf == "tos-pause-window" {
+        // Empty and the kernel's explicit disable spellings switch the
+        // protective pause off; anything else must be a positive Go duration.
+        let normalized = value.trim().to_ascii_lowercase();
+        if normalized.is_empty()
+            || matches!(normalized.as_str(), "0" | "off" | "false" | "none" | "disabled")
+        {
+            return true;
+        }
+        return duration_nanos(&normalized).is_some_and(|nanos| nanos > 0);
+    }
     if leaf == "stream-bootstrap-timeout" {
         let normalized = value.trim().to_ascii_lowercase();
         if matches!(
@@ -724,7 +737,7 @@ fn validate_value(path: &[String], value: &Json, before: &Json) -> Result<(), St
         }
         Some("bool") if value.is_boolean() => {}
         Some("rebind-on") => {
-            if !matches!(value.as_str(), Some("any" | "quota")) {
+            if !matches!(value.as_str(), Some("any" | "quota" | "never")) {
                 return Err(error());
             }
         }
@@ -769,6 +782,32 @@ fn validate_value(path: &[String], value: &Json, before: &Json) -> Result<(), St
             }) => {}
         Some("image-mode")
             if value.is_boolean() || matches!(value.as_str(), Some("chat" | "passthrough")) => {}
+        Some("sensitive-patterns") => {
+            for rule in value.as_array().ok_or_else(error)? {
+                let object = rule.as_object().ok_or_else(error)?;
+                let pattern = object
+                    .get("pattern")
+                    .and_then(Json::as_str)
+                    .filter(|pattern| !pattern.trim().is_empty())
+                    .ok_or_else(error)?;
+                if pattern.chars().any(char::is_control) {
+                    return Err(error());
+                }
+                if object.get("replacement").is_some_and(|replacement| {
+                    replacement
+                        .as_str()
+                        .is_none_or(|text| text.chars().any(char::is_control))
+                }) {
+                    return Err(error());
+                }
+                if object
+                    .keys()
+                    .any(|key| !matches!(key.as_str(), "pattern" | "replacement"))
+                {
+                    return Err(error());
+                }
+            }
+        }
         Some("ice") => {
             for server in value.as_array().ok_or_else(error)? {
                 let object = server.as_object().ok_or_else(error)?;
@@ -1536,6 +1575,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
                 "{path}"
             );
         }
+
         let accepted = [
             ("observability/pprof/addr", json!("[::1]:8316")),
             (
@@ -1573,6 +1613,104 @@ client: {codex: {optimize-multi-agent-v2: false}}
             prepare_patch(content, &[change(content, path, value, false)])
                 .unwrap_or_else(|error| panic!("{path}: {error}"));
         }
+    }
+
+    #[test]
+    fn extended_tos_pause_window_accepts_durations_and_disable_spellings() {
+        let path = parts("oauth/providers/antigravity/tos-pause-window");
+        for value in ["", "0", "off", "OFF", "false", "none", "disabled", "6h", "30m", "1h30m"] {
+            assert!(validate_string(&path, value), "{value}");
+        }
+        for value in ["abc", "6x", "-1h", "0s", "6h 30m", "tomorrow"] {
+            assert!(!validate_string(&path, value), "{value}");
+        }
+        let content = "config-version: 8\n";
+        let (_, result) = prepare_patch(
+            content,
+            &[change(content, &path.join("/"), json!("6h"), false)],
+        )
+        .unwrap();
+        assert_eq!(result.config["oauth"]["providers"]["antigravity"]["tos-pause-window"], "6h");
+        assert!(
+            prepare_patch(
+                content,
+                &[change(content, &path.join("/"), json!("abc"), false)]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn extended_sensitive_patterns_replace_requires_ordered_pattern_rules() {
+        let path = "oauth/providers/antigravity/sensitive-patterns-replace";
+        let content = "config-version: 8\n";
+        let rules = json!([
+            {"pattern": "(?m)^RFC 2119[^\\n]*\\n?", "replacement": ""},
+            {"pattern": "internal-only", "replacement": "Assistant"}
+        ]);
+        let (_, result) = prepare_patch(content, &[change(content, path, rules, false)]).unwrap();
+        let saved = result.config["oauth"]["providers"]["antigravity"]["sensitive-patterns-replace"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(saved.len(), 2);
+        assert_eq!(saved[0]["replacement"], "");
+        assert_eq!(saved[1]["replacement"], "Assistant");
+        for rejected in [
+            json!("not-a-list"),
+            json!([{"replacement": "x"}]),
+            json!([{"pattern": "   "}]),
+            json!([{"pattern": "bad\u{0007}"}]),
+            json!([{"pattern": "ok", "replacement": 1}]),
+            json!([{"pattern": "ok", "unexpected": true}]),
+        ] {
+            assert!(
+                prepare_patch(content, &[change(content, path, rejected.clone(), false)]).is_err(),
+                "{rejected}"
+            );
+        }
+        assert!(
+            prepare_patch(
+                content,
+                &[change(
+                    content,
+                    &format!("{path}/0/pattern"),
+                    json!("only-pattern"),
+                    false
+                )]
+            )
+            .is_err(),
+            "rules are stored as whole ordered lists, not per-row leaves"
+        );
+    }
+
+    #[test]
+    fn extended_session_affinity_rebind_accepts_never() {
+        let content = "config-version: 8\n";
+        for value in ["any", "quota", "never"] {
+            prepare_patch(
+                content,
+                &[change(
+                    content,
+                    "routing/session-affinity-rebind-on",
+                    json!(value),
+                    false,
+                )],
+            )
+            .unwrap_or_else(|error| panic!("{value}: {error}"));
+        }
+        assert!(
+            prepare_patch(
+                content,
+                &[change(
+                    content,
+                    "routing/session-affinity-rebind-on",
+                    json!("sometimes"),
+                    false
+                )]
+            )
+            .is_err()
+        );
     }
 
     #[test]

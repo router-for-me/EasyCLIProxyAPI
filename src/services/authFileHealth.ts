@@ -23,7 +23,11 @@ export type AuthFileHealth = {
   message: string;
   status: string;
   disabled: boolean;
+  /** Upstream terms-of-service suspension reported by the core, not a plain disable. */
+  suspension?: 'tos';
 };
+
+export type AuthFileAppeal = { url: string; text?: string };
 
 const reasonKeys: Record<string, MessageKey> = {
   quota: 'authFiles.health.reason.quota',
@@ -36,7 +40,22 @@ const reasonKeys: Record<string, MessageKey> = {
   model_not_supported: 'authFiles.health.reason.modelUnsupported',
   transient_error: 'authFiles.health.reason.upstream',
   token_expired: 'authFiles.health.reason.tokenExpired',
+  tos_violation: 'authFiles.health.reason.tosViolation',
 };
+
+// The core marks a credential it deactivated after an upstream TOS violation with
+// this status message; it is a terminal suspension, not a cooldown.
+const suspensionReasons: Record<string, NonNullable<AuthFileHealth['suspension']>> = {
+  tos_violation: 'tos',
+};
+
+/** HTTPS-only appeal link published by the core for a suspended credential. */
+export function authFileAppeal(file: Record<string, unknown>): AuthFileAppeal | undefined {
+  const url = readString(file, 'tos_appeal_url').trim();
+  if (!/^https:\/\//i.test(url)) return undefined;
+  const text = readString(file, 'tos_appeal_url_text').trim();
+  return { url, ...(text ? { text } : {}) };
+}
 
 export function cooldownReasonKey(reason: string): MessageKey {
   return Object.prototype.hasOwnProperty.call(reasonKeys, reason)
@@ -125,7 +144,13 @@ export function authFileHealth(file: Record<string, unknown>): AuthFileHealth {
   const message = healthyMessages.has(rawMessage.toLowerCase()) ? '' : rawMessage;
   const disabled = readBoolean(file, 'disabled') || status === 'disabled';
   const base = { status, message, disabled };
-  if (disabled) return { ...base, label: 'authFiles.status.disabled', tone: 'neutral' };
+  if (disabled) {
+    const suspension = suspensionReasons[message.toLowerCase()];
+    // Only a core-reported upstream suspension gets its own label and hides the
+    // internal marker; an ordinary disabled credential keeps the neutral state.
+    if (suspension) return { ...base, message: '', label: 'authFiles.health.reason.tosViolation', tone: 'warning', suspension };
+    return { ...base, label: 'authFiles.status.disabled', tone: 'neutral' };
+  }
   if (readBoolean(file, 'unavailable') || status === 'error') {
     const marker = message.toLowerCase();
     const reason = Object.prototype.hasOwnProperty.call(messageReasons, marker) ? messageReasons[marker] : marker;

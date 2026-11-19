@@ -93,6 +93,16 @@
   border-top: 1px solid var(--border-color);
 }
 .auth-health-actions .auth-health-hint { flex: 1; min-width: 140px; margin: 0; }
+.auth-health-appeal {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 8px 0 0;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-meta);
+}
+.auth-health-appeal button { flex-shrink: 0; }
 .auth-health-reset { flex-shrink: 0; margin-left: auto; }
 
 @media (max-width: 760px) {

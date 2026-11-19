@@ -48,10 +48,11 @@ export const routingTemplateGroups: readonly TemplateConfigGroup[] = [
     id: 'routing-advanced', title: text('会话与冷却策略', 'Session & cooldown behavior', 'セッションとクールダウンの動作'),
     fields: [
       field('routing.session-affinity-subagents', 'boolean', '子代理继承父会话凭据', 'Bind subagents to parent credentials', '子エージェントで親セッションの認証情報を使用', true, text('仅在启用会话粘性时生效。关闭后子代理按回退选择器分配。', 'Effective only with session affinity. When disabled, subagents use the fallback selector.', 'セッション固定が有効な場合のみ適用します。無効にすると子エージェントは代替選択方式を使用します。')),
-      field('routing.session-affinity-rebind-on', 'select', '会话重绑触发条件', 'Session rebind trigger', 'セッション再バインドのトリガー', 'quota', text('粘性会话与已绑定凭据解绑并重新分配的触发条件。', 'Conditions under which sticky sessions unbind and reassign to a new credential.', 'セッション固定がバインドされた認証情報を解放して再割り当てする条件。'), {
+      field('routing.session-affinity-rebind-on', 'select', '会话重绑触发条件', 'Session rebind trigger', 'セッション再バインドのトリガー', 'quota', text('粘性会话与已绑定凭据解绑并重新分配的触发条件。选择“从不重绑”时，已建立的会话绑定始终留在原凭据，不会移到其他凭据。', 'Conditions under which sticky sessions unbind and reassign to a new credential. With "Never rebind", an established session binding always stays on its original credential and is never moved to another one.', 'セッション固定がバインドされた認証情報を解放して再割り当てする条件。「再バインドしない」を選ぶと、確立済みのセッションのバインドは元の認証情報のままで、他の認証情報へ移動しません。'), {
         options: [
           { value: 'quota', label: text('仅配额耗尽（默认）', 'Quota exhaustion only (default)', 'クォータ枯渇時のみ（既定）') },
           { value: 'any', label: text('任意错误', 'Any error', '任意のエラー') },
+          { value: 'never', label: text('从不重绑', 'Never rebind', '再バインドしない') },
         ],
       }),
       field('routing.retry.request-retry', 'number', '单请求重试轮数', 'Request retry rounds', 'リクエストの再試行ラウンド数', 0, text('单个请求最多执行的重试轮数，0 沿用默认。', 'Maximum retry rounds for a single request (0 uses default).', '1 リクエストあたりの最大再試行ラウンド数（0 で既定値）。'), { min: 0 }),

@@ -14,6 +14,26 @@ const render = (file: Record<string, unknown>, options: {
   <AuthFileHealthStatus file={file} receivedAtMs={receivedAtMs} onReset={() => {}} {...options} />
 </I18nProvider>);
 
+describe('upstream TOS suspension status', () => {
+  it('shows the TOS reason on the summary and the appeal link when open', () => {
+    const html = render({ status: 'disabled', status_message: 'tos_violation', tos_appeal_url: 'https://example.com/appeal' });
+    const summary = html.slice(0, html.indexOf('</summary>'));
+    expect(summary).toContain('<strong>Suspended by upstream terms-of-service violation</strong>');
+    expect(summary).not.toContain('<strong>Disabled</strong>');
+    expect(html).toContain('Open appeal page');
+  });
+
+  it('ignores non-HTTPS appeal links and leaves plain disables unchanged', () => {
+    const unsafe = render({ status: 'disabled', status_message: 'tos_violation', tos_appeal_url: 'javascript:alert(1)' });
+    expect(unsafe).not.toContain('javascript:');
+    expect(unsafe).not.toContain('Open appeal page');
+    const plain = render({ status: 'disabled' });
+    expect(plain).toContain('<strong>Disabled</strong>');
+    expect(plain).not.toContain('appeal');
+    expect(plain).not.toContain('<details');
+  });
+});
+
 describe('credential cooldown actions', () => {
   it('makes model cooldowns and the clear action visible without opening details', () => {
     const html = render({ status: 'error', cooldowns: [cooldown] });
