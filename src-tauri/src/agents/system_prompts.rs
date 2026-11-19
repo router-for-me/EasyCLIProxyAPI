@@ -1,7 +1,7 @@
 use super::*;
 use crate::core_config::{
     core_config_uses_v8, core_tls_settings_from_value, lock_core_config_file,
-    read_core_config_document,
+    managed_core_tls_enabled, read_core_config_document,
 };
 use crate::GuiConfigState;
 use flate2::read::GzDecoder;
@@ -158,6 +158,9 @@ pub(crate) struct AgentSystemPromptEditorSnapshot {
     pub default_preserve_dynamic_context: bool,
     pub proxy_active: bool,
     pub proxy_port: Option<u16>,
+    /// The loopback listener is plaintext HTTP; a TLS-enabled kernel must not be downgraded
+    /// silently, so the editor blocks saving until TLS is turned off.
+    pub core_tls_enabled: bool,
     pub models: Vec<AgentSystemPromptEditorModel>,
 }
 
@@ -2056,6 +2059,7 @@ fn build_editor_snapshot(
         default_preserve_dynamic_context,
         proxy_active: active_port.is_some(),
         proxy_port: active_port,
+        core_tls_enabled: managed_core_tls_enabled(),
         models,
     })
 }
@@ -2149,6 +2153,13 @@ pub(crate) async fn save_agent_system_prompt_editor(
         persist_prompt_state_locked(&guard)?;
         (has_active, port)
     };
+
+    if has_active && managed_core_tls_enabled() {
+        return Err(
+            "Custom system prompts need the loopback prompt proxy, which only listens over plain HTTP. Turn off TLS for the local kernel first, then save the prompt again."
+                .to_string(),
+        );
+    }
 
     if has_active {
         ensure_client_proxy_listener(client_id, preferred_port, Some(&app)).await?;

@@ -546,9 +546,11 @@ export function AgentSystemPromptDialog({
                 </p>
               ) : null}
               <p className="codex-catalog-hint" role="note">
-                {snapshot?.proxyActive && snapshot.proxyPort
-                  ? t('agents.systemPrompt.proxyActiveNotice', { port: snapshot.proxyPort })
-                  : t('agents.systemPrompt.proxyInactiveNotice')}
+                {snapshot?.coreTlsEnabled
+                  ? t('agents.systemPrompt.tlsBlockedNotice')
+                  : snapshot?.proxyActive && snapshot.proxyPort
+                    ? t('agents.systemPrompt.proxyActiveNotice', { port: snapshot.proxyPort })
+                    : t('agents.systemPrompt.proxyInactiveNotice')}
               </p>
             </>
           ) : !loading ? (
@@ -595,7 +597,7 @@ export function AgentSystemPromptDialog({
             type="button"
             className="primary-button"
             onClick={() => void save()}
-            disabled={!snapshot || !dirty || loading || saving}
+            disabled={!snapshot || !dirty || loading || saving || Boolean(snapshot.coreTlsEnabled)}
           >
             {saving ? <LoaderCircle size={16} className="spin" /> : null}
             {saving ? t('common.saving') : t('common.save')}

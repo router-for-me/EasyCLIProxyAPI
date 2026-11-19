@@ -21,6 +21,7 @@ export interface AgentSystemPromptEditorSnapshot {
   defaultPreserveDynamicContext: boolean;
   proxyActive: boolean;
   proxyPort: number | null;
+  coreTlsEnabled?: boolean;
   models: AgentSystemPromptEditorModel[];
 }
 
