@@ -704,10 +704,12 @@ fn parse_subagent_markdown(file_path: &Path) -> Option<ZCodeSubagentItem> {
             description = v.to_string();
         } else if let Some(val) = trimmed.strip_prefix("model:") {
             let v = val.trim().trim_matches('"').trim_matches('\'');
-            if !v.is_empty() && v != "inherit" { model = Some(v.to_string()); }
+            // Report the literal value: the editor needs to tell a pinned model apart from
+            // "inherit", and the save path only writes when something actually changed.
+            if !v.is_empty() { model = Some(v.to_string()); }
         } else if let Some(val) = trimmed.strip_prefix("thoughtLevel:") {
             let v = val.trim().trim_matches('"').trim_matches('\'');
-            if !v.is_empty() && v != "inherit" { thought_level = Some(v.to_string()); }
+            if !v.is_empty() { thought_level = Some(v.to_string()); }
         } else if let Some(val) = trimmed.strip_prefix("tools:") {
             let v = val.trim().trim_matches('[').trim_matches(']');
             tools = v.split(',').map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string()).filter(|s| !s.is_empty()).collect();
@@ -913,25 +915,35 @@ fn update_subagent_frontmatter(
     let frontmatter = &rest[..end_idx];
     let original_tail = &rest[end_idx..];
 
-    let mut lines: Vec<String> = frontmatter.lines().map(String::from).collect();
+    let original_lines: Vec<String> = frontmatter.lines().map(String::from).collect();
+    let mut lines = original_lines.clone();
     let mut has_model = false;
     let mut has_thought = false;
+    let newline = if content.starts_with("---\r\n") { "\r\n" } else { "\n" };
 
+    // An absent value means "keep what the file already says"; only a real change rewrites
+    // the line, so a plain refresh of the dialog cannot churn every subagent file.
     for line in lines.iter_mut() {
         let trimmed = line.trim();
         if trimmed.starts_with("model:") {
             has_model = true;
-            if let Some(m) = model.filter(|s| !s.trim().is_empty()) {
-                *line = format!("model: {m}");
-            } else {
-                *line = "model: inherit".into();
+            match model.filter(|s| !s.trim().is_empty()) {
+                Some(m) if trimmed != format!("model: {m}") => *line = format!("model: {m}"),
+                Some(_) => {}
+                None if !trimmed.starts_with("model: inherit") => *line = "model: inherit".into(),
+                None => {}
             }
         } else if trimmed.starts_with("thoughtLevel:") {
             has_thought = true;
-            if let Some(tl) = thought_level.filter(|s| !s.trim().is_empty()) {
-                *line = format!("thoughtLevel: {tl}");
-            } else {
-                *line = "thoughtLevel: inherit".into();
+            match thought_level.filter(|s| !s.trim().is_empty()) {
+                Some(tl) if trimmed != format!("thoughtLevel: {tl}") => {
+                    *line = format!("thoughtLevel: {tl}")
+                }
+                Some(_) => {}
+                None if !trimmed.starts_with("thoughtLevel: inherit") => {
+                    *line = "thoughtLevel: inherit".into()
+                }
+                None => {}
             }
         }
     }
@@ -947,15 +959,91 @@ fn update_subagent_frontmatter(
         }
     }
 
-    if let Some(next_prompt) = system_prompt {
-        let normalized = next_prompt.replace("\r\n", "\n");
-        if normalized.trim().is_empty() {
-            return Some(format!("---\n{}\n---\n", lines.join("\n")));
-        }
-        return Some(format!("---\n{}\n---\n\n{}\n", lines.join("\n"), normalized.trim()));
+    let Some(next_prompt) = system_prompt else {
+        return Some(format!("---{newline}{}{}", lines.join(newline), original_tail));
+    };
+    let normalized = next_prompt.replace("\r\n", "\n");
+    let body = normalized.trim();
+    // The editor shows `body`, so an unchanged body means "keep the original tail verbatim",
+    // including its trailing spaces and closing newline. Only an edit re-serializes the file.
+    let prompt_unchanged = subagent_body_text(original_tail) == body;
+    if prompt_unchanged && lines == original_lines {
+        return None;
+    }
+    if prompt_unchanged {
+        return Some(format!("---{newline}{}{}", lines.join(newline), original_tail));
+    }
+    if body.is_empty() {
+        return Some(format!("---{newline}{}{newline}---{newline}", lines.join(newline)));
+    }
+    Some(format!(
+        "---{newline}{}{newline}---{newline}{newline}{body}{newline}",
+        lines.join(newline)
+    ))
+}
+
+/// Body text after the closing `---` fence in the same form the editor shows it, so an
+/// untouched body is not mistaken for an edited one.
+fn subagent_body_text(tail: &str) -> &str {
+    let after_fence = if let Some(rest) = tail.strip_prefix("\r\n---") {
+        rest
+    } else if let Some(rest) = tail.strip_prefix("\n---") {
+        rest
+    } else {
+        tail
+    };
+    after_fence
+        .strip_prefix("\r\n")
+        .or_else(|| after_fence.strip_prefix('\n'))
+        .unwrap_or(after_fence)
+        .trim()
+}
+
+#[cfg(test)]
+mod subagent_frontmatter_tests {
+    use super::update_subagent_frontmatter;
+
+    const FILE: &str = "---\nname: reviewer\nmodel: inherit\ndescription: Reviews code\n---\n\nReview the diff.\n\nKeep the report short.  \n";
+
+    #[test]
+    fn unchanged_prompt_and_model_skip_the_write() {
+        let updated =
+            update_subagent_frontmatter(FILE, None, None, Some("Review the diff.\n\nKeep the report short."));
+        assert!(updated.is_none(), "an unchanged subagent must not be rewritten, got {updated:?}");
     }
 
-    Some(format!("---\n{}{}", lines.join("\n"), original_tail))
+    #[test]
+    fn model_only_change_keeps_the_body_byte_for_byte() {
+        let updated = update_subagent_frontmatter(
+            FILE,
+            Some("cpa-gui/glm-5.3"),
+            None,
+            Some("Review the diff.\n\nKeep the report short."),
+        )
+        .expect("a model change must still update the frontmatter");
+        assert_eq!(updated, FILE.replace("model: inherit", "model: cpa-gui/glm-5.3"));
+    }
+
+    #[test]
+    fn edited_prompt_replaces_the_body() {
+        let updated = update_subagent_frontmatter(FILE, None, None, Some("New instructions."))
+            .expect("an edited prompt must be written");
+        assert_eq!(
+            updated,
+            "---\nname: reviewer\nmodel: inherit\ndescription: Reviews code\n---\n\nNew instructions.\n"
+        );
+    }
+
+    #[test]
+    fn crlf_files_keep_their_line_endings() {
+        let crlf = "---\r\nname: reviewer\r\nmodel: inherit\r\n---\r\n\r\nBody line.\r\n";
+        let updated = update_subagent_frontmatter(crlf, None, Some("high"), Some("Body line."))
+            .expect("a thought level change must be written");
+        assert_eq!(
+            updated,
+            "---\r\nname: reviewer\r\nmodel: inherit\r\nthoughtLevel: high\r\n---\r\n\r\nBody line.\r\n"
+        );
+    }
 }
 
 #[tauri::command]

@@ -709,8 +709,37 @@ fn is_utility_system_prompt(text: &str) -> bool {
         || lower.starts_with("you are a helpful ai assistant tasked with summarizing")
 }
 
+/// System prompts of helper calls that only reshape content: web search, titles, summaries.
+/// They are recognised by their instruction ("Name this chat", "Generate a concise ...") rather
+/// than by size, because a short user turn looks identical on the wire.
+fn is_helper_task_system_prompt(text: Option<&str>) -> bool {
+    let Some(text) = text else {
+        return false;
+    };
+    let lower = text.trim().to_ascii_lowercase();
+    if lower.is_empty() || lower.len() > 2048 {
+        return false;
+    }
+    is_utility_system_prompt(&lower)
+        || lower.starts_with("name this chat")
+        || lower.starts_with("name the conversation")
+        || lower.starts_with("suggest a title")
+        || lower.starts_with("create a title")
+        || lower.starts_with("generate a title")
+        || lower.contains("generate a short title")
+        || lower.contains("concise title for this conversation")
+        || lower.contains("rewrite the prompt")
+        || lower.contains("improve the following prompt")
+}
+
 fn is_short_toolless_helper_call(client_id: &str, root: &Map<String, Value>) -> bool {
     if client_id == "claude-desktop" {
+        return false;
+    }
+    // A short tool-less request is either a side-channel helper call or a brief user turn.
+    // Helper calls name the job they do ("Name this chat"), so only a system prompt that
+    // asks for one of those tasks is skipped; an ordinary chat keeps the custom prompt.
+    if !is_helper_task_system_prompt(primary_system_text(root).as_deref()) {
         return false;
     }
     let has_tools = root
@@ -726,6 +755,50 @@ fn is_short_toolless_helper_call(client_id: &str, root: &Map<String, Value>) -> 
         .or_else(|| root.get("max_output_tokens"))
         .and_then(Value::as_u64);
     max_tokens.is_some_and(|limit| limit > 0 && limit <= 256)
+}
+
+fn primary_system_text(root: &Map<String, Value>) -> Option<String> {
+    if let Some(system) = root.get("system") {
+        if let Some(text) = system.as_str() {
+            return Some(text.to_string());
+        }
+        if let Some(items) = system.as_array() {
+            return Some(
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        item.get("text")
+                            .and_then(Value::as_str)
+                            .or_else(|| item.as_str())
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+            );
+        }
+        return None;
+    }
+    let collect = |items: &Vec<Value>| -> Option<String> {
+        let mut parts = Vec::new();
+        for item in items {
+            let role = item.get("role").and_then(Value::as_str).unwrap_or("");
+            let is_system = matches!(role, "system" | "developer");
+            if !is_system {
+                break;
+            }
+            parts.push(extract_message_content_text(
+                item.get("content").unwrap_or(&Value::Null),
+            ));
+        }
+        (!parts.is_empty()).then(|| parts.join("\n\n"))
+    };
+    if let Some(messages) = root.get("messages").and_then(Value::as_array) {
+        if let Some(text) = collect(messages) {
+            return Some(text);
+        }
+    }
+    root.get("input")
+        .and_then(Value::as_array)
+        .and_then(collect)
 }
 
 fn rewrite_anthropic_messages_json(
@@ -805,10 +878,12 @@ fn rewrite_anthropic_messages_json(
         let mut base_block = Map::new();
         base_block.insert("type".to_string(), Value::String("text".to_string()));
         base_block.insert("text".to_string(), Value::String(rewritten_base));
-        base_block.insert(
-            "cache_control".to_string(),
-            preserved_cache_control.unwrap_or_else(|| json!({ "type": "ephemeral" })),
-        );
+        // Only carry a cache breakpoint that the client already declared. Adding one
+        // unconditionally creates a fresh ephemeral breakpoint on every request and can
+        // exceed Anthropic's per-request breakpoint limit.
+        if let Some(cache_control) = preserved_cache_control {
+            base_block.insert("cache_control".to_string(), cache_control);
+        }
         let mut new_blocks = vec![Value::Object(base_block)];
         if keep_dynamic {
             new_blocks.extend(dynamic_blocks);
@@ -2212,6 +2287,55 @@ mod tests {
             &title_call,
         )
         .is_none());
+    }
+
+    #[test]
+    fn short_user_conversation_keeps_custom_prompt() {
+        let cfg = sample_cfg(
+            Some(("Custom Prompt", PromptRewriteMode::Replace, true)),
+            &[],
+        );
+        let body = serde_json::to_vec(&json!({
+            "model": "glm-5.3",
+            "max_tokens": 64,
+            "system": [{ "type": "text", "text": "You are ZCode, an interactive agent" }],
+            "messages": [{ "role": "user", "content": "hi" }]
+        }))
+        .unwrap();
+        let (rewritten, _) = rewrite_inference_body_with_config(
+            "zcode",
+            InferenceWireKind::AnthropicMessages,
+            "/v1/messages",
+            &cfg,
+            &body,
+        )
+        .expect("a short chat turn must still be rewritten");
+        let parsed: Value = serde_json::from_slice(&rewritten).unwrap();
+        assert_eq!(parsed["system"][0]["text"], "Custom Prompt");
+    }
+
+    #[test]
+    fn anthropic_array_system_without_cache_control_stays_unmarked() {
+        let cfg = sample_cfg(
+            Some(("Custom Prompt", PromptRewriteMode::Replace, false)),
+            &[],
+        );
+        let body = serde_json::to_vec(&json!({
+            "model": "glm-5.3",
+            "system": [{ "type": "text", "text": "You are ZCode, an interactive agent" }],
+            "messages": [{ "role": "user", "content": "hello there" }]
+        }))
+        .unwrap();
+        let (rewritten, _) = rewrite_inference_body_with_config(
+            "zcode",
+            InferenceWireKind::AnthropicMessages,
+            "/v1/messages",
+            &cfg,
+            &body,
+        )
+        .unwrap();
+        let parsed: Value = serde_json::from_slice(&rewritten).unwrap();
+        assert!(parsed["system"][0].get("cache_control").is_none());
     }
 
     #[test]
