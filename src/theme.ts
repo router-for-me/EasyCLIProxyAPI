@@ -4,6 +4,7 @@ import {
   getThemeSelection,
   saveThemeSelection,
   openCustomThemesDirectory as openThemesDirectory,
+  importCustomTheme as importThemeFromPath,
   detectCorePlatform,
   getLinuxSystemTheme,
   setWindowMaterial,
@@ -73,6 +74,7 @@ let customAnimeImage: string | null = (() => {
   return isThemeImageDataUrl(saved) ? saved : null;
 })();
 let loadedCustomThemes: ThemeDefinition[] = [];
+let loadedCustomFolders = new Set<string>();
 
 function resolveAnimeBackdropImage(): string | undefined {
   if (animePreset === 'none') return undefined;
@@ -142,19 +144,23 @@ function reportCustomThemes(next: CustomThemeStatus) {
   notifyThemeSubscribers();
 }
 
-async function loadCustomThemes() {
+async function loadCustomThemes(): Promise<boolean> {
   const load = ++customLoads;
   reportCustomThemes({ ...customStatus, loading: true });
   try {
     const { files, omitted } = await listCustomThemes();
     const { themes, skipped, diagnostics } = parseCustomThemes(files);
-    if (load !== customLoads) return;
+    if (load !== customLoads) return false;
+    const skippedFolders = new Set(skipped.map((item) => item.folder));
     loadedCustomThemes = themes;
+    loadedCustomFolders = new Set(files.map((file) => file.folder).filter((folder) => !skippedFolders.has(folder)));
     customRegistry = buildActiveRegistry();
     controller?.setRegistry(customRegistry);
     reportCustomThemes({ loading: false, failed: false, skipped, diagnostics, omitted });
+    return true;
   } catch {
     if (load === customLoads) reportCustomThemes({ ...customStatus, loading: false, failed: true });
+    return false;
   }
 }
 
@@ -173,6 +179,21 @@ export async function initializeThemePreferences(): Promise<void> {
 export const reloadCustomThemes = loadCustomThemes;
 
 export const openCustomThemesDirectory = () => openThemesDirectory();
+
+export async function importCustomTheme(
+  path: string,
+  overwrite = false,
+): Promise<{ importedIds: string[]; existingIds: string[]; loadedThemes: ThemeDefinition[] }> {
+  const { importedIds, existingIds } = await importThemeFromPath({ path, overwrite });
+  if (existingIds.length) return { importedIds: [], existingIds, loadedThemes: [] };
+  if (!(await loadCustomThemes())) throw new Error('reload-failed');
+  const imported = new Set(importedIds.filter((id) => loadedCustomFolders.has(id)));
+  return {
+    importedIds,
+    existingIds: [],
+    loadedThemes: loadedCustomThemes.filter((theme) => imported.has(theme.id)),
+  };
+}
 
 const subscribeCustomThemes = (listener: () => void) => {
   customSubscribers.add(listener);

@@ -1348,8 +1348,14 @@ export function createBrowserMockRuntime(
       case 'plugin:app|identifier': return 'com.cpa.gui.browser-mock';
       case 'plugin:dialog|open': {
         const options = asObject(payload.options);
-        return options.directory
-          ? 'C:\\Users\\Mock\\Projects\\demo'
+        if (options.directory) return 'C:\\Users\\Mock\\Projects\\demo';
+        const filters = Array.isArray(options.filters) ? options.filters : [];
+        const isZip = filters.some((filter) => {
+          const extensions = asObject(filter).extensions;
+          return Array.isArray(extensions) && extensions.includes('zip');
+        });
+        return isZip
+          ? 'C:\\Users\\Mock\\Downloads\\mock-theme.zip'
           : 'C:\\Users\\Mock\\Certificates\\mock.pem';
       }
       case 'plugin:dialog|save': return 'C:\\Users\\Mock\\Downloads\\mock-output.json';
@@ -1357,6 +1363,12 @@ export function createBrowserMockRuntime(
       case 'detect_core_platform': return { os: 'windows', arch: 'x86_64', assetOs: 'windows', assetArch: 'amd64', archiveKind: 'zip' };
       case 'get_linux_system_theme': return 'light';
       case 'detect_window_material': return null;
+      case 'import_custom_theme': {
+        const importPath = String(payload.path ?? '').trim();
+        if (!importPath) throw new Error('not-found');
+        if (!payload.overwrite) return { importedIds: [], existingIds: ['harbor-dark'] };
+        return { importedIds: ['harbor-dark'], existingIds: [] };
+      }
       case 'list_custom_themes': return { files: [
         { folder: 'harbor-dark', content: JSON.stringify(MOCK_CUSTOM_THEME) },
         { folder: 'harbor-image-dark', content: JSON.stringify({

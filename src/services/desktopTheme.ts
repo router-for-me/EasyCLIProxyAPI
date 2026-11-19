@@ -15,8 +15,13 @@ export const getThemeSelection = (): Promise<ThemeSelection | null> =>
 export const saveThemeSelection = (args: { selection: ThemeSelection; }): Promise<void> =>
   invoke<void>('save_theme_selection', args);
 
+export type ImportCustomThemeResult = { importedIds: string[]; existingIds: string[] };
+
 export const openCustomThemesDirectory = (): Promise<void> =>
   invoke<void>('open_custom_themes_directory');
+
+export const importCustomTheme = (args: { path: string; overwrite?: boolean }): Promise<ImportCustomThemeResult> =>
+  invoke<ImportCustomThemeResult>('import_custom_theme', args);
 
 export const detectCorePlatform = (): Promise<{ os: string }> =>
   invoke<{ os: string }>('detect_core_platform');
