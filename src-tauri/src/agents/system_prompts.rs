@@ -368,6 +368,7 @@ pub(crate) fn restore_agent_prompt_proxies(app: tauri::AppHandle) {
         // a plaintext loopback. Deactivate the persisted overrides and point the clients back
         // at the kernel instead of silently downgrading them.
         if managed_core_tls_enabled() {
+            // Fail closed: without readable state assume every known client may hold rules.
             let clients: Vec<String> = match PROMPT_STATE.lock() {
                 Ok(guard) => guard
                     .clients
@@ -375,10 +376,10 @@ pub(crate) fn restore_agent_prompt_proxies(app: tauri::AppHandle) {
                     .filter(|(_, cfg)| cfg.has_active_rules())
                     .map(|(client, _)| client.clone())
                     .collect(),
-                Err(_) => return,
+                Err(_) => SYSTEM_PROMPT_CLIENTS.iter().map(|c| c.to_string()).collect(),
             };
             for client in clients {
-                if let Err(error) = deactivate_prompt_overrides_for_tls(&app, &client).await {
+                if let Err(error) = deactivate_prompt_overrides_for_tls(&app, &client) {
                     eprintln!("Failed to disable system prompt proxy for {client}: {error}");
                 }
             }
@@ -412,7 +413,7 @@ pub(crate) fn restore_agent_prompt_proxies(app: tauri::AppHandle) {
 
 /// Drops every rule for `client`, stops its listener and restores the kernel origin in the
 /// client configuration. Used when kernel TLS makes the plaintext loopback unusable.
-async fn deactivate_prompt_overrides_for_tls(
+fn deactivate_prompt_overrides_for_tls(
     app: &tauri::AppHandle,
     client_id: &str,
 ) -> Result<(), String> {
@@ -434,10 +435,9 @@ async fn deactivate_prompt_overrides_for_tls(
         .map(|port| format!("http://127.0.0.1:{port}"))
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", preferred_proxy_port(client_id)));
 
-    // Rewrite the client configuration first: if that fails the overrides stay armed and the
-    // client still points at a live proxy, instead of being left pointing at a dead one with
-    // its rules already wiped.
-    let kernel_origin = agent_effective_loopback_origin(client_id, gui_config.port);
+    // Resolve the kernel origin before the active port is cleared: while the entry is still
+    // active this helper would report the proxy itself.
+    let kernel_origin = managed_core_loopback_origin(gui_config.port);
     {
         let _file_guard = crate::AGENT_CONFIG_FILE_LOCK
             .lock()
@@ -632,6 +632,13 @@ pub(crate) async fn sync_zcode_catalog_model_prompts(
     let _op = PROMPT_PROXY_OP_LOCK.lock().await;
     let old_origin = agent_effective_loopback_origin("zcode", core_port);
     let (effective_default, _) = zcode_model_system_prompts_for_editor(home);
+
+    let wants_active = model_prompts
+        .iter()
+        .any(|(_, prompt)| prompt.as_deref().is_some_and(|p| !p.trim().is_empty()));
+    if wants_active && managed_core_tls_enabled() {
+        return Err(TLS_LOOPBACK_UNSUPPORTED.to_string());
+    }
 
     let (has_active, preferred_port) = {
         let mut guard = PROMPT_STATE
@@ -2206,6 +2213,37 @@ pub(crate) async fn save_agent_system_prompt_editor(
     }
 
     let _op = PROMPT_PROXY_OP_LOCK.lock().await;
+    // Refuse before touching the stored rules: a rejected save must not leave changed rules
+    // armed behind a plaintext proxy the caller was told does not exist.
+    let wants_active = validated_default.is_some() || !validated_models.is_empty();
+    if managed_core_tls_enabled() {
+        let already_active = PROMPT_STATE
+            .lock()
+            .map(|guard| {
+                guard
+                    .clients
+                    .get(client_id)
+                    .is_some_and(|cfg| cfg.has_active_rules())
+            })
+            .unwrap_or(true);
+        // A rejected save must not leave changed rules armed. When overrides were already
+        // active, shut the plaintext proxy down instead of keeping it running.
+        if already_active {
+            // Scoped so the (non-Send) lock guard never lives across an await point.
+            {
+                let _file_guard = crate::AGENT_CONFIG_FILE_LOCK
+                    .lock()
+                    .map_err(|_| "Agent configuration file lock is poisoned".to_string())?;
+            }
+            deactivate_prompt_overrides_for_tls(&app, client_id)?;
+        }
+        if wants_active {
+            return Err(TLS_LOOPBACK_UNSUPPORTED.to_string());
+        }
+        let models = fetch_models_for_prompt_editor(client_id, &gui_config).await;
+        return AGENT_CONFIG_DIRECTORIES
+            .sync_scope(directories, || build_editor_snapshot(client_id, &home, &models));
+    }
     let old_origin = agent_effective_loopback_origin(client_id, gui_config.port);
 
     let (has_active, preferred_port) = {
