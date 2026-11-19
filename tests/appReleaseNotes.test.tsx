@@ -49,8 +49,17 @@ describe('localized release notes display', () => {
     expect(html).toContain('v0.2.96');
     expect(html).not.toContain('v0.2.95');
     expect(html).not.toContain('他の言語');
-    expect(html.indexOf('release notes</strong>')).toBeLessThan(html.indexOf('Newest skipped release'));
-    expect(html.indexOf('Newest skipped release')).toBeLessThan(html.indexOf('Older skipped release'));
+    // The target version renders first, then skipped releases newest to oldest.
+    const targetIndex = html.indexOf('v0.2.98');
+    const newestIndex = html.indexOf('Newest skipped release');
+    const olderIndex = html.indexOf('Older skipped release');
+    expect(targetIndex).toBeGreaterThan(-1);
+    expect(newestIndex).toBeGreaterThan(-1);
+    expect(olderIndex).toBeGreaterThan(-1);
+    expect(targetIndex).toBeLessThan(newestIndex);
+    expect(newestIndex).toBeLessThan(olderIndex);
+    // Each skipped release shows its own version label before its notes.
+    expect(html.indexOf('v0.2.97')).toBeLessThan(newestIndex);
   });
 
   test('renders versioned Markdown with date and release link without requiring an available update', () => {
