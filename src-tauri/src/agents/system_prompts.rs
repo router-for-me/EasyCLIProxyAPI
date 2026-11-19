@@ -434,6 +434,17 @@ async fn deactivate_prompt_overrides_for_tls(
         .map(|port| format!("http://127.0.0.1:{port}"))
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", preferred_proxy_port(client_id)));
 
+    // Rewrite the client configuration first: if that fails the overrides stay armed and the
+    // client still points at a live proxy, instead of being left pointing at a dead one with
+    // its rules already wiped.
+    let kernel_origin = agent_effective_loopback_origin(client_id, gui_config.port);
+    {
+        let _file_guard = crate::AGENT_CONFIG_FILE_LOCK
+            .lock()
+            .map_err(|_| "Agent configuration file lock is poisoned".to_string())?;
+        sync_configured_agent_origin(client_id, &home, &proxy_origin, &kernel_origin)?;
+    }
+
     {
         let mut guard = PROMPT_STATE
             .lock()
@@ -445,12 +456,6 @@ async fn deactivate_prompt_overrides_for_tls(
         persist_prompt_state_locked(&guard)?;
     }
     stop_client_proxy_listener(client_id);
-
-    let kernel_origin = agent_effective_loopback_origin(client_id, gui_config.port);
-    let _file_guard = crate::AGENT_CONFIG_FILE_LOCK
-        .lock()
-        .map_err(|_| "Agent configuration file lock is poisoned".to_string())?;
-    sync_configured_agent_origin(client_id, &home, &proxy_origin, &kernel_origin)?;
     Ok(())
 }
 
