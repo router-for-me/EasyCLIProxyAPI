@@ -35,6 +35,24 @@ function renderNotes(overrides: Partial<Parameters<typeof AppReleaseNotes>[0]> =
 }
 
 describe('localized release notes display', () => {
+  test('renders skipped releases below the target in the current locale only', () => {
+    const html = renderNotes({ info: {
+      ...info,
+      skippedReleaseNotes: [
+        { version: '0.2.97', releaseNotes: { en: 'Newest skipped release' } },
+        { version: '0.2.96', releaseNotes: { en: 'Older skipped release' } },
+        { version: '0.2.95', releaseNotes: { ja: '他の言語' } },
+      ],
+    } }, 'en');
+
+    expect(html).toContain('v0.2.97');
+    expect(html).toContain('v0.2.96');
+    expect(html).not.toContain('v0.2.95');
+    expect(html).not.toContain('他の言語');
+    expect(html.indexOf('release notes</strong>')).toBeLessThan(html.indexOf('Newest skipped release'));
+    expect(html.indexOf('Newest skipped release')).toBeLessThan(html.indexOf('Older skipped release'));
+  });
+
   test('renders versioned Markdown with date and release link without requiring an available update', () => {
     const html = renderNotes();
     expect(html).toContain('v0.2.98');

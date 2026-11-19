@@ -7,6 +7,7 @@ export type AppUpdateInfo = {
   updateAvailable: boolean;
   releaseUrl: string;
   releaseNotes: Partial<Record<AppLocale, string>> | null;
+  skippedReleaseNotes?: { version: string; releaseNotes: Partial<Record<AppLocale, string>> }[];
   publishedAt: string;
   currentBuildAt: string | null;
   autoUpdateSupported: boolean;

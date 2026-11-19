@@ -146,6 +146,46 @@ where
     Ok(notes)
 }
 
+pub(crate) fn skipped_release_notes(
+    history: &serde_json::Value,
+    current_version: &str,
+    target_version: &str,
+) -> Vec<SkippedReleaseNotes> {
+    let (Ok(current), Ok(target), Some(history)) = (
+        semver::Version::parse(current_version.trim_start_matches('v')),
+        semver::Version::parse(target_version.trim_start_matches('v')),
+        history.as_object(),
+    ) else {
+        return Vec::new();
+    };
+    if !target.pre.is_empty() {
+        return Vec::new();
+    }
+    let mut entries = history
+        .iter()
+        .filter_map(|(version, notes)| {
+            let version = semver::Version::parse(version).ok()?;
+            if !version.pre.is_empty()
+                || !version.build.is_empty()
+                || !version.cmp_precedence(&current).is_gt()
+                || !version.cmp_precedence(&target).is_lt()
+            {
+                return None;
+            }
+            let notes = deserialize_release_notes(notes).ok()?;
+            (!notes.is_empty()).then_some((version, notes))
+        })
+        .collect::<Vec<_>>();
+    entries.sort_unstable_by(|(left, _), (right, _)| right.cmp(left));
+    entries
+        .into_iter()
+        .map(|(version, release_notes)| SkippedReleaseNotes {
+            version: version.to_string(),
+            release_notes,
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub(crate) fn get_version_source_settings(
     gui_config_state: tauri::State<'_, GuiConfigState>,
@@ -382,12 +422,22 @@ pub(crate) async fn resolve_app_update(
     } else {
         None
     };
+    let skipped_release_notes = if update_available && !is_preview {
+        skipped_release_notes(
+            &manifest.release_notes_history,
+            &current_version,
+            &latest_version,
+        )
+    } else {
+        Vec::new()
+    };
     let info = AppUpdateInfo {
         current_version,
         latest_version,
         update_available,
         release_url: manifest.release_url,
         release_notes: manifest.release_notes,
+        skipped_release_notes,
         published_at: manifest.published_at,
         current_build_at,
         auto_update_supported,
