@@ -36,7 +36,7 @@ describe('automatic update policy', () => {
   });
   it('localizes settings, eligibility, and retry states in every language', () => {
     for (const locale of supportedLocales) {
-      for (const key of ['title', 'downloadHint', 'phase.waiting-startup', 'phase.installing', 'phase.failed']) {
+      for (const key of ['title', 'enabled', 'phase.waiting-startup', 'phase.installing', 'phase.failed']) {
         const message = translate(locale, `autoUpdate.${key}`);
         expect(message).toBeTruthy();
         expect(message).not.toBe(`autoUpdate.${key}`);

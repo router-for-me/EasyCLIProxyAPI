@@ -1,34 +1,72 @@
 @layer components {
-  .auto-update-panel { display: grid; gap: 10px; min-width: 0; padding: 14px 16px; }
-  /* Inside a version card the panel is a plain section; the card's info
-     block already draws the divider above it. */
-  .auto-update-panel-inset {
-    gap: 4px;
-    padding: 0;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    box-shadow: none;
-  }
-  .auto-update-heading, .auto-update-controls, .auto-update-actions, .auto-update-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; }
+  .auto-update-panel { display: grid; gap: 12px; min-width: 0; padding: 14px 16px; }
+  .auto-update-heading, .auto-update-actions, .auto-update-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; }
   .auto-update-heading { justify-content: space-between; }
-  .auto-update-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
-  .auto-update-title h2 { margin: 0; font-size: var(--font-size-body); font-weight: var(--font-weight-semibold); line-height: var(--line-height-body); }
-  /* Switch sits right after the title, so the label reads as a single control row. */
+  .auto-update-title { margin: 0; min-width: 0; font-size: var(--font-size-body); font-weight: var(--font-weight-semibold); line-height: var(--line-height-body); }
+
+  /* Targets read as a short settings list instead of two loose native boxes. */
   .auto-update-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
   .auto-update-fields legend { margin: 0; padding: 0; }
-  .auto-update-controls { gap: 6px 16px; }
-  .auto-update-explanation, .auto-update-note { margin: 0; color: var(--text-secondary); font-size: var(--font-size-caption); line-height: var(--line-height-body); }
-  /* The hint describes both checkboxes, so it sits in their group rather than the card edge. */
-  .auto-update-panel-inset .auto-update-explanation { padding-left: 22px; }
+  .auto-update-targets { display: grid; gap: 2px; }
+  /* Inactive master switch dims the target list so it reads as off, not empty. */
+  .auto-update-fields:disabled .auto-update-targets .binary-control-label { color: var(--color-text-muted); opacity: 0.75; cursor: not-allowed; }
+  .auto-update-fields:disabled .auto-update-targets .auto-update-checkbox { border-color: var(--color-border-default); background: var(--color-surface-hover); }
+  .auto-update-targets .binary-control-label { gap: 8px; padding: 2px 0; font-size: var(--font-size-meta); color: var(--color-text-secondary); }
+  .auto-update-panel input.auto-update-checkbox {
+    appearance: none;
+    display: inline-grid;
+    place-content: center;
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    border: 1.5px solid var(--color-border-strong);
+    border-radius: 4px;
+    background: var(--bg-card);
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .auto-update-panel input.auto-update-checkbox::after {
+    content: '';
+    width: 8px;
+    height: 4px;
+    border: solid transparent;
+    border-width: 0 0 2px 2px;
+    transform: rotate(-45deg) translate(0.5px, -1px) scale(0.7);
+    opacity: 0;
+    transition: opacity 120ms ease, transform 120ms ease;
+  }
+  .auto-update-panel input.auto-update-checkbox:checked {
+    background: var(--ui-accent);
+    border-color: var(--ui-accent);
+  }
+  .auto-update-panel input.auto-update-checkbox:checked::after {
+    border-color: var(--bg-card);
+    opacity: 1;
+    transform: rotate(-45deg) translate(0.5px, -1px) scale(1);
+  }
+  .auto-update-panel input.auto-update-checkbox:hover:not(:disabled) { border-color: var(--ui-accent); }
+  /* Dimming comes from the disabled fieldset, so the box itself keeps a readable edge. */
+  .auto-update-panel input.auto-update-checkbox:disabled { cursor: not-allowed; }
+
+  .auto-update-note { margin: 0; color: var(--color-text-tertiary); font-size: var(--font-size-caption); line-height: var(--line-height-body); }
   .auto-update-status { font-size: var(--font-size-caption); }
   .auto-update-status span, .auto-update-actions > span { color: var(--text-secondary); font-size: var(--font-size-caption); }
   .auto-update-actions { justify-content: flex-end; gap: 8px; margin-left: auto; }
   .auto-update-actions .compact-button { padding: 0 10px; min-height: 30px; }
-  .auto-update-panel .notice, .auto-update-panel .inline-notice, .auto-update-panel [role="alert"] { margin: 0; }
+  /* An inert Save should read as unavailable, not as a dark primary action. */
+  .auto-update-actions .primary-button:disabled {
+    border-color: var(--color-border-subtle);
+    background: var(--color-surface-hover);
+    color: var(--color-text-tertiary);
+    box-shadow: none;
+    opacity: 1;
+  }
+
+  /* Inside the version card the panel is a plain section; the card already draws the divider. */
+  .auto-update-panel-inset { gap: 10px; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+
   @media (max-width: 640px) {
     .auto-update-panel { padding: 12px 14px; }
     .auto-update-title { flex-wrap: wrap; }
-    .auto-update-actions { margin-left: auto; }
   }
 }

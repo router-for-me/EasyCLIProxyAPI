@@ -80,28 +80,26 @@ export function AutoUpdatePanel({ embedded = false, enabled, unavailableHint, un
   const disabled = busy || unavailable;
   return <section className={`auto-update-panel${embedded ? ' auto-update-panel-inset' : ' surface-panel'}`} aria-label={t('autoUpdate.title')}>
     <div className="auto-update-heading">
-      <div className="auto-update-title">
-        <h2>{t('autoUpdate.title')}</h2>
-        <Switch checked={draft?.enabled ?? false} onChange={event => change({ enabled: event.target.checked })}
-          aria-label={t('autoUpdate.enabled')} title={t('autoUpdate.enabled')} disabled={Boolean(disabled)} />
-      </div>
+      <h2 className="auto-update-title">{t('autoUpdate.title')}</h2>
       <div className="auto-update-actions">
         {dirty ? <span>{t('autoUpdate.unsaved')}</span> : null}
         {status?.phase === 'failed' ? <button type="button" className="link-button" disabled={Boolean(disabled)}
           onClick={() => void action(retryAutoUpdate)}>{t('autoUpdate.retry')}</button> : null}
-        <button type="button" className="primary-button compact-button" disabled={Boolean(disabled) || !dirty} onClick={save}><Check size={16} aria-hidden="true" />{t('common.save')}</button>
+        <Switch checked={draft?.enabled ?? false} onChange={event => change({ enabled: event.target.checked })}
+          aria-label={t('autoUpdate.enabled')} title={t('autoUpdate.enabled')} disabled={Boolean(disabled)} />
+        <button type="button" className="primary-button compact-button" disabled={Boolean(disabled) || !dirty} onClick={save}><Check size={15} aria-hidden="true" />{t('common.save')}</button>
       </div>
     </div>
     <InlineNotice notice={error || readError ? { owner: 'auto-update-settings', message: error || readError, tone: 'error' } : null} onDismiss={() => { setError(''); setReadError(''); }} />
     {!draft ? <p className="auto-update-note">{t('common.loading')}</p> : <>
-      <fieldset disabled={Boolean(disabled)} className="auto-update-fields">
+      <fieldset disabled={Boolean(disabled) || !draft.enabled} className="auto-update-fields">
         <legend className="sr-only">{t('autoUpdate.settings')}</legend>
-        <div className="auto-update-controls">
-          <Checkbox checked={draft.updateApp} onChange={event => change({ updateApp: event.target.checked })} label={t('autoUpdate.app')} />
-          <Checkbox checked={draft.updateCore} onChange={event => change({ updateCore: event.target.checked })} label={t('autoUpdate.core')} />
+        <div className="auto-update-targets">
+          <Checkbox className="auto-update-checkbox" checked={draft.updateApp} onChange={event => change({ updateApp: event.target.checked })} label={t('autoUpdate.app')} />
+          <Checkbox className="auto-update-checkbox" checked={draft.updateCore} onChange={event => change({ updateCore: event.target.checked })} label={t('autoUpdate.core')} />
         </div>
       </fieldset>
-      <p className="auto-update-explanation">{unavailable ? (unsupportedReason || unavailableHint) : t('autoUpdate.downloadHint')}</p>
+      {unavailable ? <p className="auto-update-note">{unsupportedReason || unavailableHint}</p> : null}
       {status?.settings.enabled ? <div className="auto-update-status" aria-live="polite">
         <strong>{t(`autoUpdate.phase.${status.phase}`)}</strong>
         {status?.version ? <span>{t(status.target === 'core' ? 'autoUpdate.core' : 'autoUpdate.app')} {status.version}</span> : null}

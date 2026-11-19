@@ -4,7 +4,6 @@ const messages: Record<string, readonly [string, string, string, string]> = {
   settings: ["更新对象与条件","Update targets and conditions","更新対象と条件","Цели и условия обновления"],
   targets: ["更新对象","Update","更新対象","Обновлять"],
   app: ['应用', 'Application', 'アプリ', 'Приложение'], core: ['内核', 'Core', 'コア', 'Ядро'],
-  downloadHint: ['所选更新在后台静默下载，下次启动时安装。', 'Selected updates download in the background and install on the next launch.', '選択した更新をバックグラウンドでダウンロードし、次回起動時にインストールします。', 'Выбранные обновления загружаются в фоне и устанавливаются при следующем запуске.'],
   unsaved: ["未保存","Unsaved changes","未保存の変更","Изменения не сохранены"],
   retry: ['清除失败记录并重试', 'Clear failures and retry', '失敗履歴を消去して再試行', 'Сбросить ошибки и повторить'],
   selectTarget: ['请至少选择应用或内核。', 'Select the application or core.', 'アプリまたはコアを選択してください。', 'Выберите приложение или ядро.'],
