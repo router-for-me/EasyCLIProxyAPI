@@ -175,6 +175,53 @@ const assert = require('node:assert/strict');
     assert.match(await page.locator('.theme-selector-hint').innerText(), /themes\/<.*>\/theme\.json/);
     await page.locator('[data-action="open-themes"]').click();
     await page.waitForFunction(() => window.themeFixture.calls.some(call => call.cmd === 'open_custom_themes_directory'));
+    const importButton = page.locator('[data-action="import-theme"]');
+    const openButton = page.locator('[data-action="open-themes"]');
+    const [importBox, openBox] = await Promise.all([importButton.boundingBox(), openButton.boundingBox()]);
+    assert.ok(importBox && openBox && importBox.x + importBox.width <= openBox.x, 'import button sits to the left of open themes folder');
+    await importButton.click();
+    await page.locator('.theme-selector-import-menu').waitFor();
+    await page.keyboard.press('Escape');
+    await page.locator('.theme-selector-import-menu').waitFor({ state: 'detached' });
+    assert.equal(await page.locator('.theme-selector-menu').count(), 1, 'Escape closes the import menu without closing the theme dialog');
+
+    await page.evaluate(() => {
+      window.themeFixture.setDialogOpenResult('/tmp/sunset.zip');
+      window.themeFixture.setImportResult({
+        importedIds: ['sunset-dark'],
+        existingIds: ['sunset-dark'],
+        addedThemes: [{
+          folder: 'sunset-dark',
+          content: JSON.stringify({
+            schemaVersion: 1, id: 'sunset-dark', name: { en: 'Sunset', 'zh-CN': '日落' },
+            appearance: 'dark', windowBackground: '#1A1215', tokens: { accent: '#F08A5D' },
+          }),
+        }],
+      });
+    });
+    await importButton.click();
+    await page.locator('[data-action="import-theme-zip"]').click();
+    await page.locator('.app-confirm-dialog').waitFor();
+    await page.locator('.app-confirm-dialog .danger-button').click();
+    await card('sunset-dark').waitFor();
+    await page.waitForFunction(() => document.documentElement.dataset.themeId === 'sunset-dark');
+    assert.match(await page.locator('.theme-selector-import-notice').innerText(), /日落/);
+    const zipDialogCall = await page.evaluate(() =>
+      window.themeFixture.calls.find(call => call.cmd === 'plugin:dialog|open'));
+    assert.equal(zipDialogCall.args.options.directory, false);
+    assert.deepEqual(zipDialogCall.args.options.filters, [{ name: 'ZIP', extensions: ['zip'] }]);
+
+    await page.evaluate(() => {
+      window.themeFixture.setDialogOpenResult('/tmp/empty-folder');
+      window.themeFixture.setImportResult({ importedIds: [], error: 'no-theme-found' });
+    });
+    await importButton.click();
+    await page.locator('[data-action="import-theme-folder"]').click();
+    await page.waitForFunction(() => /theme\.json/.test(document.querySelector('.theme-selector-import-notice')?.textContent ?? ''));
+    const folderDialogCall = await page.evaluate(() =>
+      [...window.themeFixture.calls].reverse().find(call => call.cmd === 'plugin:dialog|open'));
+    assert.equal(folderDialogCall.args.options.directory, true);
+
     await page.evaluate(() => window.themeFixture.setCustomThemes([], true));
     await page.locator('[data-action="reload-themes"]').click();
     await page.waitForFunction(() => /无法读取自定义主题/.test(document.querySelector('.theme-selector-custom-notice')?.textContent ?? ''));

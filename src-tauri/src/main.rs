@@ -2994,6 +2994,7 @@ fn main() {
             desktop_theme::get_linux_system_theme,
             desktop_theme::list_custom_themes,
             desktop_theme::open_custom_themes_directory,
+            desktop_theme::import_custom_theme,
             desktop_theme::get_theme_selection,
             desktop_theme::save_theme_selection,
             window_material::detect_window_material,

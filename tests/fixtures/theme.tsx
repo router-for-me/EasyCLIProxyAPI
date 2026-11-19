@@ -23,6 +23,8 @@ const customTheme = (id: string, name: unknown, extra = {}) => JSON.stringify({
 });
 let customError = params.has('custom-error');
 let customOmitted = params.has('custom') ? 3 : 0;
+let dialogOpenResult: string | null = null;
+let importResult: { importedIds: string[]; existingIds?: string[]; addedThemes?: typeof customThemes; error?: string } = { importedIds: [], existingIds: [] };
 let customThemes = params.has('custom') ? [
   { folder: 'a-harbor', content: customTheme('harbor-dark', { en: 'Harbor', 'zh-CN': '港湾' }) },
   { folder: 'b-broken', content: '{' },
@@ -53,6 +55,19 @@ mockIPC(async (cmd, args: any) => {
   if (cmd === 'open_custom_themes_directory') {
     if (params.has('open-error')) throw new Error('No file manager');
     return;
+  }
+  if (cmd === 'plugin:dialog|open') {
+    return dialogOpenResult;
+  }
+  if (cmd === 'import_custom_theme') {
+    if (importResult.error) throw importResult.error;
+    if (!args?.overwrite && importResult.existingIds?.length) {
+      return { importedIds: [], existingIds: importResult.existingIds };
+    }
+    if (importResult.addedThemes?.length) {
+      customThemes = [...customThemes, ...importResult.addedThemes];
+    }
+    return { importedIds: importResult.importedIds, existingIds: [] };
   }
   if (cmd === 'detect_window_material') return params.get('material');
   if (cmd === 'set_window_material') {
@@ -88,6 +103,8 @@ Object.assign(window, {
     get appearance() { return appearance; },
     setSaveError(value: boolean) { saveError = value; },
     setCustomThemes(files: typeof customThemes, error = false) { customThemes = files; customError = error; customOmitted = 0; },
+    setDialogOpenResult(value: string | null) { dialogOpenResult = value; },
+    setImportResult(next: typeof importResult) { importResult = next; },
     async setSystem(theme: AppTheme) {
       system = theme;
       if (platform === 'linux' || override === null) {
