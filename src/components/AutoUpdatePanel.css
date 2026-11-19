@@ -59,7 +59,7 @@
     background: var(--color-surface-hover);
     color: var(--color-text-tertiary);
     box-shadow: none;
-    opacity: 1;
+    opacity: 0.55;
   }
 
   /* Inside the version card the panel is a plain section; the card already draws the divider. */
