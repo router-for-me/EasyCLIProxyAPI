@@ -154,13 +154,13 @@
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
   min-height: 480px;
 }
 
 .usage-live-routing-layout .live-routing-map {
   flex: 1 1 auto;
-  min-height: 360px;
+  min-height: 260px;
 }
 
 @container workspace (min-width: 600px) {

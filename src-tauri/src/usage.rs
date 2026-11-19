@@ -1,3 +1,4 @@
+mod client_agent;
 mod resp;
 mod sources;
 mod token;
@@ -246,7 +247,14 @@ pub(crate) struct UsageRecord {
     client_ip: Option<String>,
     #[serde(default, skip_serializing)]
     x_forwarded_for: Option<String>,
-    #[serde(default, skip_serializing)]
+    #[serde(
+        default,
+        rename(serialize = "client_agent"),
+        alias = "client_agent",
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "client_agent::serialize",
+        deserialize_with = "client_agent::deserialize"
+    )]
     user_agent: Option<String>,
     #[serde(default)]
     reasoning_effort: String,
@@ -6459,6 +6467,74 @@ mod tests {
         assert_eq!(record.tokens.total_tokens, 30);
         assert_eq!(record.tokens.cache_read_tokens, 5);
         assert!(!record.api_key_hash.is_empty());
+    }
+
+    #[test]
+    fn client_agent_queue_sqlite_ui_and_export_roundtrip_keep_only_safe_identity() {
+        let root = test_root("client-agent-roundtrip");
+        let mut connection = open_test_database(&root);
+        let config = GuiConfigFile::default();
+        let raw = "OpenClaw/2026.11.19 (/home/private; person@example.test; token=private-value)";
+        let record = normalize_usage_record(
+            serde_json::json!({
+                "request_id": "client-agent-roundtrip", "timestamp": "2026-11-19T08:00:00Z",
+                "user_agent": raw, "client_ip": "192.0.2.1", "x_forwarded_for": "192.0.2.2",
+                "model": "claude-test", "provider": "codex"
+            }),
+            &config,
+        )
+        .unwrap();
+        insert_usage_records(&mut connection, &[record]).unwrap();
+        let stored: String = connection
+            .query_row("SELECT user_agent FROM usage_events LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(stored, raw);
+        let page = load_usage_events(&connection, &UsageQuery::default(), &config).unwrap();
+        let value = serde_json::to_value(&page.items[0]).unwrap();
+        assert_eq!(value["client_agent"], "openclaw");
+        for key in ["user_agent", "client_ip", "x_forwarded_for"] {
+            assert!(value.get(key).is_none());
+        }
+        let text = value.to_string();
+        for private in [
+            "/home/private",
+            "person@example.test",
+            "private-value",
+            "192.0.2.",
+        ] {
+            assert!(!text.contains(private));
+        }
+        let sdk = normalize_usage_record(serde_json::json!({"request_id": "sdk", "user_agent": "python-httpx/0.28 token=secret"}), &config).unwrap();
+        assert_eq!(serde_json::to_value(sdk).unwrap()["client_agent"], "other");
+        let missing = normalize_usage_record(serde_json::json!({"request_id": "legacy", "provider": "codex", "model": "claude-code"}), &config).unwrap();
+        assert!(serde_json::to_value(missing)
+            .unwrap()
+            .get("client_agent")
+            .is_none());
+        let injected = normalize_usage_record(
+            serde_json::json!({"request_id": "not-header", "client_agent": "openclaw"}),
+            &config,
+        )
+        .unwrap();
+        assert!(serde_json::to_value(injected)
+            .unwrap()
+            .get("client_agent")
+            .is_none());
+        let imported: UsageRecord = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            serde_json::to_value(imported).unwrap()["client_agent"],
+            "openclaw"
+        );
+        let mut legacy = serde_json::to_value(&page.items[0]).unwrap();
+        legacy.as_object_mut().unwrap().remove("client_agent");
+        let legacy: UsageRecord = serde_json::from_value(legacy).unwrap();
+        assert!(serde_json::to_value(legacy)
+            .unwrap()
+            .get("client_agent")
+            .is_none());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
