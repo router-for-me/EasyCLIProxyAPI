@@ -2,6 +2,7 @@ import { readAgentConfigDirectories, writeAgentConfigDirectories } from '../serv
 import { hasDeepSeekArgumentConflict, parseAgentLaunchArguments } from '../services/agentLaunchArguments';
 import { pollWhileActive } from '../services/windowActivity';
 import { Notice } from '../components/Notice';
+import { isTransientConnectBlockReason, resolveAgentConnectBlockReason } from '../services/agentConnectBlock';
 import { Tabs } from '../components/Tabs';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { Switch } from '../components/Switch';
@@ -124,7 +125,7 @@ import { ZCodeSubagentConfigDialog } from './ZCodeSubagentConfigDialog';
 import { DeepSeekHarnessCatalogDialog } from './DeepSeekHarnessCatalogDialog';
 import { AgentConfigBackupDialog } from './AgentConfigBackupDialog';
 import { AgentClientList } from './AgentClientList';
-import { AgentConfigManagementPanel, AgentConfigurationFeedback, AgentRunControls } from './AgentControls';
+import { AgentConfigManagementPanel, AgentConfigurationFeedback, AgentConnectBlockNotice, AgentRunControls, connectBlockNoticeText } from './AgentControls';
 import { Dialog } from '../components/Dialog';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { requestAppNavigation } from '../navigation';
@@ -1064,6 +1065,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     activeStatus?.supportedPlatform
       && (activeStatus.installed || activeStatus.configExists),
   );
+  // canEnable stays the write-readiness gate used by template/update actions; the
+  // blocked-reason model below additionally covers busy/loading/invalid config.
   const canEnable = Boolean(
     canConfigureActiveClient
       && !modelLoading
@@ -1071,6 +1074,33 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         ? claudeMappingsReady && claudeCodeRuntimeSettingsReady
         : selectedModelOption),
   );
+  const connectBlockInput = {
+    busy,
+    loading,
+    hasStatus: Boolean(activeStatus),
+    supportedPlatform: Boolean(activeStatus?.supportedPlatform),
+    installed: Boolean(activeStatus?.installed),
+    configExists: Boolean(activeStatus?.configExists),
+    connectionInvalid: connectionState === 'invalid',
+    modelLoading,
+    modelCount: models.length,
+    hasSavedModelSelection: Boolean(savedSelectedModel),
+    // A saved model that exists in the catalog is still a valid selection for clients that
+    // keep the applied model out of the picker; only a missing catalog entry is gone.
+    hasSelectedModel: Boolean(savedSelectedModel && (selectedModelOption || isClaudeModelMappingClient)),
+    claudeMappingClient: isClaudeModelMappingClient,
+    claudeMappingsReady,
+    claudeRuntimeSettingsReady: claudeCodeRuntimeSettingsReady,
+  };
+  const connectBlockReason = resolveAgentConnectBlockReason(connectBlockInput);
+  const connectDisabled = connectBlockReason !== null;
+  // The management apply row additionally needs an edited setting to write.
+  const connectApplyBlockReason = resolveAgentConnectBlockReason({
+    ...connectBlockInput,
+    requirePendingChanges: true,
+    hasPendingChanges,
+  });
+  const connectApplyDisabled = connectApplyBlockReason !== null;
   const activeLaunchTargets = activeStatus?.launchTargets ?? [];
   const launchEnabled = Boolean(
     activeStatus?.supportedPlatform
@@ -1882,12 +1912,34 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     </button>
   ) : null;
 
+  // The blocked reason repeats the invalid-config guidance in its own notice.
   const configurationFeedback = <AgentConfigurationFeedback pending={hasPendingChanges}
     status={modelLoading || !activeStatus ? t('agents.modify.checking')
       : activeStatus.modificationState === 'invalid' ? t('agents.modify.invalidState') : ''}
-    description={modificationDescription} />;
+    description={connectBlockReason === 'configInvalid' ? '' : modificationDescription} />;
   const setupErrorKey = selected === 'vscode-copilot' ? copilotSetupErrorKey(configurationError) : undefined;
   const configurationErrorMessage = (setupErrorKey ? t(setupErrorKey) : configurationError) || (!nativeOauth ? modelSelectionError || (selected === 'claude-code' ? '' : modelError) : '');
+  const connectBlockNoticeId = useId();
+  const modelNames = models.map((model) => model.name);
+  const connectBlockVisible = connectBlockReason !== null
+    && !isTransientConnectBlockReason(connectBlockReason);
+  // The notice renders once at the page level so the save bar keeps its layout when a
+  // reason appears; each save bar reserves a full-width slot to expose the same copy on hover.
+  // The management subpage additionally requires an edited setting before writing, so it
+  // reuses the page-level notice whenever the pending-change state is the only blocker.
+  const shownBlockReason = activeSubpage === 'management' && connectApplyBlockReason === 'noPendingChanges'
+    && connectBlockReason === null ? connectApplyBlockReason : connectBlockReason;
+  const shownBlockVisible = shownBlockReason !== null
+    && !isTransientConnectBlockReason(shownBlockReason);
+  const shownBlockReasonText = shownBlockVisible && shownBlockReason
+    ? connectBlockNoticeText(shownBlockReason, t) : '';
+  const connectBlockNotice = shownBlockVisible
+    ? <AgentConnectBlockNotice id={connectBlockNoticeId} reason={shownBlockReason} models={modelNames}
+      canTemplate={canEnable && !nativeOauth}
+      onTemplate={() => void openDefaultConfirmation()}
+      onOpenManagement={() => setActiveSubpage('management')}
+      onRefreshModels={refreshModels} />
+    : null;
 
   const editDesktopEntries = (entries: ClaudeDesktopModelMapping[]) => {
     setModelSelectionError('');
@@ -2013,6 +2065,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
             <Tabs className="agent-subpage-tabs secondary-page-tabs" aria-label={t('agents.tabs.label')} value={activeSubpage} onChange={setActiveSubpage} disabled={busy}
               items={availableSubpages.map(subpage => ({ value: subpage.id, id: `agent-subpage-tab-${subpage.id}`, panelId: `agent-subpage-panel-${subpage.id}`, label: t(subpage.labelKey) }))} />
           ) : null}
+          {connectBlockNotice}
           <div className="agent-config-scroll-region">
           {embedded && selected === 'vscode-copilot' && activeSubpage === 'core' && activeStatus ? (
             <CopilotPluginStatus installed={activeStatus.pluginInstalled} version={activeStatus.pluginVersion} />
@@ -2055,13 +2108,16 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
               <div className="agent-save-bar">
                 {configurationFeedback}
+                {shownBlockVisible ? <span className="agent-connect-block-slot" title={shownBlockReasonText} aria-hidden="true" /> : null}
                 <div className={`agent-save-actions${!isPiClient ? " agent-codex-save-actions" : ""}`}>
                   {closeConfigurationButton}
                   <button
                     type="button"
                     className="primary-button"
                     onClick={applySelectedConfiguration}
-                    disabled={busy || !canEnable || configurationWriteBlocked}
+                    disabled={connectDisabled}
+                    title={connectDisabled && shownBlockReasonText ? shownBlockReasonText : undefined}
+                    aria-describedby={connectBlockNotice ? connectBlockNoticeId : undefined}
                   >
                     {['apply', 'install-pi', 'repair-pi'].includes(busyAction ?? '') ? <LoaderCircle size={16} className="spin" /> : null}
                     {isPiClient
@@ -2309,10 +2365,13 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
 
               <div className="agent-save-bar">
                 {configurationFeedback}
+                {shownBlockVisible ? <span className="agent-connect-block-slot" title={shownBlockReasonText} aria-hidden="true" /> : null}
                   <div className={`agent-save-actions${!isPiClient ? " agent-codex-save-actions" : ""}`}>
                   {closeConfigurationButton}
                   <button type="button" className="primary-button" onClick={applySelectedConfiguration}
-                    disabled={busy || !canEnable || configurationWriteBlocked}
+                    disabled={connectDisabled}
+                    title={connectDisabled && shownBlockReasonText ? shownBlockReasonText : undefined}
+                    aria-describedby={connectBlockNotice ? connectBlockNoticeId : undefined}
                   >
                     {['apply', 'install-pi', 'repair-pi'].includes(busyAction ?? '') ? <LoaderCircle size={16} className="spin" /> : null}
                     {isPiClient && !activeStatus?.pluginInstalled ? t('agents.pi.install') : configurationActionLabel}
@@ -2377,8 +2436,10 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
                       type="button"
                       className="primary-button"
                       onClick={applySelectedConfiguration}
-                      disabled={busy || !canEnable || configurationWriteBlocked || !hasPendingChanges}
+                      disabled={connectApplyDisabled}
                       style={{ height: '36px', padding: '0 14px', whiteSpace: 'nowrap' }}
+                      title={connectApplyDisabled ? shownBlockReasonText || undefined : undefined}
+                      aria-describedby={shownBlockVisible ? connectBlockNoticeId : undefined}
                     >
                       {busyAction === 'apply' ? <LoaderCircle size={15} className="spin" /> : null}
                       {configurationActionLabel}
