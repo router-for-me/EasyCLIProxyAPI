@@ -78,6 +78,118 @@ export const anime: ThemeDefinition = {
   },
 };
 
+const lightGlassBackdrops: Record<string, NonNullable<ThemeDefinition['backdrop']>> = {
+  'sakura-light': {
+    layers: [
+      {
+        kind: 'linear',
+        angle: 120,
+        stops: [
+          { color: '#FFE1F038', at: 0 },
+          { color: '#FDE9EF2E', at: 58 },
+          { color: '#FAF5EE38', at: 100 },
+        ],
+      },
+    ],
+    sidebar: '#FFF5F880',
+    panel: '#FFF8FA96',
+    inset: '#FFF0F56E',
+    hover: '#FFF8FAB0',
+    imagePosition: [50, 35],
+  },
+  'warm-sand-light': {
+    layers: [
+      {
+        kind: 'linear',
+        angle: 135,
+        stops: [
+          { color: '#F7F3EC42', at: 0 },
+          { color: '#FFFCF732', at: 100 },
+        ],
+      },
+    ],
+    sidebar: '#F7F1E885',
+    panel: '#FFFCF79A',
+    inset: '#F4EDE272',
+    hover: '#FFFCF7B2',
+    imagePosition: [50, 35],
+  },
+  default: {
+    layers: [
+      {
+        kind: 'linear',
+        angle: 135,
+        stops: [
+          { color: '#FFFFFF3D', at: 0 },
+          { color: '#F8FAFC33', at: 100 },
+        ],
+      },
+    ],
+    sidebar: '#F8FAFC85',
+    panel: '#FFFFFF9A',
+    inset: '#F1F5F972',
+    hover: '#FFFFFFB2',
+    imagePosition: [50, 35],
+  },
+};
+
+const darkGlassBackdrops: Record<string, NonNullable<ThemeDefinition['backdrop']>> = {
+  'midnight-dark': {
+    layers: [
+      {
+        kind: 'linear',
+        angle: 135,
+        stops: [
+          { color: '#0D152694', at: 0 },
+          { color: '#141E3382', at: 50 },
+          { color: '#1B243B8C', at: 100 },
+        ],
+      },
+    ],
+    sidebar: '#0D1422BF',
+    panel: '#182238BD',
+    inset: '#131C2E99',
+    hover: '#24314FD1',
+    imagePosition: [50, 35],
+  },
+  'graphite-dark': {
+    layers: [
+      {
+        kind: 'linear',
+        angle: 135,
+        stops: [
+          { color: '#14161996', at: 0 },
+          { color: '#1C1F2485', at: 50 },
+          { color: '#14161996', at: 100 },
+        ],
+      },
+    ],
+    sidebar: '#181B1FBF',
+    panel: '#21252BBD',
+    inset: '#1B1E2499',
+    hover: '#2D333BD1',
+    imagePosition: [50, 35],
+  },
+  default: {
+    layers: [
+      {
+        kind: 'linear',
+        angle: 135,
+        stops: [
+          { color: '#090B1096', at: 0 },
+          { color: '#10141D85', at: 50 },
+          { color: '#090B1096', at: 100 },
+        ],
+      },
+    ],
+    sidebar: '#0E1117BF',
+    panel: '#151922BD',
+    inset: '#10141C99',
+    hover: '#202634D1',
+    imagePosition: [50, 35],
+  },
+};
+
 export function withAnimeBackdrop(backdropImage: string | undefined): ThemeDefinition {
   if (!backdropImage) {
     const { assets: _assets, backdropImage: _image, ...rest } = anime;
@@ -87,5 +199,30 @@ export function withAnimeBackdrop(backdropImage: string | undefined): ThemeDefin
     ...anime,
     assets: { backdropImage: 'assets/anime-custom.webp' },
     backdropImage,
+  };
+}
+
+export function withThemeBackdrop(theme: ThemeDefinition, backdropImage: string | undefined): ThemeDefinition {
+  if (theme.id === 'anime-light') {
+    return withAnimeBackdrop(backdropImage);
+  }
+  if (!backdropImage) {
+    return theme;
+  }
+  const isDark = theme.appearance === 'dark';
+  const backdrop = isDark
+    ? (darkGlassBackdrops[theme.id] ?? darkGlassBackdrops.default)
+    : (lightGlassBackdrops[theme.id] ?? lightGlassBackdrops.default);
+  return {
+    ...theme,
+    assets: { ...theme.assets, backdropImage: 'assets/theme-custom.webp' },
+    backdropImage,
+    backdrop,
+    tokens: {
+      popoverBackground: isDark ? '#161922' : '#FFFFFF',
+      overlaySoftSurface: isDark ? '#1E222D' : '#F3F5F8',
+      overlayHoverBackground: isDark ? '#262B38' : '#EAECEF',
+      ...theme.tokens,
+    },
   };
 }

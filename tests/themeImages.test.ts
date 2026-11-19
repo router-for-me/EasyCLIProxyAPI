@@ -3,6 +3,8 @@ import { parseCustomThemes } from '../src/themes/customThemes';
 import { builtinThemes, createThemeRegistry, themePreview } from '../src/themes/registry';
 import { createThemeApplicator, themeWindowMaterial } from '../src/themes/applyTheme';
 import { themeBackdropImage } from '../src/themes/backdrop';
+import { withThemeBackdrop } from '../src/themes/anime';
+import { themeOverlayRules } from '../src/themes/materials';
 
 const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
 const definition = {
@@ -82,4 +84,21 @@ test('switching image, image-only and default themes clears artwork, focal posit
   apply(parse(definition, '').themes[0]);
   expect(root.dataset.themeBackdrop).toBe('gradient');
   expect(root.dataset.windowMaterial).toBe('mica');
+});
+
+test('withThemeBackdrop equips any light or dark theme with validated glassmorphic surfaces and opaque overlays', () => {
+  const customized = builtinThemes.map((theme) => withThemeBackdrop(theme, image));
+  const registry = createThemeRegistry(customized);
+  for (const theme of builtinThemes) {
+    const resolved = registry.get(theme.id)!;
+    expect(resolved.backdropImage).toBe(image);
+    expect(resolved.backdrop?.panel).toMatch(/^#[\da-f]{8}$/i);
+    expect(resolved.backdrop?.sidebar).toMatch(/^#[\da-f]{8}$/i);
+    expect(themeOverlayRules(resolved)).toContain('--theme-surface:#');
+    if (theme.id !== 'anime-light') {
+      expect(withThemeBackdrop(theme, undefined)).toBe(theme);
+    } else {
+      expect(withThemeBackdrop(theme, undefined).backdropImage).toBeUndefined();
+    }
+  }
 });

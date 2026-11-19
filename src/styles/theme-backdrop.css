@@ -17,7 +17,7 @@
   background: var(--theme-backdrop-sidebar);
 }
 
-:root[data-theme-backdrop='image'] .sidebar {
+:root[data-theme-backdrop='image'] :is(.sidebar, .immersive-window .window-titlebar) {
   -webkit-backdrop-filter: blur(12px) saturate(1.15);
   backdrop-filter: blur(12px) saturate(1.15);
 }

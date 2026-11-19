@@ -19,7 +19,7 @@ import { builtinThemes, createThemeRegistry, type ThemeRegistry } from './themes
 import {
   ANIME_SAKURA_SKY_WALLPAPER,
   ANIME_STARLIGHT_WALLPAPER,
-  withAnimeBackdrop,
+  withThemeBackdrop,
   type AnimeWallpaperPreset,
 } from './themes/anime';
 import { isThemeImageDataUrl } from './themes/resources';
@@ -43,6 +43,7 @@ export type CustomThemeStatus = {
 };
 
 const ANIME_PRESET_KEY = 'easy-cli-proxy-api.anime-backdrop-preset.v1';
+const THEME_PRESETS_KEY = 'easy-cli-proxy-api.theme-backdrop-presets.v1';
 const ANIME_IMAGE_KEY = 'easy-cli-proxy-api.anime-backdrop-image.v1';
 
 function readStorage(key: string): string | null {
@@ -64,9 +65,25 @@ function writeStorage(key: string, value: string | null): boolean {
   }
 }
 
+function isValidPreset(value: unknown): value is AnimeWallpaperPreset {
+  return value === 'starlight' || value === 'sakura-sky' || value === 'none' || value === 'custom';
+}
+
 let animePreset: AnimeWallpaperPreset = (() => {
   const saved = readStorage(ANIME_PRESET_KEY);
   return saved === 'sakura-sky' || saved === 'none' || saved === 'custom' ? saved : 'starlight';
+})();
+let themePresets: Record<string, AnimeWallpaperPreset> = (() => {
+  try {
+    const raw = readStorage(THEME_PRESETS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const entries = Object.entries(parsed).filter(([, val]) => isValidPreset(val)) as [string, AnimeWallpaperPreset][];
+    return Object.fromEntries(entries);
+  } catch {
+    return {};
+  }
 })();
 let customAnimeImage: string | null = (() => {
   const saved = readStorage(ANIME_IMAGE_KEY);
@@ -74,18 +91,32 @@ let customAnimeImage: string | null = (() => {
 })();
 let loadedCustomThemes: ThemeDefinition[] = [];
 
-function resolveAnimeBackdropImage(): string | undefined {
-  if (animePreset === 'none') return undefined;
-  if (animePreset === 'sakura-sky') return ANIME_SAKURA_SKY_WALLPAPER;
-  if (animePreset === 'custom' && customAnimeImage) return customAnimeImage;
+function getPresetForTheme(themeId: string): AnimeWallpaperPreset {
+  const raw = themeId === 'anime-light'
+    ? (themePresets[themeId] ?? animePreset)
+    : (themePresets[themeId] ?? 'none');
+  if (raw === 'custom' && !customAnimeImage) {
+    return themeId === 'anime-light' ? 'starlight' : 'none';
+  }
+  return raw;
+}
+
+function resolveThemeBackdropImage(themeId: string): string | undefined {
+  const preset = getPresetForTheme(themeId);
+  if (preset === 'none') return undefined;
+  if (preset === 'sakura-sky') return ANIME_SAKURA_SKY_WALLPAPER;
+  if (preset === 'custom' && customAnimeImage) return customAnimeImage;
   return ANIME_STARLIGHT_WALLPAPER;
 }
 
 function buildActiveRegistry(): ThemeRegistry {
   const resolvedBuiltins = builtinThemes.map((theme) =>
-    theme.id === 'anime-light' ? withAnimeBackdrop(resolveAnimeBackdropImage()) : theme,
+    withThemeBackdrop(theme, resolveThemeBackdropImage(theme.id)),
   );
-  return createThemeRegistry([...resolvedBuiltins, ...loadedCustomThemes]);
+  const resolvedCustoms = loadedCustomThemes.map((theme) =>
+    withThemeBackdrop(theme, resolveThemeBackdropImage(theme.id)),
+  );
+  return createThemeRegistry([...resolvedBuiltins, ...resolvedCustoms]);
 }
 
 let customRegistry = buildActiveRegistry();
@@ -106,33 +137,54 @@ function refreshActiveRegistry() {
 export function useAnimeBackdropState() {
   return useSyncExternalStore(
     subscribeCustomThemes,
-    () => `${animePreset}:${customAnimeImage ? '1' : '0'}`,
+    () => `${animePreset}:${JSON.stringify(themePresets)}:${customAnimeImage ? '1' : '0'}`,
   );
 }
 
-export function getAnimeBackdropInfo(): { preset: AnimeWallpaperPreset; hasCustomImage: boolean } {
-  return { preset: animePreset, hasCustomImage: Boolean(customAnimeImage) };
+export function getAnimeBackdropInfo(themeId: string = 'anime-light'): { preset: AnimeWallpaperPreset; hasCustomImage: boolean } {
+  return { preset: getPresetForTheme(themeId), hasCustomImage: Boolean(customAnimeImage) };
 }
 
-export function setAnimeBackdropPreset(preset: AnimeWallpaperPreset): boolean {
-  const next = preset === 'custom' && !customAnimeImage ? 'starlight' : preset;
-  if (!writeStorage(ANIME_PRESET_KEY, next)) return false;
-  animePreset = next;
+export function setAnimeBackdropPreset(preset: AnimeWallpaperPreset, themeId: string = 'anime-light'): boolean {
+  const fallback = themeId === 'anime-light' ? 'starlight' : 'none';
+  const next = preset === 'custom' && !customAnimeImage ? fallback : preset;
+  const nextMap = { ...themePresets, [themeId]: next };
+  if (!writeStorage(THEME_PRESETS_KEY, JSON.stringify(nextMap))) return false;
+  if (themeId === 'anime-light') {
+    writeStorage(ANIME_PRESET_KEY, next);
+    animePreset = next;
+  }
+  themePresets = nextMap;
   refreshActiveRegistry();
   return true;
 }
 
-export function setCustomAnimeBackdropImage(dataUrl: string | null): boolean {
+export function setCustomAnimeBackdropImage(dataUrl: string | null, themeId: string = 'anime-light'): boolean {
   if (dataUrl !== null && !isThemeImageDataUrl(dataUrl)) return false;
-  const nextPreset = dataUrl !== null ? 'custom' : animePreset === 'custom' ? 'starlight' : animePreset;
   const previousImage = readStorage(ANIME_IMAGE_KEY);
   if (!writeStorage(ANIME_IMAGE_KEY, dataUrl)) return false;
-  if (!writeStorage(ANIME_PRESET_KEY, nextPreset)) {
+  const nextMap = { ...themePresets };
+  if (dataUrl !== null) {
+    nextMap[themeId] = 'custom';
+    if (themeId === 'anime-light') {
+      writeStorage(ANIME_PRESET_KEY, 'custom');
+      animePreset = 'custom';
+    }
+  } else {
+    for (const [id, val] of Object.entries(nextMap)) {
+      if (val === 'custom') nextMap[id] = id === 'anime-light' ? 'starlight' : 'none';
+    }
+    if (animePreset === 'custom') {
+      animePreset = 'starlight';
+      writeStorage(ANIME_PRESET_KEY, 'starlight');
+    }
+  }
+  if (!writeStorage(THEME_PRESETS_KEY, JSON.stringify(nextMap))) {
     writeStorage(ANIME_IMAGE_KEY, previousImage);
     return false;
   }
   customAnimeImage = dataUrl;
-  animePreset = nextPreset;
+  themePresets = nextMap;
   refreshActiveRegistry();
   return true;
 }
