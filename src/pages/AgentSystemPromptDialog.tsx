@@ -35,6 +35,16 @@ function snapshotToDraft(snapshot: AgentSystemPromptEditorSnapshot): DraftState 
   };
 }
 
+// A TLS-enabled kernel only blocks turning rewriting on; clearing every override must stay
+// possible so the plaintext loopback can be switched off.
+function draftKeepsOverrides(draft: DraftState | null): boolean {
+  if (!draft) return false;
+  return (
+    (draft.defaultCustomized && draft.defaultPrompt.trim().length > 0) ||
+    draft.models.some((item) => item.customized && item.prompt.trim().length > 0)
+  );
+}
+
 function sameDraftAndSnapshot(
   draft: DraftState | null,
   snapshot: AgentSystemPromptEditorSnapshot | null,
@@ -597,7 +607,13 @@ export function AgentSystemPromptDialog({
             type="button"
             className="primary-button"
             onClick={() => void save()}
-            disabled={!snapshot || !dirty || loading || saving || Boolean(snapshot.coreTlsEnabled)}
+            disabled={
+              !snapshot ||
+              !dirty ||
+              loading ||
+              saving ||
+              (Boolean(snapshot.coreTlsEnabled) && draftKeepsOverrides(draft))
+            }
           >
             {saving ? <LoaderCircle size={16} className="spin" /> : null}
             {saving ? t('common.saving') : t('common.save')}
