@@ -695,6 +695,13 @@ textarea:focus-visible {
   gap: 8px;
 }
 
+.app-version-meta {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-meta);
+  line-height: var(--line-height-body);
+}
+
 .version-alert-banner {
   display: flex;
   min-width: 0;

@@ -699,7 +699,11 @@ export function VersionManagementPage() {
           </div>
         </div>
 
-        <AutoUpdatePanel />
+        <AutoUpdatePanel
+          enabled={appUpdate?.autoUpdateSupported !== false && !appIsPreview}
+          unavailableHint={t('appUpdate.manualFallback')}
+          unsupportedReason={appUpdate && !appUpdate.autoUpdateSupported ? (appUnsupportedReason ?? undefined) : undefined}
+        />
         <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
         <div className="version-card-grid">
         <article className="version-list-item app-module-card surface-panel">
@@ -757,23 +761,9 @@ export function VersionManagementPage() {
             )}
 
             <div className="app-version-info-section">
-              <MessageNotice message={appUpdateError} />
-              <div className="version-alert-banner neutral">
-                <Info size={14} aria-hidden="true" />
-                <span>
-                  {appUpdate?.autoUpdateSupported
-                    ? t('kernel.versions.autoUpdateSupported')
-                    : t('appUpdate.manualFallback')}
-                  {appIsPreview && latestAppPublishedAt
-                    ? ` · ${t('appUpdate.publishedAt', { date: latestAppPublishedAt })}`
-                    : ''}
-                </span>
-              </div>
-              {appUpdate && !appUpdate.autoUpdateSupported && appUnsupportedReason ? (
-                <div className="version-alert-banner neutral version-unsupported-reason">
-                  <Info size={14} aria-hidden="true" />
-                  <span title={appUpdate.unsupportedReason ?? undefined}>{appUnsupportedReason}</span>
-                </div>
+              <MessageNotice message={appUpdateError || channelError} />
+              {appIsPreview && latestAppPublishedAt && !appUpdateError && !channelError ? (
+                <p className="app-version-meta">{t('appUpdate.publishedAt', { date: latestAppPublishedAt })}</p>
               ) : null}
               {activeChannel.startsWith('preview') ? (
                 <>
@@ -811,7 +801,6 @@ export function VersionManagementPage() {
                   </div>
                 </>
               ) : null}
-              {channelError ? <MessageNotice message={channelError} /> : null}
             </div>
           </div>
 
