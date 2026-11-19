@@ -3,6 +3,7 @@ import { LoaderCircle, RefreshCw, RotateCcw, Search, X } from 'lucide-react';
 import { Dialog } from '../components/Dialog';
 import { Checkbox } from '../components/Checkbox';
 import { Select } from '../components/Select';
+import { Switch } from '../components/Switch';
 import { MessageNotice } from '../appNotice';
 import { useConfirmation } from '../components/ConfirmationDialog';
 import { useI18n } from '../i18n';
@@ -18,6 +19,7 @@ import {
 const DEFAULT_TARGET_ID = '__default__';
 
 type DraftState = {
+  overridesEnabled: boolean | null;
   defaultCustomized: boolean;
   defaultPrompt: string;
   defaultMode: PromptRewriteMode;
@@ -25,20 +27,43 @@ type DraftState = {
   models: AgentSystemPromptEditorModel[];
 };
 
+function supportsOverrideSwitch(client: AgentClientId): boolean {
+  return client === 'claude-code' || client === 'claude-desktop';
+}
+
+function hasUncapturedClaudePrompt(snapshot: AgentSystemPromptEditorSnapshot): boolean {
+  return snapshot.defaultSource === 'template'
+    && supportsOverrideSwitch(snapshot.client);
+}
+
+function resetPrompt(snapshot: AgentSystemPromptEditorSnapshot): string {
+  return hasUncapturedClaudePrompt(snapshot) ? '' : snapshot.builtinDefaultPrompt;
+}
+
 function snapshotToDraft(snapshot: AgentSystemPromptEditorSnapshot): DraftState {
+  const uncapturedClaude = hasUncapturedClaudePrompt(snapshot);
+  // The fallback template is not the original client prompt.
+  const defaultPrompt = uncapturedClaude && !snapshot.defaultCustomized ? '' : snapshot.defaultPrompt;
   return {
+    overridesEnabled: snapshot.overridesEnabled ?? null,
     defaultCustomized: snapshot.defaultCustomized,
-    defaultPrompt: snapshot.defaultPrompt,
+    defaultPrompt,
     defaultMode: snapshot.defaultMode,
     defaultPreserveDynamicContext: snapshot.defaultPreserveDynamicContext,
-    models: snapshot.models.map((item) => ({ ...item })),
+    models: snapshot.models.map((item) => ({
+      ...item,
+      ...(uncapturedClaude && {
+        prompt: item.customized ? item.prompt : defaultPrompt,
+        defaultPrompt,
+      }),
+    })),
   };
 }
 
 // A TLS-enabled kernel only blocks turning rewriting on; clearing every override must stay
 // possible so the plaintext loopback can be switched off.
 function draftKeepsOverrides(draft: DraftState | null): boolean {
-  if (!draft) return false;
+  if (!draft || draft.overridesEnabled === false) return false;
   return (
     (draft.defaultCustomized && draft.defaultPrompt.trim().length > 0) ||
     draft.models.some((item) => item.customized && item.prompt.trim().length > 0)
@@ -50,6 +75,7 @@ function sameDraftAndSnapshot(
   snapshot: AgentSystemPromptEditorSnapshot | null,
 ): boolean {
   if (!draft || !snapshot) return true;
+  if (draft.overridesEnabled !== (snapshot.overridesEnabled ?? null)) return false;
   if (draft.defaultCustomized !== snapshot.defaultCustomized) return false;
   if (draft.defaultCustomized) {
     if (draft.defaultPrompt !== snapshot.defaultPrompt) return false;
@@ -134,18 +160,23 @@ export function AgentSystemPromptDialog({
     [draft, isDefaultSelected, selectedTarget],
   );
 
+  const uncapturedClaude = snapshot !== null && hasUncapturedClaudePrompt(snapshot);
+
   const updateDefaultPrompt = (nextPrompt: string) => {
     if (!snapshot) return;
     setDraft((prev) => {
       if (!prev) return prev;
-      const customized =
-        nextPrompt !== snapshot.builtinDefaultPrompt
-        || prev.defaultMode !== 'replace'
-        || !prev.defaultPreserveDynamicContext;
+      const customized = uncapturedClaude
+        ? nextPrompt !== '' || snapshot.defaultCustomized
+        : nextPrompt !== snapshot.builtinDefaultPrompt
+          || prev.defaultMode !== 'replace'
+          || !prev.defaultPreserveDynamicContext;
       return {
         ...prev,
         defaultCustomized: customized,
         defaultPrompt: nextPrompt,
+        defaultMode: customized ? prev.defaultMode : 'replace',
+        defaultPreserveDynamicContext: customized ? prev.defaultPreserveDynamicContext : true,
         models: prev.models.map((item) => (
           item.customized
             ? { ...item, defaultPrompt: nextPrompt }
@@ -160,9 +191,9 @@ export function AgentSystemPromptDialog({
   const updateDefaultMode = (nextMode: PromptRewriteMode) => {
     if (!snapshot) return;
     setDraft((prev) => {
-      if (!prev) return prev;
+      if (!prev || (uncapturedClaude && !prev.defaultPrompt.trim())) return prev;
       const customized =
-        prev.defaultPrompt !== snapshot.builtinDefaultPrompt
+        uncapturedClaude || prev.defaultPrompt !== snapshot.builtinDefaultPrompt
         || nextMode !== 'replace'
         || !prev.defaultPreserveDynamicContext;
       return {
@@ -178,9 +209,9 @@ export function AgentSystemPromptDialog({
   const updateDefaultPreserveDynamic = (checked: boolean) => {
     if (!snapshot) return;
     setDraft((prev) => {
-      if (!prev) return prev;
+      if (!prev || (uncapturedClaude && !prev.defaultPrompt.trim())) return prev;
       const customized =
-        prev.defaultPrompt !== snapshot.builtinDefaultPrompt
+        uncapturedClaude || prev.defaultPrompt !== snapshot.builtinDefaultPrompt
         || prev.defaultMode !== 'replace'
         || !checked;
       return {
@@ -210,7 +241,7 @@ export function AgentSystemPromptDialog({
   const resetCurrentTarget = () => {
     if (!snapshot || !draft) return;
     if (isDefaultSelected) {
-      const restored = snapshot.builtinDefaultPrompt;
+      const restored = resetPrompt(snapshot);
       setDraft((prev) => {
         if (!prev) return prev;
         return {
@@ -242,10 +273,11 @@ export function AgentSystemPromptDialog({
 
   const resetAllTargets = () => {
     if (!snapshot) return;
-    const restored = snapshot.builtinDefaultPrompt;
+    const restored = resetPrompt(snapshot);
     setDraft((prev) => {
       if (!prev) return prev;
       return {
+        ...prev,
         defaultCustomized: false,
         defaultPrompt: restored,
         defaultMode: 'replace',
@@ -299,6 +331,7 @@ export function AgentSystemPromptDialog({
     try {
       const next = await saveAgentSystemPromptEditor({
         client,
+        ...(supportsOverrideSwitch(client) && { overridesEnabled: draft.overridesEnabled }),
         defaultCustomized: draft.defaultCustomized,
         defaultPrompt: draft.defaultPrompt,
         defaultMode: draft.defaultMode,
@@ -327,23 +360,65 @@ export function AgentSystemPromptDialog({
       ? 'agents.systemPrompt.source.installed'
       : snapshot?.defaultSource === 'observed'
         ? 'agents.systemPrompt.source.observed'
-        : 'agents.systemPrompt.source.template';
+        : uncapturedClaude
+          ? 'agents.systemPrompt.source.uncaptured'
+          : 'agents.systemPrompt.source.template';
 
   const currentCustomized = isDefaultSelected
     ? Boolean(draft?.defaultCustomized)
     : Boolean(activeModel?.customized);
 
-  const currentMode: PromptRewriteMode = isDefaultSelected
+  const hasClaudeDefaultOverride = uncapturedClaude && Boolean(draft?.defaultCustomized && draft.defaultPrompt.trim());
+  const inheritsClaudeOverride = hasClaudeDefaultOverride && !isDefaultSelected && !currentCustomized;
+
+  const currentMode: PromptRewriteMode = isDefaultSelected || inheritsClaudeOverride
     ? (draft?.defaultMode ?? 'replace')
     : (activeModel?.mode ?? 'replace');
 
-  const currentPreserveDynamic = isDefaultSelected
-    ? Boolean(draft?.defaultPreserveDynamicContext ?? true)
-    : Boolean(activeModel?.preserveDynamicContext ?? true);
+  const currentPreserveDynamic = isDefaultSelected || inheritsClaudeOverride
+    ? (draft?.defaultPreserveDynamicContext ?? true)
+    : (activeModel?.preserveDynamicContext ?? true);
 
   const currentPromptValue = isDefaultSelected
     ? (draft?.defaultPrompt ?? '')
     : (activeModel?.prompt ?? '');
+
+  const hasSavedModelOverride = Boolean(snapshot?.models.find((item) => item.id === selectedTarget)?.customized);
+  const supportsSwitch = supportsOverrideSwitch(client);
+  const hasSavedRules = Boolean(snapshot?.defaultCustomized || snapshot?.models.some((item) => item.customized));
+  const savedSwitchOn = snapshot?.overridesEnabled ?? hasSavedRules;
+  const switchOn = draft?.overridesEnabled ?? draftKeepsOverrides(draft);
+  const hasSavedOverride = Boolean(snapshot?.defaultCustomized || (!isDefaultSelected && hasSavedModelOverride));
+  const showRewriteOptions = !uncapturedClaude || Boolean(currentPromptValue.trim());
+  const showBlankHint = uncapturedClaude && !currentCustomized && !inheritsClaudeOverride;
+  const inheritedLabelKey = hasClaudeDefaultOverride
+    ? 'agents.systemPrompt.inheritedOverride'
+    : 'agents.systemPrompt.inherited';
+  const currentLabel = isDefaultSelected
+    ? t(sourceLabelKey)
+    : uncapturedClaude && currentCustomized ? '' : t(inheritedLabelKey);
+
+  const updateCurrentPrompt = (value: string) => {
+    if (!draft) return;
+    if (isDefaultSelected) {
+      updateDefaultPrompt(value);
+    } else if (activeModel) {
+      updateActiveModel((item) => {
+        const customized = uncapturedClaude && value === '' && draft.defaultPrompt === ''
+          ? hasSavedModelOverride
+          : value !== draft.defaultPrompt || item.mode !== 'replace' || !item.preserveDynamicContext;
+        return {
+          ...item,
+          customized,
+          prompt: value,
+          mode: uncapturedClaude ? (customized ? currentMode : 'replace') : item.mode,
+          preserveDynamicContext: uncapturedClaude
+            ? (customized ? currentPreserveDynamic : true)
+            : item.preserveDynamicContext,
+        };
+      });
+    }
+  };
 
   const hasAnyCustomization = Boolean(
     draft?.defaultCustomized || draft?.models.some((item) => item.customized),
@@ -363,7 +438,7 @@ export function AgentSystemPromptDialog({
           <h2 id="agent-system-prompt-title">
             {t('agents.systemPrompt.title', { name: clientName })}
           </h2>
-          <p>{t('agents.systemPrompt.subtitle', { name: clientName })}</p>
+          <p>{t(uncapturedClaude ? 'agents.systemPrompt.subtitle.uncaptured' : 'agents.systemPrompt.subtitle', { name: clientName })}</p>
         </div>
         <button
           type="button"
@@ -433,7 +508,7 @@ export function AgentSystemPromptDialog({
                       <small>
                         {model.customized
                           ? t('agents.catalog.customized')
-                          : t('agents.systemPrompt.inherited')}
+                          : t(inheritedLabelKey)}
                       </small>
                     </button>
                   </div>
@@ -456,10 +531,9 @@ export function AgentSystemPromptDialog({
                       : activeModel?.id}
                   </h3>
                   <span className={currentCustomized ? 'customized' : ''}>
-                    {isDefaultSelected
-                      ? t(sourceLabelKey)
-                      : t('agents.systemPrompt.inherited')}
-                    {currentCustomized ? ` · ${t('agents.catalog.customized')}` : ''}
+                    {currentCustomized
+                      ? [currentLabel, t('agents.catalog.customized')].filter(Boolean).join(' · ')
+                      : currentLabel}
                   </span>
                 </div>
                 <button
@@ -473,31 +547,58 @@ export function AgentSystemPromptDialog({
                 </button>
               </div>
 
-              <div className="codex-catalog-form">
-                <label className="wide">
-                  <span>{t('agents.systemPrompt.mode')}</span>
-                  <Select
-                    value={currentMode}
+              {supportsSwitch ? (
+                <div className="codex-catalog-hint">
+                  <Switch
+                    label={t('agents.systemPrompt.overridesEnabled')}
+                    checked={switchOn}
+                    disabled={saving}
+                    aria-describedby="agent-system-prompt-switch-hint"
                     onChange={(event) => {
-                      const nextMode = event.currentTarget.value as PromptRewriteMode;
-                      if (isDefaultSelected) {
-                        updateDefaultMode(nextMode);
-                      } else if (activeModel) {
-                        updateActiveModel((item) => ({
-                          ...item,
-                          customized: true,
-                          mode: nextMode,
-                        }));
-                      }
+                      const overridesEnabled = event.currentTarget.checked;
+                      setDraft((previous) => previous && { ...previous, overridesEnabled });
+                      setError('');
+                      setNotice('');
                     }}
-                  >
-                    <option value="replace">{t('agents.systemPrompt.mode.replace')}</option>
-                    <option value="prepend">{t('agents.systemPrompt.mode.prepend')}</option>
-                    <option value="append">{t('agents.systemPrompt.mode.append')}</option>
-                  </Select>
-                </label>
+                  />
+                  <p id="agent-system-prompt-switch-hint">{t('agents.systemPrompt.overridesEnabledHint')}</p>
+                  {savedSwitchOn !== switchOn ? (
+                    <p role="status">{t(savedSwitchOn ? 'agents.systemPrompt.pendingPause' : 'agents.systemPrompt.pendingEnable')}</p>
+                  ) : null}
+                </div>
+              ) : null}
+              {uncapturedClaude && !hasSavedOverride ? (
+                <p className="codex-catalog-hint">{t('agents.systemPrompt.overrideInactive')}</p>
+              ) : null}
 
-                {currentMode === 'replace' ? (
+              <div className="codex-catalog-form">
+                {showRewriteOptions ? (
+                  <label className="wide">
+                    <span>{t('agents.systemPrompt.mode')}</span>
+                    <Select
+                      value={currentMode}
+                      onChange={(event) => {
+                        const nextMode = event.currentTarget.value as PromptRewriteMode;
+                        if (isDefaultSelected) {
+                          updateDefaultMode(nextMode);
+                        } else if (activeModel) {
+                          updateActiveModel((item) => ({
+                            ...item,
+                            customized: true,
+                            mode: nextMode,
+                            preserveDynamicContext: currentPreserveDynamic,
+                          }));
+                        }
+                      }}
+                    >
+                      <option value="replace">{t('agents.systemPrompt.mode.replace')}</option>
+                      <option value="prepend">{t('agents.systemPrompt.mode.prepend')}</option>
+                      <option value="append">{t('agents.systemPrompt.mode.append')}</option>
+                    </Select>
+                  </label>
+                ) : null}
+
+                {showRewriteOptions && currentMode === 'replace' ? (
                   <label className="wide codex-catalog-option">
                     <Checkbox
                       checked={currentPreserveDynamic}
@@ -509,6 +610,7 @@ export function AgentSystemPromptDialog({
                           updateActiveModel((item) => ({
                             ...item,
                             customized: true,
+                            mode: currentMode,
                             preserveDynamicContext: checked,
                           }));
                         }
@@ -525,42 +627,32 @@ export function AgentSystemPromptDialog({
                     rows={14}
                     spellCheck={false}
                     value={currentPromptValue}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      if (isDefaultSelected) {
-                        updateDefaultPrompt(value);
-                      } else if (activeModel) {
-                        updateActiveModel((item) => ({
-                          ...item,
-                          customized:
-                            value !== draft.defaultPrompt
-                            || item.mode !== 'replace'
-                            || !item.preserveDynamicContext,
-                          prompt: value,
-                        }));
-                      }
-                    }}
+                    onChange={(event) => updateCurrentPrompt(event.currentTarget.value)}
                     aria-describedby="agent-system-prompt-hint"
                   />
                   <small id="agent-system-prompt-hint">
-                    {isDefaultSelected
-                      ? t('agents.systemPrompt.fieldHintDefault', { name: clientName })
-                      : t('agents.systemPrompt.fieldHintModel', { model: activeModel?.id ?? '' })}
+                    {showBlankHint
+                      ? t('agents.systemPrompt.fieldHintUncaptured')
+                      : isDefaultSelected
+                        ? t('agents.systemPrompt.fieldHintDefault', { name: clientName })
+                        : t('agents.systemPrompt.fieldHintModel', { model: activeModel?.id ?? '' })}
                   </small>
                 </label>
               </div>
 
-              {currentMode === 'replace' ? (
+              {showRewriteOptions && currentMode === 'replace' ? (
                 <p className="codex-catalog-hint">
                   {t('agents.systemPrompt.preserveDynamicHint')}
                 </p>
               ) : null}
               <p className="codex-catalog-hint" role="note">
                 {snapshot?.coreTlsEnabled
-                  ? t('agents.systemPrompt.tlsBlockedNotice')
+                  ? t(supportsSwitch ? 'agents.systemPrompt.claudeTlsNotice' : 'agents.systemPrompt.tlsBlockedNotice')
                   : snapshot?.proxyActive && snapshot.proxyPort
                     ? t('agents.systemPrompt.proxyActiveNotice', { port: snapshot.proxyPort })
-                    : t('agents.systemPrompt.proxyInactiveNotice')}
+                    : supportsSwitch && !savedSwitchOn && hasSavedRules
+                      ? t('agents.systemPrompt.overridesPaused')
+                      : t('agents.systemPrompt.proxyInactiveNotice')}
               </p>
             </>
           ) : !loading ? (

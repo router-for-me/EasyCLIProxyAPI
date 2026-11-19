@@ -101,10 +101,22 @@ struct SavedClientPromptConfig {
     models: BTreeMap<String, AgentSystemPromptRule>,
     #[serde(default)]
     observed_default_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    overrides_enabled: Option<bool>,
 }
 
 impl SavedClientPromptConfig {
+    fn normalize_for_client(&mut self, client_id: &str) {
+        if !supports_override_switch(client_id) {
+            self.overrides_enabled = None;
+        }
+    }
+
     fn has_active_rules(&self) -> bool {
+        self.overrides_enabled != Some(false) && self.has_saved_rules()
+    }
+
+    fn has_saved_rules(&self) -> bool {
         self.default_rule
             .as_ref()
             .is_some_and(|rule| !rule.prompt.trim().is_empty())
@@ -115,6 +127,9 @@ impl SavedClientPromptConfig {
     }
 
     fn resolve_rule(&self, model: Option<&str>) -> Option<&AgentSystemPromptRule> {
+        if self.overrides_enabled == Some(false) {
+            return None;
+        }
         if let Some(raw_model) = model.map(str::trim).filter(|m| !m.is_empty()) {
             for candidate in candidate_model_ids(raw_model) {
                 if let Some(rule) = self.models.get(candidate) {
@@ -159,6 +174,7 @@ pub(crate) struct AgentSystemPromptEditorSnapshot {
     pub default_customized: bool,
     pub default_mode: PromptRewriteMode,
     pub default_preserve_dynamic_context: bool,
+    pub overrides_enabled: Option<bool>,
     pub proxy_active: bool,
     pub proxy_port: Option<u16>,
     /// The loopback listener is plaintext HTTP; a TLS-enabled kernel must not be downgraded
@@ -183,6 +199,8 @@ pub(crate) struct AgentSystemPromptModelSaveItem {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentSystemPromptEditorSaveRequest {
     pub client: String,
+    #[serde(default)]
+    pub overrides_enabled: Option<bool>,
     pub default_customized: bool,
     pub default_prompt: String,
     #[serde(default)]
@@ -235,6 +253,10 @@ fn normalize_prompt_client_id(client: &str) -> Result<&'static str, String> {
         .copied()
         .find(|candidate| *candidate == trimmed)
         .ok_or_else(|| format!("Unsupported agent client for system prompt editing: {client}"))
+}
+
+fn supports_override_switch(client_id: &str) -> bool {
+    matches!(client_id, "claude-code" | "claude-desktop")
 }
 
 fn preferred_proxy_port(client_id: &str) -> u16 {
@@ -303,7 +325,7 @@ pub(crate) fn load_agent_system_prompts(app: &tauri::AppHandle) -> Result<(), St
 }
 
 fn load_agent_system_prompts_from_path(path: &Path) -> Result<(), String> {
-    let parsed = match fs::read_to_string(path) {
+    let mut parsed = match fs::read_to_string(path) {
         Ok(content) => serde_json::from_str::<SavedAgentSystemPromptsFile>(&content)
             .map_err(|error| format!("Invalid agent system prompts file: {error}"))?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => SavedAgentSystemPromptsFile {
@@ -316,7 +338,8 @@ fn load_agent_system_prompts_from_path(path: &Path) -> Result<(), String> {
     };
 
     let mut active_ports = HashMap::new();
-    for (client, cfg) in &parsed.clients {
+    for (client, cfg) in &mut parsed.clients {
+        cfg.normalize_for_client(client);
         if cfg.has_active_rules() {
             let port = cfg
                 .port
@@ -411,8 +434,8 @@ pub(crate) fn restore_agent_prompt_proxies(app: tauri::AppHandle) {
     });
 }
 
-/// Drops every rule for `client`, stops its listener and restores the kernel origin in the
-/// client configuration. Used when kernel TLS makes the plaintext loopback unusable.
+/// Stops the plaintext listener and restores the kernel origin. Claude rules can be
+/// retained in a paused state; clients without a switch keep the existing clearing behavior.
 fn deactivate_prompt_overrides_for_tls(
     app: &tauri::AppHandle,
     client_id: &str,
@@ -454,8 +477,12 @@ fn deactivate_prompt_overrides_for_tls(
         match PROMPT_STATE.lock() {
             Ok(mut guard) => {
                 let entry = guard.clients.entry(client_id.to_string()).or_default();
-                entry.default_rule = None;
-                entry.models.clear();
+                if supports_override_switch(client_id) {
+                    entry.overrides_enabled = Some(false);
+                } else {
+                    entry.default_rule = None;
+                    entry.models.clear();
+                }
                 guard.active_ports.remove(client_id);
                 persist_prompt_state_locked(&guard)
             }
@@ -1464,7 +1491,17 @@ async fn handle_prompt_proxy_request(
         ));
     };
 
-    let should_inspect_json = parts.method == Method::POST
+    // Existing keep-alive connections can outlive a listener shutdown. For paused
+    // Claude clients, stream even those bodies unchanged rather than buffering them.
+    let rewrite_enabled = !supports_override_switch(&client_id)
+        || PROMPT_STATE.lock().is_ok_and(|state| {
+            state
+                .clients
+                .get(&client_id)
+                .is_some_and(SavedClientPromptConfig::has_active_rules)
+        });
+    let should_inspect_json = rewrite_enabled
+        && parts.method == Method::POST
         && detect_inference_wire_kind(&path).is_some()
         && parts
             .headers
@@ -2150,6 +2187,7 @@ fn build_editor_snapshot(
         default_customized,
         default_mode,
         default_preserve_dynamic_context,
+        overrides_enabled: cfg.overrides_enabled,
         proxy_active: active_port.is_some(),
         proxy_port: active_port,
         core_tls_enabled: managed_core_tls_enabled(),
@@ -2175,6 +2213,107 @@ pub(crate) async fn get_agent_system_prompt_editor(
     AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
         build_editor_snapshot(client_id, &home, &models)
     })
+}
+
+// The caller holds PROMPT_PROXY_OP_LOCK. Keep the old listener available until
+// the managed route and persisted settings both succeed. A new listener is bound
+// before moving the route, but does not rewrite until the state is published.
+async fn save_claude_prompt_config(
+    app: &tauri::AppHandle,
+    client_id: &str,
+    home: &Path,
+    directories: AgentConfigDirectories,
+    core_port: u16,
+    mut next: SavedClientPromptConfig,
+) -> Result<(), String> {
+    let old_origin = agent_effective_loopback_origin(client_id, core_port);
+    let (new_port, pending_listener) = if next.has_active_rules() {
+        let existing_port = PROMPT_LISTENERS
+            .lock()
+            .map_err(|_| "Prompt proxy listener lock is poisoned".to_string())?
+            .get(client_id)
+            .filter(|listener| listener.is_alive())
+            .map(|listener| listener.port);
+        if let Some(port) = existing_port {
+            (Some(port), None)
+        } else {
+            let preferred = next
+                .port
+                .filter(|port| *port > 0)
+                .unwrap_or_else(|| preferred_proxy_port(client_id));
+            let (port, listener) =
+                spawn_listener_for_client(client_id, preferred, None, Some(app.clone())).await?;
+            (Some(port), Some(listener))
+        }
+    } else {
+        (None, None)
+    };
+    if let Some(port) = new_port {
+        next.port = Some(port);
+    }
+    let new_origin = new_port
+        .map(|port| format!("http://127.0.0.1:{port}"))
+        .unwrap_or_else(|| managed_core_loopback_origin(core_port));
+
+    let result = AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || -> Result<(), String> {
+        let _file_guard = crate::AGENT_CONFIG_FILE_LOCK
+            .lock()
+            .map_err(|_| "Agent configuration file lock is poisoned".to_string())?;
+        if new_port.is_some() && managed_core_tls_enabled() {
+            return Err(TLS_LOOPBACK_UNSUPPORTED.to_string());
+        }
+        let moved = sync_configured_agent_origin(client_id, home, &old_origin, &new_origin)?;
+        let persisted = (|| {
+            let mut guard = PROMPT_STATE
+                .lock()
+                .map_err(|_| "Agent system prompt state lock is poisoned".to_string())?;
+            if let Some(current) = guard.clients.get(client_id) {
+                next.observed_default_prompt = current.observed_default_prompt.clone();
+            }
+            let previous = guard.clients.insert(client_id.to_string(), next);
+            if let Err(error) = persist_prompt_state_locked(&guard) {
+                if let Some(previous) = previous {
+                    guard.clients.insert(client_id.to_string(), previous);
+                } else {
+                    guard.clients.remove(client_id);
+                }
+                return Err(error);
+            }
+            if let Some(port) = new_port {
+                guard.active_ports.insert(client_id.to_string(), port);
+            } else {
+                guard.active_ports.remove(client_id);
+            }
+            Ok(())
+        })();
+        if let Err(error) = persisted {
+            if moved {
+                sync_configured_agent_origin(client_id, home, &new_origin, &old_origin).map_err(
+                    |rollback| {
+                        format!("{error}; failed to restore previous agent route: {rollback}")
+                    },
+                )?;
+            }
+            return Err(error);
+        }
+        Ok(())
+    });
+    if let Some(listener) = pending_listener {
+        if result.is_ok() {
+            if let Some(previous) = PROMPT_LISTENERS
+                .lock()
+                .map_err(|_| "Prompt proxy listener lock is poisoned".to_string())?
+                .insert(client_id.to_string(), listener)
+            {
+                previous.stop();
+            }
+        } else {
+            listener.stop();
+        }
+    } else if result.is_ok() && new_port.is_none() {
+        stop_client_proxy_listener(client_id);
+    }
+    result
 }
 
 #[tauri::command]
@@ -2223,6 +2362,47 @@ pub(crate) async fn save_agent_system_prompt_editor(
     }
 
     let _op = PROMPT_PROXY_OP_LOCK.lock().await;
+    if supports_override_switch(client_id) {
+        let previous = {
+            let mut guard = PROMPT_STATE
+                .lock()
+                .map_err(|_| "Agent system prompt state lock is poisoned".to_string())?;
+            if guard.storage_path.is_none() {
+                guard.storage_path = Some(agent_system_prompts_path(&app)?);
+            }
+            guard.clients.get(client_id).cloned().unwrap_or_default()
+        };
+        let previously_active = previous.has_active_rules();
+        let next = SavedClientPromptConfig {
+            default_rule: validated_default,
+            models: validated_models,
+            // Older callers cannot accidentally resume an explicitly paused client.
+            overrides_enabled: request.overrides_enabled.or(previous.overrides_enabled),
+            ..previous
+        };
+        if next.has_active_rules() && managed_core_tls_enabled() {
+            if previously_active {
+                AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
+                    deactivate_prompt_overrides_for_tls(&app, client_id)
+                })?;
+            }
+            return Err(TLS_LOOPBACK_UNSUPPORTED.to_string());
+        }
+        save_claude_prompt_config(
+            &app,
+            client_id,
+            &home,
+            directories.clone(),
+            gui_config.port,
+            next,
+        )
+        .await?;
+        let _ = status_cache.clear();
+        let models = fetch_models_for_prompt_editor(client_id, &gui_config).await;
+        return AGENT_CONFIG_DIRECTORIES.sync_scope(directories, || {
+            build_editor_snapshot(client_id, &home, &models)
+        });
+    }
     // Refuse before touching the stored rules: a rejected save must not leave changed rules
     // armed behind a plaintext proxy the caller was told does not exist.
     let wants_active = validated_default.is_some() || !validated_models.is_empty();
@@ -2339,6 +2519,7 @@ mod tests {
             }),
             models,
             observed_default_prompt: None,
+            overrides_enabled: None,
         }
     }
 
@@ -2583,6 +2764,121 @@ mod tests {
             gem_json["systemInstruction"]["parts"][0]["text"],
             "Replaced Prompt"
         );
+    }
+
+    #[test]
+    fn claude_switch_preserves_legacy_rules_and_round_trips_explicit_pause() {
+        let legacy = r#"{"defaultRule":{"prompt":"Default","mode":"append"},"models":{"one":{"prompt":"Model","mode":"prepend","preserveDynamicContext":false}}}"#;
+        for client in ["claude-code", "claude-desktop"] {
+            let mut cfg: SavedClientPromptConfig = serde_json::from_str(legacy).unwrap();
+            assert!(cfg.has_active_rules());
+            assert!(!SavedClientPromptConfig::default().has_active_rules());
+            let original = cfg.clone();
+            cfg.overrides_enabled = Some(false);
+            let mut restored: SavedClientPromptConfig =
+                serde_json::from_slice(&serde_json::to_vec(&cfg).unwrap()).unwrap();
+            restored.normalize_for_client(client);
+            assert!(restored.has_saved_rules());
+            assert!(!restored.has_active_rules());
+            assert!(restored.resolve_rule(Some("one")).is_none());
+            assert!(restored.resolve_rule(Some("other")).is_none());
+            assert_eq!(restored.default_rule, original.default_rule);
+            assert_eq!(restored.models, original.models);
+            restored.overrides_enabled = Some(true);
+            assert!(restored.has_active_rules());
+            assert_eq!(
+                restored.resolve_rule(Some("one")),
+                original.resolve_rule(Some("one"))
+            );
+            assert_eq!(
+                restored.resolve_rule(Some("other")),
+                original.resolve_rule(Some("other"))
+            );
+        }
+        let mut other: SavedClientPromptConfig = serde_json::from_str(legacy).unwrap();
+        other.overrides_enabled = Some(false);
+        other.normalize_for_client("zcode");
+        assert!(other.has_active_rules());
+    }
+
+    #[tokio::test]
+    async fn paused_claude_proxy_forwards_original_bytes_and_resumes_each_mode() {
+        for client in ["claude-code", "claude-desktop"] {
+            let upstream = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
+            let port = upstream.local_addr().unwrap().port();
+            let echo = tokio::spawn(async move {
+                loop {
+                    let (stream, _) = upstream.accept().await.unwrap();
+                    tokio::spawn(async move {
+                        let svc = hyper::service::service_fn(|req: Request<Incoming>| async move {
+                            let bytes = req.into_body().collect().await.unwrap().to_bytes();
+                            Ok::<_, Infallible>(Response::new(Full::new(bytes)))
+                        });
+                        let _ = hyper::server::conn::http1::Builder::new()
+                            .serve_connection(TokioIo::new(stream), svc)
+                            .await;
+                    });
+                }
+            });
+            let (port, listener) = spawn_listener_for_client(client, 0, Some(port), None)
+                .await
+                .unwrap();
+            let http = reqwest::Client::builder().no_proxy().build().unwrap();
+            let payload = "{ \"model\": \"one\", \"system\": \"Original\", \"messages\": [] }";
+            let request = || {
+                http.post(format!("http://127.0.0.1:{port}/v1/messages"))
+                    .header("content-type", "application/json")
+                    .body(payload)
+            };
+            for (mode, expected) in [
+                (PromptRewriteMode::Replace, "Model"),
+                (PromptRewriteMode::Prepend, "Model\n\nOriginal"),
+                (PromptRewriteMode::Append, "Original\n\nModel"),
+            ] {
+                let mut cfg = sample_cfg(
+                    Some(("Default", mode, false)),
+                    &[("one", "Model", mode, false)],
+                );
+                cfg.overrides_enabled = Some(false);
+                PROMPT_STATE
+                    .lock()
+                    .unwrap()
+                    .clients
+                    .insert(client.to_string(), cfg);
+                let original = request()
+                    .send()
+                    .await
+                    .unwrap()
+                    .error_for_status()
+                    .unwrap()
+                    .bytes()
+                    .await
+                    .unwrap();
+                assert_eq!(original.as_ref(), payload.as_bytes());
+                PROMPT_STATE
+                    .lock()
+                    .unwrap()
+                    .clients
+                    .get_mut(client)
+                    .unwrap()
+                    .overrides_enabled = Some(true);
+                let rewritten: Value = request()
+                    .send()
+                    .await
+                    .unwrap()
+                    .error_for_status()
+                    .unwrap()
+                    .json()
+                    .await
+                    .unwrap();
+                assert_eq!(rewritten["system"], expected);
+            }
+            listener.stop();
+            echo.abort();
+            PROMPT_STATE.lock().unwrap().clients.remove(client);
+        }
     }
 
     #[tokio::test]

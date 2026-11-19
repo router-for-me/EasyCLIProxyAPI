@@ -19,6 +19,7 @@ export interface AgentSystemPromptEditorSnapshot {
   defaultCustomized: boolean;
   defaultMode: PromptRewriteMode;
   defaultPreserveDynamicContext: boolean;
+  overridesEnabled?: boolean | null;
   proxyActive: boolean;
   proxyPort: number | null;
   coreTlsEnabled?: boolean;
@@ -35,6 +36,7 @@ export interface AgentSystemPromptModelSaveItem {
 
 export interface AgentSystemPromptEditorSaveRequest {
   client: AgentClientId;
+  overridesEnabled?: boolean | null;
   defaultCustomized: boolean;
   defaultPrompt: string;
   defaultMode: PromptRewriteMode;

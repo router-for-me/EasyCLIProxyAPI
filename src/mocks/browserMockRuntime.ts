@@ -1258,6 +1258,7 @@ export function createBrowserMockRuntime(
   pluginPages = 0,
   onPluginWebview?: (state: PluginWebviewMockState) => void,
 ): BrowserMockRuntime {
+  const claudePromptEditors = new Map<string, { overridesEnabled?: boolean | null }>();
   const state = createState(scenario);
   const acp: AcpStatus = {
     executable: 'C:/Users/demo/AppData/Local/agy/bin/agy.exe', profile: 'C:/ECPA/acp/antigravity',
@@ -2008,6 +2009,9 @@ export function createBrowserMockRuntime(
 
       case 'get_agent_system_prompt_editor': {
         const client = readString(payload.client) || 'zcode';
+        const saved = claudePromptEditors.get(client);
+        if (saved) return clone(saved);
+        const supportsSwitch = client === 'claude-code' || client === 'claude-desktop';
         const defaultPrompt = `You are ${client}, a coding assistant.`;
         return {
           client,
@@ -2015,6 +2019,7 @@ export function createBrowserMockRuntime(
           builtinDefaultPrompt: defaultPrompt,
           defaultSource: 'template',
           defaultCustomized: false,
+          ...(supportsSwitch && { overridesEnabled: null }),
           defaultMode: 'replace',
           defaultPreserveDynamicContext: true,
           proxyActive: false,
@@ -2039,19 +2044,26 @@ export function createBrowserMockRuntime(
           mode: readString(m.mode) || 'replace',
           preserveDynamicContext: m.preserveDynamicContext !== false,
         }));
-        const anyActive = defaultCustomized || models.some((m) => m.customized);
-        return {
+        const supportsSwitch = client === 'claude-code' || client === 'claude-desktop';
+        const overridesEnabled = typeof req.overridesEnabled === 'boolean'
+          ? req.overridesEnabled : claudePromptEditors.get(client)?.overridesEnabled ?? null;
+        const anyActive = (!supportsSwitch || overridesEnabled !== false)
+          && (defaultCustomized || models.some((m) => m.customized));
+        const editor = {
           client,
           defaultPrompt,
           builtinDefaultPrompt,
           defaultSource: 'template',
           defaultCustomized,
+          ...(supportsSwitch && { overridesEnabled }),
           defaultMode: readString(req.defaultMode) || 'replace',
           defaultPreserveDynamicContext: req.defaultPreserveDynamicContext !== false,
           proxyActive: anyActive,
           proxyPort: anyActive ? 18331 : null,
           models,
         };
+        if (supportsSwitch) claudePromptEditors.set(client, editor);
+        return clone(editor);
       }
       case 'get_codex_model_catalog_editor': return clone(state.codexCatalog);
       case 'get_codex_subagent_config': return clone(state.codexSubagents);
