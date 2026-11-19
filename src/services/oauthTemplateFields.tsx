@@ -51,27 +51,37 @@ export const sensitivePatternsShape: ConfigShape = { type: 'array', item: { type
     hint: T('留空表示删除匹配内容。', 'Leave empty to delete matches.', '空欄にすると一致部分を削除します。') },
 } } };
 
-const tosPauseParts = /([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ms|s|m|h)/g;
-const tosPauseScale: Record<string, number> = { ms: 1, s: 1e3, m: 6e4, h: 3.6e6 };
-// Non-positive windows mean "disabled", so a zero duration is rejected here just
-// like the core rejects it; only the explicit disable spellings stay valid.
-const tosPauseSeconds = (value: string): number | null => {
+// Mirrors the core's duration parser: it accepts the ns/us/ms/s/m/h units in any
+// order with an optional sign, while a non-positive window simply means disabled.
+const tosPauseParts = /([+-]?)([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h)/g;
+const tosPauseScale: Record<string, number> = { ns: 1e-6, us: 1e-3, 'µs': 1e-3, 'μs': 1e-3, ms: 1, s: 1e3, m: 6e4, h: 3.6e6 };
+// The core stores durations as int64 nanoseconds, so a value past that bound is
+// not a duration it can represent; reject it here instead of saving a value the
+// core would silently read as "disabled".
+const tosPauseMaxMillis = Number(9223372036854775807n) / 1e6;
+const tosPauseMillis = (value: string): number | null => {
+  const body = value.replace(/^[+-]/, '');
+  if (!body) return null;
   let end = 0;
   let total = 0;
-  for (const part of value.matchAll(tosPauseParts)) {
+  for (const part of body.matchAll(tosPauseParts)) {
     if (part.index !== end) return null;
-    total += Number(part[1]) * tosPauseScale[part[2]];
+    total += Number(part[2]) * tosPauseScale[part[3]];
+    if (!Number.isFinite(total) || total > tosPauseMaxMillis) return null;
     end = part.index + part[0].length;
   }
-  return end === value.length && end > 0 ? total : null;
+  return end === body.length && end > 0 ? total : null;
 };
 const tosPauseValidate = (value: unknown): TemplateText | null => {
   if (typeof value !== 'string') return T('请输入时长或留空关闭。', 'Enter a duration, or leave empty to disable.', '期間を入力するか、空欄で無効にします。');
   const trimmed = value.trim();
-  if (trimmed === '' || controlChars.test(trimmed)) return trimmed === '' ? null : T('时长不能包含控制字符。', 'The duration must not contain control characters.', '期間に制御文字は使用できません。');
+  if (trimmed === '') return null;
+  if (controlChars.test(trimmed)) return T('时长不能包含控制字符。', 'The duration must not contain control characters.', '期間に制御文字は使用できません。');
   if (/^(?:0|off|false|none|disabled)$/i.test(trimmed)) return null;
-  return tosPauseSeconds(trimmed) !== null && tosPauseSeconds(trimmed)! > 0 ? null
-    : T('留空表示关闭；也可填 6h、30m 等正时长，或 0 / off / false / none / disabled。', 'Leave empty to disable, or enter a positive duration such as 6h or 30m, or 0 / off / false / none / disabled.', '空欄で無効。6h、30m などの正の期間、または 0 / off / false / none / disabled を入力してください。');
+  // Any parseable duration is saved as typed: a zero or negative value simply
+  // means the pause stays off, so the UI must not reject what the core accepts.
+  return tosPauseMillis(trimmed) !== null ? null
+    : T('留空表示关闭；也可填 6h、30m、1us 等内核支持的时长，或 0 / off / false / none / disabled。', 'Leave empty to disable, or enter a core duration such as 6h, 30m or 1us, or 0 / off / false / none / disabled.', '空欄で無効。6h、30m、1us などコアが対応する期間、または 0 / off / false / none / disabled を入力してください。');
 };
 
 export const oauthTemplateGroups: TemplateConfigGroup[] = [

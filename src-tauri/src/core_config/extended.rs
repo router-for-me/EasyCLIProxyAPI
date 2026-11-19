@@ -553,15 +553,27 @@ fn validate_string(path: &[String], value: &str) -> bool {
     let key = path.join("/");
     let leaf = path.last().map(String::as_str).unwrap_or_default();
     if leaf == "tos-pause-window" {
-        // Empty and the kernel's explicit disable spellings switch the
-        // protective pause off; anything else must be a positive Go duration.
-        let normalized = value.trim().to_ascii_lowercase();
-        if normalized.is_empty()
-            || matches!(normalized.as_str(), "0" | "off" | "false" | "none" | "disabled")
-        {
+        // Same contract as the core: the disable spellings are case-insensitive,
+        // while a duration must parse exactly as typed. A zero or negative window
+        // is valid input that leaves the pause off, so it is not rejected here.
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
             return true;
         }
-        return duration_nanos(&normalized).is_some_and(|nanos| nanos > 0);
+        if matches!(
+            trimmed.to_ascii_lowercase().as_str(),
+            "0" | "off" | "false" | "none" | "disabled"
+        ) {
+            return true;
+        }
+        // The core parses with time.ParseDuration, which rejects a value that
+        // overflows int64 nanoseconds; accept only what that parser would.
+        let nanos = match duration_nanos(trimmed) {
+            Some(nanos) => nanos,
+            None => return false,
+        };
+        let magnitude = (nanos as i128).abs();
+        return magnitude < i64::MAX as i128 || magnitude == 0;
     }
     if leaf == "stream-bootstrap-timeout" {
         let normalized = value.trim().to_ascii_lowercase();
@@ -1621,7 +1633,13 @@ client: {codex: {optimize-multi-agent-v2: false}}
         for value in ["", "0", "off", "OFF", "false", "none", "disabled", "6h", "30m", "1h30m"] {
             assert!(validate_string(&path, value), "{value}");
         }
-        for value in ["abc", "6x", "-1h", "0s", "6h 30m", "tomorrow"] {
+        for value in ["-1h", "0s", "0m", "1us", "1ns", "300ms", "+1h", "2562047h"] {
+            assert!(validate_string(&path, value), "{value}");
+        }
+        for value in [
+            "abc", "6x", "6H", "6S", "1d", "15", "6h 30m", "tomorrow", "1e300s",
+            "999999999999999h", "2562048h",
+        ] {
             assert!(!validate_string(&path, value), "{value}");
         }
         let content = "config-version: 8\n";

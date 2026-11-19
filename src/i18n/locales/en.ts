@@ -269,6 +269,7 @@ export const en: Record<MessageKey, string> = {
   'authFiles.health.reason.tokenExpired': 'Access token expired',
   'authFiles.health.reason.unknown': 'Other or unknown restriction',
   'authFiles.health.reason.tosViolation': 'Suspended by upstream terms-of-service violation',
+  'authFiles.health.reason.tosViolationHistorical': 'Previously suspended for a terms-of-service violation',
   'authFiles.health.tosAppealHint': 'The upstream suspended this credential. Submit an appeal through',
   'authFiles.health.tosAppealLink': 'Open appeal page',
   'authFiles.requests.title': 'Requests',

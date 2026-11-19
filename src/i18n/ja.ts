@@ -267,6 +267,7 @@ export const jaOverrides = {
   'authFiles.health.reason.tokenExpired': 'アクセストークンの有効期限切れ',
   'authFiles.health.reason.unknown': 'その他または不明な制限',
   'authFiles.health.reason.tosViolation': '上流の利用規約違反により停止',
+  'authFiles.health.reason.tosViolationHistorical': '以前に上流の利用規約違反で停止',
   'authFiles.health.tosAppealHint': '上流がこの認証情報を停止しました。次のリンクから異議申し立てを行えます',
   'authFiles.health.tosAppealLink': '申し立てページを開く',
   'authFiles.requests.title': 'リクエスト履歴',

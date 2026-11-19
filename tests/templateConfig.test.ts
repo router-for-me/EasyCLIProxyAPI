@@ -159,8 +159,16 @@ describe('template configuration drafts', () => {
     expect(pause.type).toBe('string');
     expect(pause.placeholder).toBe('6h');
     expect(pause.defaultValue).toBeUndefined();
-    for (const value of ['6h', '0', 'off', '', '30m', '1h30m', 'DISABLED']) expect(templateFieldValidation(pause, value)).toBeNull();
-    for (const value of ['abc', '6x', '-1h', '0s', '6h 30m']) expect(templateFieldValidation(pause, value)).not.toBeNull();
+    // Accepts exactly what the core's duration parser accepts; a zero or negative
+    // window is valid input that simply leaves the pause off.
+    for (const value of ['6h', '0', 'off', '', '30m', '1h30m', 'DISABLED', '0s', '-1h', '+1h', '1us', '1µs', '1ns', '300ms', ' 6h ']) {
+      expect(templateFieldValidation(pause, value)).toBeNull();
+    }
+    // Rejected because the core cannot parse them (wrong case, unknown units, or an
+    // int64-nanosecond overflow that the core would read as "disabled").
+    for (const value of ['abc', '6x', '6H', '6S', '1d', '15', '6h 30m', '1e3s', '999999999999999h', '2562048h']) {
+      expect(templateFieldValidation(pause, value)).not.toBeNull();
+    }
 
     const patterns = others.fields.find(item => item.path.join('.') === 'oauth.providers.antigravity.sensitive-patterns-replace')!;
     expect(patterns.type).toBe('custom');

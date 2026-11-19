@@ -41,13 +41,34 @@ describe('upstream TOS suspension', () => {
     }
   });
 
-  it('still reports a suspension after a restart kept only the persisted appeal link', () => {
+  it('reports a link-only record as historical instead of a current suspension', () => {
+    // Re-enabling a credential keeps the appeal metadata on disk, so a link with no
+    // live status marker cannot distinguish "reloaded suspension" from "manually
+    // disabled afterwards". It is reported as a past suspension, in a neutral tone.
+    const linkOnly = authFileHealth({ status: 'disabled', disabled: true, tos_appeal_url: 'https://example.com/appeal' });
+    expect(linkOnly).toMatchObject({
+      disabled: true, label: 'authFiles.health.reason.tosViolationHistorical',
+      tone: 'neutral', suspension: 'tos', suspensionHistorical: true,
+    });
+    // A status reason still wins over the leftover link.
+    const quota = authFileHealth({ status: 'disabled', disabled: true, status_message: 'quota exhausted', tos_appeal_url: 'https://example.com/appeal' });
+    expect(quota.label).toBe('authFiles.status.disabled');
+    expect(quota.suspension).toBeUndefined();
+    // An active credential with a leftover link stays healthy.
+    expect(authFileHealth({ status: 'active', tos_appeal_url: 'https://example.com/appeal' }).label).toBe('authFiles.health.active');
+  });
+
+  it('keeps a restart-reloaded suspension visible after the marker is gone', () => {
     // The core keeps the marker in memory, so a reloaded credential carries the
-    // appeal link but no status message. It must not degrade to a plain disable.
+    // appeal link but no status message. It must not degrade to a plain disable,
+    // and it must not claim the live state the running core cannot report.
     const reloaded = authFileHealth({ status: 'disabled', tos_appeal_url: 'https://example.com/appeal' });
-    expect(reloaded).toMatchObject({ disabled: true, suspension: 'tos', label: 'authFiles.health.reason.tosViolation', tone: 'warning', message: '' });
+    expect(reloaded).toMatchObject({
+      disabled: true, suspension: 'tos', suspensionHistorical: true,
+      label: 'authFiles.health.reason.tosViolationHistorical', tone: 'neutral', message: '',
+    });
     expect(render({ status: 'disabled', tos_appeal_url: 'https://example.com/appeal' }))
-      .toContain('Suspended by upstream terms-of-service violation');
+      .toContain('Previously suspended for a terms-of-service violation');
   });
 
   it('renders the TOS reason with an appeal link and leaves other disables neutral', () => {

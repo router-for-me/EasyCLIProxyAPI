@@ -254,6 +254,7 @@ export const zhCN: Record<string, string> = {
   'authFiles.health.reason.tokenExpired': '访问令牌已过期',
   'authFiles.health.reason.unknown': '其他或未知限制',
   'authFiles.health.reason.tosViolation': '因上游服务条款违规被停用',
+  'authFiles.health.reason.tosViolationHistorical': '曾被判定违反上游服务条款',
   'authFiles.health.tosAppealHint': '上游已停用该凭据，可通过以下入口提交申诉',
   'authFiles.health.tosAppealLink': '打开申诉页面',
   'authFiles.requests.title': '请求记录',

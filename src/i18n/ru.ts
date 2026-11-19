@@ -570,6 +570,7 @@ export const ru: Record<MessageKey, string> = {
   'authFiles.health.reason.tokenExpired': 'Срок действия токена доступа истек',
   'authFiles.health.reason.unknown': 'Иное или неизвестное ограничение',
   'authFiles.health.reason.tosViolation': 'Заблокировано за нарушение условий использования',
+  'authFiles.health.reason.tosViolationHistorical': 'Ранее заблокировано за нарушение условий использования',
   'authFiles.health.tosAppealHint': 'Поставщик заблокировал эту учётную запись. Подайте апелляцию по ссылке',
   'authFiles.health.tosAppealLink': 'Открыть страницу апелляции',
   'authFiles.requests.title': 'Запросы',

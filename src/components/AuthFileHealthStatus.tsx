@@ -74,7 +74,10 @@ function HealthStatus({ file, snapshot, nowMs, resetting = false, resetDisabled 
   const hasTimers = cooldown.rows.length > 0;
   const healthy = health.label === 'authFiles.health.active';
   if (healthy && !hasTimers && snapshot?.records !== null) return null;
-  const appeal = authFileAppeal(file);
+  // Only a suspension the running core currently reports offers the appeal link.
+  // A persisted-only link is historical evidence, so it must not prompt an appeal
+  // for a credential that a manual or quota disable explains.
+  const appeal = health.suspension === 'tos' && !health.suspensionHistorical ? authFileAppeal(file) : undefined;
   const hasDetails = hasTimers || Boolean(health.message) || Boolean(appeal);
   const reasonSet = new Set(cooldown.active.map(({ record }) => cooldownReasonKey(record.reason)));
   if (reasonSet.has('authFiles.health.reason.credentialQuota')) reasonSet.delete('authFiles.health.reason.quota');

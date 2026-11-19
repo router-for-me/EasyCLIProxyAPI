@@ -25,6 +25,11 @@ export type AuthFileHealth = {
   disabled: boolean;
   /** Upstream terms-of-service suspension reported by the core, not a plain disable. */
   suspension?: 'tos';
+  /**
+   * Set when the only evidence is the persisted appeal link, so the suspension is
+   * historical rather than currently reported by the running core.
+   */
+  suspensionHistorical?: true;
 };
 
 export type AuthFileAppeal = { url: string; text?: string };
@@ -145,12 +150,17 @@ export function authFileHealth(file: Record<string, unknown>): AuthFileHealth {
   const disabled = readBoolean(file, 'disabled') || status === 'disabled';
   const base = { status, message, disabled };
   if (disabled) {
-    // The core reports the suspension in memory as a status marker, and persists
-    // the appeal link on the credential file, so either signal identifies it.
-    // Ordinary disables keep their neutral state.
+    // A live suspension arrives as a status marker. That marker is memory-only, so
+    // a reloaded credential keeps just the persisted appeal link. The two states
+    // are indistinguishable in the payload once a re-enabled credential is disabled
+    // again, so the link-only case is reported as a past suspension instead of
+    // claiming a current one.
     const suspension = suspensionReasons[message.toLowerCase()];
-    if (suspension || authFileAppeal(file)) {
-      return { ...base, message: '', label: 'authFiles.health.reason.tosViolation', tone: 'warning', suspension: suspension ?? 'tos' };
+    if (suspension) {
+      return { ...base, message: '', label: 'authFiles.health.reason.tosViolation', tone: 'warning', suspension };
+    }
+    if (!message && authFileAppeal(file)) {
+      return { ...base, message: '', label: 'authFiles.health.reason.tosViolationHistorical', tone: 'neutral', suspension: 'tos', suspensionHistorical: true };
     }
     return { ...base, label: 'authFiles.status.disabled', tone: 'neutral' };
   }
