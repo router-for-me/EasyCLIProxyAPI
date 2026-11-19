@@ -364,6 +364,26 @@ pub(crate) fn agent_effective_loopback_origin(client_id: &str, core_port: u16) -
 pub(crate) fn restore_agent_prompt_proxies(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let _op = PROMPT_PROXY_OP_LOCK.lock().await;
+        // Start-up restoration must obey the same rule as the editor: a TLS kernel never gets
+        // a plaintext loopback. Deactivate the persisted overrides and point the clients back
+        // at the kernel instead of silently downgrading them.
+        if managed_core_tls_enabled() {
+            let clients: Vec<String> = match PROMPT_STATE.lock() {
+                Ok(guard) => guard
+                    .clients
+                    .iter()
+                    .filter(|(_, cfg)| cfg.has_active_rules())
+                    .map(|(client, _)| client.clone())
+                    .collect(),
+                Err(_) => return,
+            };
+            for client in clients {
+                if let Err(error) = deactivate_prompt_overrides_for_tls(&app, &client).await {
+                    eprintln!("Failed to disable system prompt proxy for {client}: {error}");
+                }
+            }
+            return;
+        }
         let targets: Vec<(String, u16)> = {
             let Ok(guard) = PROMPT_STATE.lock() else {
                 return;
@@ -388,6 +408,50 @@ pub(crate) fn restore_agent_prompt_proxies(app: tauri::AppHandle) {
             }
         }
     });
+}
+
+/// Drops every rule for `client`, stops its listener and restores the kernel origin in the
+/// client configuration. Used when kernel TLS makes the plaintext loopback unusable.
+async fn deactivate_prompt_overrides_for_tls(
+    app: &tauri::AppHandle,
+    client_id: &str,
+) -> Result<(), String> {
+    let Some(gui_config) = app
+        .try_state::<GuiConfigState>()
+        .and_then(|state| state.snapshot().ok())
+    else {
+        return Err("GUI configuration is unavailable".to_string());
+    };
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|_| "Failed to get user directory".to_string())?;
+    let proxy_origin = PROMPT_STATE
+        .lock()
+        .ok()
+        .and_then(|guard| guard.active_ports.get(client_id).copied())
+        .filter(|port| *port > 0)
+        .map(|port| format!("http://127.0.0.1:{port}"))
+        .unwrap_or_else(|| format!("http://127.0.0.1:{}", preferred_proxy_port(client_id)));
+
+    {
+        let mut guard = PROMPT_STATE
+            .lock()
+            .map_err(|_| "Agent system prompt state lock is poisoned".to_string())?;
+        let entry = guard.clients.entry(client_id.to_string()).or_default();
+        entry.default_rule = None;
+        entry.models.clear();
+        guard.active_ports.remove(client_id);
+        persist_prompt_state_locked(&guard)?;
+    }
+    stop_client_proxy_listener(client_id);
+
+    let kernel_origin = agent_effective_loopback_origin(client_id, gui_config.port);
+    let _file_guard = crate::AGENT_CONFIG_FILE_LOCK
+        .lock()
+        .map_err(|_| "Agent configuration file lock is poisoned".to_string())?;
+    sync_configured_agent_origin(client_id, &home, &proxy_origin, &kernel_origin)?;
+    Ok(())
 }
 
 fn builtin_template_for_client(client_id: &str) -> &'static str {
