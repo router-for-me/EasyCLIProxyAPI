@@ -1,5 +1,5 @@
 @layer components {
-  .auto-update-panel { display: grid; gap: 8px; min-width: 0; padding: 14px 16px; }
+  .auto-update-panel { display: grid; gap: 5px; min-width: 0; padding: 14px 16px; }
 
   /* Label plus switch; the targets only appear once automatic updates are on. */
   .auto-update-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; }
@@ -17,7 +17,7 @@
   .auto-update-actions .compact-button { min-height: 26px; margin-top: 0; padding: 0 10px; font-size: var(--font-size-meta); box-shadow: none; }
   .auto-update-row .link-button { margin-left: auto; font-size: var(--font-size-meta); }
 
-  .auto-update-note { margin: 0; color: var(--color-text-tertiary); font-size: var(--font-size-caption); line-height: var(--line-height-body); }
+  .auto-update-note { margin: 0; color: var(--color-text-disabled); font-size: var(--font-size-caption); line-height: 1.5; }
   .auto-update-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: var(--font-size-caption); }
   .auto-update-status strong { font-weight: var(--font-weight-medium); }
   .auto-update-status span { color: var(--text-secondary); }

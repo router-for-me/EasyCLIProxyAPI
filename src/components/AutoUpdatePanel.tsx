@@ -98,7 +98,7 @@ export function AutoUpdatePanel({ embedded = false, enabled, unavailableHint, un
         <button type="button" className="primary-button compact-button" disabled={Boolean(disabled)} onClick={save}>{t('common.save')}</button>
       </div> : null}
     </div>
-    {unavailable ? <p className="auto-update-note">{unsupportedReason || unavailableHint}</p> : null}
+    {unavailable ? <p className="auto-update-note">{unsupportedReason || unavailableHint}</p> : <p className="auto-update-note">{t('autoUpdate.hint')}</p>}
     <InlineNotice notice={error || readError ? { owner: 'auto-update-settings', message: error || readError, tone: 'error' } : null} onDismiss={() => { setError(''); setReadError(''); }} />
     {draft && status?.settings.enabled ? <div className="auto-update-status" aria-live="polite">
       <strong>{t(`autoUpdate.phase.${status.phase}`)}</strong>

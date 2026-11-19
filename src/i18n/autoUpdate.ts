@@ -1,6 +1,7 @@
 const messages: Record<string, readonly [string, string, string, string]> = {
   title: ['自动更新', 'Automatic updates', '自動更新', 'Автоматические обновления'],
   enabled: ['启用自动更新', 'Enable automatic updates', '自動更新を有効にする', 'Включить автоматические обновления'],
+  hint: ['开启后，新版本将在后台自动下载，并在下次启动时安装。', 'When on, new versions download in the background and install on the next launch.', '有効にすると、新しいバージョンをバックグラウンドでダウンロードし、次回起動時にインストールします。', 'Когда включено, новые версии загружаются в фоне и устанавливаются при следующем запуске.'],
   settings: ["更新对象与条件","Update targets and conditions","更新対象と条件","Цели и условия обновления"],
   targets: ["更新对象","Update","更新対象","Обновлять"],
   app: ['应用', 'Application', 'アプリ', 'Приложение'], core: ['内核', 'Core', 'コア', 'Ядро'],
