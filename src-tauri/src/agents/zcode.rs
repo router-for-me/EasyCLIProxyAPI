@@ -984,7 +984,7 @@ fn update_subagent_frontmatter(
 
 /// Body text after the closing `---` fence in the same form the editor shows it, so an
 /// untouched body is not mistaken for an edited one.
-fn subagent_body_text(tail: &str) -> &str {
+fn subagent_body_text(tail: &str) -> String {
     let after_fence = if let Some(rest) = tail.strip_prefix("\r\n---") {
         rest
     } else if let Some(rest) = tail.strip_prefix("\n---") {
@@ -997,6 +997,8 @@ fn subagent_body_text(tail: &str) -> &str {
         .or_else(|| after_fence.strip_prefix('\n'))
         .unwrap_or(after_fence)
         .trim()
+        // The editor compares LF text; a CRLF file must not look edited just for its endings.
+        .replace("\r\n", "\n")
 }
 
 #[cfg(test)]
@@ -1042,6 +1044,23 @@ mod subagent_frontmatter_tests {
         assert_eq!(
             updated,
             "---\r\nname: reviewer\r\nmodel: inherit\r\nthoughtLevel: high\r\n---\r\n\r\nBody line.\r\n"
+        );
+    }
+
+    #[test]
+    fn crlf_multiline_body_is_not_rewritten_when_unchanged() {
+        let crlf = "---\r\nname: reviewer\r\nmodel: inherit\r\n---\r\n\r\nFirst paragraph.\r\n\r\nSecond paragraph.\r\n";
+        // What the editor submits: the trimmed body as LF text.
+        let edited = "First paragraph.\n\nSecond paragraph.";
+        assert!(
+            update_subagent_frontmatter(crlf, None, None, Some(edited)).is_none(),
+            "a CRLF file whose body is unchanged must not be rewritten"
+        );
+        let updated = update_subagent_frontmatter(crlf, Some("glm-5.3"), None, Some(edited))
+            .expect("a model change must still be written");
+        assert_eq!(
+            updated,
+            "---\r\nname: reviewer\r\nmodel: glm-5.3\r\n---\r\n\r\nFirst paragraph.\r\n\r\nSecond paragraph.\r\n"
         );
     }
 }
