@@ -7,7 +7,7 @@
   /* Targets read as a short settings list instead of two loose native boxes. */
   .auto-update-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
   .auto-update-fields legend { margin: 0; padding: 0; }
-  .auto-update-targets { display: grid; gap: 2px; }
+  .auto-update-targets { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; }
   /* Inactive master switch dims the target list so it reads as off, not empty. */
   .auto-update-fields:disabled .auto-update-targets .binary-control-label { color: var(--color-text-muted); opacity: 0.75; cursor: not-allowed; }
   .auto-update-fields:disabled .auto-update-targets .auto-update-checkbox { border-color: var(--color-border-default); background: var(--color-surface-hover); }
