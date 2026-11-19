@@ -241,7 +241,7 @@ export function ZCodeSubagentConfigDialog({
             <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
               {filteredSubagents.length > 0 ? (
                 filteredSubagents.map((sub) => {
-                  const currentModelClean = sub.model ? sub.model.replace(/^cpa-gui\//, "") : "";
+                  const currentModelClean = sub.model && sub.model !== "inherit" ? sub.model.replace(/^cpa-gui\//, "") : "";
                   const promptOpen = Boolean(expandedPromptPaths[sub.filePath]);
                   return (
                     <div
@@ -302,7 +302,7 @@ export function ZCodeSubagentConfigDialog({
                           </Select>
 
                           <Select
-                            value={sub.thoughtLevel ?? ""}
+                            value={sub.thoughtLevel && sub.thoughtLevel !== "inherit" ? sub.thoughtLevel : ""}
                             onChange={(e) => updateSubagentThoughtLevel(sub.filePath, e.currentTarget.value)}
                             style={{ minWidth: "105px", fontSize: "12px" }}
                           >
