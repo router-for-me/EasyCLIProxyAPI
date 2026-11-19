@@ -693,6 +693,7 @@ textarea:focus-visible {
 
 .app-version-info-section {
   gap: 8px;
+  padding-top: 10px;
 }
 
 .app-version-meta {

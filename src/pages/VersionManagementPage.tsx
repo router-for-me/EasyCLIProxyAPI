@@ -699,11 +699,6 @@ export function VersionManagementPage() {
           </div>
         </div>
 
-        <AutoUpdatePanel
-          enabled={appUpdate?.autoUpdateSupported !== false && !appIsPreview}
-          unavailableHint={t('appUpdate.manualFallback')}
-          unsupportedReason={appUpdate && !appUpdate.autoUpdateSupported ? (appUnsupportedReason ?? undefined) : undefined}
-        />
         <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
         <div className="version-card-grid">
         <article className="version-list-item app-module-card surface-panel">
@@ -762,6 +757,12 @@ export function VersionManagementPage() {
 
             <div className="app-version-info-section">
               <MessageNotice message={appUpdateError || channelError} />
+              <AutoUpdatePanel
+                embedded
+                enabled={appUpdate?.autoUpdateSupported !== false && !appIsPreview}
+                unavailableHint={t('appUpdate.manualFallback')}
+                unsupportedReason={appUpdate && !appUpdate.autoUpdateSupported ? (appUnsupportedReason ?? undefined) : undefined}
+              />
               {appIsPreview && latestAppPublishedAt && !appUpdateError && !channelError ? (
                 <p className="app-version-meta">{t('appUpdate.publishedAt', { date: latestAppPublishedAt })}</p>
               ) : null}

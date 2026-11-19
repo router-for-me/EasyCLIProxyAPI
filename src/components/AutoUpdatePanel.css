@@ -1,5 +1,15 @@
 @layer components {
   .auto-update-panel { display: grid; gap: 10px; min-width: 0; padding: 14px 16px; }
+  /* Inside a version card the panel is a plain section; the card's info
+     block already draws the divider above it. */
+  .auto-update-panel-inset {
+    gap: 4px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
   .auto-update-heading, .auto-update-controls, .auto-update-actions, .auto-update-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; }
   .auto-update-heading { justify-content: space-between; }
   .auto-update-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -9,9 +19,11 @@
   .auto-update-fields legend { margin: 0; padding: 0; }
   .auto-update-controls { gap: 6px 16px; }
   .auto-update-explanation, .auto-update-note { margin: 0; color: var(--text-secondary); font-size: var(--font-size-caption); line-height: var(--line-height-body); }
+  /* The hint describes both checkboxes, so it sits in their group rather than the card edge. */
+  .auto-update-panel-inset .auto-update-explanation { padding-left: 22px; }
   .auto-update-status { font-size: var(--font-size-caption); }
   .auto-update-status span, .auto-update-actions > span { color: var(--text-secondary); font-size: var(--font-size-caption); }
-  .auto-update-actions { justify-content: flex-end; gap: 8px; }
+  .auto-update-actions { justify-content: flex-end; gap: 8px; margin-left: auto; }
   .auto-update-actions .compact-button { padding: 0 10px; min-height: 30px; }
   .auto-update-panel .notice, .auto-update-panel .inline-notice, .auto-update-panel [role="alert"] { margin: 0; }
   @media (max-width: 640px) {

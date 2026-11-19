@@ -12,6 +12,8 @@ import {
 import './AutoUpdatePanel.css';
 
 type AutoUpdatePanelProps = {
+  /** Renders as an inset block instead of a standalone card. */
+  embedded?: boolean;
   /** False once the app reports that in-place updates are unavailable here. */
   enabled: boolean;
   /** Shown with the hints when the running build cannot update itself. */
@@ -19,7 +21,7 @@ type AutoUpdatePanelProps = {
   unsupportedReason?: string;
 };
 
-export function AutoUpdatePanel({ enabled, unavailableHint, unsupportedReason }: AutoUpdatePanelProps) {
+export function AutoUpdatePanel({ embedded = false, enabled, unavailableHint, unsupportedReason }: AutoUpdatePanelProps) {
   const { t } = useI18n();
   const [status, setStatus] = useState<AutoUpdateStatus | null>(null);
   const [draft, setDraft] = useState<AutoUpdateSettings | null>(null);
@@ -76,7 +78,7 @@ export function AutoUpdatePanel({ enabled, unavailableHint, unsupportedReason }:
   // A build that cannot update itself keeps its saved settings visible but locked.
   const unavailable = !enabled;
   const disabled = busy || unavailable;
-  return <section className="auto-update-panel surface-panel" aria-label={t('autoUpdate.title')}>
+  return <section className={`auto-update-panel${embedded ? ' auto-update-panel-inset' : ' surface-panel'}`} aria-label={t('autoUpdate.title')}>
     <div className="auto-update-heading">
       <div className="auto-update-title">
         <h2>{t('autoUpdate.title')}</h2>
@@ -97,9 +99,9 @@ export function AutoUpdatePanel({ enabled, unavailableHint, unsupportedReason }:
         <div className="auto-update-controls">
           <Checkbox checked={draft.updateApp} onChange={event => change({ updateApp: event.target.checked })} label={t('autoUpdate.app')} />
           <Checkbox checked={draft.updateCore} onChange={event => change({ updateCore: event.target.checked })} label={t('autoUpdate.core')} />
-          <span className="auto-update-explanation">{unavailable ? (unsupportedReason || unavailableHint) : t('autoUpdate.downloadHint')}</span>
         </div>
       </fieldset>
+      <p className="auto-update-explanation">{unavailable ? (unsupportedReason || unavailableHint) : t('autoUpdate.downloadHint')}</p>
       {status?.settings.enabled ? <div className="auto-update-status" aria-live="polite">
         <strong>{t(`autoUpdate.phase.${status.phase}`)}</strong>
         {status?.version ? <span>{t(status.target === 'core' ? 'autoUpdate.core' : 'autoUpdate.app')} {status.version}</span> : null}
