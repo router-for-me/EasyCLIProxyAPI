@@ -32,6 +32,7 @@ describe('live route map', () => {
     expect(gateway).toContain(`<img src="${encoded(appLogo)}" width="30" height="30" alt=""`);
     expect(gateway).not.toContain('<svg');
     expect(html).toContain('data-route-gateway="true"');
+    expect(html).toContain('<span class="gateway-name">ECPA</span>');
     expect(wires(html)).not.toMatch(/<(text|tspan|title|foreignObject)\b/);
   });
 
@@ -57,13 +58,13 @@ describe('live route map', () => {
   });
 
   it('pulses only the Agent and associated model/credential of a matching successful arrival', () => {
-    const fresh = request('fresh', { model: 'aliased-source', alias: 'shown-model', auth_index: '  main  ' });
+    const fresh = request('fresh', { timestamp: new Date(now - 1000).toISOString(), model: 'aliased-source', alias: 'shown-model', auth_index: '  main  ' });
     const other = request('other', { model: 'model-b', client_agent: 'codex', auth_index: 'backup', source_display: 'Backup' });
     const html = render(buildLiveRouting([fresh, other], [], now), [fresh]);
     expect(pathFor(html, 'model', 'agent:claude-code')).toContain('routing-edge-flowing');
     expect(pathFor(html, 'target', routingDestinationId(fresh))).toContain('routing-edge-flowing');
     expect(pathFor(html, 'model', 'agent:codex')).toContain('routing-edge-recorded');
-    expect(pathFor(html, 'target', routingDestinationId(other))).toContain('routing-edge-recorded');
+    expect(pathFor(html, 'target', routingDestinationId(other))).toBe('');
     expect(packetsFor(html, 'model')).toHaveLength(1);
     expect(packetsFor(html, 'model')[0]).toContain('data-model="agent:claude-code"');
     expect(packetsFor(html, 'target')).toHaveLength(1);
@@ -131,16 +132,24 @@ describe('live route map', () => {
     expect(target).not.toContain('1 failed');
     expect(wires(html)).not.toContain('routing-packet');
     const idle = render(buildLiveRouting([], cooldowns, now));
-    expect(pathFor(idle, 'target', 'cooldown:auth:main')).toContain('routing-edge-idle');
+    expect(idle).toContain('class="routing-unobserved-cooling"');
+    expect(idle).toContain('Main');
+    expect(idle).toContain('Cooldown · 10s');
+    expect(idle).not.toContain('data-route-target');
+    expect(wires(idle)).toBe('');
     expect(idle).not.toContain('0 · 0 ms');
+
+    const unrelated = render(buildLiveRouting([request('ok', { auth_index: 'other' })], cooldowns, now));
+    expect(unrelated).toContain('class="routing-unobserved-cooling"');
+    expect(pathFor(unrelated, 'target', 'cooldown:auth:main')).toBe('');
   });
 
-  it('retains empty ports and static ghost paths', () => {
+  it('shows a single empty region without disconnected nodes or synthetic paths', () => {
     const html = render(buildLiveRouting([], [], now));
-    expect(html).toContain('data-route-model="__ghost__"');
-    expect(html).toContain('data-route-target="__ghost__"');
-    expect(wires(html).match(/routing-edge-ghost/g)).toHaveLength(2);
-    expect(wires(html)).not.toContain('routing-packet');
+    expect(html).toContain('data-testid="routing-empty"');
+    expect(html.match(/Waiting for recorded requests…/g)).toHaveLength(1);
+    expect(html).not.toContain('data-route-');
+    expect(html).not.toContain('live-routing-edges');
   });
 
   it('bounds link stroke weights while distinguishing route volume', () => {
@@ -158,23 +167,40 @@ describe('live route map', () => {
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.routing-packet\s*\{\s*display: none;/);
     expect(css).toContain('@container (max-width: 740px)');
     expect(css).toContain('@container (max-width: 540px)');
-    expect(css).toMatch(/\.routing-map-models \.routing-row-text\s*\{\s*width: 100%;\s*flex: none;/);
+    expect(css).toMatch(/\.live-routing-map \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto minmax\(0, 1fr\);[^}]*align-items: start;/);
+    expect(css).toMatch(/@container \(max-width: 400px\)[\s\S]*?grid-template-columns: minmax\(0, 1fr\);/);
+    expect(css).not.toMatch(/\.live-routing-map \{[^}]*min-height:/);
     expect(css.match(/^\.routing-row-text \{/gm)).toHaveLength(1);
     expect(css).toMatch(/^\.routing-row-heading \{/m);
     expect(css).not.toMatch(/\.node-ghost \.routing-row-heading/);
     expect(css).not.toContain('routing-edge-label');
   });
 
-  it('labels each model and credential destination with its actual Agent association', () => {
+  it('does not repeat the model, Agent name or failure count across both ends of a single route', () => {
+    const html = render(buildLiveRouting([request('single', { failed: true })], [], now));
+    const source = html.split('class="routing-map-column routing-map-models"')[1]?.split('class="routing-map-center"')[0];
+    const destination = html.split('class="routing-map-column routing-map-targets"')[1];
+    expect(source).toContain('Claude Code');
+    expect(source).not.toContain('model-a');
+    expect(source).not.toContain('1 failed');
+    expect(destination).toContain('model-a');
+    expect(destination).toContain('Main credential');
+    expect(destination).toContain('1 failed');
+    expect(destination).not.toContain('>Claude Code<');
+  });
+
+  it('initially opens only the latest Agent and omits folded destination paths and packets', () => {
     const claude = request('claude', { client_agent: 'claude-code', model: 'same-model' });
-    const codex = request('codex', { client_agent: 'codex', model: 'same-model' });
+    const codex = request('codex', { client_agent: 'codex', model: 'same-model', timestamp: new Date(now - 1000).toISOString() });
     const html = render(buildLiveRouting([claude, codex], [], now), [claude]);
     expect(html).toContain('data-route-agent="agent:claude-code"');
     expect(html).toContain('data-route-agent="agent:codex"');
-    expect(html.match(/class="routing-row-origin"/g)).toHaveLength(2);
-    expect(pathFor(html, 'target', routingDestinationId(claude))).toContain('routing-edge-flowing');
+    expect(html).toContain('aria-label="Expand routes for Claude Code"');
+    expect(html).toContain('aria-label="Collapse routes for Codex"');
+    expect(html).not.toContain('routing-row-origin');
+    expect(pathFor(html, 'target', routingDestinationId(claude))).toBe('');
     expect(pathFor(html, 'target', routingDestinationId(codex))).toContain('routing-edge-recorded');
-    expect(wires(html)).not.toMatch(/<(text|tspan|title|foreignObject)\b/);
+    expect(packetsFor(html, 'target')).toHaveLength(0);
   });
 
   it('does not display raw or unrecognized client header content in text or titles', () => {

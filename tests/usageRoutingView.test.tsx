@@ -107,7 +107,8 @@ describe('routing model and credential disclosure', () => {
     expect(projectRoutingGroups(single, { depth: 'credentials', expanded: {} }).rows).toHaveLength(1);
     expect(routingGroupOpen(pair[0], DEFAULT_ROUTING_DISPLAY)).toBe(true);
     const html = render(<RoutingMap view={buildLiveRouting([record('one')], [], now)} packets={[]} now={now} />);
-    expect(html).not.toContain('aria-expanded=');
+    expect(html).toMatch(/class="routing-node-focus routing-agent-toggle" aria-expanded="true"/);
+    expect(html).not.toContain('routing-group-toggle');
   });
 
   it('makes every credential beyond eight reachable, with hidden activity projected onto its visible summary', () => {
@@ -193,10 +194,10 @@ describe('completed request focus', () => {
 
   it('uses only route-window metrics on the live page and localizes new controls in every locale', () => {
     const source = readFileSync(new URL('../src/pages/UsageRecordsPage.tsx', import.meta.url), 'utf8');
-    const live = source.slice(source.indexOf("{activeTab === 'live-routing' ? ("), source.indexOf("{activeTab === 'overview'", source.indexOf("{activeTab === 'live-routing' ? (")));
+    const live = source.match(/\{activeTab === 'live-routing' \? [\s\S]*? : null\}/)?.[0] ?? '';
     expect(live).not.toContain('UsageStatGrid');
     expect(live).toContain('<RoutingPanel');
-    for (const locale of supportedLocales) for (const key of ['routing.depth', 'routing.depth.auto', 'routing.depth.models', 'routing.depth.credentials', 'routing.windowRecords', 'routing.failedRecords', 'routing.observedPaths', 'routing.backToLatest', 'routing.recordExpired', 'routing.expiredSelection'] as const) {
+    for (const locale of supportedLocales) for (const key of ['routing.depth', 'routing.depth.auto', 'routing.depth.models', 'routing.depth.credentials', 'routing.windowRecords', 'routing.failedRecords', 'routing.observedPaths', 'routing.backToLatest', 'routing.recordExpired', 'routing.expiredSelection', 'routing.pausedEmpty', 'routing.expandAgent', 'routing.collapseAgent', 'routing.allAgentsFolded'] as const) {
       expect(translate(locale, key)).not.toBe(key);
       expect(translate(locale, key).length).toBeGreaterThan(0);
     }

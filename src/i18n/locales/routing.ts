@@ -1,4 +1,7 @@
 export const routingEn = {
+  'routing.expandAgent': 'Expand routes for {agent}',
+  'routing.collapseAgent': 'Collapse routes for {agent}',
+  'routing.allAgentsFolded': 'Select an Agent to show its routes.',
   'routing.expiredSelection': 'Outside window',
   'routing.depth': 'View depth',
   'routing.depth.auto': 'Automatic',
@@ -119,7 +122,7 @@ export const routingEn = {
   'routing.unknownClient': 'Unknown client', 'routing.otherClient': 'Other client',
   'routing.models': 'Models',
   'routing.targets': 'Upstreams',
-  'routing.gateway': 'Gateway',
+  'routing.pausedEmpty': 'No requests in the paused snapshot.',
   'routing.waiting': 'Waiting for recorded requests…',
   'routing.paused': 'Paused',
   'routing.pause': 'Pause monitor',
@@ -132,6 +135,9 @@ export const routingEn = {
 } as const;
 type RoutingMessages = Record<keyof typeof routingEn, string>;
 export const routingZhCN: RoutingMessages = {
+  'routing.expandAgent': '展开 {agent} 的路由',
+  'routing.collapseAgent': '收起 {agent} 的路由',
+  'routing.allAgentsFolded': '选择一个 Agent 展开路由。',
   'routing.expiredSelection': '已离开窗口',
   'routing.depth': '展开层级',
   'routing.depth.auto': '自动',
@@ -222,12 +228,15 @@ export const routingZhCN: RoutingMessages = {
   'routing.liveDescription': '近期请求记录 · 滚动 60 秒窗口 · 每 3 秒刷新', 'routing.requests': '{count} 条请求记录',
   'routing.agents': 'Agent 来源', 'routing.destinations': '模型 / 凭据',
   'routing.unknownClient': '未知客户端', 'routing.otherClient': '其他客户端',
-  'routing.models': '模型', 'routing.targets': '上游', 'routing.gateway': '网关', 'routing.waiting': '等待请求记录…',
+  'routing.models': '模型', 'routing.targets': '上游', 'routing.pausedEmpty': '暂停的快照中没有请求记录。', 'routing.waiting': '等待请求记录…',
   'routing.paused': '已暂停', 'routing.pause': '暂停监控', 'routing.resume': '恢复监控', 'routing.cooldown': '冷却中 · {seconds} 秒',
   'routing.cooldownsUnavailable': '冷却状态不可用', 'routing.truncated': '60 秒窗口内的记录超过 200 条，仅显示最新记录。',
   'routing.failures': '{count} 次失败', 'routing.updated': '更新于 {time}',
 };
 export const routingZhTW: RoutingMessages = {
+  'routing.expandAgent': '展開 {agent} 的路由',
+  'routing.collapseAgent': '收合 {agent} 的路由',
+  'routing.allAgentsFolded': '選擇一個 Agent 展開路由。',
   'routing.expiredSelection': '已離開視窗',
   'routing.depth': '展開層級',
   'routing.depth.auto': '自動',
@@ -318,12 +327,15 @@ export const routingZhTW: RoutingMessages = {
   'routing.liveDescription': '近期請求記錄 · 滾動 60 秒視窗 · 每 3 秒重新整理', 'routing.requests': '{count} 筆請求記錄',
   'routing.agents': 'Agent 來源', 'routing.destinations': '模型 / 憑據',
   'routing.unknownClient': '未知用戶端', 'routing.otherClient': '其他用戶端',
-  'routing.models': '模型', 'routing.targets': '上游', 'routing.gateway': '閘道', 'routing.waiting': '等待請求記錄…',
+  'routing.models': '模型', 'routing.targets': '上游', 'routing.pausedEmpty': '暫停的快照中沒有請求記錄。', 'routing.waiting': '等待請求記錄…',
   'routing.paused': '已暫停', 'routing.pause': '暫停監控', 'routing.resume': '恢復監控', 'routing.cooldown': '冷卻中 · {seconds} 秒',
   'routing.cooldownsUnavailable': '冷卻狀態無法使用', 'routing.truncated': '60 秒視窗內的記錄超過 200 筆，僅顯示最新記錄。',
   'routing.failures': '{count} 次失敗', 'routing.updated': '更新於 {time}',
 };
 export const routingJa: RoutingMessages = {
+  'routing.expandAgent': '{agent} の経路を展開',
+  'routing.collapseAgent': '{agent} の経路を折りたたむ',
+  'routing.allAgentsFolded': 'Agent を選ぶと経路を表示できます。',
   'routing.expiredSelection': 'ウィンドウの範囲外',
   'routing.depth': '表示階層',
   'routing.depth.auto': '自動',
@@ -414,7 +426,7 @@ export const routingJa: RoutingMessages = {
   'routing.liveDescription': '直近のリクエスト記録・60秒間の移動窓・3秒ごとに更新', 'routing.requests': '{count} 件のリクエスト記録',
   'routing.agents': 'Agent', 'routing.destinations': 'モデル / 認証情報',
   'routing.unknownClient': '不明なクライアント', 'routing.otherClient': 'その他のクライアント',
-  'routing.models': 'モデル', 'routing.targets': '上流', 'routing.gateway': 'ゲートウェイ', 'routing.waiting': 'リクエスト記録を待機中…',
+  'routing.models': 'モデル', 'routing.targets': '上流', 'routing.pausedEmpty': '一時停止したスナップショットにリクエスト記録はありません。', 'routing.waiting': 'リクエスト記録を待機中…',
   'routing.paused': '一時停止中', 'routing.pause': '監視を一時停止', 'routing.resume': '監視を再開', 'routing.cooldown': 'クールダウン・{seconds}秒',
   'routing.cooldownsUnavailable': 'クールダウン状態を取得できません', 'routing.truncated': '60秒ウィンドウ内の記録が200件を超えています。最新の記録を表示します。',
   'routing.failures': '{count} 件失敗', 'routing.updated': '更新：{time}',

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { ChevronDown, Terminal } from 'lucide-react';
+import { ChevronDown, Radio, Terminal, TriangleAlert } from 'lucide-react';
 import appLogo from '../../assets/logo.jpg';
 import openclawIcon from '../../assets/icons/openclaw.svg';
 import hermesIcon from '../../assets/icons/hermes.png';
@@ -61,7 +61,7 @@ function buildEdge(from: [number, number], to: [number, number]): string {
 }
 
 export function RoutingMap({ view, packets, now, paused = false, display = DEFAULT_ROUTING_DISPLAY,
-  onToggleGroup, focusedRecord, onFocusRecord }: {
+  onToggleGroup, focusedRecord, onFocusRecord, error }: {
   view: ReturnType<typeof buildLiveRouting>;
   packets: UsageRecord[];
   now: number;
@@ -70,6 +70,7 @@ export function RoutingMap({ view, packets, now, paused = false, display = DEFAU
   onToggleGroup?: (group: RoutingGroup) => void;
   focusedRecord?: UsageRecord;
   onFocusRecord?: (record: UsageRecord) => void;
+  error?: string;
 }) {
   const { t, formatNumber } = useI18n();
   const privacy = usePrivacyMask();
@@ -77,9 +78,31 @@ export function RoutingMap({ view, packets, now, paused = false, display = DEFAU
   const containerRef = useRef<HTMLDivElement>(null);
   const [modelEdges, setModelEdges] = useState<Record<string, string>>({});
   const [targetEdges, setTargetEdges] = useState<Record<string, string>>({});
-  const lastFocusedTarget = useRef<{ element: HTMLElement; id: string } | undefined>(undefined);
-  const groups = useMemo(() => groupRoutingTargets(view.targets), [view.targets]);
-  const projection = useMemo(() => projectRoutingGroups(groups, display), [groups, display]);
+  const lastFocusedTarget = useRef<{ element: HTMLElement; id: string; agentId?: string } | undefined>(undefined);
+  const [expandedAgents, setExpandedAgents] = useState<ReadonlySet<string> | null>(null);
+  const initialAgent = expandedAgents === null ? orderedRoutingRecords(view.records)[0] : undefined;
+  // Initialize on the first populated snapshot only, never from a changing poll or request selection.
+  if (initialAgent) setExpandedAgents(new Set([routingAgentId(initialAgent)]));
+  const isAgentOpen = (id: string) => expandedAgents?.has(id) ?? false;
+  const toggleAgent = (id: string) => setExpandedAgents(previous => {
+    const next = new Set(previous);
+    if (!next.delete(id)) next.add(id);
+    return next;
+  });
+  const agentControlsId = (id: string) => `${controlsPrefix}-agent-${routingGroupControlId(id)}`;
+  const groups = useMemo(() => groupRoutingTargets(view.targets.filter(target => target.count > 0)), [view.targets]);
+  const sectionsByAgent = useMemo(() => {
+    const projection = projectRoutingGroups(groups.filter(group => group.agentId && expandedAgents?.has(group.agentId)), display);
+    const sections = new Map<string, typeof projection.sections>();
+    for (const section of projection.sections) {
+      const id = section.group.agentId;
+      if (!id) continue;
+      const bucket = sections.get(id) ?? [];
+      bucket.push(section);
+      sections.set(id, bucket);
+    }
+    return { ...projection, byAgent: sections };
+  }, [groups, expandedAgents, display]);
 
   const updatePaths = useCallback(() => {
     const container = containerRef.current;
@@ -109,7 +132,7 @@ export function RoutingMap({ view, packets, now, paused = false, display = DEFAU
       const pRect = portEl.getBoundingClientRect();
       const x1 = pRect.left - cRect.left + pRect.width / 2;
       const y1 = pRect.top - cRect.top + pRect.height / 2;
-      const dockY = gwCenterY + (i - (N - 1) / 2) * 8;
+      const dockY = gwCenterY + (i - (N - 1) / 2) * Math.min(8, 32 / Math.max(1, N - 1));
       newModelEdges[key] = buildEdge([x1, y1], [gwLeft, dockY]);
     });
     setModelEdges(newModelEdges);
@@ -123,7 +146,7 @@ export function RoutingMap({ view, packets, now, paused = false, display = DEFAU
       const pRect = portEl.getBoundingClientRect();
       const x2 = pRect.left - cRect.left + pRect.width / 2;
       const y2 = pRect.top - cRect.top + pRect.height / 2;
-      const dockY = gwCenterY + (j - (M - 1) / 2) * Math.min(8, 40 / Math.max(1, M - 1));
+      const dockY = gwCenterY + (j - (M - 1) / 2) * Math.min(8, 32 / Math.max(1, M - 1));
       const parentId = el.getAttribute('data-route-parent');
       const parent = parentId ? [...targetEls].find(node => node.getAttribute('data-route-target') === parentId) : undefined;
       const parentPort = parent?.querySelector<HTMLElement>('.port-in')?.getBoundingClientRect();
@@ -143,27 +166,33 @@ export function RoutingMap({ view, packets, now, paused = false, display = DEFAU
     const nodes = el.querySelectorAll('[data-route-model], [data-route-target], [data-route-gateway]');
     nodes.forEach((node) => ro.observe(node));
     return () => ro.disconnect();
-  }, [view.agents, projection.rows, updatePaths]);
+  }, [view.agents, sectionsByAgent.rows, updatePaths]);
 
   useIsomorphicLayoutEffect(() => {
+    if (!containerRef.current) {
+      lastFocusedTarget.current = undefined;
+      return;
+    }
     const previous = lastFocusedTarget.current;
     if (!previous || previous.element.isConnected) return;
     if (document.activeElement && document.activeElement !== document.body && document.activeElement.isConnected) {
       lastFocusedTarget.current = undefined;
       return;
     }
-    const visibleId = projection.endpointByTarget.get(previous.id) || previous.id;
+    const visibleId = sectionsByAgent.endpointByTarget.get(previous.id) || previous.id;
     const element = [...(containerRef.current?.querySelectorAll<HTMLElement>('[data-route-target]') || [])]
       .find(node => node.getAttribute('data-route-target') === visibleId);
+    const source = [...containerRef.current.querySelectorAll<HTMLElement>('[data-route-model]')]
+      .find(node => node.dataset.routeModel === previous.agentId);
     const control = element?.querySelector<HTMLElement>('.routing-group-toggle') || element?.querySelector<HTMLElement>('.routing-node-focus')
-      || containerRef.current?.querySelector<HTMLElement>('.routing-group-toggle, .routing-node-focus');
+      || source?.querySelector<HTMLElement>('.routing-agent-toggle') || containerRef.current.querySelector<HTMLElement>('.routing-agent-toggle');
     control?.focus({ preventScroll: true });
     lastFocusedTarget.current = undefined;
-  }, [projection]);
+  }, [sectionsByAgent]);
 
   const traffic = useMemo(() => indexTraffic(view.records, packets), [view.records, packets]);
   const peakModel = Math.max(1, ...view.agents.map((node) => node.count));
-  const peakTarget = Math.max(1, ...projection.rows.map(row => row.node.count));
+  const peakTarget = Math.max(1, ...sectionsByAgent.rows.map(row => row.node.count));
   const focusedAgent = focusedRecord ? routingAgentId(focusedRecord) : undefined;
   const relatedRow = (row: RoutingRow) => !focusedRecord || routingRowRelated(row, focusedRecord);
   const rowTraffic = (row: RoutingRow): LinkTraffic | undefined => {
@@ -182,7 +211,7 @@ export function RoutingMap({ view, packets, now, paused = false, display = DEFAU
     const latest = models ? traffic.agents.get(node.id) : row ? rowTraffic(row) : undefined;
     const state = linkState(node, latest, paused);
     const related = models ? !focusedAgent || focusedAgent === node.id : !row || relatedRow(row);
-    const offset = index - ((models ? view.agents : projection.rows).length - 1) / 2;
+    const offset = index - ((models ? view.agents : sectionsByAgent.rows).length - 1) / 2;
     const d = (models ? modelEdges : targetEdges)[node.id] ?? (models
       ? buildEdge([240, 120 + offset * 44], [420, 120 + offset * 8])
       : buildEdge([580, 120 + offset * 8], [760, 120 + offset * 44]));
@@ -218,18 +247,19 @@ export function RoutingMap({ view, packets, now, paused = false, display = DEFAU
   );
   const renderAgent = (node: RoutingAgent) => {
     const state = linkState(node, traffic.agents.get(node.id), paused);
-    const record = focusedAgent === node.id ? focusedRecord : orderedRoutingRecords(view.records).find(item => routingAgentId(item) === node.id);
     const name = privacy.text(clientName(node));
+    const open = isAgentOpen(node.id);
     return (
       <div key={node.id} className={`routing-node node-${state}${focusedAgent === node.id ? ' node-focused' : focusedAgent ? ' node-unrelated' : ''}`}
         data-route-model={node.id} data-route-agent={node.id}>
-        <button type="button" className="routing-node-focus" aria-pressed={focusedAgent === node.id} onClick={() => focusNode(node.id)}>
+        <button type="button" className="routing-node-focus routing-agent-toggle" aria-expanded={open}
+          aria-controls={agentControlsId(node.id)} aria-label={t(open ? 'routing.collapseAgent' : 'routing.expandAgent', { agent: name })}
+          onClick={() => toggleAgent(node.id)}>
           {mark(node.client.icon || '')}
           <span className="routing-row-text">
             <span className="routing-row-heading"><span className="routing-row-name" title={name}>{name}</span></span>
-            {record ? <span className="routing-row-credential">{privacy.text(record.alias || record.model)}</span> : null}
-            {node.failures ? <span className="routing-row-failures">{t('routing.failures', { count: formatNumber(node.failures) })}</span> : null}
           </span>
+          <ChevronDown size={16} aria-hidden="true" className={open ? 'open' : ''} />
         </button>
         <span className="routing-port port-out" aria-hidden="true" />
       </div>
@@ -253,7 +283,6 @@ export function RoutingMap({ view, packets, now, paused = false, display = DEFAU
           <span className="routing-row-text">
             <span className="routing-row-heading">
               <span className="routing-row-name" title={name}>{name}</span>
-              {kind !== 'credential' && group.agentId ? <span className="routing-row-origin">{clientName(view.agents.find(item => item.id === group.agentId))}</span> : null}
             </span>
             {subline ? <span className="routing-row-credential">{privacy.text(subline)}{summary && node.provider ? ` · ${privacy.text(node.provider)}` : ''}</span> : null}
             <span className="routing-node-details">
@@ -276,47 +305,73 @@ export function RoutingMap({ view, packets, now, paused = false, display = DEFAU
     );
   };
 
-  return (
-    <div className="live-routing-map" data-testid="routing-map" ref={containerRef} onFocusCapture={event => {
-      const element = event.target as HTMLElement;
-      const target = element.closest<HTMLElement>('[data-route-target]');
-      if (target?.dataset.routeTarget) lastFocusedTarget.current = { element, id: target.dataset.routeTarget };
-      else lastFocusedTarget.current = undefined;
-    }}>
-      <svg className="live-routing-edges" aria-hidden="true">
-        {view.agents.length ? view.agents.map((node, index) => renderLink(node, 'model', index)) : (
-          <path className="routing-edge routing-edge-ghost" data-model="__ghost__" d={modelEdges['__ghost__'] || 'M 240 120 C 330 120, 330 120, 420 120'} />
-        )}
-        {projection.rows.length ? projection.rows.map((row, index) => renderLink(row.node, 'target', index, row)) : (
-          <path className="routing-edge routing-edge-ghost" data-target="__ghost__" d={targetEdges['__ghost__'] || 'M 580 120 C 670 120, 670 120, 760 120'} />
-        )}
-      </svg>
-      <div className="routing-map-column routing-map-models">
-        <div className="routing-column-head"><span>{t('routing.agents')}</span><span className="routing-column-count">{formatNumber(view.agents.length)}</span></div>
-        <div className="routing-node-list">{view.agents.length ? view.agents.map(renderAgent) : (
-          <div className="routing-node node-ghost" data-route-model="__ghost__" data-route-agent="__ghost__"><span className="routing-row-text"><span className="routing-row-name">{t('routing.waiting')}</span></span><span className="routing-port port-out port-ghost" aria-hidden="true" /></div>
-        )}</div>
+  const unobservedCooling = view.targets.flatMap(({ id, name, count, cooldown }) => !count && cooldown ? [{ id, name, cooldown }] : []);
+  const coolingDetails = unobservedCooling.length > 0 ? (
+    <ul className="routing-unobserved-cooling">
+      {unobservedCooling.map(({ id, name, cooldown }) => <li key={id}>
+        <span>{privacy.text(name)}</span>
+        <span>{t('routing.cooldown', { seconds: routingCooldownSeconds(cooldown, now) })}</span>
+      </li>)}
+    </ul>
+  ) : null;
+
+  if (!view.records.length) {
+    return (
+      <div className="routing-map-frame routing-empty" data-testid="routing-empty">
+        <p className={error ? 'live-routing-warning' : undefined} role="status">
+          {error ? <TriangleAlert size={16} aria-hidden="true" /> : <Radio size={16} aria-hidden="true" />}
+          {error || t(paused ? 'routing.pausedEmpty' : 'routing.waiting')}
+        </p>
+        {coolingDetails}
       </div>
-      <div className="routing-map-center">
-        <div className={`routing-gateway${view.records.length === 0 ? ' gateway-idle' : ''}`} data-route-gateway="true">
-          <span className="gateway-rail gateway-rail-in" aria-hidden="true" /><span className="gateway-rail gateway-rail-out" aria-hidden="true" />
-          <span className="gateway-mark" aria-hidden="true"><img src={appLogo} width={30} height={30} alt="" /></span><span className="gateway-name">{t('routing.gateway')}</span>
+    );
+  }
+
+  return (
+    <div className="routing-map-frame">
+      <div className="live-routing-map" data-testid="routing-map" ref={containerRef} onFocusCapture={event => {
+        const element = event.target as HTMLElement;
+        const target = element.closest<HTMLElement>('[data-route-target]');
+        if (target?.dataset.routeTarget) lastFocusedTarget.current = { element, id: target.dataset.routeTarget, agentId: target.dataset.routeAgentId };
+        else lastFocusedTarget.current = undefined;
+      }}>
+        <svg className="live-routing-edges" aria-hidden="true">
+          {view.agents.map((node, index) => renderLink(node, 'model', index))}
+          {sectionsByAgent.rows.map((row, index) => renderLink(row.node, 'target', index, row))}
+        </svg>
+        <div className="routing-map-column routing-map-models">
+          <div className="routing-column-head"><span>{t('routing.agents')}</span><span className="routing-column-count">{formatNumber(view.agents.length)}</span></div>
+          <div className="routing-node-list">{view.agents.map(renderAgent)}</div>
+        </div>
+        <div className="routing-map-center">
+          <div className="routing-gateway" data-route-gateway="true">
+            <span className="gateway-rail gateway-rail-in" aria-hidden="true" /><span className="gateway-rail gateway-rail-out" aria-hidden="true" />
+            <span className="gateway-mark" aria-hidden="true"><img src={appLogo} width={30} height={30} alt="" /></span><span className="gateway-name">ECPA</span>
+          </div>
+        </div>
+        <div className="routing-map-column routing-map-targets">
+          <div className="routing-column-head"><span>{t('routing.destinations')}</span><span className="routing-column-count">{formatNumber(sectionsByAgent.sections.length)}</span></div>
+          <div className="routing-node-list">{view.agents.map(agent => {
+            const sections = sectionsByAgent.byAgent.get(agent.id);
+            const name = privacy.text(clientName(agent));
+            return <div key={agent.id} id={agentControlsId(agent.id)} className="routing-agent-routes"
+              data-routing-agent-routes={agent.id} role="group" aria-label={name} hidden={!sections?.length}>
+              {sectionsByAgent.byAgent.size > 1 && sections?.length ? <div className="routing-agent-route-heading" aria-hidden="true">{name}</div> : null}
+              {sections?.map(section => {
+                const controlsId = `${controlsPrefix}-credentials-${routingGroupControlId(section.group.id)}`;
+                return <div className="routing-group" key={section.group.id} data-routing-group={section.group.id}>
+                  {renderTarget(section.summary, section.open, controlsId)}
+                  {section.group.targets.length > 1 ? <div id={controlsId} className="routing-group-children" hidden={!section.open}>
+                    {section.children.map(row => renderTarget(row, false))}
+                  </div> : null}
+                </div>;
+              })}
+            </div>;
+          })}</div>
+          {!sectionsByAgent.rows.length ? <p className="routing-folded-hint">{t('routing.allAgentsFolded')}</p> : null}
         </div>
       </div>
-      <div className="routing-map-column routing-map-targets">
-        <div className="routing-column-head"><span>{t('routing.destinations')}</span><span className="routing-column-count">{formatNumber(groups.length)}</span></div>
-        <div className="routing-node-list">{projection.sections.length ? projection.sections.map(section => {
-          const controlsId = `${controlsPrefix}-credentials-${routingGroupControlId(section.group.id)}`;
-          return <div className="routing-group" key={section.group.id} data-routing-group={section.group.id}>
-            {renderTarget(section.summary, section.open, controlsId)}
-            {section.group.targets.length > 1 ? <div id={controlsId} className="routing-group-children" hidden={!section.open}>
-              {section.children.map(row => renderTarget(row, false))}
-            </div> : null}
-          </div>;
-        }) : (
-          <div className="routing-node node-ghost" data-route-target="__ghost__"><span className="routing-port port-in port-ghost" aria-hidden="true" /><span className="routing-row-text"><span className="routing-row-name">{t('routing.waiting')}</span></span></div>
-        )}</div>
-      </div>
+      {coolingDetails}
     </div>
   );
 }

@@ -592,11 +592,7 @@ export function UsageRecordsPage() {
         <EmptyState className="usage-initial-loading" icon={<Database size={22} />}>{t('usage.loading')}</EmptyState>
       ) : null}
 
-      {activeTab === 'live-routing' ? (
-        <div className="usage-live-routing-layout">
-          <RoutingPanel />
-        </div>
-      ) : null}
+      {activeTab === 'live-routing' ? <RoutingPanel /> : null}
       {activeTab === 'overview' && overview ? <OverviewView overview={overview} range={overviewRange} /> : null}
       {activeTab === 'analysis' && (analysis || overview) ? <UsageAnalysisView analysis={analysis} overview={overview} range={overviewRange} /> : null}
       {activeTab === 'events' ? (
