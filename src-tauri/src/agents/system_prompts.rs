@@ -438,24 +438,34 @@ fn deactivate_prompt_overrides_for_tls(
     // Resolve the kernel origin before the active port is cleared: while the entry is still
     // active this helper would report the proxy itself.
     let kernel_origin = managed_core_loopback_origin(gui_config.port);
-    {
-        let _file_guard = crate::AGENT_CONFIG_FILE_LOCK
-            .lock()
-            .map_err(|_| "Agent configuration file lock is poisoned".to_string())?;
-        sync_configured_agent_origin(client_id, &home, &proxy_origin, &kernel_origin)?;
-    }
+    // The plaintext listener must go down no matter what happens to the client config, so the
+    // rewrite error is reported after the shutdown rather than short-circuiting it.
+    let rewrite_result = {
+        let file_guard = crate::AGENT_CONFIG_FILE_LOCK.lock();
+        match file_guard {
+            Ok(_file_guard) => {
+                sync_configured_agent_origin(client_id, &home, &proxy_origin, &kernel_origin)
+            }
+            Err(_) => Err("Agent configuration file lock is poisoned".to_string()),
+        }
+    };
 
-    {
-        let mut guard = PROMPT_STATE
-            .lock()
-            .map_err(|_| "Agent system prompt state lock is poisoned".to_string())?;
-        let entry = guard.clients.entry(client_id.to_string()).or_default();
-        entry.default_rule = None;
-        entry.models.clear();
-        guard.active_ports.remove(client_id);
-        persist_prompt_state_locked(&guard)?;
-    }
+    let cleared = {
+        match PROMPT_STATE.lock() {
+            Ok(mut guard) => {
+                let entry = guard.clients.entry(client_id.to_string()).or_default();
+                entry.default_rule = None;
+                entry.models.clear();
+                guard.active_ports.remove(client_id);
+                persist_prompt_state_locked(&guard)
+            }
+            Err(_) => Err("Agent system prompt state lock is poisoned".to_string()),
+        }
+    };
     stop_client_proxy_listener(client_id);
+
+    rewrite_result?;
+    cleared?;
     Ok(())
 }
 
