@@ -13,14 +13,11 @@ import './AutoUpdatePanel.css';
 type AutoUpdatePanelProps = {
   /** Renders as an inset block instead of a standalone card. */
   embedded?: boolean;
-  /** False once the app reports that in-place updates are unavailable here. */
-  enabled: boolean;
-  /** Shown with the hints when the running build cannot update itself. */
-  unavailableHint?: string;
-  unsupportedReason?: string;
+  /** Application capability is informational; core updates are configured independently. */
+  appUnavailableHint?: string;
 };
 
-export function AutoUpdatePanel({ embedded = false, enabled, unavailableHint, unsupportedReason }: AutoUpdatePanelProps) {
+export function AutoUpdatePanel({ embedded = false, appUnavailableHint }: AutoUpdatePanelProps = {}) {
   const { t } = useI18n();
   const [status, setStatus] = useState<AutoUpdateStatus | null>(null);
   const [draft, setDraft] = useState<AutoUpdateSettings | null>(null);
@@ -74,10 +71,7 @@ export function AutoUpdatePanel({ embedded = false, enabled, unavailableHint, un
   };
   const change = (patch: Partial<AutoUpdateSettings>) => setDraft(current => current ? { ...current, ...patch } : current);
   const dirty = Boolean(draft && JSON.stringify(draft) !== JSON.stringify(status?.settings));
-  const busy = saving || !draft || status?.phase === 'installing';
-  // A build that cannot update itself keeps its saved settings visible but locked.
-  const unavailable = !enabled;
-  const disabled = busy || unavailable;
+  const disabled = saving || !draft || status?.phase === 'installing';
   return <section className={`auto-update-panel${embedded ? ' auto-update-panel-inset' : ' surface-panel'}`} aria-label={t('autoUpdate.title')}>
     {/* Off is the common state, so the card shows only the label and its switch. */}
     <div className="auto-update-row">
@@ -98,7 +92,7 @@ export function AutoUpdatePanel({ embedded = false, enabled, unavailableHint, un
         <button type="button" className="primary-button compact-button" disabled={Boolean(disabled)} onClick={save}>{t('common.save')}</button>
       </div> : null}
     </div>
-    {unavailable ? <p className="auto-update-note">{unsupportedReason || unavailableHint}</p> : <p className="auto-update-note">{t('autoUpdate.hint')}</p>}
+    <p className="auto-update-note">{appUnavailableHint || t('autoUpdate.hint')}</p>
     <InlineNotice notice={error || readError ? { owner: 'auto-update-settings', message: error || readError, tone: 'error' } : null} onDismiss={() => { setError(''); setReadError(''); }} />
     {draft && status?.settings.enabled ? <div className="auto-update-status" aria-live="polite">
       <strong>{t(`autoUpdate.phase.${status.phase}`)}</strong>

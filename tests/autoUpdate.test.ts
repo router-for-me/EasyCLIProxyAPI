@@ -29,7 +29,7 @@ describe('automatic update policy', () => {
     expect((await runtime.invoke('get_auto_update_status') as AutoUpdateStatus).settings).toEqual(settings);
   });
   it('renders an initially disabled control without a native session', () => {
-    const markup = renderToStaticMarkup(createElement(I18nProvider, null, createElement(AutoUpdatePanel, { enabled: true })));
+    const markup = renderToStaticMarkup(createElement(I18nProvider, null, createElement(AutoUpdatePanel)));
     expect(markup).toContain('auto-update-panel');
     expect(markup).toContain('role="switch"');
     expect(markup).not.toContain('checked=""');

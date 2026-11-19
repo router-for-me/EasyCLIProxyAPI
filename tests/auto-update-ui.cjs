@@ -35,11 +35,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     await page.addStyleTag({ content: '#browser-mock-toolbar { display: none; }' });
     await page.evaluate(() => {
       const invoke = window.__TAURI_INTERNALS__.invoke;
-      window.autoUpdateTest = { calls: [], override: null };
+      window.autoUpdateTest = { calls: [], override: null, appUnsupported: false };
       window.__TAURI_INTERNALS__.invoke = async (command, args, options) => {
         window.autoUpdateTest.calls.push({ command, args });
         const result = await invoke(command, args, options);
         if (command === 'get_auto_update_status' && window.autoUpdateTest.override) return { ...result, ...window.autoUpdateTest.override };
+        if (command === 'check_app_update' && window.autoUpdateTest.appUnsupported) {
+          return { ...result, autoUpdateSupported: false, unsupportedReason: 'Application package is unavailable' };
+        }
         return result;
       };
       window.dispatchEvent(new CustomEvent('app:navigate', { detail: 'config' }));
@@ -103,6 +106,20 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     await enabled.uncheck(); await save.click();
     await panel.getByText('Waiting for a newer version', { exact: true }).waitFor({ state: 'hidden' });
     assert.equal(await enabled.isChecked(), false);
+    await page.evaluate(() => { window.autoUpdateTest.appUnsupported = true; });
+    await page.locator('.app-module-card').getByRole('button', { name: 'Check for Updates' }).click();
+    await panel.getByText('Application package is unavailable', { exact: true }).waitFor();
+    await enabled.check();
+    await panel.getByRole('checkbox', { name: 'Application', exact: true }).uncheck();
+    await core.check();
+    await save.click();
+    await panel.getByText('Waiting for a newer version', { exact: true }).waitFor();
+    assert.deepEqual(await page.evaluate(() => window.autoUpdateTest.calls.filter(call => call.command === 'set_auto_update_settings').at(-1).args.settings), {
+      enabled: true, updateApp: false, updateCore: true,
+    }, 'core settings can still be saved when the application cannot update');
+    await enabled.uncheck();
+    await save.click();
+    await panel.getByText('Waiting for a newer version', { exact: true }).waitFor({ state: 'hidden' });
     await page.evaluate(() => window.dispatchEvent(new CustomEvent('app:navigate', { detail: 'config' })));
     await page.locator('#config-subpage-tab-software').click();
     assert.equal(await panel.count(), 0);

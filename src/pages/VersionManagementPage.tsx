@@ -759,9 +759,7 @@ export function VersionManagementPage() {
               <MessageNotice message={appUpdateError || channelError} />
               <AutoUpdatePanel
                 embedded
-                enabled={appUpdate?.autoUpdateSupported !== false && !appIsPreview}
-                unavailableHint={t('appUpdate.manualFallback')}
-                unsupportedReason={appUpdate && !appUpdate.autoUpdateSupported ? (appUnsupportedReason ?? undefined) : undefined}
+                appUnavailableHint={appUpdate && !appUpdate.autoUpdateSupported ? (appUnsupportedReason ?? t('appUpdate.manualFallback')) : undefined}
               />
               {appIsPreview && latestAppPublishedAt && !appUpdateError && !channelError ? (
                 <p className="app-version-meta">{t('appUpdate.publishedAt', { date: latestAppPublishedAt })}</p>
