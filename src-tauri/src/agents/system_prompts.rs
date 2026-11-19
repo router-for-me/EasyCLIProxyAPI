@@ -32,6 +32,9 @@ const STORAGE_VERSION: u32 = 1;
 const BASE_PROXY_PORT: u16 = 18320;
 const MAX_PROMPT_BYTES: usize = 262_144;
 const MAX_REWRITE_BODY_BYTES: usize = 32 * 1024 * 1024;
+/// The loopback prompt endpoint only speaks plain HTTP; enabling rewriting against a TLS
+/// kernel would downgrade the client connection, so both activation paths refuse it.
+const TLS_LOOPBACK_UNSUPPORTED: &str = "Custom system prompts need the loopback prompt proxy, which only listens over plain HTTP. Turn off TLS for the local kernel first, then save the prompt again.";
 
 pub(crate) const SYSTEM_PROMPT_CLIENTS: [&str; 15] = [
     "claude-code",
@@ -613,6 +616,10 @@ pub(crate) async fn sync_zcode_catalog_model_prompts(
         persist_prompt_state_locked(&guard)?;
         (has_active, port)
     };
+
+    if has_active && managed_core_tls_enabled() {
+        return Err(TLS_LOOPBACK_UNSUPPORTED.to_string());
+    }
 
     if has_active {
         ensure_client_proxy_listener("zcode", preferred_port, Some(app)).await?;
@@ -2155,10 +2162,7 @@ pub(crate) async fn save_agent_system_prompt_editor(
     };
 
     if has_active && managed_core_tls_enabled() {
-        return Err(
-            "Custom system prompts need the loopback prompt proxy, which only listens over plain HTTP. Turn off TLS for the local kernel first, then save the prompt again."
-                .to_string(),
-        );
+        return Err(TLS_LOOPBACK_UNSUPPORTED.to_string());
     }
 
     if has_active {
