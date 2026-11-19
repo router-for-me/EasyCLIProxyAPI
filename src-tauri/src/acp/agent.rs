@@ -287,6 +287,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn account_reset_cancels_and_forgets_pending_continuations() {
+        let state = AcpState::default();
+        let (_sender, receiver) = mpsc::sync_channel(1);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let turn = Arc::new(Mutex::new(Session {
+            receiver, cancel: cancel.clone(), pending: BTreeMap::new(),
+            expected: Vec::new(), identity: json!({"account":"old"}),
+            expires: Instant::now() + TOOL_WAIT,
+        }));
+        state.agents.0.lock().unwrap().insert("old-call".into(), turn);
+        reset_account(&state).unwrap();
+        assert!(cancel.load(Ordering::Acquire));
+        assert!(state.agents.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn pending_tools_require_matching_history_identity_and_single_delivery() {
         let sessions = Sessions::default();
         let (events, receiver) = mpsc::sync_channel(4);

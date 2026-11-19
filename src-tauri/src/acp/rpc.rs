@@ -329,7 +329,7 @@ impl Client {
         let response = self.call("initialize", json!({"protocolVersion":1,"clientCapabilities":{},"clientInfo":{"name":"EasyCLIProxyAPI","version":env!("CARGO_PKG_VERSION")}}), cancel, |_| {})?;
         self.supports_logout = response["agentCapabilities"]["auth"]
             .get("logout")
-            .is_some_and(|value| !value.is_null());
+            .is_some_and(|value| value.is_object() || value == true);
         let capabilities = &response["agentCapabilities"];
         self.system_prompt = if capabilities["sessionCapabilities"]
             .get("systemPrompt")
@@ -349,7 +349,7 @@ impl Client {
         cancel: &Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<(), String> {
         if !self.supports_logout {
-            return Err("This official CLI does not support ACP logout; update Antigravity CLI to switch accounts".into());
+            return Err("This official CLI does not support ACP logout. Update Antigravity CLI to sign out or authorize again; alternatively remove this app's local account record.".into());
         }
         self.call("logout", json!({}), cancel, |_| {})?;
         Ok(())

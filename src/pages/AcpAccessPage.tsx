@@ -1,14 +1,97 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowRight, ChevronDown, CircleCheck, Code2, Copy, ExternalLink, KeyRound, LoaderCircle, LockKeyhole, LogIn, Plus, RefreshCw, Settings2, Terminal, Unplug, X, Zap } from 'lucide-react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { ChevronDown, CircleCheck, Code2, Copy, ExternalLink, LoaderCircle, LockKeyhole, LogIn, LogOut, Pencil, Plus, RefreshCw, Terminal, Trash2, Unplug, Users, X, Zap } from 'lucide-react';
 import antigravityIcon from '../assets/icons/antigravity.svg';
+import { Dialog } from '../components/Dialog';
+import { useConfirmation } from '../components/ConfirmationDialog';
 import { Notice } from '../components/Notice';
 import { Select } from '../components/Select';
 import { Switch } from '../components/Switch';
 import { useI18n } from '../i18n';
 import { usePrivacyMask } from '../privacy';
-import { acpApi, type AcpStatus } from '../services/acp';
+import { acpApi, acpErrorMessageKey, type AcpAccount, type AcpStatus } from '../services/acp';
 import { openExternalUrl } from '../services/appSettings';
 import './AcpAccessPage.css';
+
+// Same anchored button/dropdown pattern used by MCP management. Keep it in
+// the dialog DOM for its focus trap; opening it never changes the row height.
+function AccountMoreActions({ current, busy, hasCli, onAction }: {
+  current: boolean; busy: boolean; hasCli: boolean;
+  onAction: (kind: 'remove' | 'logout') => void;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [upward, setUpward] = useState(false);
+  const menuId = useId();
+  const wrap = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const focusLast = useRef(false);
+  const close = (restoreFocus: boolean) => {
+    setOpen(false);
+    if (restoreFocus) trigger.current?.focus();
+  };
+  const show = (last = false) => {
+    if (busy) return;
+    focusLast.current = last;
+    const button = trigger.current?.getBoundingClientRect();
+    const dialog = wrap.current?.closest('[role="dialog"]')?.getBoundingClientRect();
+    setUpward(Boolean(button && dialog && dialog.bottom - button.bottom < 130));
+    setOpen(true);
+  };
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => {
+      const items = menu.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
+      (focusLast.current ? items?.[items.length - 1] : items?.[0])?.focus();
+    });
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !wrap.current?.contains(event.target)) setOpen(false);
+    };
+    // Capture at window before the shared dialog's document Escape listener:
+    // one Escape dismisses only this menu, a later Escape closes the dialog.
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault(); event.stopPropagation();
+      setOpen(false); trigger.current?.focus();
+    };
+    document.addEventListener('pointerdown', outside);
+    window.addEventListener('keydown', escape, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener('pointerdown', outside);
+      window.removeEventListener('keydown', escape, true);
+    };
+  }, [open]);
+  useEffect(() => { if (busy) setOpen(false); }, [busy]);
+  return <div className="acp-account-more" ref={wrap} onBlur={event => {
+    if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+  }}>
+    <button ref={trigger} type="button" className="secondary-button acp-more-trigger" disabled={busy} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuId : undefined}
+      onClick={() => open ? close(false) : show()} onKeyDown={event => {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); show(event.key === 'ArrowUp'); }
+      }}>{t('acp.moreActions')}<ChevronDown size={12} aria-hidden="true" /></button>
+    {open ? <div ref={menu} id={menuId} className="acp-account-menu surface-panel" data-upward={upward} role="menu" aria-label={t('acp.moreActions')} onKeyDown={event => {
+      const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+      const index = items.indexOf(document.activeElement as HTMLButtonElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+        : event.key === 'ArrowDown' ? (index + 1) % items.length
+        : event.key === 'ArrowUp' ? (index + items.length - 1) % items.length : -1;
+      if (next >= 0 && items[next]) { event.preventDefault(); items[next].focus(); }
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        const dialog = wrap.current?.closest('[role="dialog"]');
+        const controls = Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [href], [tabindex="0"]') || [])
+          .filter(element => !menu.current?.contains(element) && element.getClientRects().length > 0);
+        const triggerIndex = controls.indexOf(trigger.current as HTMLButtonElement);
+        close(false);
+        (event.shiftKey ? trigger.current : controls[triggerIndex + 1] || controls[0])?.focus();
+      }
+    }}>
+      {current ? <button type="button" role="menuitem" className="acp-account-menu-item" disabled={!hasCli} onClick={() => { close(true); onAction('logout'); }}><LogOut size={14} aria-hidden="true" />{t('acp.logout')}</button> : null}
+      <button type="button" role="menuitem" className="acp-account-menu-item acp-remove-action" onClick={() => { close(true); onAction('remove'); }}><Trash2 size={14} aria-hidden="true" />{t('acp.removeLocal')}</button>
+    </div> : null}
+  </div>;
+}
 
 export function AcpAccessPage() {
   const { t } = useI18n();
@@ -17,12 +100,15 @@ export function AcpAccessPage() {
   const [loading, setLoading] = useState(true);
   const [operation, setOperation] = useState('');
   const [error, setError] = useState('');
+  const [managingAccounts, setManagingAccounts] = useState(false);
+  const [editor, setEditor] = useState<{ account?: AcpAccount } | null>(null);
   const [accountLabel, setAccountLabel] = useState('');
-  const [addingAccount, setAddingAccount] = useState(false);
+  const [formError, setFormError] = useState('');
+  const { askConfirmation, confirmationDialog } = useConfirmation();
   const [copied, setCopied] = useState(false);
   const mounted = useRef(false);
   const pending = useRef(false);
-  const addAccountButton = useRef<HTMLButtonElement>(null);
+  const labelInput = useRef<HTMLInputElement>(null);
   const refresh = useCallback(async () => {
     const next = await acpApi.status();
     if (mounted.current) setStatus(next);
@@ -49,16 +135,18 @@ export function AcpAccessPage() {
   }, [status?.busy, operation, refresh]);
 
   const run = async (name: string, action: () => Promise<unknown>) => {
-    if (pending.current || status?.busy) return;
+    if (pending.current || status?.busy) return false;
     pending.current = true;
     setOperation(name); setError('');
-    try { await action(); }
+    let success = false;
+    try { await action(); success = true; }
     catch (cause) { if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause)); }
     finally {
       try { await refresh(); } catch (cause) { if (mounted.current) setError(String(cause)); }
       pending.current = false;
       if (mounted.current) setOperation('');
     }
+    return success;
   };
 
   const busy = Boolean(operation || status?.busy);
@@ -68,45 +156,87 @@ export function AcpAccessPage() {
     : activeOperation === 'test' ? 'acp.testing'
     : activeOperation === 'select' ? 'acp.savingModel'
     : activeOperation === 'upstream' ? 'acp.updatingApi'
-    : activeOperation === 'request' ? 'acp.servingRequest' : 'acp.refreshing');
+    : activeOperation === 'request' ? 'acp.servingRequest'
+    : activeOperation === 'logout' ? 'acp.signingOut'
+    : ['rename', 'remove'].includes(activeOperation || '') ? 'acp.updatingAccount' : 'acp.refreshing');
   const connected = status?.authenticated === true;
   const hasCli = Boolean(status?.executable);
   const apiEnabled = status?.upstreamEnabled === true;
   const apiReady = apiEnabled && connected && Boolean(status?.upstreamUrl);
   const apiSwitchOperation = activeOperation === 'upstream';
   const apiCanStart = connected && Boolean(status?.models.length);
-  // Stopping stays available whenever access is on, regardless of connection state.
-  const apiSwitchDisabled = apiSwitchOperation || (!apiEnabled && (!apiCanStart || loading));
-  const apiSwitchHint = busy && !apiSwitchOperation
-    ? t('acp.apiSwitchWaiting', { label: busyLabel })
-    : !apiEnabled && !apiCanStart
-      ? t(loading ? 'acp.apiSwitchChecking' : 'acp.apiSwitchNeedsAccount')
-      : !apiEnabled && apiCanStart
-        ? t('acp.apiSwitchStartHint')
-        : apiEnabled && !apiReady
-          ? t('acp.apiSwitchWaitingConnection')
-          : t('acp.apiSwitchStopHint');
-  const awaitingFirstConnection = !connected && status?.activeAccount === 'default'
-    && status.accounts.length === 1 && status.accounts[0].label === 'Default' && !status.accounts[0].email;
+  // The backend serializes all operations; an enabled API can still be stopped
+  // while disconnected, but not during another in-flight operation.
+  const apiSwitchDisabled = busy || loading || (!apiEnabled && !apiCanStart);
+  const apiSwitchHint = loading ? t('acp.apiSwitchChecking')
+    : busy && !apiSwitchOperation ? t('acp.apiSwitchWaiting')
+    : !apiEnabled && !apiCanStart ? t('acp.apiSwitchNeedsAccount')
+    : apiEnabled && !apiReady ? t('acp.apiSwitchWaitingConnection') : '';
+  const activeAccount = status?.accounts.find(account => account.id === status.activeAccount);
+  const savedAccounts = status?.accounts.filter(account => account.saved) || [];
+  const visibleAccounts = savedAccounts;
+  const accountName = (account: AcpAccount) => !account.saved ? t('acp.noConnectedAccount') : account.id === 'default' && account.label === 'Default'
+    ? privacy.text(account.email || t('acp.legacyAccount'), account.email ? [account.email] : [])
+    : privacy.enabled ? privacy.identifier(account.label) : account.label;
   const shownError = error || status?.error;
+  // Preserve the backend text. Only the exact cancellation outcomes receive a
+  // neutral presentation; authorization/network/cleanup errors stay errors.
+  const cancelled = /^(?:Account saved; connection not verified: )?ACP request cancelled$/.test(shownError || '');
+  const errorMessageKey = shownError ? acpErrorMessageKey(shownError) : null;
+  const actionNotice = shownError ? <Notice className="acp-action-notice" tone={cancelled ? 'info' : 'error'} title={t(cancelled ? 'acp.operationCancelled' : 'acp.operationFailed')}>
+    {errorMessageKey ? <>{errorMessageKey !== 'acp.errorCancelled' ? <p>{t(errorMessageKey)}</p> : null}<details className="acp-error-detail"><summary>{t('acp.errorDetails')}</summary><p>{privacy.text(shownError)}</p></details></> : privacy.text(shownError)}
+  </Notice> : null;
   const example = JSON.stringify({ model: `acp/${status?.selectedModel || 'MODEL_ID'}`, messages: [{ role: 'user', content: 'Hello' }], stream: true }, null, 2);
   useEffect(() => { setCopied(false); }, [example]);
-  const closeAccountForm = () => {
-    setAddingAccount(false);
-    setAccountLabel('');
-    addAccountButton.current?.focus();
+  const openEditor = (account?: AcpAccount) => {
+    setAccountLabel(account?.label || ''); setFormError(''); setError(''); setEditor({ account });
   };
+  const closeEditor = () => { if (!busy) { setEditor(null); setFormError(''); } };
+  const saveAccount = async () => {
+    if (!editor || busy) return;
+    const trimmed = accountLabel.trim();
+    if (!trimmed || [...trimmed].length > 80 || /[\u0000-\u001f\u007f-\u009f]/u.test(accountLabel)) {
+      setFormError(t('acp.labelInvalid')); labelInput.current?.focus(); return;
+    }
+    setFormError('');
+    const editing = editor.account;
+    const previousId = status?.activeAccount;
+    const ok = await run(editing ? 'rename' : 'login', () => editing
+      ? acpApi.renameAccount(editing.id, trimmed) : acpApi.addAccount(trimmed));
+    if (mounted.current) {
+      const current = await refresh().catch(() => null);
+      // Official authorization may have committed before model verification
+      // failed or was cancelled. Return to its saved row, not an "add" retry.
+      if (ok || (!editing && current && current.activeAccount !== previousId)) setEditor(null);
+    }
+  };
+  const confirmAccountAction = async (kind: 'remove' | 'logout' | 'relogin', account: AcpAccount) => {
+    if (busy) return;
+    if (!await askConfirmation({
+      title: t(kind === 'remove' ? 'acp.removeTitle' : kind === 'logout' ? 'acp.logoutTitle' : 'acp.reloginTitle'),
+      message: t(kind === 'remove' ? 'acp.removeMessage' : kind === 'logout' ? 'acp.logoutMessage' : 'acp.reloginMessage'),
+      warning: kind === 'remove' && account.id === status?.activeAccount ? t('acp.removeCurrentWarning') : undefined,
+      details: [{ label: t('acp.accountNote'), value: accountName(account) }],
+      confirmText: t(kind === 'remove' ? 'acp.removeLocal' : kind === 'logout' ? 'acp.logout' : 'acp.relogin'),
+      variant: kind === 'relogin' ? 'primary' : 'danger',
+    })) return;
+    await run(kind === 'remove' ? 'remove' : kind === 'logout' ? 'logout' : 'login', () => kind === 'remove'
+      ? acpApi.removeAccount(account.id) : kind === 'logout' ? acpApi.logoutAccount() : acpApi.reloginAccount());
+  };
+  const operationStatus = busy ? <div className="acp-operation-status" role="status" aria-live="polite"><span><LoaderCircle size={16} className="spin" aria-hidden="true" />{busyLabel}</span>
+    {!['rename', 'remove', 'select', 'upstream'].includes(activeOperation || '') ? <button type="button" className="secondary-button compact-button" onClick={() => void acpApi.cancel().catch(cause => setError(String(cause)))}><X size={14} aria-hidden="true" />{t('acp.cancel')}</button> : null}
+  </div> : null;
 
   return <div className="acp-access-page" aria-busy={busy || loading} data-connected={connected}>
     <header className="acp-page-heading">
       <div><h1>{t('oauth.acp.tab')}</h1><p>{t('acp.description')}</p></div>
-      <button type="button" className="secondary-button" disabled={busy || loading} title={t('acp.refreshHint')}
+      <button type="button" className="secondary-button" disabled={busy || loading}
         onClick={() => void run('refresh', async () => { const next = await refresh(); if (next.executable) await acpApi.connect(false); })}>
         <RefreshCw size={15} className={activeOperation === 'refresh' ? 'spin' : undefined} aria-hidden="true" />{t('acp.refresh')}
       </button>
     </header>
 
-    {shownError ? <Notice tone="error" title={t('acp.operationFailed')}>{privacy.text(shownError)}</Notice> : null}
+    {!managingAccounts && !editor && !confirmationDialog ? actionNotice : null}
 
     <section className="panel surface-panel acp-provider-card" aria-labelledby="acp-provider-title">
       <div className="acp-provider-heading">
@@ -118,47 +248,28 @@ export function AcpAccessPage() {
         </div>
       </div>
 
-      {!hasCli && !loading ? <div className="acp-install-state"><p className="acp-muted">{t('acp.installHint')}</p><button type="button" className="primary-button" onClick={() => void openExternalUrl({ url: 'https://antigravity.google/docs/cli/install/' }).catch(cause => setError(String(cause)))}><ExternalLink size={15} aria-hidden="true" />{t('acp.install')}</button></div> : <div className="acp-account-section">
-      <div className="acp-account-row"><div className="acp-model-controls acp-account-controls"><label><span>{t('acp.currentAccount')}</span>
-        <Select value={status?.activeAccount || 'default'} disabled={busy || loading || !hasCli || awaitingFirstConnection}
-          aria-describedby="acp-account-help"
-          onChange={event => { const id = event.currentTarget.value; void run('refresh', () => acpApi.switchAccount(id)); }}>
-          {!status?.accounts.length ? <option value="default">{t(loading ? 'acp.checking' : 'acp.noConnectedAccount')}</option> : null}
-          {status?.accounts.map((account, index) => <option key={account.id} value={account.id}>{account.email
-            ? privacy.text(account.id === 'default' && account.label === 'Default' ? account.email : `${account.email} · ${account.label}`, [account.email])
-            : account.id === 'default' && account.label === 'Default'
-            ? t(awaitingFirstConnection ? 'acp.noConnectedAccount' : 'acp.unnamedAccount', { number: index + 1 })
-            : privacy.text(account.label)}</option>)}
-        </Select>
-      </label></div>
-      <div className="acp-provider-actions">
-        {!connected ? <button type="button" className="primary-button" disabled={!hasCli || busy || loading || addingAccount}
-          onClick={() => void run('login', () => acpApi.connect(true))}>
-          <LogIn size={16} aria-hidden="true" />{t('acp.login')}
-        </button> : null}
-        <button ref={addAccountButton} type="button" className="secondary-button" disabled={busy || loading || !hasCli} aria-expanded={addingAccount} aria-controls="acp-add-account-form" onClick={() => addingAccount ? closeAccountForm() : setAddingAccount(true)}><Plus size={16} aria-hidden="true" />{t('acp.newAccount')}</button>
-      </div></div>
-      <p className="acp-muted" id="acp-account-help">{t(connected ? 'acp.accountConnectedHint' : 'acp.accountLoginHint')}</p>
-
-      {addingAccount ? <form id="acp-add-account-form" className="acp-add-account" onSubmit={event => { event.preventDefault(); if (!accountLabel.trim() || busy || loading || !hasCli) return; void run('login', async () => { await acpApi.addAccount(accountLabel.trim()); if (mounted.current) closeAccountForm(); }); }}>
-        <div className="acp-add-account-heading"><strong>{t('acp.newAccount')}</strong><p className="acp-muted">{t('acp.newAccountHint')}</p></div>
-        <div className="acp-add-account-fields"><label><span>{t('acp.accountLabel')}</span><input autoFocus type="text" value={accountLabel} maxLength={80} disabled={busy || loading || !hasCli} placeholder={t('acp.accountLabelPlaceholder')} onChange={event => setAccountLabel(event.currentTarget.value)} /></label>
-        <button type="submit" className="primary-button" disabled={busy || loading || !hasCli || !accountLabel.trim()}><LogIn size={15} aria-hidden="true" />{t('acp.addAccount')}</button>
-        <button type="button" className="secondary-button" disabled={busy} onClick={closeAccountForm}>{t('common.cancel')}</button></div>
-      </form> : null}
-      </div>}
-      <div className="acp-provider-footer"><p className="acp-cli-status"><Terminal size={13} aria-hidden="true" /><span>{t('acp.cli')}</span><span className="acp-status-dot" data-ready={hasCli} aria-hidden="true" /><span>{loading ? t('acp.checking') : hasCli ? t('acp.detected') : t('acp.missing')}</span></p><span>{t('acp.sharedCli')}</span></div>
+      <div className="acp-account-section">
+        <div className="acp-account-row">
+          <div className="acp-current-account"><span className="acp-eyebrow">{t('acp.currentAccount')}</span>
+            <strong className="acp-account-name" title={activeAccount ? accountName(activeAccount) : undefined}>{loading ? t('acp.checking') : activeAccount ? accountName(activeAccount) : t('acp.noConnectedAccount')}</strong>
+            {activeAccount?.saved && activeAccount.email && !(activeAccount.id === 'default' && activeAccount.label === 'Default') ? <span className="acp-account-email" title={privacy.text(activeAccount.email, [activeAccount.email])}>{privacy.text(activeAccount.email, [activeAccount.email])}</span> : null}
+            <span className="acp-account-total">{t('acp.savedCount', { count: savedAccounts.length })}</span>
+          </div>
+          <div className="acp-provider-actions">
+            {!connected ? <button type="button" className="primary-button" disabled={!hasCli || busy || loading} onClick={() => void run('login', () => acpApi.connect(true))}><LogIn size={16} aria-hidden="true" />{t('acp.login')}</button> : null}
+            <button type="button" className="secondary-button" disabled={loading} aria-haspopup="dialog" onClick={() => setManagingAccounts(true)}><Users size={16} aria-hidden="true" />{t('acp.manageAccounts')}</button>
+          </div>
+        </div>
+        {!hasCli && !loading ? <div className="acp-install-state"><button type="button" className="secondary-button" onClick={() => void openExternalUrl({ url: 'https://antigravity.google/docs/cli/install/' }).catch(cause => setError(String(cause)))}><ExternalLink size={14} aria-hidden="true" />{t('acp.install')}</button></div> : null}
+      </div>
+      <div className="acp-provider-footer"><p className="acp-cli-status"><Terminal size={13} aria-hidden="true" /><span>{t('acp.cli')}</span><span className="acp-status-dot" data-ready={hasCli} aria-hidden="true" /><span>{loading ? t('acp.checking') : hasCli ? t('acp.detected') : t('acp.missing')}</span></p></div>
     </section>
 
-      {busy ? <div className="acp-operation-status" role="status" aria-live="polite"><span><LoaderCircle size={16} className="spin" aria-hidden="true" />{busyLabel}</span>
-        <button type="button" className="secondary-button compact-button" onClick={() => void acpApi.cancel().catch(cause => setError(String(cause)))}>
-          <X size={14} aria-hidden="true" />{t('acp.cancel')}</button>
-      </div> : null}
+    {!managingAccounts && !editor ? operationStatus : null}
 
     <div className="acp-workspace-grid"><section className="panel surface-panel acp-model-card" aria-labelledby="acp-model-title">
-      <div className="acp-section-heading"><div className="acp-section-identity"><span className="acp-section-icon"><Zap size={17} aria-hidden="true" /></span><div><h2 id="acp-model-title">{t('acp.stepTest')}</h2><p className="acp-muted">{t('acp.testDescription')}</p></div></div><span className="acp-count">{t('acp.optional')}</span></div>
+      <div className="acp-section-heading"><div className="acp-section-identity"><span className="acp-section-icon"><Zap size={17} aria-hidden="true" /></span><div><h2 id="acp-model-title">{t('acp.stepTest')}</h2></div></div>{connected ? <span className="acp-count">{t('acp.modelCount', { count: status.models.length })}</span> : null}</div>
       {connected ? <>
-      <p className="acp-model-availability"><span className="acp-status-dot" data-ready="true" aria-hidden="true" />{t('acp.modelCount', { count: status.models.length })}</p>
       <div className="acp-model-controls acp-test-model-controls"><label><span>{t('acp.model')}</span>
         <Select value={status?.selectedModel || ''} disabled={!connected || busy || !status?.models.length}
           onChange={event => { const model = event.currentTarget.value; void run('select', () => acpApi.selectModel(model)); }}>
@@ -170,35 +281,28 @@ export function AcpAccessPage() {
           onClick={() => void run('test', () => acpApi.test())}>
           <Zap size={16} aria-hidden="true" />{t('acp.test')}</button>
       </div>
-      <p className="acp-muted">{t('acp.modelHint')}</p>
       {probe ? <div className="acp-probe-result" role="status"><strong><CircleCheck size={16} aria-hidden="true" />{t('acp.testPassed')}</strong>
         <dl><div><dt>{t('acp.reply')}</dt><dd><code>{probe.text}</code></dd></div>
           <div><dt>{t('acp.model')}</dt><dd>{probe.model}</dd></div>
           <div><dt>{t('acp.duration')}</dt><dd>{(probe.durationMs / 1000).toFixed(2)} s</dd></div>
           <div><dt>{t('acp.firstText')}</dt><dd>{probe.firstTextMs == null ? '—' : (probe.firstTextMs / 1000).toFixed(2) + ' s'}</dd></div></dl>
       </div> : null}
-      </> : <div className="acp-empty-state"><span className="acp-empty-icon"><LockKeyhole size={20} aria-hidden="true" /></span><strong>{t('acp.modelsLocked')}</strong><p>{t('acp.emptyModels')}</p><button type="button" className="secondary-button" disabled><Zap size={15} aria-hidden="true" />{t('acp.test')}</button></div>}
+      </> : <div className="acp-empty-state"><span className="acp-empty-icon"><LockKeyhole size={20} aria-hidden="true" /></span><strong>{t('acp.modelsLocked')}</strong><button type="button" className="secondary-button" disabled><Zap size={15} aria-hidden="true" />{t('acp.test')}</button></div>}
     </section>
 
     <section className="panel surface-panel acp-model-card acp-api-card" aria-labelledby="acp-api-title" data-enabled={apiReady}>
-      <div className="acp-section-heading"><div className="acp-section-identity"><span className="acp-section-icon"><Code2 size={17} aria-hidden="true" /></span><div><h2 id="acp-api-title">{t('acp.apiTitle')}</h2><p className="acp-muted">{t('acp.apiDescription')}</p></div></div><span className="acp-connection-status" role="status" data-connected={apiReady}><span className="acp-status-dot" data-ready={apiReady} aria-hidden="true" />{t(apiSwitchOperation ? 'acp.apiStateStarting'
-        : apiEnabled ? apiReady ? 'acp.apiStateOn' : 'acp.apiStateWaiting'
-        : 'acp.apiStateOff')}</span></div>
+      <div className="acp-section-heading"><div className="acp-section-identity"><span className="acp-section-icon"><Code2 size={17} aria-hidden="true" /></span><div><h2 id="acp-api-title">{t('acp.apiTitle')}</h2></div></div></div>
       <label className="acp-api-switch">
-        <Switch checked={apiEnabled} disabled={apiSwitchDisabled} title={t(apiEnabled ? 'acp.apiSwitchOffLabel' : 'acp.apiSwitchOnLabel')}
-          aria-describedby="acp-api-switch-hint"
+        <Switch checked={apiEnabled} disabled={apiSwitchDisabled} aria-label={t(apiEnabled ? 'acp.apiSwitchOffLabel' : 'acp.apiSwitchOnLabel')}
+          aria-describedby={apiSwitchHint ? 'acp-api-switch-hint' : undefined}
           onChange={event => { const enabled = event.currentTarget.checked; if (enabled === apiEnabled) return; void run('upstream', () => acpApi.setUpstreamEnabled(enabled)); }} />
-        <span className="acp-api-switch-text"><strong>{t(apiEnabled ? 'acp.apiSwitchOffLabel' : 'acp.apiSwitchOnLabel')}</strong>
-          <span className="acp-muted" id="acp-api-switch-hint">{apiSwitchHint}</span></span>
-        <span className="acp-api-switch-state" data-state={apiSwitchOperation ? 'starting' : apiEnabled ? (apiReady ? 'on' : 'waiting') : 'off'}>
+        <span className="acp-api-switch-text"><strong>{t('acp.enableApi')}</strong>
+          {apiSwitchHint ? <span className="acp-muted" id="acp-api-switch-hint">{apiSwitchHint}</span> : null}</span>
+        <span className="acp-api-switch-state" role="status" data-state={apiSwitchOperation ? 'starting' : apiEnabled ? (apiReady ? 'on' : 'waiting') : 'off'}>
           {apiSwitchOperation ? <LoaderCircle size={13} className="spin" aria-hidden="true" /> : null}{t(apiSwitchOperation ? 'acp.apiStateStarting'
             : apiEnabled ? apiReady ? 'acp.apiStateOn' : 'acp.apiStateWaiting'
             : 'acp.apiStateOff')}</span>
       </label>
-      <div className="acp-api-enable-row">
-        <p className="acp-muted">{!apiEnabled && !apiCanStart ? t('acp.apiNeedsAccountHint') : t(apiEnabled && !apiReady ? 'acp.apiReconnectHint' : 'acp.apiHint')}</p>
-        {connected ? <div className="acp-api-summary"><span className="acp-model-total">{status.models.length}</span><div><strong>{t('acp.apiModelsTitle')}</strong><span>{t('acp.apiModelsHint')}</span></div></div> : null}
-      </div>
       {apiReady ? <details className="acp-api-details"><summary>{t('acp.apiUsageTitle')}<ChevronDown size={14} aria-hidden="true" /></summary><div className="acp-api-details-body">
         <p className="acp-muted">{t('acp.apiUsage')}</p>
         <div className="acp-code-example"><div className="acp-code-heading"><span><b>POST</b><code>/v1/chat/completions</code></span>
@@ -208,13 +312,41 @@ export function AcpAccessPage() {
       </div></details> : null}
     </section></div>
 
-    <details className="acp-footnote"><summary><span><Settings2 size={15} aria-hidden="true" />{t('acp.connectionDetails')}</span><ChevronDown size={15} aria-hidden="true" /></summary><div className="acp-footnote-body">
-      <h3>{t('acp.connectionFlow')}</h3><div className="acp-flow"><span><KeyRound size={14} aria-hidden="true" />{t('acp.flowAccount')}</span><ArrowRight size={13} aria-hidden="true" /><span>Antigravity CLI</span><ArrowRight size={13} aria-hidden="true" /><span>CPA API</span></div>
-      <h3>{t('acp.cli')}</h3><code>{status?.executable ? privacy.text(status.executable) : t('acp.missing')}</code>
-      <h3>{t('acp.currentAccount')}</h3><p>{t('acp.switchHint')}</p>
-      {connected ? <div className="acp-relogin"><p>{t('acp.reloginHint')}</p><button type="button" className="secondary-button" disabled={busy || loading} onClick={() => void run('login', () => acpApi.reloginAccount())}><LogIn size={15} aria-hidden="true" />{t('acp.relogin')}</button></div> : null}
-      <h3>{t('acp.profile')}</h3><p>{t('acp.profileHint')}</p>
-      {status?.profile ? <code>{privacy.text(status.profile)}</code> : null}
-    </div></details>
+    {managingAccounts ? <Dialog className="config-dialog acp-account-dialog" title={t('acp.manageAccounts')} icon={<Users size={19} aria-hidden="true" />} onClose={() => setManagingAccounts(false)} inert={Boolean(editor)} actionsClassName="acp-dialog-actions"
+      actions={<button type="button" className="secondary-button" onClick={() => setManagingAccounts(false)}>{t('common.close')}</button>}>
+      <div className="acp-manage-toolbar"><span className="acp-account-total">{t('acp.savedCount', { count: savedAccounts.length })}</span><button type="button" className="primary-button" disabled={busy || !hasCli || savedAccounts.length >= 32} onClick={() => openEditor()}><Plus size={15} aria-hidden="true" />{t('acp.newAccount')}</button></div>
+      {!hasCli ? <p className="acp-dialog-note">{t('acp.cliAccountHint')}</p> : null}
+      {savedAccounts.length >= 32 ? <p className="acp-dialog-note">{t('acp.errorAccountLimit')}</p> : null}
+      {!editor && !confirmationDialog ? actionNotice : null}
+      {!editor ? operationStatus : null}
+      {!visibleAccounts.length ? <div className="acp-account-empty"><LockKeyhole size={22} aria-hidden="true" /><strong>{t('acp.noSavedAccounts')}</strong>
+        {hasCli ? <button type="button" className="secondary-button" disabled={busy} onClick={() => void run('login', () => acpApi.connect(true))}><LogIn size={15} aria-hidden="true" />{t('acp.login')}</button> : null}
+      </div> : null}
+      <div className="acp-account-list" aria-label={t('acp.savedAccounts')}>
+        {visibleAccounts.map(account => {
+          const current = account.id === status?.activeAccount;
+          return <article key={account.id} className="acp-managed-account" data-current={current}>
+            <div className="acp-managed-identity"><strong className="acp-account-name" title={accountName(account)}>{accountName(account)}</strong>
+              {account.email && !(account.id === 'default' && account.label === 'Default') ? <span className="acp-account-email" title={privacy.text(account.email, [account.email])}>{privacy.text(account.email, [account.email])}</span> : null}
+              <div className="acp-account-badges">{current ? <><span>{t('acp.currentUse')}</span><span data-connected={connected}>{t(connected ? 'acp.connected' : 'acp.notVerified')}</span></> : <span>{t('acp.saved')}</span>}</div>
+            </div>
+            <div className="acp-managed-actions">
+              {!current ? <button type="button" className="secondary-button" disabled={busy || !hasCli} onClick={() => void run('refresh', () => acpApi.switchAccount(account.id))}>{t('acp.useAccount')}</button> : <button type="button" className="secondary-button" disabled={busy || !hasCli} onClick={() => void confirmAccountAction('relogin', account)}><LogIn size={14} aria-hidden="true" />{t('acp.relogin')}</button>}
+              <button type="button" className="icon-button quiet" disabled={busy} aria-label={t('acp.renameAccount', { label: accountName(account) })} title={t('acp.editNote')} onClick={() => openEditor(account)}><Pencil size={15} aria-hidden="true" /></button>
+              <AccountMoreActions current={current} busy={busy} hasCli={hasCli} onAction={kind => void confirmAccountAction(kind, account)} />
+            </div>
+          </article>;
+        })}
+      </div>
+    </Dialog> : null}
+    {editor ? <Dialog as="form" size="sm" className="config-dialog acp-account-dialog acp-account-editor" title={t(editor.account ? 'acp.editNote' : 'acp.newAccount')} onClose={closeEditor} closeDisabled={busy} busy={busy} initialFocusRef={labelInput}
+      onSubmit={event => { event.preventDefault(); void saveAccount(); }} actionsClassName="acp-dialog-actions"
+      actions={<><button type="button" className="secondary-button" disabled={busy} onClick={closeEditor}>{t('common.cancel')}</button><button type="submit" className="primary-button" disabled={busy || (!editor.account && !hasCli)}>{t(editor.account ? 'common.save' : 'acp.addAccount')}</button></>}>
+      <label className="acp-note-field"><span className="acp-note-label"><span>{t('acp.accountNote')}</span><span className="acp-note-count" aria-hidden="true">{[...accountLabel.trim()].length}/80</span></span><input ref={labelInput} type="text" value={accountLabel} disabled={busy} aria-invalid={Boolean(formError)} aria-describedby={formError ? 'acp-note-error' : undefined} placeholder={t('acp.accountLabelPlaceholder')} onChange={event => { setAccountLabel(event.currentTarget.value); setFormError(''); }} /></label>
+      {formError ? <p id="acp-note-error" className="acp-form-error" role="alert">{formError}</p> : null}
+      {!confirmationDialog ? actionNotice : null}
+      {operationStatus}
+    </Dialog> : null}
+    {confirmationDialog}
   </div>;
 }

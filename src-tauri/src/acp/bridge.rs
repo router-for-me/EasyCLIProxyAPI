@@ -22,6 +22,9 @@ pub(super) struct Runtime {
     stop: CancellationToken,
     url: String,
     key: String,
+    // Retain the configuration this runtime was registered against. Account
+    // maintenance must report failures at that exact path, not a global guess.
+    config: PathBuf,
 }
 
 impl Drop for Runtime {
@@ -288,6 +291,7 @@ async fn set_enabled<R: tauri::Runtime>(
                 stop: stop.clone(),
                 url: url.clone(),
                 key: key.clone(),
+                config: config.into(),
             };
             register_at(config, Some(&url), &key, &status.models)?;
             if let Err(error) = save_settings(
@@ -362,7 +366,7 @@ pub(super) fn sync_models(state: &AcpState) -> Result<(), String> {
         .lock()
         .map_err(|_| "ACP bridge state unavailable")?;
     if let Some(runtime) = runtime.as_ref() {
-        register(Some(&runtime.url), &runtime.key, &status.models)?;
+        register_at(&runtime.config, Some(&runtime.url), &runtime.key, &status.models)?;
     }
     Ok(())
 }
