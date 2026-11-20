@@ -223,7 +223,7 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
         <div className="panel surface-panel control-panel">
           <div className="panel-heading home-panel-heading">
             <div>
-              <h2>{t('kernel.control.title')}</h2>
+              <h2 id="home-cpa-runtime" tabIndex={-1}>{t('kernel.control.title')}</h2>
               <p>{t(!coreStatus ? (statusError ? 'home.runtime.unknown' : 'home.runtime.checking') : coreReady ? 'home.runtime.ready' : coreInstalled ? 'home.runtime.stopped' : 'home.runtime.notInstalled')}</p>
             </div>
             <button type="button" className="icon-button quiet ghost small-button" disabled={coreProcessBusy} onClick={() => void refreshStatus()} title={t('kernel.control.refresh')} aria-label={t('kernel.control.refresh')}><RefreshCw size={15} aria-hidden="true" /></button>

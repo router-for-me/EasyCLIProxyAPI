@@ -1,3 +1,4 @@
+import { remoteCpaZhCN } from '../remoteCpa';
 import { routingZhCN } from './routing';
 import { easyModeZhCN } from '../easyMode';
 import { homeZhCN } from '../home';
@@ -8,6 +9,7 @@ import { themeDiyZhCN } from '../themeDiy';
 import { acpZhCN } from '../acp';
 import { agentSystemPromptsZhCN } from '../agentSystemPrompts';
 export const zhCN: Record<string, string> = {
+  ...remoteCpaZhCN,
   ...autoUpdateZhCN,
   ...acpZhCN,
   ...agentSystemPromptsZhCN,

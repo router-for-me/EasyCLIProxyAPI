@@ -74,7 +74,7 @@ type I18nContextValue = {
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
-export function I18nProvider({ children }: { children: ReactNode }) {
+export function I18nProvider({ children, syncNativeLocale = true }: { children: ReactNode; syncNativeLocale?: boolean }) {
   const [locale, updateLocale] = useState<AppLocale>(detectInitialLocale);
   setCurrentLocale(locale);
 
@@ -89,10 +89,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       window.localStorage.setItem(STORAGE_KEY, locale);
     } catch {
     }
-    void setAppLocale({ locale }).catch((error) => {
+    if (syncNativeLocale) void setAppLocale({ locale }).catch((error) => {
       console.warn('Failed to synchronize the app locale with the native shell', error);
     });
-  }, [locale]);
+  }, [locale, syncNativeLocale]);
 
   const t = useCallback(
     (key: MessageKey, variables?: MessageVariables) => translate(locale, key, variables),

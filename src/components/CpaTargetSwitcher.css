@@ -1,0 +1,58 @@
+@layer pages {
+  .cpa-target-switcher { position: relative; min-width: 0; }
+  .cpa-target-trigger {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+    padding: 6px 9px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-text-primary);
+    font-size: 13px;
+    text-align: start;
+  }
+  .cpa-target-trigger:hover:not(:disabled), .cpa-target-trigger[aria-expanded='true'] { background: var(--color-surface-hover); }
+  .cpa-target-trigger > svg { flex: none; }
+  .cpa-target-trigger > svg:last-child { margin-inline-start: auto; }
+  .cpa-target-trigger-text, .cpa-target-trigger-text strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cpa-target-trigger-text strong, .cpa-target-trigger-text small { display: block; }
+  .cpa-target-trigger-text small { color: var(--color-text-secondary); }
+  .cpa-target-menu {
+    position: absolute;
+    z-index: 65;
+    inset-block-start: calc(100% + 5px);
+    inset-inline-start: 0;
+    display: grid;
+    gap: 2px;
+    width: min(258px, calc(100vw - 32px));
+    padding: 5px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-text-primary);
+    box-shadow: var(--config-dialog-shadow);
+  }
+  .cpa-target-current { display: grid; gap: 3px; padding: 6px 8px; color: var(--color-text-secondary); font-size: 12px; }
+  .cpa-target-current code { overflow-wrap: anywhere; }
+  .cpa-target-menu > button { display: flex; align-items: center; gap: 8px; padding: 8px; text-align: start; border-radius: var(--radius-md); }
+  .cpa-target-menu > button > svg { flex: none; }
+  .cpa-target-menu > button:is(:hover,:focus-visible) { background: var(--color-surface-hover); }
+  .sidebar > .cpa-target-switcher { flex-shrink: 0; margin-bottom: 10px; }
+  .cpa-remote-header > .cpa-target-switcher { max-width: min(300px, 100%); margin-inline-start: auto; }
+  .cpa-remote-header .cpa-target-menu { inset-inline: auto 0; }
+  @media (min-width: 901px) and (max-width: 1100px) {
+    .sidebar .cpa-target-trigger { padding-inline: 5px; gap: 4px; }
+    .sidebar .cpa-target-trigger-text { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); }
+  }
+  @media (max-width: 900px) {
+    .sidebar > .cpa-target-switcher { grid-column: 1 / -1; grid-row: 2; justify-self: start; margin: 0; }
+    .sidebar > .cpa-target-switcher + .nav-section { grid-row: 3; }
+  }
+}

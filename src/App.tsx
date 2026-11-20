@@ -70,6 +70,9 @@ import { useThemePreference } from './theme';
 import { usePrivacyMode } from './privacy';
 import { Dialog } from './components/Dialog';
 import { EmptyState } from './components/EmptyState';
+import { CpaTargetSwitcher } from './components/CpaTargetSwitcher';
+import { CpaConnectionDialog, RemoteCpaPage } from './pages/RemoteCpaPage';
+import { cpaConnectionPending, getCpaConnection, type CpaConnection } from './services/remoteCpa';
 
 const QQ_CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
 const DISCORD_SERVER_URL = 'https://discord.gg/PxvX4D9kgs';
@@ -162,19 +165,49 @@ function HomePage() {
   return <KernelPage view="home" />;
 }
 
-function App() {
+function App({ initialConnection }: { initialConnection?: CpaConnection }) {
+  const { t } = useI18n();
+  const [connection, setConnection] = useState(initialConnection);
+  const [connectionOpen, setConnectionOpen] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (initialConnection) return;
+    let cancelled = false;
+    void getCpaConnection().then(next => { if (!cancelled) setConnection(next); })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [attempt, initialConnection]);
+  const openConnection = () => setConnectionOpen(true);
+  const closeConnection = () => setConnectionOpen(false);
+
   return (
-    <AppUpdateProvider>
-      <CoreRuntimeProvider>
-        <CoreUpdateProvider>
-          <WindowFrame><AppContent /></WindowFrame>
-        </CoreUpdateProvider>
-      </CoreRuntimeProvider>
-    </AppUpdateProvider>
+    <WindowFrame>
+      {!connection ? (
+        <main className="cpa-remote-workspace">
+          <p role={failed ? 'alert' : 'status'}>{t(failed ? 'remote.error.unknown' : 'remote.loading')}</p>
+          {failed ? <button type="button" className="secondary-button" onClick={() => { setFailed(false); setAttempt(value => value + 1); }}>{t('remote.retry')}</button> : null}
+        </main>
+      ) : connection.remoteActive || cpaConnectionPending(connection) ? (
+        <RemoteCpaPage connection={connection} openConnection={openConnection} onChange={setConnection} />
+      ) : (
+        <AppUpdateProvider>
+          <CoreRuntimeProvider>
+            <CoreUpdateProvider>
+              <AppContent openConnection={openConnection} />
+            </CoreUpdateProvider>
+          </CoreRuntimeProvider>
+        </AppUpdateProvider>
+      )}
+      {connection && !connection.remoteActive ? <LocalWindowClose /> : null}
+      {connection && connectionOpen ? (
+        <CpaConnectionDialog connection={connection} close={closeConnection} onChange={setConnection} />
+      ) : null}
+    </WindowFrame>
   );
 }
 
-function AppContent() {
+function AppContent({ openConnection }: { openConnection: () => void }) {
   const { locale, setLocale, t } = useI18n();
   const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing } = useAppUpdate();
   const [appVersionDisplay, setAppVersionDisplay] = useState<AppVersionSeries>('stable');
@@ -190,7 +223,6 @@ function AppContent() {
   const [theme, setTheme] = useThemePreference();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [privacyMode, setPrivacyMode] = usePrivacyMode();
-  const [windowsClosePrompt, setWindowsClosePrompt] = useState<WindowsClosePrompt | null>(null);
   const languageMenuRef = useRef<HTMLDivElement>(null);
   const languageButtonRef = useRef<HTMLButtonElement>(null);
   const { status } = useCoreRuntime();
@@ -267,50 +299,6 @@ function AppContent() {
     };
   }, [languageMenuOpen]);
 
-  useEffect(() => {
-    let disposed = false;
-    let stopListening: (() => void) | undefined;
-
-    const handleWindowsCloseRequest = async () => {
-      try {
-        const settings = await getGuiSettings();
-        if (settings.closeBehavior !== 'ask') {
-          await resolveWindowsCloseRequest(settings.closeBehavior, false);
-          return;
-        }
-      } catch (error) {
-        console.error('Failed to read close behavior settings', error);
-      }
-
-      setWindowsClosePrompt((current) =>
-        current ?? {
-          resolvingAction: null,
-          rememberChoice: false,
-          error: null,
-        },
-      );
-    };
-
-    void onWindowsCloseRequested(() => {
-      void handleWindowsCloseRequest();
-    })
-      .then((stop) => {
-        if (disposed) {
-          stop();
-        } else {
-          stopListening = stop;
-        }
-      })
-      .catch((error) => {
-        console.error('Failed to listen for Windows close confirmation events', error);
-      });
-
-    return () => {
-      disposed = true;
-      stopListening?.();
-    };
-  }, []);
-
   const handleLanguageListKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
     const options = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]'));
@@ -356,40 +344,6 @@ function AppContent() {
     }
   };
 
-  const resolveWindowsCloseRequest = async (
-    action: WindowsCloseAction,
-    remember = windowsClosePrompt?.rememberChoice ?? false,
-  ) => {
-    setWindowsClosePrompt((current) =>
-      current
-        ? {
-            ...current,
-            resolvingAction: action,
-            error: null,
-          }
-        : current,
-    );
-
-    try {
-      await resolveWindowsCloseRequestCommand({ action, remember });
-      setWindowsClosePrompt(null);
-    } catch (error) {
-      setWindowsClosePrompt((current) =>
-        current
-          ? {
-              ...current,
-              resolvingAction: null,
-              error: error instanceof Error ? error.message : String(error),
-            }
-          : {
-              resolvingAction: null,
-              rememberChoice: false,
-              error: error instanceof Error ? error.message : String(error),
-            },
-      );
-    }
-  };
-
   return (
     <>
       <div className={`app-shell${active === "easy" ? " app-shell-easy-mode" : ""}`}>
@@ -405,6 +359,8 @@ function AppContent() {
                 <span>{t('app.desktopConsole')}</span>
               </div>
             </div>
+
+            <CpaTargetSwitcher onConnect={openConnection} />
 
             <nav
               ref={setNavElement}
@@ -622,6 +578,94 @@ function AppContent() {
         </div>
       </div>
 
+      <AppUpdateDialog />
+    </>
+  );
+}
+
+function LocalWindowClose() {
+  const { t } = useI18n();
+  const [windowsClosePrompt, setWindowsClosePrompt] = useState<WindowsClosePrompt | null>(null);
+  useEffect(() => {
+    let disposed = false;
+    let stopListening: (() => void) | undefined;
+
+    const handleWindowsCloseRequest = async () => {
+      try {
+        const settings = await getGuiSettings();
+        if (settings.closeBehavior !== 'ask') {
+          await resolveWindowsCloseRequest(settings.closeBehavior, false);
+          return;
+        }
+      } catch (error) {
+        console.error('Failed to read close behavior settings', error);
+      }
+
+      setWindowsClosePrompt((current) =>
+        current ?? {
+          resolvingAction: null,
+          rememberChoice: false,
+          error: null,
+        },
+      );
+    };
+
+    void onWindowsCloseRequested(() => {
+      void handleWindowsCloseRequest();
+    })
+      .then((stop) => {
+        if (disposed) {
+          stop();
+        } else {
+          stopListening = stop;
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to listen for Windows close confirmation events', error);
+      });
+
+    return () => {
+      disposed = true;
+      stopListening?.();
+    };
+  }, []);
+
+  const resolveWindowsCloseRequest = async (
+    action: WindowsCloseAction,
+    remember = windowsClosePrompt?.rememberChoice ?? false,
+  ) => {
+    setWindowsClosePrompt((current) =>
+      current
+        ? {
+            ...current,
+            resolvingAction: action,
+            error: null,
+          }
+        : current,
+    );
+
+    try {
+      await resolveWindowsCloseRequestCommand({ action, remember });
+      setWindowsClosePrompt(null);
+    } catch (error) {
+      setWindowsClosePrompt((current) =>
+        current
+          ? {
+              ...current,
+              resolvingAction: null,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          : {
+              resolvingAction: null,
+              rememberChoice: false,
+              error: error instanceof Error ? error.message : String(error),
+            },
+      );
+    }
+  };
+
+  return (
+    <>
       {windowsClosePrompt ? (
         <Dialog
           alert
@@ -689,8 +733,6 @@ function AppContent() {
           </div>
         </Dialog>
       ) : null}
-
-      <AppUpdateDialog />
     </>
   );
 }

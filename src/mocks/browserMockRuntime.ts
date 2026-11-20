@@ -1418,6 +1418,11 @@ export function createBrowserMockRuntime(
         return null;
       }
 
+      case 'get_cpa_connection': return { remoteActive: false, remoteSelected: false, endpoint: null, needsRepair: false, revision: 0 };
+      case 'test_remote_cpa':
+      case 'select_cpa_connection':
+      case 'get_remote_cpa_keys':
+      case 'save_remote_cpa_keys': throw 'notActive';
       case 'get_core_status': return clone(state.coreStatus);
       case 'main_window_active': return !document.hidden;
       case 'start_core_process': {

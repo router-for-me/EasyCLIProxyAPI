@@ -1,3 +1,4 @@
+import { remoteCpaEn } from '../remoteCpa';
 import { routingEn } from './routing';
 import type { MessageKey } from './zh-CN';
 import { easyModeEn } from '../easyMode';
@@ -9,6 +10,7 @@ import { themeDiyEn } from '../themeDiy';
 import { acpEn } from '../acp';
 import { agentSystemPromptsEn } from '../agentSystemPrompts';
 export const en: Record<MessageKey, string> = {
+  ...remoteCpaEn,
   ...autoUpdateEn,
   ...acpEn,
   ...agentSystemPromptsEn,

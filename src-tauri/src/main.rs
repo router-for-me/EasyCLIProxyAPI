@@ -34,6 +34,7 @@ mod plugin_webview;
 mod plugins;
 mod privacy_mode;
 mod progress;
+mod remote_cpa;
 mod provider_health;
 mod reverse_proxy;
 mod auto_update;
@@ -2574,6 +2575,23 @@ struct GithubAsset {
     digest: Option<String>,
 }
 
+fn start_linux_activation_for_main_window(_app: &tauri::AppHandle) {
+    #[cfg(target_os = "linux")]
+    {
+        let activation_app = _app.clone();
+        if let Err(error) = start_app_activation_listener(move || {
+            let app_handle = activation_app.clone();
+            if let Err(error) = activation_app
+                .run_on_main_thread(move || show_windows_main_window(&app_handle))
+            {
+                eprintln!("Failed to schedule showing the main window: {error}");
+            }
+        }) {
+            eprintln!("{error}");
+        }
+    }
+}
+
 fn main() {
     let helper_args = env::args_os().collect::<Vec<_>>();
     if helper_args.get(1).is_some_and(|arg| arg == "--cpa-acp-tools") {
@@ -2626,27 +2644,35 @@ fn main() {
     };
 
     let portable_update_ack = portable_update_ack_argument();
-    let gui_config = match load_or_create_gui_config() {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("{error}");
-            if portable_update_ack.is_some() {
-                return;
+    let remote_cpa = remote_cpa::RemoteCpaState::load();
+    let remote_launch = remote_cpa.remote_launch;
+    let gui_config = if remote_launch {
+        // Local startup can repair credentials and rewrite local CPA config.
+        // A Remote session must not load that initialization path at all.
+        GuiConfigFile::default()
+    } else {
+        match load_or_create_gui_config() {
+            Ok(config) => config,
+            Err(error) => {
+                eprintln!("{error}");
+                if portable_update_ack.is_some() {
+                    return;
+                }
+                let mut config = GuiConfigFile::default();
+                // If the GUI configuration cannot be read before the kernel starts,
+                // use the shared recovery key so requests and the generated kernel
+                // configuration stay synchronized.
+                config.management_secret_key = LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string();
+                if let Err(sanitize_error) = sanitize_gui_config(&mut config) {
+                    eprintln!("Failed to initialize fixed credentials directory: {sanitize_error}");
+                }
+                config
             }
-            let mut config = GuiConfigFile::default();
-            // If the GUI configuration cannot be read before the kernel starts,
-            // use the shared recovery key so requests and the generated kernel
-            // configuration stay synchronized.
-            config.management_secret_key = LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string();
-            if let Err(sanitize_error) = sanitize_gui_config(&mut config) {
-                eprintln!("Failed to initialize fixed credentials directory: {sanitize_error}");
-            }
-            config
         }
     };
     let initial_window_size = configured_window_size(&gui_config);
     let initial_window_position = configured_window_position(&gui_config);
-    let start_hidden = should_start_hidden(&gui_config);
+    let start_hidden = !remote_launch && should_start_hidden(&gui_config);
 
     let context = tauri::generate_context!();
     #[cfg(target_os = "linux")]
@@ -2658,12 +2684,17 @@ fn main() {
         context
     };
 
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_autostart::init(
+    let app = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+    let app = if remote_launch {
+        app
+    } else {
+        app.plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![AUTOSTART_ARGUMENT]),
         ))
+    };
+    let app = app
+        .manage(remote_cpa)
         .plugin(
             tauri_plugin_opener::Builder::new()
                 .open_js_links_on_click(false)
@@ -2674,9 +2705,9 @@ fn main() {
         .manage(AppUpdateState::default())
         .manage(auto_update::AutoUpdateState::default())
         .manage(window_activity::WindowActivity::default())
-        .manage(CoreProcessState::new(should_start_core_on_launch(
-            &gui_config,
-        )))
+        .manage(CoreProcessState::new(
+            !remote_launch && should_start_core_on_launch(&gui_config),
+        ))
         .manage(DeepSeekHarnessProcessState::default())
         .manage(usage::UsageCollectorState::default())
         .manage(agent_usage::AgentUsageState::default())
@@ -2744,8 +2775,8 @@ fn main() {
     });
 
     #[cfg(target_os = "macos")]
-    let app = app.on_window_event(|window, event| {
-        if window.label() == "main" {
+    let app = app.on_window_event(move |window, event| {
+        if !remote_launch && window.label() == "main" {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 set_macos_dock_visible(window.app_handle(), false);
@@ -2758,8 +2789,8 @@ fn main() {
     });
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
-    let app = app.on_window_event(|window, event| {
-        if window.label() == "main" {
+    let app = app.on_window_event(move |window, event| {
+        if !remote_launch && window.label() == "main" {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 if let Err(error) = window.emit(WINDOWS_CLOSE_REQUEST_EVENT, ()) {
@@ -2781,6 +2812,19 @@ fn main() {
             if let Some(window) = app.get_webview_window("main") {
                 window.set_background_color(Some(tauri::window::Color(255, 255, 255, 255)))?;
             }
+            if remote_launch {
+                start_linux_activation_for_main_window(app.handle());
+                configure_initial_main_window(app.handle(), false)?;
+                if let Some(ack_path) = portable_update_ack.as_ref() {
+                    // An application update started in Local mode may land on a
+                    // saved Remote selection; acknowledge the GUI, not a core.
+                    app_update::acknowledge_update_runtime_with_probe(ack_path, false, || {
+                        Err("Unexpected core acceptance in Remote mode".into())
+                    })?;
+                }
+                return Ok(());
+            }
+
             if let Err(error) = network_proxy::refresh(app.state::<GuiConfigState>().inner()) {
                 eprintln!("Failed to read startup proxy settings: {error}");
             }
@@ -2819,20 +2863,7 @@ fn main() {
                 eprintln!("Failed to configure startup window state: {error}");
             }
 
-            #[cfg(target_os = "linux")]
-            {
-                let activation_app = app.handle().clone();
-                if let Err(error) = start_app_activation_listener(move || {
-                    let app_handle = activation_app.clone();
-                    if let Err(error) = activation_app
-                        .run_on_main_thread(move || show_windows_main_window(&app_handle))
-                    {
-                        eprintln!("Failed to schedule showing the main window: {error}");
-                    }
-                }) {
-                    eprintln!("{error}");
-                }
-            }
+            start_linux_activation_for_main_window(app.handle());
 
             if let Err(error) =
                 configuration_watcher::start_configuration_file_watcher(app.handle().clone())
@@ -2990,8 +3021,25 @@ fn main() {
             });
 
             Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
+        });
+
+    let app = if remote_launch {
+        // Allowlist by construction: new Local commands cannot accidentally
+        // acquire a path to local files or lifecycle from Remote sessions.
+        app.invoke_handler(tauri::generate_handler![
+            remote_cpa::get_cpa_connection,
+            remote_cpa::test_remote_cpa,
+            remote_cpa::select_cpa_connection,
+            remote_cpa::get_remote_cpa_keys,
+            remote_cpa::save_remote_cpa_keys,
+            window_activity::main_window_active,
+            desktop_theme::get_linux_system_theme,
+        ])
+    } else {
+        app.invoke_handler(tauri::generate_handler![
+            remote_cpa::get_cpa_connection,
+            remote_cpa::test_remote_cpa,
+            remote_cpa::select_cpa_connection,
             acp::get_acp_status,
             acp::acp_connect,
             acp::switch_acp_account,
@@ -3205,15 +3253,20 @@ fn main() {
             reverse_proxy::reverse_proxy_start,
             reverse_proxy::reverse_proxy_stop
         ])
-        .build(context)
-        .expect("failed to build app");
+    };
+    let app = app.build(context).expect("failed to build app");
 
-    app.run(|app_handle, event| match event {
+    app.run(move |app_handle, event| match event {
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen {
             has_visible_windows: false,
             ..
         } => show_main_window(app_handle),
+        tauri::RunEvent::ExitRequested { .. } if remote_launch => {
+            #[cfg(windows)]
+            webview_recovery::stop(app_handle);
+        }
+        tauri::RunEvent::Exit if remote_launch => {}
         tauri::RunEvent::ExitRequested { api, code, .. } => {
             #[cfg(windows)]
             webview_recovery::stop(app_handle);

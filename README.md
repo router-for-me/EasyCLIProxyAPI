@@ -51,6 +51,10 @@ automatically download or install updates.
 
 **Version Management** also shows application release notes in the current interface language. Stable update manifests include available historical notes, so when upgrading across stable releases the page shows up to 9 skipped stable releases newer than the installed version and older than the target, newest first, for a maximum of 10 notes including the target. The serialized history is limited to 128 KiB of UTF-8, excluding the target notes. The target release notes remain visible after upgrading. Preview builds and legacy manifests without history show only the target release notes. Older clients that do not support history show only the target notes until upgraded. Notes are shown only in the current language; if that translation is unavailable, the page reports that notes are unavailable instead of falling back to another language. Authors maintain per-version Markdown files in [`docs/release-notes/`](docs/release-notes/README.md) for Simplified Chinese, Traditional Chinese, English, and Japanese. CI includes available translations in the update manifest; the GitHub Release body shows English followed by Simplified Chinese.
 
+### External CPA management
+
+[Connect to a running CPA instance](docs/remote-cpa.md) on this computer, on a private network, or in the cloud. Remote CPA manages client API keys through the v8 management API without taking over the process.
+
 ### OAuth account authorization
 
 ![OAuth account authorization](docs/screenshots/en/2.png)
