@@ -756,11 +756,113 @@ fn prefixed_and_bare_names_resolve_to_the_same_acp_model() {
 #[test]
 fn single_user_message_is_passed_through_unchanged() {
     let completion = parse_completion(&request(false), &models()).unwrap();
-    assert_eq!(completion.text, "ping");
+    assert_eq!(completion.prompt[0].as_text(), Some("ping"));
     let mut value = request(false);
     value["messages"] =
         json!([{"role":"user","content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}]);
-    assert_eq!(parse_completion(&value, &models()).unwrap().text, "ab");
+    assert_eq!(
+        parse_completion(&value, &models()).unwrap().prompt[0].as_text(),
+        Some("ab")
+    );
+}
+
+const PNG: &str =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yXxQAAAAASUVORK5CYII=";
+
+fn image_part() -> Value {
+    json!({"type":"image_url","image_url":{"url":format!("data:image/png;base64,{PNG}")}})
+}
+
+#[test]
+fn image_and_text_history_preserve_block_order_and_skip_reasoning_only_turns() {
+    let mut value = request(false);
+    let mut image = image_part();
+    image["image_url"]["detail"] = json!("low");
+    value["messages"] = json!([
+        {"role":"user","content":[{"type":"text","text":"before"}, image, {"type":"text","text":"after"}]},
+        {"role":"assistant","content":null,"reasoning_content":"private reasoning, not an assistant reply"},
+        {"role":"assistant","content":"seen"},
+        {"role":"user","content":[image_part()]}
+    ]);
+    let parsed = parse_completion(&value, &models()).unwrap();
+    assert_eq!(parsed.ignored_parameters, ["image_url.detail"]);
+    assert_eq!(
+        json!(parsed.prompt),
+        json!([
+            {"type":"text","text":"User: before"},
+            {"type":"image","mimeType":"image/png","data":PNG},
+            {"type":"text","text":"after\n\nAssistant: seen\n\nUser: "},
+            {"type":"image","mimeType":"image/png","data":PNG}
+        ])
+    );
+}
+
+#[test]
+fn rejected_content_names_the_location_and_does_not_leak_urls() {
+    for (content, reason) in [
+        (Value::Null, "missing or null"),
+        (json!(17), "must be a string or an array"),
+        (json!([{"type":"text","text":7}]), "text must be a string"),
+        (
+            json!([{"type":"input_audio"}]),
+            "does not support 'input_audio'",
+        ),
+        (json!([{"type":"file"}]), "does not support 'file'"),
+        (
+            json!([{"type":"image_url","image_url":"not-an-object"}]),
+            "image_url must be an object",
+        ),
+        (
+            json!([{"type":"image_url","image_url":{"url":"data:image/png;base64,%"}}]),
+            "invalid base64",
+        ),
+        (
+            json!([{"type":"image_url","image_url":{"url":"data:image/png;base64,"}}]),
+            "does not match",
+        ),
+        (
+            json!([{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,QUJD"}}]),
+            "does not match",
+        ),
+        (
+            json!([{"type":"image_url","image_url":{"url":"data:image/svg+xml;base64,QUJD"}}]),
+            "must be PNG, JPEG",
+        ),
+    ] {
+        let mut value = request(false);
+        value["messages"][0]["content"] = content;
+        let error = parse_completion(&value, &models()).err().unwrap();
+        assert!(
+            error.contains("messages[0]") && error.contains(reason),
+            "{error}"
+        );
+    }
+    for url in [
+        "https://example.test/private-token",
+        "file:///home/private-token",
+        "/tmp/private-token",
+    ] {
+        let mut value = request(false);
+        value["messages"][0]["content"] = json!([{"type":"image_url","image_url":{"url":url}}]);
+        let error = parse_completion(&value, &models()).err().unwrap();
+        assert!(
+            error.contains("user content part 0") && error.contains("does not fetch URLs"),
+            "{error}"
+        );
+        assert!(!error.contains("private-token"), "{error}");
+    }
+    let mut value = request(false);
+    value["messages"] = json!([{"role":"assistant","content":null},{"role":"user","content":"hi"}]);
+    let error = parse_completion(&value, &models()).err().unwrap();
+    assert!(
+        error.contains("assistant message content is missing or null"),
+        "{error}"
+    );
+    value["messages"][0]["content"] = json!([image_part()]);
+    assert!(parse_completion(&value, &models())
+        .err()
+        .unwrap()
+        .contains("send image_url in a user message"));
 }
 
 #[test]
@@ -771,7 +873,7 @@ fn client_generation_options_are_validated_and_reported_as_unapplied() {
     value["temperature"] = json!(0.7);
     value["top_p"] = json!(1);
     let parsed = parse_completion(&value, &models()).unwrap();
-    assert_eq!(parsed.text, "ping");
+    assert_eq!(parsed.prompt[0].as_text(), Some("ping"));
     assert_eq!(
         parsed.ignored_parameters,
         [
@@ -824,7 +926,7 @@ fn text_clients_can_send_empty_tools_disabled_tools_and_metadata() {
             .unwrap()
             .extend(control.as_object().unwrap().clone());
         let parsed = parse_completion(&value, &models()).unwrap();
-        assert_eq!(parsed.text, "ping");
+        assert_eq!(parsed.prompt[0].as_text(), Some("ping"));
     }
     for control in [
         json!({"tools":{}}),
@@ -854,11 +956,12 @@ fn developer_instructions_are_delivered_through_the_official_session_field() {
         {"role":"user","name":"test-user","content":"verify-system"}
     ]);
     let request = parse_completion(&value, &models()).unwrap();
-    assert_eq!(request.text, "verify-system");
+    assert_eq!(request.prompt[0].as_text(), Some("verify-system"));
     assert_eq!(request.system, "be brief\n\nuse plain language");
     let cancel = Arc::new(AtomicBool::new(false));
     let mut client = spawn_fake(Path::new("unused"), Path::new("unused"), "").unwrap();
     let mut chunks = String::new();
+    client.initialize(&cancel).unwrap();
     let output = complete(
         &mut client,
         Path::new("unused"),
@@ -901,6 +1004,7 @@ fn official_cli_completes_a_chat_client_request_with_system_and_empty_tools() {
     let request = parse_completion(&value, &models).unwrap();
     drop(discovery);
     let mut client = rpc::Client::spawn(&executable, &profile, "").unwrap();
+    client.initialize(&cancel).unwrap();
     let output = complete(&mut client, &profile, &request, &cancel, |_| {}).unwrap();
     assert!(
         output.contains(&marker),
@@ -917,7 +1021,7 @@ fn system_messages_are_separate_from_the_user_turn() {
         {"role":"user","content":"hello"},
     ]);
     let completion = parse_completion(&value, &models()).unwrap();
-    assert_eq!(completion.text, "hello");
+    assert_eq!(completion.prompt[0].as_text(), Some("hello"));
     assert_eq!(completion.system, "be brief\n\nstay calm");
 }
 
@@ -931,8 +1035,8 @@ fn multi_turn_history_is_flattened_into_one_prompt() {
         {"role":"user","content":"again"},
     ]);
     assert_eq!(
-        parse_completion(&value, &models()).unwrap().text,
-        "User: hi\n\nAssistant: hello\n\nUser: again"
+        parse_completion(&value, &models()).unwrap().prompt[0].as_text(),
+        Some("User: hi\n\nAssistant: hello\n\nUser: again")
     );
 }
 
@@ -990,7 +1094,11 @@ fn fake_official_server() {
         };
         let result = match value["method"].as_str().unwrap_or("") {
             "initialize" => {
-                json!({"protocolVersion":1,"agentCapabilities":{"auth":{"logout":{}},"_meta":{"antigravity":{"systemPrompt":{"append":true}}}}})
+                let mut result = json!({"protocolVersion":1,"agentCapabilities":{"auth":{"logout":{}},"_meta":{"antigravity":{"systemPrompt":{"append":true}}}}});
+                if std::env::var_os("ECPA_ACP_TEST_IMAGE").is_some() {
+                    result["agentCapabilities"]["promptCapabilities"] = json!({"image":true});
+                }
+                result
             }
             "session/new" => {
                 tool_config = value["params"]["mcpServers"][0].clone();
@@ -1011,7 +1119,22 @@ fn fake_official_server() {
                     !selected.is_empty(),
                     "explicit model selection must precede inference"
                 );
-                let prompt = value["params"]["prompt"][0]["text"].as_str().unwrap();
+                let blocks = &value["params"]["prompt"];
+                let prompt = blocks[0]["text"].as_str().unwrap_or("");
+                if selected == "plain-model"
+                    || ["inspect-image", "use-client-tool-with-image"].contains(&prompt)
+                {
+                    assert!(std::env::var_os("ECPA_ACP_TEST_IMAGE").is_some());
+                    let image = json!({"type":"image","mimeType":"image/png","data":PNG});
+                    if selected == "plain-model" {
+                        assert_eq!(*blocks, json!([image]));
+                    } else {
+                        assert_eq!(
+                            *blocks,
+                            json!([{"type":"text","text":prompt}, image, {"type":"text","text":"after"}])
+                        );
+                    }
+                }
                 if prompt == "fail-before-output" || prompt == "fail-after-output" {
                     if prompt == "fail-after-output" {
                         println!(
@@ -1026,7 +1149,7 @@ fn fake_official_server() {
                     std::io::stdout().flush().unwrap();
                     continue;
                 }
-                if value["params"]["prompt"][0]["text"] == "use-client-tool" {
+                if ["use-client-tool", "use-client-tool-with-image"].contains(&prompt) {
                     let env = tool_config["env"].as_array().unwrap();
                     let port: u16 = env
                         .iter()
@@ -1066,8 +1189,7 @@ fn fake_official_server() {
                 }
                 if let Some(expected) = value["params"]["prompt"][0]["text"]
                     .as_str()
-                    .unwrap()
-                    .strip_prefix("expect:")
+                    .and_then(|text| text.strip_prefix("expect:"))
                 {
                     assert_eq!(selected, expected);
                 }
@@ -1097,7 +1219,7 @@ fn fake_official_server() {
     }
 }
 
-fn spawn_fake(_: &Path, _: &Path, _: &str) -> Result<rpc::Client, String> {
+fn spawn_fake(executable: &Path, _: &Path, _: &str) -> Result<rpc::Client, String> {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
         .args([
@@ -1109,6 +1231,11 @@ fn spawn_fake(_: &Path, _: &Path, _: &str) -> Result<rpc::Client, String> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    if executable == Path::new("fake-image-cli") {
+        command.env("ECPA_ACP_TEST_IMAGE", "1");
+    } else {
+        command.env_remove("ECPA_ACP_TEST_IMAGE");
+    }
     crate::configure_background_command(&mut command);
     rpc::Client::spawn_command(command)
 }
@@ -1130,20 +1257,12 @@ fn official_agent_waits_for_client_tool_and_continues() {
     let mut discovery = rpc::Client::spawn(&executable, &profile, "").unwrap();
     discovery.initialize(&cancel).unwrap();
     let models = model_list(&discovery.session(&profile, &cancel).unwrap());
-    drop(discovery);
     let mut value = json!({"model":"acp/gemini-3.8-flash-high","messages":[{"role":"user","content":"Call lookup with key alpha. Wait for its returned secret and reply with the secret. Do not guess."}],"tools":[{"type":"function","function":{"name":"lookup","description":"Look up a secret. The API client executes this.","parameters":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}}}]});
     let request = parse_completion(&value, &models).unwrap();
     let identity = json!({"test":"native"});
     let sessions = super::super::agent::Sessions::default();
     let session = sessions
-        .start(
-            &request,
-            identity.clone(),
-            &executable,
-            &profile,
-            "",
-            rpc::Client::spawn,
-        )
+        .start(&request, identity.clone(), &profile, discovery)
         .unwrap();
     let output = sessions
         .collect(&session, &request, &cancel, |_| {})
@@ -1362,7 +1481,7 @@ async fn real_cpa_lists_and_routes_registered_acp_models() {
         status.models = models();
         status.authenticated = true;
         status.upstream_enabled = true;
-        status.executable = Some("fake-official-cli".into());
+        status.executable = Some("fake-image-cli".into());
         status.profile = directory.to_string_lossy().into_owned();
     }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1441,8 +1560,8 @@ async fn real_cpa_lists_and_routes_registered_acp_models() {
         // listener implements Chat Completions; Responses conversion belongs
         // to CPA and must not be duplicated in the desktop application.
         for responses in [false, true] {
-            for stream in [false, true] {
-                let (path, payload) = if responses {
+            for (stream, with_image) in [(false, false), (true, false), (false, true), (true, true)] {
+                let (path, mut payload) = if responses {
                     ("responses", json!({"model":"acp/test-model","input":[{"role":"developer","content":"use plain language"},{"role":"user","content":"verify-system"}],"instructions":"be brief","tools":[],"tool_choice":"auto","parallel_tool_calls":true,"stream":stream,"store":false,"max_output_tokens":1024,"temperature":0.7,"top_p":1}))
                 } else {
                     let mut value = request(stream);
@@ -1454,6 +1573,19 @@ async fn real_cpa_lists_and_routes_registered_acp_models() {
                     value["top_p"] = json!(1);
                     ("chat/completions", value)
                 };
+                if with_image {
+                    if responses {
+                        payload["input"][1]["content"] = json!([
+                            {"type":"input_text","text":"inspect-image"},
+                            {"type":"input_image","image_url":image_part()["image_url"]["url"]},
+                            {"type":"input_text","text":"after"}
+                        ]);
+                    } else {
+                        payload["messages"][2]["content"] = json!([
+                            {"type":"text","text":"inspect-image"}, image_part(), {"type":"text","text":"after"}
+                        ]);
+                    }
+                }
                 let response = http
                     .post(format!("{base}/v1/{path}"))
                     .bearer_auth("isolated-client-key")
@@ -1882,4 +2014,128 @@ async fn damaged_provider_does_not_prevent_selection_or_current_local_removal() 
     drop(state);
     drop(app);
     cleanup_account_runtime_fixture(root);
+}
+
+#[tokio::test]
+async fn http_image_capability_and_agent_continuation_work_in_both_modes() {
+    let (app, directory) = bridge_fixture();
+    app.manage(crate::GuiConfigState::new(crate::GuiConfigFile::default()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "http://{}/v1/chat/completions",
+        listener.local_addr().unwrap()
+    );
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(serve(
+        app.handle().clone(),
+        listener,
+        "test-key".into(),
+        stop.clone(),
+        spawn_fake,
+    ));
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(6))
+        .build()
+        .unwrap();
+    let send = |payload: &Value| http.post(&url).bearer_auth("test-key").json(payload).send();
+    for stream in [false, true] {
+        for (cli, tool, image_only) in [
+            ("fake-official-cli", false, false),
+            ("fake-official-cli", true, false),
+            ("fake-image-cli", false, false),
+            ("fake-image-cli", false, true),
+            ("fake-image-cli", true, false),
+        ] {
+            {
+                let state = app.state::<AcpState>();
+                let mut status = state.status.lock().unwrap();
+                status.upstream_enabled = true;
+                status.executable = Some(cli.into());
+            }
+            let mut payload = request(stream);
+            let mut part = image_part();
+            part["image_url"]["detail"] = json!("high");
+            let content = if image_only {
+                payload["model"] = json!("acp/plain-model");
+                json!([part])
+            } else {
+                json!([{"type":"text","text":if tool {"use-client-tool-with-image"} else {"inspect-image"}}, part, {"type":"text","text":"after"}])
+            };
+            payload["messages"][0]["content"] = content;
+            if tool {
+                payload["tools"] = json!([{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]);
+            }
+            let response = send(&payload).await.unwrap();
+            let status = response.status();
+            if cli == "fake-official-cli" {
+                assert_eq!(status, 400);
+                let error: Value = response.json().await.unwrap();
+                assert_eq!(error["error"]["type"], "invalid_request_error");
+                assert!(error["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("does not advertise image input"));
+                continue;
+            }
+            assert_eq!(status, 200);
+            assert_eq!(
+                response.headers()["x-ecpa-ignored-parameters"],
+                "image_url.detail"
+            );
+            let body = response.text().await.unwrap();
+            let reply = |body: &str, finish: &str| -> Value {
+                if stream {
+                    let chunks = chat_stream(body, finish);
+                    let deltas = chunks.iter().map(|chunk| &chunk["choices"][0]["delta"]);
+                    if finish == "tool_calls" {
+                        let calls = deltas
+                            .filter_map(|delta| delta.get("tool_calls"))
+                            .next()
+                            .unwrap();
+                        json!({"role":"assistant","content":null,"tool_calls":calls})
+                    } else {
+                        let text: String = deltas
+                            .filter_map(|delta| delta["content"].as_str())
+                            .collect();
+                        json!({"content":text})
+                    }
+                } else {
+                    let body: Value = serde_json::from_str(body).unwrap();
+                    assert_eq!(body["choices"][0]["finish_reason"], finish);
+                    body["choices"][0]["message"].clone()
+                }
+            };
+            if tool {
+                let assistant = reply(&body, "tool_calls");
+                let result = json!({"role":"tool","tool_call_id":assistant["tool_calls"][0]["id"],"content":[{"type":"text","text":"CLIENT_"},{"type":"text","text":"TOOL_OK"}]});
+                let messages = payload["messages"].as_array_mut().unwrap();
+                messages.push(assistant);
+                messages.push(result);
+                let mut media_result = payload.clone();
+                media_result["messages"][2]["content"] = json!([image_part()]);
+                assert_eq!(send(&media_result).await.unwrap().status(), 400);
+                let mut changed = payload.clone();
+                changed["messages"][0]["content"][1] = json!({"type":"text","text":"changed"});
+                let reject = send(&changed).await.unwrap();
+                assert_eq!(reject.status(), 400);
+                assert!(reject
+                    .text()
+                    .await
+                    .unwrap()
+                    .contains("history does not match"));
+                let response = send(&payload).await.unwrap();
+                assert_eq!(response.status(), 200);
+                assert_eq!(
+                    reply(&response.text().await.unwrap(), "stop")["content"],
+                    "CLIENT_TOOL_OK"
+                );
+            } else {
+                assert_eq!(reply(&body, "stop")["content"], "ACP_OK");
+            }
+        }
+    }
+    stop.cancel();
+    server.await.unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
 }

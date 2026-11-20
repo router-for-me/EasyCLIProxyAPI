@@ -71,18 +71,17 @@ impl Sessions {
                 return Err("Return all pending ACP tool results in one request".into());
             }
             let mut ids = std::collections::BTreeSet::new();
+            let mut results = Vec::with_capacity(request.results.len());
             for result in &request.results {
                 let id = result["tool_call_id"]
                     .as_str()
                     .ok_or("Missing tool_call_id")?;
-                if !ids.insert(id.to_string()) || !turn.pending.contains_key(id) {
+                if !ids.insert(id) || !turn.pending.contains_key(id) {
                     return Err("Unknown or duplicate ACP tool result".into());
                 }
-                bridge::message_text(result, "tool")?;
+                results.push((id, bridge::tool_text(result)?));
             }
-            for result in &request.results {
-                let id = result["tool_call_id"].as_str().unwrap();
-                let content = bridge::message_text(result, "tool")?;
+            for (id, content) in results {
                 turn.pending
                     .remove(id)
                     .unwrap()
@@ -99,10 +98,8 @@ impl Sessions {
         &self,
         request: &bridge::Completion,
         identity: Value,
-        executable: &Path,
         profile: &Path,
-        proxy: &str,
-        spawn: bridge::SpawnClient,
+        mut client: rpc::Client,
     ) -> Result<Arc<Mutex<Session>>, String> {
         {
             let mut sessions = self.0.lock().map_err(|_| "Agent sessions unavailable")?;
@@ -128,16 +125,12 @@ impl Sessions {
         }));
         let tools = request.tools.clone();
         let system = request.system.clone();
-        let text = request.text.clone();
+        let prompt = request.prompt.clone();
         let model = request.model.clone();
-        let executable = executable.to_path_buf();
         let profile = profile.to_path_buf();
-        let proxy = proxy.to_string();
         std::thread::spawn(move || {
             let result = (|| {
                 let transport = Transport::start(&tools, sender.clone(), cancel.clone())?;
-                let mut client = spawn(&executable, &profile, &proxy)?;
-                client.initialize(&cancel)?;
                 client.allow_api_tools(&tools);
                 let instructions = format!("{system}\n\nThe API client provides tools through api_client. Use only those tools when needed. Do not use local built-in tools. Their results will arrive from the API client; wait for each result before continuing.");
                 let session = client.api_session(
@@ -148,14 +141,24 @@ impl Sessions {
                 )?;
                 client.model(&session, &model, &cancel)?;
                 let mut bytes = 0_usize;
-                let result = client.agent_prompt(json!({"sessionId":session["sessionId"],"prompt":[{"type":"text","text":text}]}), &cancel, |update| {
-                    if update["sessionUpdate"] == "agent_message_chunk" && update["content"]["type"] == "text" {
-                        if let Some(text) = update["content"]["text"].as_str() {
-                            bytes = bytes.saturating_add(text.len());
-                            if bytes > 1024*1024 || sender.try_send(Event::Text(text.into())).is_err() { cancel.store(true, Ordering::Release); }
+                let result = client.agent_prompt(
+                    json!({"sessionId":session["sessionId"],"prompt":prompt}),
+                    &cancel,
+                    |update| {
+                        if update["sessionUpdate"] == "agent_message_chunk"
+                            && update["content"]["type"] == "text"
+                        {
+                            if let Some(text) = update["content"]["text"].as_str() {
+                                bytes = bytes.saturating_add(text.len());
+                                if bytes > 1024 * 1024
+                                    || sender.try_send(Event::Text(text.into())).is_err()
+                                {
+                                    cancel.store(true, Ordering::Release);
+                                }
+                            }
                         }
-                    }
-                })?;
+                    },
+                )?;
                 if result["stopReason"] != "end_turn" {
                     return Err(format!("ACP agent turn stopped: {}", result["stopReason"]));
                 }
@@ -332,7 +335,7 @@ mod tests {
         let mut request = bridge::Completion {
             model: "test".into(),
             alias: "test".into(),
-            text: String::new(),
+            prompt: Vec::new(),
             system: String::new(),
             stream: false,
             ignored_parameters: Vec::new(),

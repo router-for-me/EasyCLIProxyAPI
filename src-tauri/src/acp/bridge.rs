@@ -1,4 +1,5 @@
 use super::*;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use http_body_util::{BodyExt, Full, Limited, StreamBody};
 use hyper::body::{Bytes, Frame, Incoming};
 use hyper::{Request, Response, StatusCode};
@@ -416,7 +417,7 @@ fn error(status: StatusCode, message: impl AsRef<str>) -> Response<Body> {
 pub(super) struct Completion {
     pub model: String,
     pub alias: String,
-    pub text: String,
+    pub prompt: Vec<PromptBlock>,
     pub system: String,
     pub stream: bool,
     pub ignored_parameters: Vec<&'static str>,
@@ -449,7 +450,7 @@ impl Output {
 // CPA owns the public protocol translators. This upstream must still produce
 // valid Chat Completions chunks, including the initial assistant role.
 struct CompletionStream {
-    sender: tokio::sync::mpsc::Sender<Result<String, String>>,
+    sender: tokio::sync::mpsc::Sender<Result<String, RunError>>,
     cancel: Arc<AtomicBool>,
     id: String,
     model: String,
@@ -458,7 +459,7 @@ struct CompletionStream {
 }
 
 impl CompletionStream {
-    fn send(&self, mut frame: Result<String, String>) -> Result<(), String> {
+    fn send(&self, mut frame: Result<String, RunError>) -> Result<(), String> {
         loop {
             if self.cancel.load(Ordering::Acquire) {
                 return Err("ACP API client disconnected or request cancelled".into());
@@ -501,6 +502,32 @@ impl CompletionStream {
         }
         self.chunk(json!({}), Some(output.finish()))?;
         self.send(Ok("data: [DONE]\n\n".into()))
+    }
+}
+
+#[derive(Debug)]
+enum RunError {
+    InvalidRequest(String),
+    Upstream(String),
+}
+
+impl From<String> for RunError {
+    fn from(error: String) -> Self {
+        Self::Upstream(error)
+    }
+}
+
+impl RunError {
+    fn parts(self) -> (StatusCode, String) {
+        match self {
+            Self::InvalidRequest(message) => (StatusCode::BAD_REQUEST, message),
+            Self::Upstream(message) => (upstream_status(&message), message),
+        }
+    }
+
+    fn into_response(self) -> Response<Body> {
+        let (status, message) = self.parts();
+        error(status, message)
     }
 }
 
@@ -552,11 +579,101 @@ fn compatibility_headers(mut response: Response<Body>, ignored: &[&str]) -> Resp
     response
 }
 
-pub(super) fn message_text(message: &Value, role: &str) -> Result<String, String> {
+#[derive(Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(super) enum PromptBlock {
+    Text {
+        text: String,
+    },
+    Image {
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+        data: String,
+    },
+}
+
+impl PromptBlock {
+    fn as_text(&self) -> Option<&str> {
+        match self {
+            Self::Text { text } => Some(text),
+            Self::Image { .. } => None,
+        }
+    }
+
+    fn body_len(&self) -> usize {
+        match self {
+            Self::Text { text } => text.len(),
+            Self::Image { data, .. } => data.len(),
+        }
+    }
+}
+
+fn push_text(blocks: &mut Vec<PromptBlock>, text: &str) {
+    if let Some(PromptBlock::Text { text: existing }) = blocks.last_mut() {
+        existing.push_str(text);
+    } else {
+        blocks.push(PromptBlock::Text { text: text.into() });
+    }
+}
+
+fn image_block(part: &Value) -> Result<(PromptBlock, bool), String> {
+    let image = part["image_url"]
+        .as_object()
+        .ok_or("image_url must be an object")?;
+    if image.keys().any(|key| key != "url" && key != "detail") {
+        return Err("image_url supports only 'url' and 'detail'".into());
+    }
+    let detail_ignored = match image.get("detail").filter(|v| !v.is_null()) {
+        None => false,
+        Some(value) if value == "auto" => false,
+        Some(value) if value == "low" || value == "high" => true,
+        _ => return Err("image_url.detail must be 'auto', 'low' or 'high'".into()),
+    };
+    let url = image
+        .get("url")
+        .and_then(Value::as_str)
+        .ok_or("image_url.url must be a string")?;
+    let (mime, data) = url
+        .strip_prefix("data:")
+        .and_then(|url| url.split_once(";base64,"))
+        .ok_or("image_url.url must be an inline base64 image data URL; ACP does not fetch URLs or read files")?;
+    if !matches!(
+        mime,
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+    ) {
+        return Err("image_url must be PNG, JPEG, GIF or WebP".into());
+    }
+    let bytes = STANDARD
+        .decode(data)
+        .map_err(|_| "image_url contains invalid base64")?;
+    let matches_mime = match mime {
+        "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg" => bytes.starts_with(b"\xff\xd8\xff"),
+        "image/gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        "image/webp" => bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP"),
+        _ => false,
+    };
+    if !matches_mime {
+        return Err("image_url data does not match the declared image format".into());
+    }
+    Ok((
+        PromptBlock::Image {
+            mime_type: mime.into(),
+            data: data.into(),
+        },
+        detail_ignored,
+    ))
+}
+
+fn message_content(
+    message: &Value,
+    role: &str,
+    ignored: &mut Vec<&'static str>,
+) -> Result<Vec<PromptBlock>, String> {
     let message = message
         .as_object()
         .ok_or_else(|| format!("Invalid {role} message"))?;
-    if message.keys().any(|key| {
+    if let Some(key) = message.keys().find(|key| {
         ![
             "role",
             "content",
@@ -567,7 +684,7 @@ pub(super) fn message_text(message: &Value, role: &str) -> Result<String, String
         ]
         .contains(&key.as_str())
     }) {
-        return Err("Unsupported ACP message fields".into());
+        return Err(format!("ACP does not support {role} message field '{key}'"));
     }
     if message
         .get("name")
@@ -575,47 +692,101 @@ pub(super) fn message_text(message: &Value, role: &str) -> Result<String, String
     {
         return Err("Message name must be a string".into());
     }
-    let text = match message.get("content").unwrap_or(&Value::Null) {
-        Value::String(text) => text.clone(),
+    let has_tools = role == "assistant" && message.get("tool_calls").is_some();
+    // An assistant history entry may contain only reasoning metadata. Do not
+    // replay that metadata as a visible assistant reply or add an empty turn.
+    let reasoning_only = role == "assistant"
+        && message
+            .get("reasoning_content")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty());
+    let mut blocks = Vec::new();
+    match message.get("content").unwrap_or(&Value::Null) {
+        Value::String(text) => push_text(&mut blocks, text),
         Value::Array(parts) => {
-            let mut text = String::new();
-            for part in parts {
-                if part["type"] != "text" {
-                    return Err("ACP accepts text content only".into());
-                }
-                text.push_str(part["text"].as_str().ok_or("Invalid text content")?);
+            for (index, part) in parts.iter().enumerate() {
+                let block = match part["type"].as_str() {
+                    Some("text") => part["text"].as_str().ok_or_else(|| {
+                        format!("{role} content part {index}: text must be a string")
+                    })?,
+                    Some("image_url") if role == "user" => {
+                        let (image, detail_ignored) = image_block(part)
+                            .map_err(|error| format!("{role} content part {index}: {error}"))?;
+                        blocks.push(image);
+                        if detail_ignored && !ignored.contains(&"image_url.detail") {
+                            ignored.push("image_url.detail");
+                        }
+                        continue;
+                    }
+                    Some("image_url") => return Err(format!("{role} content part {index}: send image_url in a user message; ACP only accepts text in {role} messages")),
+                    Some(kind) => return Err(format!("{role} content part {index}: ACP does not support '{kind}'; use text or an inline image in a user message")),
+                    None => return Err(format!("{role} content part {index}: expected an object with a string 'type'")),
+                };
+                push_text(&mut blocks, block);
             }
-            text
         }
-        Value::Null if role == "assistant" && message.get("tool_calls").is_some() => String::new(),
-        _ => return Err("ACP accepts text content only".into()),
-    };
-    if text.trim().is_empty()
-        && role != "tool"
-        && !(role == "assistant" && message.get("tool_calls").is_some())
-    {
-        return Err(format!("A non-empty {role} message is required"));
+        Value::Null if has_tools || reasoning_only => {}
+        Value::Null => {
+            return Err(format!(
+                "{role} message content is missing or null; provide {}",
+                if role == "user" {
+                    "text or an inline image"
+                } else {
+                    "text"
+                }
+            ))
+        }
+        _ => {
+            return Err(format!(
+                "{role} message content must be a string or an array of content parts"
+            ))
+        }
     }
-    Ok(text)
+    if blocks
+        .iter()
+        .all(|block| block.as_text().is_some_and(|text| text.trim().is_empty()))
+    {
+        if !has_tools && !reasoning_only && role != "tool" {
+            return Err(format!("A non-empty {role} message is required"));
+        }
+        if reasoning_only && !has_tools {
+            blocks.clear();
+        }
+    }
+    Ok(blocks)
 }
 
-// The official CLI is stateless per request, so earlier turns are flattened
-// into the single prompt text block instead of a server-side conversation.
-fn prompt_text(messages: &[Value]) -> Result<String, String> {
+pub(super) fn tool_text(message: &Value) -> Result<String, String> {
+    let blocks = message_content(message, "tool", &mut Vec::new())?;
+    Ok(blocks
+        .first()
+        .and_then(PromptBlock::as_text)
+        .unwrap_or_default()
+        .into())
+}
+
+// ACP starts a fresh session for a new turn. Encode prior roles as text while
+// keeping image blocks in their original positions, including images in history.
+fn plan_prompt(
+    messages: &[Value],
+    ignored: &mut Vec<&'static str>,
+) -> Result<(Vec<PromptBlock>, String), String> {
     let mut turns = Vec::new();
+    let mut system = Vec::new();
     let mut pending = std::collections::BTreeSet::new();
-    for message in messages {
+    for (index, message) in messages.iter().enumerate() {
         let role = message["role"].as_str().unwrap_or("");
-        let label = match role {
-            "system" | "developer" | "user" | "assistant" | "tool" => role,
-            "" => return Err("Invalid message role".into()),
+        match role {
+            "system" | "developer" | "user" | "assistant" | "tool" => {}
+            "" => return Err(format!("Invalid role in messages[{index}]")),
             role => {
                 return Err(format!(
-                    "ACP accepts system, developer, user and assistant messages only; role '{role}' is not supported"
+                    "ACP does not support role '{role}' in messages[{index}]"
                 ))
             }
-        };
-        let mut text = message_text(message, label)?;
+        }
+        let mut blocks = message_content(message, role, ignored)
+            .map_err(|error| format!("messages[{index}]: {error}"))?;
         if role == "tool" {
             let id = message["tool_call_id"]
                 .as_str()
@@ -623,7 +794,13 @@ fn prompt_text(messages: &[Value]) -> Result<String, String> {
             if !pending.remove(id) {
                 return Err("role 'tool' references an unknown or duplicate tool_call_id".into());
             }
-            text = json!({"tool_call_id":id,"output":text}).to_string();
+            let text = blocks
+                .first()
+                .and_then(PromptBlock::as_text)
+                .unwrap_or_default();
+            blocks = vec![PromptBlock::Text {
+                text: json!({"tool_call_id":id,"output":text}).to_string(),
+            }];
         } else if !pending.is_empty() {
             return Err("Missing results for preceding tool calls".into());
         }
@@ -653,43 +830,50 @@ fn prompt_text(messages: &[Value]) -> Result<String, String> {
                     return Err("Invalid assistant tool call".into());
                 }
             }
-            text.push_str(&format!("\nTool calls: {}", json!(calls)));
+            push_text(&mut blocks, &format!("\nTool calls: {}", json!(calls)));
         }
-        if role != "system" && role != "developer" {
-            let label = match role {
-                "user" => "User",
-                "tool" => "Tool result",
-                _ => "Assistant",
-            };
-            turns.push((label, text));
+        match role {
+            "system" | "developer" => system.push(blocks[0].as_text().unwrap().to_string()),
+            "user" => turns.push(("User", blocks)),
+            "tool" => turns.push(("Tool result", blocks)),
+            "assistant" if !blocks.is_empty() => turns.push(("Assistant", blocks)),
+            _ => {}
         }
     }
-    if messages.is_empty() {
-        return Err("A non-empty user message is required".into());
-    }
+    let last = messages
+        .last()
+        .ok_or("A non-empty user message is required")?;
     if !pending.is_empty() {
         return Err("Missing results for assistant tool calls".into());
     }
-    if messages[messages.len() - 1]["role"] != "user"
-        && messages[messages.len() - 1]["role"] != "tool"
-    {
+    if last["role"] != "user" && last["role"] != "tool" {
         return Err("the last message must be from the user or a tool result".into());
     }
-    if turns.len() == 1 {
-        let text = turns.remove(0).1;
-        if text.len() > MAX_BODY {
-            return Err("ACP prompt exceeds 1 MiB after flattening the conversation".into());
+    let prompt = if turns.len() == 1 {
+        turns.pop().unwrap().1
+    } else {
+        let mut prompt = Vec::new();
+        for (index, (label, blocks)) in turns.into_iter().enumerate() {
+            let separator = if index == 0 { "" } else { "\n\n" };
+            push_text(&mut prompt, &format!("{separator}{label}: "));
+            for block in blocks {
+                if let Some(text) = block.as_text() {
+                    push_text(&mut prompt, text);
+                } else {
+                    prompt.push(block);
+                }
+            }
         }
-        return Ok(text);
+        prompt
+    };
+    let system = system.join("\n\n");
+    let size = prompt.iter().fold(system.len(), |size, block| {
+        size.saturating_add(block.body_len())
+    });
+    if size > MAX_BODY {
+        return Err("ACP prompt and system instructions exceed 1 MiB".into());
     }
-    let turns = turns
-        .into_iter()
-        .map(|(label, text)| format!("{label}: {text}"));
-    let text = turns.collect::<Vec<_>>().join("\n\n");
-    if text.len() > MAX_BODY {
-        return Err("ACP prompt exceeds 1 MiB after flattening the conversation".into());
-    }
-    Ok(text)
+    Ok((prompt, system))
 }
 
 pub(super) fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, String> {
@@ -728,7 +912,7 @@ pub(super) fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Com
             ));
         }
     }
-    let ignored_parameters = compatibility_parameters(value)?;
+    let mut ignored_parameters = compatibility_parameters(value)?;
     let mut tools = match value.get("tools") {
         None | Some(Value::Null) => &[][..],
         Some(Value::Array(tools)) => tools.as_slice(),
@@ -846,7 +1030,7 @@ pub(super) fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Com
     let messages = value["messages"]
         .as_array()
         .ok_or("messages must be an array")?;
-    let text = prompt_text(messages)?;
+    let (prompt, system) = plan_prompt(messages, &mut ignored_parameters)?;
     let results: Vec<_> = messages
         .iter()
         .rev()
@@ -856,15 +1040,6 @@ pub(super) fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Com
         .into_iter()
         .rev()
         .collect();
-    let system = messages
-        .iter()
-        .filter(|message| message["role"] == "system" || message["role"] == "developer")
-        .map(|message| message_text(message, message["role"].as_str().unwrap()))
-        .collect::<Result<Vec<_>, _>>()?
-        .join("\n\n");
-    if text.len().saturating_add(system.len()) > MAX_BODY {
-        return Err("ACP prompt and system instructions exceed 1 MiB".into());
-    }
     let stream = match value.get("stream") {
         None => false,
         Some(Value::Bool(stream)) => *stream,
@@ -888,7 +1063,7 @@ pub(super) fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Com
     Ok(Completion {
         model: selected.into(),
         alias: format!("acp/{}", model.id),
-        text,
+        prompt,
         system,
         stream,
         ignored_parameters,
@@ -905,14 +1080,13 @@ fn complete<F: FnMut(&str)>(
     cancel: &Arc<AtomicBool>,
     mut chunk: F,
 ) -> Result<String, String> {
-    client.initialize(cancel)?;
     let session = client.session_with_system(profile, &request.system, cancel)?;
     client.model(&session, &request.model, cancel)?;
     let mut text = String::new();
     let mut oversized = false;
     let result = client.call(
         "session/prompt",
-        json!({"sessionId":session["sessionId"],"prompt":[{"type":"text","text":request.text}]}),
+        json!({"sessionId":session["sessionId"],"prompt":request.prompt}),
         cancel,
         |update| {
             if update["sessionUpdate"] == "agent_message_chunk"
@@ -1089,7 +1263,7 @@ async fn handle_inner<R: tauri::Runtime>(
     let worker_app = app.clone();
     let worker = tauri::async_runtime::spawn_blocking(move || {
         let _guard = guard;
-        let result: Result<Output, String> = (|| {
+        let result: Result<Output, RunError> = (|| {
             let mut send_text = |part: &str| {
                 if stream {
                     if events.delta(json!({"content":part})).is_err() {
@@ -1097,57 +1271,69 @@ async fn handle_inner<R: tauri::Runtime>(
                     }
                 }
             };
-            if !request.tools.is_empty() || resumed.is_some() {
-                let state = worker_app.state::<AcpState>();
-                let session = match resumed {
-                    Some(session) => session,
-                    None => state.agents.start(
-                        &request,
-                        agent_identity,
-                        &executable,
-                        &profile,
-                        &proxy,
-                        spawn,
-                    )?,
-                };
-                let output =
+            let state = worker_app.state::<AcpState>();
+            let session = match resumed {
+                // The original request already negotiated image capability;
+                // history matching rejects changed attachments on continuation.
+                Some(session) => session,
+                None => {
+                    let mut client = spawn(&executable, &profile, &proxy)?;
+                    client.initialize(&_guard.cancel)?;
+                    if !client.supports_prompt_images()
+                        && request
+                            .prompt
+                            .iter()
+                            .any(|block| matches!(block, PromptBlock::Image { .. }))
+                    {
+                        return Err(RunError::InvalidRequest(
+                            "The connected ACP CLI does not advertise image input; remove the image or use an image-capable CLI".into(),
+                        ));
+                    }
+                    if request.tools.is_empty() {
+                        let text =
+                            complete(&mut client, &profile, &request, &_guard.cancel, send_text)?;
+                        return Ok(Output {
+                            text,
+                            calls: Vec::new(),
+                        });
+                    }
                     state
                         .agents
-                        .collect(&session, &request, &_guard.cancel, &mut send_text)?;
-                if stream && !output.calls.is_empty() {
-                    let calls: Vec<_> = output
-                        .calls
-                        .iter()
-                        .enumerate()
-                        .map(|(index, call)| {
-                            let mut call = call.clone();
-                            call["index"] = json!(index);
-                            call
-                        })
-                        .collect();
-                    events.delta(json!({"tool_calls":calls}))?;
+                        .start(&request, agent_identity, &profile, client)?
                 }
-                Ok(output)
-            } else {
-                let mut client = spawn(&executable, &profile, &proxy)?;
-                let text = complete(&mut client, &profile, &request, &_guard.cancel, send_text)?;
-                Ok(Output {
-                    text,
-                    calls: Vec::new(),
-                })
+            };
+            let output =
+                state
+                    .agents
+                    .collect(&session, &request, &_guard.cancel, &mut send_text)?;
+            if stream && !output.calls.is_empty() {
+                let calls: Vec<_> = output
+                    .calls
+                    .iter()
+                    .enumerate()
+                    .map(|(index, call)| {
+                        let mut call = call.clone();
+                        call["index"] = json!(index);
+                        call
+                    })
+                    .collect();
+                events.delta(json!({"tool_calls":calls}))?;
             }
+            Ok(output)
         })();
         if stream {
-            match &result {
+            match result {
                 Ok(output) => {
-                    let _ = events.finish(output);
+                    let _ = events.finish(&output);
                 }
                 Err(error) => {
-                    let _ = events.send(Err(error.clone()));
+                    let _ = events.send(Err(error));
                 }
             }
+            None
+        } else {
+            Some(result)
         }
-        result
     });
     let reply = if stream {
         // Do not commit HTTP 200 until the upstream produces its first event.
@@ -1155,7 +1341,7 @@ async fn handle_inner<R: tauri::Runtime>(
         // path rather than trying to translate them as completion chunks.
         let first = match receiver.recv().await {
             Some(Ok(frame)) => frame,
-            Some(Err(message)) => return error(upstream_status(&message), message),
+            Some(Err(error)) => return error.into_response(),
             None => return error(StatusCode::BAD_GATEWAY, "ACP worker exited unexpectedly"),
         };
         let frames = futures_util::stream::unfold(
@@ -1168,11 +1354,12 @@ async fn handle_inner<R: tauri::Runtime>(
                 next.map(|data| {
                     let data = match data {
                         Ok(frame) => frame,
-                        Err(message) => {
+                        Err(error) => {
                             // An SSE error terminates the stream; never append
                             // a success finish_reason or [DONE] after it.
                             receiver.close();
-                            let value = json!({"error":{"message":message,"type":"upstream_error","code":upstream_status(&message).as_u16()}});
+                            let (status, message) = error.parts();
+                            let value = json!({"error":{"message":message,"type":"upstream_error","code":status.as_u16()}});
                             format!("event: error\ndata: {value}\n\n")
                         }
                     };
@@ -1192,12 +1379,12 @@ async fn handle_inner<R: tauri::Runtime>(
         let result = worker.await;
         drop(cancel);
         match result {
-            Ok(Ok(output)) => response(
+            Ok(Some(Ok(output))) => response(
                 StatusCode::OK,
                 json!({"id":id,"object":"chat.completion","created":created,"model":model,"choices":[{"index":0,"message":output.message(),"finish_reason":output.finish(),"logprobs":null}]}),
             ),
-            Ok(Err(e)) => error(upstream_status(&e), e),
-            Err(_) => error(StatusCode::BAD_GATEWAY, "ACP worker exited unexpectedly"),
+            Ok(Some(Err(error))) => error.into_response(),
+            _ => error(StatusCode::BAD_GATEWAY, "ACP worker exited unexpectedly"),
         }
     };
     compatibility_headers(reply, &ignored_parameters)

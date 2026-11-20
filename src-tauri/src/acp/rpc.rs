@@ -19,6 +19,7 @@ pub(super) struct Client {
     output: mpsc::Receiver<Result<Value, String>>,
     next_id: u64,
     supports_logout: bool,
+    supports_prompt_images: bool,
     system_prompt: SystemPromptSupport,
     api_tools: Vec<String>,
     started: std::time::SystemTime,
@@ -161,6 +162,7 @@ impl Client {
             output,
             next_id: 0,
             supports_logout: false,
+            supports_prompt_images: false,
             system_prompt: SystemPromptSupport::default(),
             api_tools: Vec::new(),
             started,
@@ -352,6 +354,7 @@ impl Client {
             .get("logout")
             .is_some_and(|value| value.is_object() || value == true);
         let capabilities = &response["agentCapabilities"];
+        self.supports_prompt_images = capabilities["promptCapabilities"]["image"] == true;
         self.system_prompt = if capabilities["sessionCapabilities"]
             .get("systemPrompt")
             .is_some_and(Value::is_object)
@@ -363,6 +366,10 @@ impl Client {
             SystemPromptSupport::Unavailable
         };
         Ok(response)
+    }
+
+    pub(super) fn supports_prompt_images(&self) -> bool {
+        self.supports_prompt_images
     }
 
     pub(super) fn logout(
