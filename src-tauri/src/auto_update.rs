@@ -1,5 +1,6 @@
 //! Download while running; install verified payloads only before startup services.
 mod prepared;
+use crate::app_version_series::AppVersionSeries;
 use crate::*;
 use prepared::{Payload, PreparedUpdate};
 use std::{collections::BTreeMap, future::Future, sync::Arc};
@@ -250,9 +251,23 @@ fn save_attempts(attempts: &Attempts) -> Result<(), String> {
     )
 }
 
-fn current_version(target: &str) -> Result<Option<String>, String> {
+fn automatic_app_baseline<'a>(
+    baselines: &'a crate::app_version_series::AppVersionBaselines,
+    channel: &str,
+) -> Option<&'a str> {
+    if channel.starts_with("preview-") {
+        return None;
+    }
+    baselines.installed_baseline(AppVersionSeries::for_channel(channel))
+}
+
+fn current_version(target: &str, config: &GuiConfigFile) -> Result<Option<String>, String> {
     if target == "app" {
-        Ok(Some(env!("CARGO_PKG_VERSION").into()))
+        let channel = normalize_update_channel(&config.update_channel);
+        Ok(
+            automatic_app_baseline(&app_update::local_app_version_baselines(), &channel)
+                .map(str::to_string),
+        )
     } else {
         Ok(read_core_metadata(&core_install_dir()?).map(|meta| meta.version))
     }
@@ -262,11 +277,12 @@ fn matching_download(
     app: &tauri::AppHandle,
     config: &GuiConfigFile,
     token: &CancellationToken,
+    target: &str,
 ) -> Result<(), String> {
     let current = app.state::<GuiConfigState>().snapshot()?;
     if token.is_cancelled()
         || current.auto_update != config.auto_update
-        || prepared::origin(&current) != prepared::origin(config)
+        || prepared::origin(&current, target) != prepared::origin(config, target)
     {
         token.cancel();
         return Err("Automatic update canceled".into());
@@ -292,8 +308,17 @@ pub(crate) fn cache_application(
     config: &GuiConfigFile,
     token: &CancellationToken,
 ) -> Result<(), String> {
-    matching_download(app, config, token)?;
+    matching_download(app, config, token, "app")?;
     store_prepared(&prepared::capture_app(config, descriptor)?)
+}
+
+fn target_newer(config: &GuiConfigFile, target: &str, current: &str, candidate: &str) -> bool {
+    if target == "app" {
+        AppVersionSeries::for_channel(&normalize_update_channel(&config.update_channel))
+            .newer(current, candidate)
+    } else {
+        newer(current, candidate)
+    }
 }
 
 fn present_cache(
@@ -309,7 +334,8 @@ fn present_cache(
         }
     };
     if let Some(cached) = cached {
-        if cached.matches(config) && current.is_some_and(|version| newer(version, &cached.version))
+        if cached.matches(config)
+            && current.is_some_and(|version| target_newer(config, target, version, &cached.version))
         {
             return Ok(Some(cached));
         }
@@ -361,7 +387,7 @@ pub(crate) async fn startup(app: &tauri::AppHandle) -> bool {
             if !config.auto_update.includes(target) {
                 return Ok(false);
             }
-            let current = current_version(target)?;
+            let current = current_version(target, &config)?;
             let Some(cached) = present_cache(target, &config, current.as_deref())? else {
                 return Ok(false);
             };
@@ -378,7 +404,7 @@ pub(crate) async fn startup(app: &tauri::AppHandle) -> bool {
             }
             {
                 let mut control = state.control()?;
-                matching_download(app, &config, &CancellationToken::new())?;
+                matching_download(app, &config, &CancellationToken::new(), target)?;
                 if app.state::<CoreProcessState>().is_shutting_down() {
                     return Ok(false);
                 }
@@ -430,7 +456,7 @@ async fn download_target(
     target: &'static str,
     version: &mut String,
 ) -> Result<Option<String>, String> {
-    let current = current_version(target)?;
+    let current = current_version(target, config)?;
     let cached = present_cache(target, config, current.as_deref())?;
     let cached_version = cached.map(|p| p.version);
     let Some(current) = current.filter(|_| config.auto_update.includes(target)) else {
@@ -439,7 +465,7 @@ async fn download_target(
     let attempts = load_attempts()?;
     let source = config.selected_download_candidate();
     let should_download = |version: &str| -> Result<bool, String> {
-        if !newer(&current, version) {
+        if !target_newer(config, target, &current, version) {
             return Ok(false);
         }
         if blocked(
@@ -447,7 +473,7 @@ async fn download_target(
             target,
             cached_version
                 .as_deref()
-                .filter(|cached| !newer(cached, version))
+                .filter(|cached| !target_newer(config, target, cached, version))
                 .unwrap_or(version),
         ) {
             return Err(
@@ -456,7 +482,7 @@ async fn download_target(
         }
         Ok(cached_version
             .as_ref()
-            .is_none_or(|cached| newer(cached, version)))
+            .is_none_or(|cached| target_newer(config, target, cached, version)))
     };
     let state = app.state::<AutoUpdateState>();
     if target == "core" {
@@ -467,7 +493,7 @@ async fn download_target(
         if !should_download(version)? {
             return Ok(cached_version);
         }
-        matching_download(app, config, token)?;
+        matching_download(app, config, token, target)?;
         state.report("downloading", target, version, None);
         let result = async {
             let staged = core_runtime::prepare_core_automatically(
@@ -478,7 +504,7 @@ async fn download_target(
                 token.clone(),
             )
             .await?;
-            matching_download(app, config, token)?;
+            matching_download(app, config, token, target)?;
             store_prepared(&prepared::capture_core(config, staged)?)
         }
         .await;
@@ -489,11 +515,13 @@ async fn download_target(
     } else {
         let (info, pending) = metadata(token, app_update::resolve_app_update(config)).await?;
         *version = info.latest_version;
-        if !info.auto_update_supported || !should_download(version)? {
+        let Some(pending) = pending.filter(|_| info.update_available) else {
+            return Ok(cached_version);
+        };
+        if !should_download(version)? {
             return Ok(cached_version);
         }
-        matching_download(app, config, token)?;
-        let pending = pending.ok_or("No installable application package")?;
+        matching_download(app, config, token, target)?;
         state.report("downloading", target, version, None);
         let updates = app.state::<AppUpdateState>();
         let preserve_core = cfg!(any(windows, target_os = "macos"));

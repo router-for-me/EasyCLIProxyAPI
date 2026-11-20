@@ -508,6 +508,9 @@ function createState(scenario: BrowserMockScenario) {
     appUpdateInfo: {
       currentVersion: '0.2.97',
       latestVersion: '0.3.0',
+      latestSeriesVersion: '0.3.0',
+      installedSeries: 'stable',
+      comparisonNewer: true,
       updateAvailable: true,
       releaseUrl: 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest',
       releaseNotes: {
@@ -519,7 +522,9 @@ function createState(scenario: BrowserMockScenario) {
         en: '## Fixed\n\n- Improved update check reliability',
       } }],
       publishedAt: isoHoursAgo(18),
+      installAvailable: true,
       currentBuildAt: null,
+      latestBuildAt: null,
       autoUpdateSupported: true,
       preserveCoreSupported: true,
       downloadUrl: 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip',
@@ -994,6 +999,8 @@ const ERROR_SCENARIO_COMMANDS = new Set([
   'get_core_config_settings',
   'get_extended_core_config',
   'check_app_update',
+  'check_app_version_display',
+  'get_app_version_baselines',
   'check_latest_core',
   'management_request',
   'get_usage_overview',
@@ -1286,22 +1293,31 @@ export function createBrowserMockRuntime(
     finally { acp.busy = false; acp.operation = ''; }
     return clone(acp);
   };
-  const applyMockUpdateChannel = (channel: string) => {
+  const appBaselines = { stable: state.appUpdateInfo.currentVersion, preview: '20261103-1137', installedSeries: 'stable' as const };
+  const applyMockUpdateChannel = (channel: string, update = state.appUpdateInfo) => {
     const normalized = channel.trim() || 'stable';
-    state.appUpdateInfo.updateChannel = normalized;
+    update.updateChannel = normalized;
     if (normalized.startsWith('preview')) {
       const tag = normalized === 'preview' ? 'preview-20261104-1623' : normalized;
-      state.appUpdateInfo.latestVersion = '0.3.0-preview.202611041623';
-      state.appUpdateInfo.currentBuildAt = isoHoursAgo(42);
-      state.appUpdateInfo.releaseUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/${tag}`;
-      state.appUpdateInfo.downloadFileName = 'EasyCLIProxyAPI-v0.3.0-preview.202611041623-Windows-amd64.zip';
-      state.appUpdateInfo.downloadUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/${tag}/${state.appUpdateInfo.downloadFileName}`;
+      update.currentVersion = appBaselines.preview;
+      update.latestVersion = '0.3.0-preview.20261104-1623';
+      update.latestSeriesVersion = '20261104-1623';
+      update.updateAvailable = false;
+      update.currentBuildAt = '2026-11-03T11:37:00Z';
+      update.latestBuildAt = '2026-11-04T16:23:00Z';
+      update.releaseUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/${tag}`;
+      update.downloadFileName = 'EasyCLIProxyAPI-v0.3.0-preview.20261104-1623-Windows-amd64.zip';
+      update.downloadUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/${tag}/${update.downloadFileName}`;
     } else {
-      state.appUpdateInfo.latestVersion = '0.3.0';
-      state.appUpdateInfo.currentBuildAt = null;
-      state.appUpdateInfo.releaseUrl = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
-      state.appUpdateInfo.downloadFileName = 'EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip';
-      state.appUpdateInfo.downloadUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/${state.appUpdateInfo.downloadFileName}`;
+      update.currentVersion = appBaselines.stable;
+      update.latestVersion = '0.3.0';
+      update.latestSeriesVersion = '0.3.0';
+      update.updateAvailable = true;
+      update.currentBuildAt = null;
+      update.latestBuildAt = null;
+      update.releaseUrl = 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest';
+      update.downloadFileName = 'EasyCLIProxyAPI-v0.3.0-Windows-amd64.zip';
+      update.downloadUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/v0.3.0/${update.downloadFileName}`;
     }
   };
   if (typeof window !== 'undefined') {
@@ -1584,6 +1600,14 @@ export function createBrowserMockRuntime(
         state.autoUpdate.phase = 'waiting-update';
         return clone(state.autoUpdate);
       }
+      case 'get_app_version_baselines': return clone(appBaselines);
+      case 'check_app_version_display': {
+        if (payload.series !== 'stable' && payload.series !== 'preview') throw new Error('Unsupported application version display series');
+        const display = clone(state.appUpdateInfo);
+        applyMockUpdateChannel(payload.series, display);
+        if (payload.series === 'preview') display.skippedReleaseNotes = [];
+        return display;
+      }
       case 'check_app_update': return clone({
         ...state.appUpdateInfo,
         skippedReleaseNotes: state.appUpdateInfo.updateChannel === 'stable' && state.appUpdateInfo.updateAvailable
@@ -1606,7 +1630,7 @@ export function createBrowserMockRuntime(
           cancellable: true,
           phase: 'downloading',
           preserveCore: payload.preserveCore === true,
-          targetVersion: state.appUpdateInfo.latestVersion,
+          targetVersion: typeof payload.expectedVersion === 'string' ? payload.expectedVersion : state.appUpdateInfo.latestVersion,
           downloadedBytes: 18 * 1024 * 1024,
           totalBytes: state.appUpdateInfo.downloadSizeBytes,
           percent: 38,

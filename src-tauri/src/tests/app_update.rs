@@ -18,16 +18,168 @@ fn release_atom_parser_reads_first_release_tag() {
 }
 
 #[test]
-fn app_update_comparison_uses_semantic_versions() {
-    assert!(is_app_update_available("v0.1.9", "v0.2.0").unwrap());
-    assert!(is_app_update_available("v0.2.0-beta.1", "v0.2.0").unwrap());
-    assert!(!is_app_update_available("v0.2.0", "v0.2.0").unwrap());
-    assert!(!is_app_update_available("v0.2.0", "v0.1.9").unwrap());
-    assert!(!is_app_update_available("v0.3.6-preview.20261103-1929", "v0.3.6-preview.20261103-1929").unwrap());
-    assert!(is_app_update_available("v0.3.6-preview.20261102-1830", "v0.3.6-preview.20261103-1929").unwrap());
-    assert!(is_app_update_available("v0.3.76-pr.584.587.1", "v0.3.76").unwrap());
-    assert!(is_app_update_available("v0.3.76-dev", "v0.3.76").unwrap());
-    assert!(is_app_update_available("v0.3.6-pr.584.587.1", "v0.3.76").unwrap());
+fn app_update_modes_compare_independent_coordinates_but_only_update_the_installed_family() {
+    use crate::app_version_series::AppVersionBaselines;
+    let preview = "8.1.0-preview.20261103-1929";
+    let stable = "1.2.10";
+    for (family, package) in [("stable", stable), ("preview", preview)] {
+        let baselines = AppVersionBaselines::from_local(
+            Some(family),
+            Some(stable),
+            Some("20261103-1929"),
+            package,
+            None,
+        );
+        assert_eq!(baselines.stable.as_deref(), Some("v1.2.10"));
+        assert_eq!(baselines.preview.as_deref(), Some("20261103-1929"));
+        for (channel, candidate, newer) in [
+            ("stable", "1.2.11", true),
+            ("preview", "0.3.6-preview.20261104-1120", true),
+            ("stable", "1.2.9", false),
+            ("preview", "9.9.9-preview.20261102-1830", false),
+            ("stable", "1.2.10+repacked", false),
+            ("preview", "9.9.9-preview.20261103-1929", false),
+            ("stable", "1.2.11", true),
+        ] {
+            let result = app_update_availability(channel, &baselines, package, candidate);
+            assert_eq!(
+                result.comparison_newer, newer,
+                "{family}/{channel}/{candidate}"
+            );
+            assert_eq!(result.update_available, newer && family == channel);
+            assert_eq!(result.install_available, newer || family != channel);
+        }
+        assert_eq!(
+            app_update_availability("stable", &baselines, package, preview),
+            AppUpdateAvailability::default()
+        );
+        assert_eq!(
+            app_update_availability("preview", &baselines, package, stable),
+            AppUpdateAvailability::default()
+        );
+    }
+}
+
+#[test]
+fn app_update_legacy_unknown_coordinates_and_pinned_installs_remain_manual() {
+    use crate::app_version_series::{AppVersionBaselines, AppVersionSeries};
+    let preview = "8.1.0-preview.20261103-1929";
+    let stable = "1.2.10";
+    let legacy_preview = AppVersionBaselines::from_local(None, None, None, preview, Some(preview));
+    assert_eq!(legacy_preview.preview.as_deref(), Some("20261103-1929"));
+    assert_eq!(
+        legacy_preview.installed_series,
+        Some(AppVersionSeries::Preview)
+    );
+    assert!(legacy_preview.stable.is_none());
+    for (channel, candidate, newer, installable) in [
+        ("stable", stable, false, true),
+        (
+            "preview-20261102-1830",
+            "2.0.0-preview.20261102-1830",
+            false,
+            true,
+        ),
+        (
+            "preview-20261104-1830",
+            "2.0.0-preview.20261104-1830",
+            true,
+            true,
+        ),
+        ("preview-20261103-1929", preview, false, false),
+        ("preview-fix-login", "2.0.0-preview.dev", false, true),
+        ("preview", "2.0.0-preview.dev", false, false),
+    ] {
+        assert_eq!(
+            app_update_availability(channel, &legacy_preview, preview, candidate),
+            AppUpdateAvailability {
+                comparison_newer: newer,
+                update_available: false,
+                install_available: installable,
+            }
+        );
+    }
+
+    let legacy_stable = AppVersionBaselines::from_local(None, None, None, stable, Some(stable));
+    assert_eq!(legacy_stable.stable.as_deref(), Some("v1.2.10"));
+    assert_eq!(
+        legacy_stable.installed_series,
+        Some(AppVersionSeries::Stable)
+    );
+    assert!(legacy_stable.preview.is_none());
+    assert!(app_update_availability("preview", &legacy_stable, stable, preview).install_available);
+    for (family, reference, package, marker) in [
+        (None, None, stable, None),
+        (None, None, stable, Some("1.2.11")),
+        (None, None, "1.2.10-pr.4", Some(stable)),
+        (Some("unknown"), None, stable, Some(stable)),
+        (Some("stable"), Some("1.2.9"), stable, Some(stable)),
+    ] {
+        let baselines = AppVersionBaselines::from_local(family, reference, None, package, marker);
+        assert!(baselines.installed_series.is_none());
+        let result = app_update_availability("stable", &baselines, package, "1.2.11");
+        assert!(!result.update_available && !result.install_available);
+    }
+}
+
+#[test]
+fn app_update_validates_release_series_and_exact_preview_pin() {
+    use crate::app_version_series::AppVersionSeries::{Preview, Stable};
+    let preview = "8.1.0-preview.20261103-1929";
+    assert!(validate_app_release_series(
+        Preview,
+        Some("preview-20261103-1929"),
+        preview,
+        "preview-20261103-1929"
+    )
+    .is_ok());
+    assert!(validate_app_release_series(
+        Preview,
+        Some("preview-fix-login"),
+        preview,
+        "preview-fix-login"
+    )
+    .is_ok());
+    assert!(validate_app_release_series(
+        Preview,
+        Some("preview-fix-login"),
+        "8.1.0-preview.dev",
+        "preview-fix-login"
+    )
+    .is_ok());
+    assert!(validate_app_release_series(
+        Preview,
+        Some("preview-20261103-1929"),
+        "8.1.0-preview.dev",
+        "preview-20261103-1929"
+    )
+    .is_err());
+    assert!(validate_app_release_series(
+        Preview,
+        Some("preview-20261103-1930"),
+        preview,
+        "preview-20261103-1930"
+    )
+    .is_err());
+    assert!(validate_app_release_series(
+        Preview,
+        Some("preview-fix-login"),
+        preview,
+        "preview-20261103-1929"
+    )
+    .is_err());
+    assert!(
+        validate_app_release_series(Stable, None, preview, "v8.1.0-preview.20261103-1929").is_err()
+    );
+    assert!(validate_app_release_series(Stable, None, "8.1.0", "v8.1.0").is_ok());
+    assert!(validate_app_release_series(Stable, None, "8.1.0", "v8.2.0").is_err());
+    assert!(validate_app_release_series(
+        Preview,
+        Some("preview-fix-login"),
+        "8.1.0",
+        "preview-fix-login"
+    )
+    .is_err());
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -1931,11 +2083,19 @@ fn update_runtime_ack_is_bound_to_live_gui_pid_and_target_version() {
 
 #[test]
 fn timestamped_preview_versions_are_recognized() {
-    assert!(is_timestamped_preview_version("v0.3.6-preview.20261106-1137"));
-    assert!(is_timestamped_preview_version("0.3.6-preview.20261106-1137"));
-    assert!(!is_timestamped_preview_version("v0.3.6"));
-    assert!(!is_timestamped_preview_version("v0.3.6-preview-Linux-amd64"));
-    assert!(!is_timestamped_preview_version("v0.3.6-dev"));
+    use crate::app_version_series::preview_version_stamp;
+    assert!(preview_version_stamp("v0.3.6-preview.20261106-1137").is_some());
+    assert!(preview_version_stamp("0.3.6-preview.20261106-1137").is_some());
+    for invalid in [
+        "v0.3.6",
+        "v0.3.6-preview-Linux-amd64",
+        "v0.3.6-dev",
+        "v0.3.6-preview.20261131-1137",
+        "v0.3.6-preview.20261106-2400",
+        "v0.3.6-preview.foo",
+    ] {
+        assert!(preview_version_stamp(invalid).is_none(), "{invalid}");
+    }
 }
 
 #[test]
@@ -1987,4 +2147,20 @@ fn macos_update_helper_has_private_process_group() {
     assert_eq!(command.get_args().collect::<Vec<_>>(), vec![
         std::ffi::OsStr::new("--portable-update-helper"), descriptor.as_os_str(),
     ]);
+}
+
+#[test]
+fn app_update_display_overrides_only_a_config_snapshot() {
+    let mut saved = GuiConfigFile::default();
+    saved.update_channel = "preview-20261109-1316".to_string();
+    saved.auto_update.enabled = true;
+    saved.auto_update.update_app = true;
+    for series in ["stable", "preview", "stable"] {
+        let view = app_display_config(saved.clone(), series).unwrap();
+        assert_eq!(view.update_channel, series);
+        assert_eq!(view.auto_update, saved.auto_update);
+        assert_eq!(saved.update_channel, "preview-20261109-1316");
+    }
+    assert!(app_display_config(saved.clone(), "preview-20261109-1316").is_err());
+    assert!(app_display_config(saved, "unknown").is_err());
 }

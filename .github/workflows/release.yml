@@ -52,6 +52,9 @@ jobs:
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       tag: ${{ steps.resolve.outputs.tag }}
+      release_family: ${{ steps.resolve.outputs.release_family }}
+      stable_series_version: ${{ steps.resolve.outputs.stable_series_version }}
+      preview_series_version: ${{ steps.resolve.outputs.preview_series_version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -63,6 +66,7 @@ jobs:
         env:
           REQUESTED_VERSION: ${{ (github.ref_type == 'tag' && github.ref_name) || inputs.release_tag }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          MANUAL_PRERELEASE: ${{ inputs.prerelease }}
           MIAOMIAO_PREVIEW: ${{ inputs.preview }}
           EVENT_NAME: ${{ github.event_name }}
           REF_TYPE: ${{ github.ref_type }}
@@ -119,6 +123,25 @@ jobs:
             fi
           fi
 
+          # A published package carries its own release identity plus the other series'
+          # source-pinned reference. Neither reference changes the package version.
+          release_family=unknown
+          stable_series_version=""
+          preview_series_version=""
+          if [[ ( "$release_tag" == preview-* || "$release_tag" == "only-preview" ) && "$version" =~ -preview\.([0-9]{8}-[0-9]{4})$ ]]; then
+            release_family=preview
+            preview_series_version="${BASH_REMATCH[1]}"
+            stable_series_version="$(node scripts/app-version-anchors.mjs stable)"
+          elif [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
+            { [[ "$ref_type" == "tag" ]] ||
+              [[ "$event_name" == "workflow_dispatch" && -n "$REQUESTED_VERSION" && "${MANUAL_PRERELEASE:-true}" == "false" ]]; }; then
+            release_family=stable
+            stable_series_version="$version"
+            preview_series_version="$(node scripts/app-version-anchors.mjs preview)"
+          fi
+          echo "release_family=$release_family" >> "$GITHUB_OUTPUT"
+          echo "stable_series_version=$stable_series_version" >> "$GITHUB_OUTPUT"
+          echo "preview_series_version=$preview_series_version" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
 
@@ -276,6 +299,9 @@ jobs:
           path: dist
       - name: Build GUI
         env:
+          ECPA_RELEASE_FAMILY: ${{ needs.version.outputs.release_family }}
+          ECPA_STABLE_SERIES_VERSION: ${{ needs.version.outputs.stable_series_version || 'unknown' }}
+          ECPA_PREVIEW_SERIES_VERSION: ${{ needs.version.outputs.preview_series_version || 'unknown' }}
           GITCODE_GUI_REPOSITORY: ${{ vars.GITCODE_GUI_REPOSITORY }}
           GITCODE_CORE_REPOSITORY: ${{ vars.GITCODE_CORE_REPOSITORY }}
         run: |

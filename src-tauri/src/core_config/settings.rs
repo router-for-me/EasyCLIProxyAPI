@@ -2364,6 +2364,7 @@ pub(crate) fn write_gui_config_to_path(
         ("proxy-url", value(config.proxy_url.as_str())),
         ("proxy-override", value(config.proxy_override)),
         ("download-source", value(config.download_source.as_str())),
+        ("update-channel", value(config.update_channel.as_str())),
         (
             "prefer-gitcode-downloads",
             value(config.prefer_gitcode_downloads),

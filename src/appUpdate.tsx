@@ -29,11 +29,12 @@ type AppUpdateContextValue = {
   task: AppUpdateTask;
   error: string;
   checking: boolean;
+  installOffer: AppUpdateInfo | null;
   confirmOpen: boolean;
   hasUpdate: boolean;
   processing: boolean;
   check: () => Promise<void>;
-  requestInstall: () => void;
+  requestInstall: (offer: AppUpdateInfo) => void;
   dismissConfirm: () => void;
   install: (preserveCore?: boolean) => Promise<void>;
   cancel: () => Promise<void>;
@@ -57,14 +58,18 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const [task, setTask] = useState<AppUpdateTask>(idleTask);
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [installOffer, setInstallOffer] = useState<AppUpdateInfo | null>(null);
+  const confirmOpen = installOffer !== null;
   const startupCheckStarted = useRef(false);
+  const checkSequence = useRef(0);
 
   const check = useCallback(async () => {
+    const sequence = ++checkSequence.current;
     setChecking(true);
     setError('');
     try {
       const result = await checkAppUpdate();
+      if (sequence !== checkSequence.current) return;
       setInfo(result);
       setTask((current) => (
         current.running
@@ -77,10 +82,11 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
             }
       ));
     } catch (nextError) {
+      if (sequence !== checkSequence.current) return;
       setInfo(null);
       setError(String(nextError));
     } finally {
-      setChecking(false);
+      if (sequence === checkSequence.current) setChecking(false);
     }
   }, []);
 
@@ -118,14 +124,15 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const install = useCallback(async (preserveCore = false) => {
-    setConfirmOpen(false);
+    setInstallOffer(null);
+    if (!installOffer?.installAvailable || !installOffer.autoUpdateSupported) return;
     setError('');
     try {
-      await startAppUpdate(preserveCore);
+      await startAppUpdate(preserveCore, installOffer.updateChannel, installOffer.latestVersion);
     } catch (nextError) {
       setError(String(nextError));
     }
-  }, []);
+  }, [installOffer]);
 
   const cancel = useCallback(async () => {
     setError('');
@@ -141,15 +148,16 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     task,
     error,
     checking,
+    installOffer,
     confirmOpen,
     hasUpdate: Boolean(info?.updateAvailable),
     processing: task.running,
     check,
-    requestInstall: () => setConfirmOpen(true),
-    dismissConfirm: () => setConfirmOpen(false),
+    requestInstall: (offer) => setInstallOffer(offer),
+    dismissConfirm: () => setInstallOffer(null),
     install,
     cancel,
-  }), [cancel, check, checking, confirmOpen, error, info, install, task]);
+  }), [cancel, check, checking, confirmOpen, error, info, install, installOffer, task]);
 
   return <AppUpdateContext.Provider value={value}>{children}</AppUpdateContext.Provider>;
 }
@@ -163,7 +171,7 @@ export function useAppUpdate() {
 export function AppUpdateDialog() {
   const { t } = useI18n();
   const {
-    info,
+    installOffer: info,
     task,
     error,
     confirmOpen,

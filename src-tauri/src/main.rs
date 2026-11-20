@@ -7,6 +7,7 @@ mod agent_usage;
 mod agent_usage_store;
 mod app_settings;
 mod app_update;
+mod app_version_series;
 mod claude_catalog;
 mod codex_catalog;
 mod codex_sessions;
@@ -481,14 +482,19 @@ struct CoreVersionOption {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppUpdateInfo {
-    current_version: String,
+    current_version: Option<String>,
+    latest_series_version: Option<String>,
     latest_version: String,
+    installed_series: Option<app_version_series::AppVersionSeries>,
+    comparison_newer: bool,
     update_available: bool,
+    install_available: bool,
     release_url: String,
     release_notes: HashMap<String, String>,
     skipped_release_notes: Vec<SkippedReleaseNotes>,
     published_at: String,
     current_build_at: Option<String>,
+    latest_build_at: Option<String>,
     auto_update_supported: bool,
     preserve_core_supported: bool,
     download_url: Option<String>,
@@ -1313,8 +1319,12 @@ fn default_true() -> bool {
 }
 
 fn default_update_channel() -> String {
-    // A preview binary keeps following the preview channel until switched explicitly.
-    if env!("CARGO_PKG_VERSION").to_ascii_lowercase().contains("preview") {
+    // Official packages use their explicit family; retain the historic default for older builds.
+    let preview = match option_env!("ECPA_RELEASE_FAMILY") {
+        Some(family) => family == "preview",
+        None => app_version_series::is_preview_package(env!("CARGO_PKG_VERSION")),
+    };
+    if preview {
         "preview".to_string()
     } else {
         "stable".to_string()
@@ -3150,6 +3160,8 @@ fn main() {
             list_update_channels,
             set_update_channel,
             check_app_update,
+            check_app_version_display,
+            get_app_version_baselines,
             get_app_update_task,
             start_app_update,
             cancel_app_update,

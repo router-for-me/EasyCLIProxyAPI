@@ -61,7 +61,7 @@ import {
   type PluginNavOverride,
 } from './services/pluginNavigation';
 import { languageOptions, useI18n } from './i18n';
-import { getUpdateChannel, setUpdateChannel } from './services/appUpdates';
+import type { AppVersionSeries } from './services/appUpdates';
 import { AppUpdateDialog, AppUpdateProvider, useAppUpdate } from './appUpdate';
 import { appUpdateIndicatorState } from './appUpdateModel';
 import { forgetUpdatedPlugins, pluginUpdateIndicatorState } from './pluginUpdateModel';
@@ -133,7 +133,7 @@ const pages = [
     id: 'versions',
     labelKey: 'app.nav.versions',
     icon: PackageOpen,
-    component: VersionManagementPageWrapper,
+    component: VersionManagementPage,
   },
   {
     id: 'plugins',
@@ -162,10 +162,6 @@ function HomePage() {
   return <KernelPage view="home" />;
 }
 
-function VersionManagementPageWrapper() {
-  return <VersionManagementPage />;
-}
-
 function App() {
   return (
     <AppUpdateProvider>
@@ -180,32 +176,9 @@ function App() {
 
 function AppContent() {
   const { locale, setLocale, t } = useI18n();
-  const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing, check: appUpdateCheck } = useAppUpdate();
-  const logoTapRef = useRef<{ count: number; timer: number | null }>({ count: 0, timer: null });
-  const handleLogoTap = useCallback(() => {
-    const tap = logoTapRef.current;
-    tap.count += 1;
-    if (tap.timer !== null) window.clearTimeout(tap.timer);
-    tap.timer = window.setTimeout(() => {
-      tap.count = 0;
-      tap.timer = null;
-    }, 3000);
-    if (tap.count >= 5) {
-      tap.count = 0;
-      if (tap.timer !== null) {
-        window.clearTimeout(tap.timer);
-        tap.timer = null;
-      }
-      void (async () => {
-        const current = await getUpdateChannel().catch(() => 'stable');
-        const next = current === 'preview' ? 'stable' : 'preview';
-        const applied = await setUpdateChannel(next as 'stable' | 'preview').catch(() => null);
-        if (applied && typeof appUpdateCheck === 'function') {
-          await appUpdateCheck();
-        }
-      })();
-    }
-  }, [appUpdateCheck]);
+  const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing } = useAppUpdate();
+  const [appVersionDisplay, setAppVersionDisplay] = useState<AppVersionSeries>('stable');
+  const logoLabel = t(appVersionDisplay === 'stable' ? 'appUpdate.logoShowPreview' : 'appUpdate.logoShowStable');
   const { latest: coreLatest, hasUpdate: coreHasUpdate } = useCoreUpdate();
   const [active, setActive] = useState<AppPageId>('home');
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -423,7 +396,10 @@ function AppContent() {
         {active !== "easy" ? (
           <aside className="sidebar">
             <div className="sidebar-brand" title={t('app.desktopConsole')}>
-              <img src={appLogo} alt="" className="brand-mark brand-logo" onClick={handleLogoTap} />
+              <button type="button" className="brand-logo-button" aria-label={logoLabel} title={logoLabel}
+                onClick={() => setAppVersionDisplay(current => current === 'stable' ? 'preview' : 'stable')}>
+                <img src={appLogo} alt="" className="brand-mark brand-logo" />
+              </button>
               <div className="sidebar-brand-text">
                 <strong>EasyCLIProxyAPI</strong>
                 <span>{t('app.desktopConsole')}</span>
@@ -630,6 +606,8 @@ function AppContent() {
                   locale={locale}
                   setLocale={setLocale}
                 />
+              ) : active === 'versions' ? (
+                <VersionManagementPage displaySeries={appVersionDisplay} />
               ) : ActivePage === PluginsPage ? (
                 <PluginsPage
                   discoveredPlugins={installedPluginList}

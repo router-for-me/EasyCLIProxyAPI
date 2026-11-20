@@ -31,12 +31,18 @@ pub(super) struct CheckedFile {
     sha256: String,
 }
 
-pub(super) fn origin(config: &GuiConfigFile) -> String {
-    let identity = serde_json::to_vec(&(
+pub(super) fn origin(config: &GuiConfigFile, target: &str) -> String {
+    let settings = (
         config.selected_download_candidate().key(),
         &config.update_channel,
         &config.proxy_url,
-    ))
+    );
+    // Do not reuse an app payload staged before update series and pins were validated.
+    let identity = if target == "app" {
+        serde_json::to_vec(&("app-series-v2", settings))
+    } else {
+        serde_json::to_vec(&settings)
+    }
     .expect("string tuple serializes");
     format!("{:x}", Sha256::digest(identity))
 }
@@ -61,7 +67,7 @@ impl PreparedUpdate {
     }
 
     pub fn matches(&self, config: &GuiConfigFile) -> bool {
-        self.origin == origin(config) && config.auto_update.includes(self.target())
+        self.origin == origin(config, self.target()) && config.auto_update.includes(self.target())
     }
 
     pub fn load(target: &str) -> Result<Option<Self>, String> {
@@ -224,7 +230,7 @@ pub(super) fn capture_app(
         .collect::<Result<_, _>>()?;
     Ok(PreparedUpdate {
         version: descriptor.target_version.clone(),
-        origin: origin(config),
+        origin: origin(config, "app"),
         executable,
         payload: Payload::App {
             descriptor: Box::new(descriptor.clone()),
@@ -256,7 +262,7 @@ pub(super) fn capture_core(
         .map_err(|e| format!("Cannot cache core update: {e}"))?;
     Ok(PreparedUpdate {
         version: staged.version,
-        origin: origin(config),
+        origin: origin(config, "core"),
         executable: env::current_exe().map_err(|e| e.to_string())?,
         payload: Payload::Core {
             staging_dir: destination,
@@ -338,7 +344,7 @@ mod tests {
             .collect();
         let cached = PreparedUpdate {
             version: "0.3.112".into(),
-            origin: origin(&GuiConfigFile::default()),
+            origin: origin(&GuiConfigFile::default(), "app"),
             executable: executable.clone(),
             payload: Payload::App {
                 descriptor: Box::new(descriptor),

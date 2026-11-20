@@ -210,6 +210,20 @@ textarea:focus-visible {
   object-fit: cover;
 }
 
+.brand-logo-button {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  cursor: pointer;
+}
+
+.brand-logo-button:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 3px;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -677,6 +691,11 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.app-module-card .version-metric-value {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .version-metric-tile.has-update .version-metric-value {
   color: var(--color-warning-text);
 }
@@ -752,8 +771,7 @@ textarea:focus-visible {
   border-color: var(--color-success-text);
 }
 
-.version-channel-row .version-channel-select { min-width: 220px; }
-.version-channel-row { flex-wrap: wrap; }
+
 
 .core-version-picker {
   gap: 8px;

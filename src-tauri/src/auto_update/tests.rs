@@ -108,7 +108,7 @@ fn prepared_core(root: &Path, config: &GuiConfigFile) -> PreparedUpdate {
     fs::write(&binary, b"verified fake core, never executed").unwrap();
     PreparedUpdate {
         version: "8.0.99".into(),
-        origin: prepared::origin(config),
+        origin: prepared::origin(config, "core"),
         executable: env::current_exe().unwrap(),
         payload: Payload::Core {
             staging_dir: staging,
@@ -199,16 +199,16 @@ fn malformed_or_mismatched_cache_records_are_not_accepted() {
 #[test]
 fn download_identity_tracks_source_channel_and_proxy_only() {
     let config = GuiConfigFile::default();
-    let original = prepared::origin(&config);
+    let original = prepared::origin(&config, "app");
     let mut changed = config.clone();
     changed.download_source = VersionDownloadSource::GhFast;
-    assert_ne!(original, prepared::origin(&changed));
+    assert_ne!(original, prepared::origin(&changed, "app"));
     changed = config.clone();
     changed.update_channel = "preview".into();
-    assert_ne!(original, prepared::origin(&changed));
+    assert_ne!(original, prepared::origin(&changed, "app"));
     changed = config.clone();
     changed.auto_update.enabled = true;
-    assert_eq!(original, prepared::origin(&changed));
+    assert_eq!(original, prepared::origin(&changed, "app"));
 }
 
 #[test]
@@ -277,4 +277,56 @@ fn saving_settings_never_panics_on_a_hand_edited_section() {
     let restored: GuiConfigFile = toml::from_str(&document.to_string()).unwrap();
     assert_eq!(restored.auto_update, settings);
     assert_eq!(restored.port, 8317);
+}
+
+#[test]
+fn automatic_app_update_compares_only_the_configured_series() {
+    let mut config = GuiConfigFile::default();
+    assert!(target_newer(&config, "app", "1.2.9", "1.2.10"));
+    assert!(!target_newer(
+        &config,
+        "app",
+        "1.2.9-preview.20261103-1929",
+        "1.2.10"
+    ));
+    config.update_channel = "preview".into();
+    assert!(!target_newer(
+        &config,
+        "app",
+        "1.2.9",
+        "8.2.10-preview.20261104-1929"
+    ));
+    assert!(target_newer(
+        &config,
+        "app",
+        "8.2.10-preview.20261103-1929",
+        "1.2.9-preview.20261104-1929"
+    ));
+    assert!(!target_newer(
+        &config,
+        "app",
+        "1.2.9-preview.20261104-1929",
+        "8.2.10-preview.20261103-1929"
+    ));
+    assert!(target_newer(&config, "core", "1.2.9", "1.2.10"));
+}
+
+#[test]
+fn automatic_update_cannot_use_the_uninstalled_family_reference_or_a_pin() {
+    use crate::app_version_series::AppVersionBaselines;
+    for (family, package, selected) in [
+        ("stable", "1.2.10", "preview"),
+        ("preview", "8.1.0-preview.20261103-1929", "stable"),
+    ] {
+        let baselines = AppVersionBaselines::from_local(
+            Some(family),
+            Some("1.2.10"),
+            Some("20261103-1929"),
+            package,
+            None,
+        );
+        assert!(automatic_app_baseline(&baselines, family).is_some());
+        assert!(automatic_app_baseline(&baselines, selected).is_none());
+        assert!(automatic_app_baseline(&baselines, "preview-20261104-1929").is_none());
+    }
 }
