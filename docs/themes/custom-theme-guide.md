@@ -71,11 +71,12 @@ themes/
 | `radiusSmall` / `radiusMedium` / `radiusLarge` | 圆角，如 `"8px"`，范围 0–24px |
 | `radiusFull` | 胶囊圆角，0–9999px |
 | `controlBorderWidth` / `cardBorderWidth` | 控件 / 卡片边框，如 `"1px"`，范围 0–4px |
+| `fontFamilySans` / `fontFamilyMono` | 正文 / 代码字体族，逗号分隔，如 `"'Noto Sans SC', system-ui, sans-serif"`；只能使用系统中已安装的字体，不能包含 `url()`、`@font-face` 或文件路径，最长 200 字符。省略时使用应用默认字体 |
 | `shadowExtraSmall` / `shadowSmall` / `shadowMedium` / `shadowLarge` / `shadowPopover` / `shadowDialog` / `shadowSpotlight` | 阴影，如 `"0 4px 16px #00000028"`；`"none"` 表示无阴影 |
 
 颜色用 `"#RRGGBB"` 或 `"#RRGGBBAA"`。最后两位 `AA` 是不透明度：`00` 全透明、`80` 约 50%、`FF` 完全不透明。例如 `"#141E3080"` 是半透明深蓝。
 
-尺寸、间距、布局和字体不能通过主题修改。
+尺寸、间距和布局不能通过主题修改。字体只能指定字体族（见下表 `fontFamilySans` / `fontFamilyMono`），不能修改字号、字重或行高。
 
 ## 加渐变或背景图
 
@@ -143,7 +144,7 @@ my-dark/
 
 ## 完整示例怎么用
 
-[custom-theme.example.json](./custom-theme.example.json) 是一套青绿色暗色渐变主题，包含全部 58 个样式字段，不依赖额外图片。复制后重命名为 `theme.json` 即可使用。
+[custom-theme.example.json](./custom-theme.example.json) 是一套青绿色暗色渐变主题，包含全部 60 个样式字段，不依赖额外图片。复制后重命名为 `theme.json` 即可使用。
 
 - 改配色：先改页面、文字、主色，再调整按钮和侧栏。
 - 改浅色主题：把 `appearance` 改为 `"light"`，同时改为浅底深字；仅改这个字段不会自动转换已写好的深色配色。也可以从快速上手例子开始，删去不需要覆盖的 token。
