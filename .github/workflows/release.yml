@@ -128,7 +128,7 @@ jobs:
           release_family=unknown
           stable_series_version=""
           preview_series_version=""
-          if [[ ( "$release_tag" == preview-* || "$release_tag" == "only-preview" ) && "$version" =~ -preview\.([0-9]{8}-[0-9]{4})$ ]]; then
+          if [[ "$version" =~ -preview\.([0-9]{8}-[0-9]{4})$ ]]; then
             release_family=preview
             preview_series_version="${BASH_REMATCH[1]}"
             stable_series_version="$(node scripts/app-version-anchors.mjs stable)"
