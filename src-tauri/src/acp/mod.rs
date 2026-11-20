@@ -270,6 +270,9 @@ fn begin<R: tauri::Runtime>(
 #[tauri::command]
 pub(crate) async fn acp_connect(app: tauri::AppHandle, login: bool) -> Result<AcpStatus, String> {
     let guard = begin(&app, if login { "login" } else { "refresh" })?;
+    if login && accounts::is_isolated_home(&accounts::active(&profile(&crate::core_base_dir()?))?) {
+        return Err("Use the account's isolated sign-in to authorize it again".into());
+    }
     connect(app, login, false, None, guard).await
 }
 
@@ -287,20 +290,35 @@ pub(crate) async fn switch_acp_account(
 }
 
 #[tauri::command]
-pub(crate) async fn add_acp_account(app: tauri::AppHandle, label: String) -> Result<AcpStatus, String> {
-    let guard = begin(&app, "login")?;
+pub(crate) async fn acp_manual_auth_available(app: tauri::AppHandle) -> Result<bool, String> {
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    if crate::find_antigravity_cli(&home).is_none() {
-        return Err("Install official Antigravity CLI before adding an account".into());
-    }
-    let pending = accounts::PendingAccount::new(&profile(&crate::core_base_dir()?), &label)?;
-    connect(app, true, false, Some(pending), guard).await
+    let Some(executable) = crate::find_antigravity_cli(&home) else { return Ok(false); };
+    let proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
+    tauri::async_runtime::spawn_blocking(move || {
+        let temp = std::env::temp_dir().canonicalize().map_err(|e| e.to_string())?
+            .join(format!("ecpa-acp-capability-{}", accounts::random_id()?));
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&temp).map_err(|e| e.to_string())?;
+        let profile = temp.join("accounts").join(accounts::random_id()?).join(accounts::ISOLATED_HOME);
+        let supported = prepare_profile(&profile).and_then(|_| {
+            manual_auth::TerminalLogin::resolve(&executable, &profile, &proxy, &Arc::new(AtomicBool::new(false)))
+        }).is_ok();
+        // This directory belongs to the no-login probe only, not any account.
+        let _ = std::fs::remove_dir_all(&temp);
+        Ok(supported)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub(crate) async fn add_acp_account_manual(
+pub(crate) async fn add_acp_account(
     app: tauri::AppHandle,
     label: String,
+    replace: Option<String>,
     on_link: tauri::ipc::Channel<manual_auth::ManualLink>,
 ) -> Result<AcpStatus, String> {
     let guard = begin(&app, "login")?;
@@ -308,7 +326,12 @@ pub(crate) async fn add_acp_account_manual(
     let executable = crate::find_antigravity_cli(&home)
         .ok_or("Install official Antigravity CLI before adding an account")?;
     let root = profile(&crate::core_base_dir()?);
-    let mut pending = accounts::PendingAccount::new(&root, &label)?;
+    let replacement = if let Some(id) = replace.as_deref() {
+        let registry = accounts::read(&root)?;
+        Some(registry.accounts.into_iter().find(|account| account.id == id && account.isolated && registry.active == id)
+            .ok_or("Only the active isolated ACP account can sign in again")?)
+    } else { None };
+    let mut pending = accounts::PendingAccount::new_isolated(&root, replacement.as_ref().map_or(label.as_str(), |account| account.label.as_str()), replacement.is_some())?;
     let directory = pending.directory()?;
     let proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
     tauri::async_runtime::spawn_blocking(move || {
@@ -316,16 +339,15 @@ pub(crate) async fn add_acp_account_manual(
         let result = (|| {
             // Terminal authentication is not an ACP authenticate RPC. Use the
             // advertised official invocation, then reconnect to the same profile.
-            let mut probe = rpc::Client::spawn(&executable, &directory, &proxy)?;
-            probe.initialize_manual(&guard.cancel)?;
-            drop(probe);
-            let mut command = rpc::command(&executable, &directory, &proxy);
-            command.arg("--login");
-            state.manual_auth.run(command, &pending.id, &guard.cancel, |link| {
+            let login = manual_auth::TerminalLogin::resolve(&executable, &directory, &proxy, &guard.cancel)?;
+            let mut command = rpc::command(&executable, &directory, &proxy)?;
+            login.apply(&mut command);
+            let identity = state.manual_auth.run(command, &pending.id, &guard.cancel, |link| {
                 on_link.send(link).map_err(|_| String::from(manual_auth::FAILED))
             })?;
+            accounts::require_isolated_token(&directory)?;
             let mut client = rpc::Client::spawn(&executable, &directory, &proxy)?;
-            finish_manual_add(state.inner(), &root, &directory, &guard.cancel, &mut client, &mut pending)
+            finish_manual_add(state.inner(), &root, &directory, &guard.cancel, &mut client, &mut pending, identity, replacement.as_ref().map(|account| account.id.as_str()))
         })();
         let result = if let Err(error) = result {
             let error = match pending.rollback() {
@@ -352,25 +374,47 @@ fn finish_manual_add(
     state: &AcpState, root: &Path, profile: &Path,
     cancel: &Arc<AtomicBool>, client: &mut rpc::Client,
     pending: &mut accounts::PendingAccount,
+    terminal_identity: Option<String>,
+    replace: Option<&str>,
 ) -> Result<(), String> {
     // The fresh server loads the terminal-authorized profile. Only its own
     // official identity log is trusted; neither a label nor user input is identity.
     client.initialize(cancel)?;
-    let session = client.session(profile, cancel)?;
+    let session = client.session(profile, cancel);
     if cancel.load(Ordering::Acquire) { return Err("ACP request cancelled".into()); }
-    pending.commit(client.account_email(profile))?;
+    let session_identity = client.account_email(profile);
+    if let (Some(terminal), Some(session)) = (&terminal_identity, &session_identity) {
+        if !session.eq_ignore_ascii_case(terminal) { return Err(accounts::IDENTITY_UNKNOWN.into()); }
+    }
+    let identity = session_identity.or(terminal_identity);
+    let session = match session {
+        Ok(session) if !model_list(&session).is_empty() => session,
+        _ if replace.is_none() && identity.is_some() => {
+            pending.commit_replacing(identity, None, false)?;
+            return Err("Account saved; connection not verified: Antigravity did not provide usable models".into());
+        }
+        _ => return Err("Antigravity did not verify the isolated ACP connection".into()),
+    };
+    pending.commit_replacing(identity, replace, true)?;
     let discovered = (|| {
         reset_account(state)?;
         refresh_account_identity(state, root)?;
         mark_session(state, &session, profile)
     })();
     if discovered.is_err() { let _ = reset_account(state); }
-    combine_account_errors(discovered, sync_account_models(state))
+    let result = combine_account_errors(discovered, sync_account_models(state));
+    if let Some(id) = replace {
+        return combine_account_errors(result, accounts::archive_replaced(root, id));
+    }
+    result
 }
 
 #[tauri::command]
 pub(crate) async fn relogin_acp_account(app: tauri::AppHandle) -> Result<AcpStatus, String> {
     let guard = begin(&app, "login")?;
+    if accounts::is_isolated_home(&accounts::active(&profile(&crate::core_base_dir()?))?) {
+        return Err("Use the account's isolated sign-in to authorize it again".into());
+    }
     clear_account(&app)?;
     connect(app, true, true, None, guard).await
 }
@@ -617,7 +661,7 @@ fn logout_session(
     let action = (|| {
         client.initialize(cancel)?;
         client.logout(cancel)?;
-        accounts::set_active_email(root, None)
+        if accounts::is_isolated_home(&accounts::active(root)?) { Ok(()) } else { accounts::set_active_email(root, None) }
     })();
     let result = combine_account_errors(action, maintenance);
     if let Err(error) = &result {
@@ -846,7 +890,7 @@ mod tests {
             profile(Path::new("data")),
             Path::new("data").join("acp/antigravity")
         );
-        let command = rpc::command(Path::new("agy"), Path::new("profile"), "");
+        let command = rpc::command(Path::new("agy"), Path::new("profile"), "").unwrap();
         let args: Vec<_> = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())

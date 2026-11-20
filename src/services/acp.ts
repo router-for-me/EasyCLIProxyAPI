@@ -1,6 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-export type AcpAccount = { id: string; label: string; email?: string | null; saved: boolean };
+export type AcpAccount = { id: string; label: string; email?: string | null; saved: boolean; isolated?: boolean };
 export type AcpModel = { id: string; name: string; reasoningLevels?: string[] };
 export type AcpStatus = {
   executable: string | null;
@@ -25,11 +25,11 @@ export const acpApi = {
   status: () => invoke<AcpStatus>('get_acp_status'),
   connect: (login: boolean) => invoke<AcpStatus>('acp_connect', { login }),
   switchAccount: (accountId: string) => invoke<AcpStatus>('switch_acp_account', { accountId }),
-  addAccount: (label: string) => invoke<AcpStatus>('add_acp_account', { label }),
-  addAccountManual: (label: string, receive: (link: AcpAuthorizationLink) => void) => {
+  manualAuthAvailable: () => invoke<boolean>('acp_manual_auth_available'),
+  addAccount: (label: string, receive: (link: AcpAuthorizationLink) => void, replace?: string) => {
     const onLink = new Channel<AcpAuthorizationLink>();
     onLink.onmessage = receive;
-    return invoke<AcpStatus>('add_acp_account_manual', { label, onLink });
+    return invoke<AcpStatus>('add_acp_account', { label, onLink, replace });
   },
   submitAccountAuthorization: (attempt: string, response: string) =>
     invoke<void>('submit_acp_account_authorization', { attempt, response }),

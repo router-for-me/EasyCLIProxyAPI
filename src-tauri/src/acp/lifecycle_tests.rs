@@ -21,7 +21,10 @@ fn lifecycle_rpc_helper() {
         if method == "authenticate" {
             assert_eq!(value["params"], json!({"methodId":"oauth-personal"}));
         }
-        let late_identity = matches!(mode.as_str(), "late-distinct" | "late-duplicate");
+        let late_identity = matches!(
+            mode.as_str(),
+            "late-distinct" | "late-duplicate" | "identity-conflict"
+        );
         if (method == "authenticate" && !late_identity && mode != "auth-fails")
             || (method == "session/new" && late_identity)
         {
@@ -386,7 +389,13 @@ fn incomparable_authorization_is_quarantined_without_registering_or_switching() 
 
 #[test]
 fn terminal_authorized_profile_refresh_persists_distinct_account_but_not_duplicate() {
-    for mode in ["late-distinct", "late-duplicate", "no-identity"] {
+    for mode in [
+        "late-distinct",
+        "late-duplicate",
+        "no-identity",
+        "terminal-identity",
+        "identity-conflict",
+    ] {
         let (root, state) = fixture();
         let mut pending = accounts::PendingAccount::new(&root, "Second").unwrap();
         let directory = pending.directory().unwrap();
@@ -399,12 +408,22 @@ fn terminal_authorized_profile_refresh_persists_distinct_account_but_not_duplica
             &mut fixture_client(
                 mode,
                 Some(&calls),
-                (mode != "no-identity").then_some(directory.as_path()),
+                matches!(
+                    mode,
+                    "late-distinct" | "late-duplicate" | "identity-conflict"
+                )
+                .then_some(directory.as_path()),
             ),
             &mut pending,
+            match mode {
+                "terminal-identity" => Some("new@example.test".into()),
+                "identity-conflict" => Some("other@example.test".into()),
+                _ => None,
+            },
+            None,
         );
         let registry = accounts::read(&root).unwrap();
-        if mode == "late-distinct" {
+        if matches!(mode, "late-distinct" | "terminal-identity") {
             result.unwrap();
             assert_eq!(registry.accounts.len(), 2);
             assert_eq!(registry.active, pending.id);
@@ -428,6 +447,44 @@ fn terminal_authorized_profile_refresh_persists_distinct_account_but_not_duplica
         );
         std::fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[test]
+fn isolated_reauthorization_does_not_replace_active_profile_until_identity_and_models_match() {
+    let (root, state) = fixture();
+    let mut existing = accounts::PendingAccount::new_isolated(&root, "Saved", false).unwrap();
+    existing.commit(Some("new@example.test".into())).unwrap();
+    let old = existing.directory().unwrap();
+    for (mode, identity) in [
+        ("models-fail", "new@example.test"),
+        ("ok", "other@example.test"),
+        ("ok", "new@example.test"),
+    ] {
+        let mut pending = accounts::PendingAccount::new_isolated(&root, "Saved", true).unwrap();
+        let directory = pending.directory().unwrap();
+        let result = finish_manual_add(
+            &state,
+            &root,
+            &directory,
+            &Arc::new(AtomicBool::new(false)),
+            &mut client(mode),
+            &mut pending,
+            Some(identity.into()),
+            Some(&existing.id),
+        );
+        if mode == "ok" && identity == "new@example.test" {
+            result.unwrap();
+            assert_eq!(accounts::active(&root).unwrap(), directory);
+            assert!(!old.exists());
+            assert_eq!(accounts::read(&root).unwrap().accounts.len(), 2);
+        } else {
+            assert!(result.is_err());
+            pending.rollback().unwrap();
+            assert_eq!(accounts::active(&root).unwrap(), old);
+            assert!(old.is_dir());
+        }
+    }
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

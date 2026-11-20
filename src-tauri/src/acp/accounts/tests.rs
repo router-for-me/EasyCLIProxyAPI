@@ -329,7 +329,10 @@ fn legacy_default_without_email_survives_new_authorization_and_new_account_remov
     let registry = read(&root).unwrap();
     assert_eq!(registry.accounts.len(), 2);
     assert_eq!(registry.accounts[0].label, "Legacy personal note");
-    assert_eq!(registry.accounts[0].email.as_deref(), Some("legacy@example.test"));
+    assert_eq!(
+        registry.accounts[0].email.as_deref(),
+        Some("legacy@example.test")
+    );
     select(&root, "default").unwrap();
     assert_eq!(
         read_selected(&active(&root).unwrap()).unwrap(),
@@ -398,7 +401,10 @@ fn missing_registry_with_legacy_profile_or_selected_model_preserves_default_acro
         assert_eq!(registry.accounts.len(), 1);
         assert!(registry.accounts[0].saved);
         assert_eq!(registry.accounts[0].label, "Default");
-        assert_eq!(registry.accounts[0].email.as_deref(), Some("legacy@example.test"));
+        assert_eq!(
+            registry.accounts[0].email.as_deref(),
+            Some("legacy@example.test")
+        );
         if history == "official-profile" {
             assert!(root
                 .join(".gemini/antigravity-cli/history-fixture")
@@ -477,4 +483,76 @@ fn missing_registry_history_probe_never_follows_a_profile_symlink() {
     assert!(outside.join("marker").is_file());
     std::fs::remove_dir_all(root).unwrap();
     std::fs::remove_dir_all(outside).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn isolated_accounts_restore_and_read_separate_files_across_fresh_processes() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    use std::process::Stdio;
+    let root = fixture();
+    mark_saved(&root).unwrap(); // Legacy account with no recorded email.
+    let first = PendingAccount::new_isolated(&root, "A", false).unwrap();
+    let second = PendingAccount::new_isolated(&root, "B", false).unwrap();
+    let executable = root.join("agy-fixture");
+    std::fs::write(&executable, "#!/bin/sh\n[ \"$HOME\" = \"$GEMINI_CLI_HOME\" ] || exit 4\n[ \"$SSH_CONNECTION\" = '127.0.0.1 0 127.0.0.1 0' ] || exit 5\np=\"$HOME/.gemini/antigravity-cli/antigravity-oauth-token\"\nif [ \"$FIXTURE_LOGOUT\" = yes ]; then /bin/rm \"$p\"; else /bin/cat \"$p\"; fi\n").unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut ids = Vec::new();
+    for (mut account, value, email) in [
+        (first, "fixture-a", "first@example.test"),
+        (second, "fixture-b", "second@example.test"),
+    ] {
+        let token = isolated_token(&account.directory().unwrap());
+        std::fs::create_dir_all(token.parent().unwrap()).unwrap();
+        std::fs::write(token, value).unwrap();
+        account.commit(Some(email.into())).unwrap();
+        ids.push(account.id.clone());
+    }
+    let launch = |id: &str, logout| {
+        select(&root, id).unwrap();
+        let registry = read(&root).unwrap(); // Reopen persisted registry for every launch.
+        assert_eq!(registry.active, id);
+        assert!(registry
+            .accounts
+            .iter()
+            .any(|account| account.id == id && account.isolated));
+        let home = active(&root).unwrap();
+        rpc::command(&executable, &home, "")
+            .unwrap()
+            .env("FIXTURE_LOGOUT", if logout { "yes" } else { "no" })
+            .stderr(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    for (id, expected) in [
+        (&ids[0], b"fixture-a"),
+        (&ids[1], b"fixture-b"),
+        (&ids[0], b"fixture-a"),
+    ] {
+        let out = launch(id, false);
+        assert!(out.status.success());
+        assert_eq!(&out.stdout, expected);
+    }
+    let home = active(&root).unwrap();
+    let negative = rpc::command(&executable, &home, "")
+        .unwrap()
+        .env_remove("SSH_CONNECTION")
+        .output()
+        .unwrap();
+    assert_eq!(negative.status.code(), Some(5));
+    assert!(launch(&ids[1], true).status.success());
+    assert!(!isolated_token(&active(&root).unwrap()).exists());
+    assert_eq!(launch(&ids[0], false).stdout, b"fixture-a");
+    let token = isolated_token(&active(&root).unwrap());
+    let elsewhere = root.join("unrelated");
+    std::fs::write(&elsewhere, b"unrelated").unwrap();
+    std::fs::remove_file(&token).unwrap();
+    symlink(&elsewhere, &token).unwrap();
+    assert!(rpc::command(&executable, &active(&root).unwrap(), "").is_err());
+    assert_eq!(directory(&root, "default").unwrap(), root);
+    let legacy = rpc::command(&executable, &root, "").unwrap();
+    assert!(!legacy
+        .get_envs()
+        .any(|(name, _)| name == "HOME" || name == "SSH_CONNECTION"));
+    std::fs::remove_dir_all(root).unwrap();
 }

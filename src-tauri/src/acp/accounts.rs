@@ -10,6 +10,8 @@ pub(crate) struct Account {
     // Historical local record only, never a claim that a login is still valid.
     #[serde(default)]
     pub(super) saved: bool,
+    #[serde(default)]
+    pub(super) isolated: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -27,6 +29,7 @@ impl Default for Accounts {
                 label: "Default".into(),
                 email: None,
                 saved: false,
+                isolated: false,
             }],
         }
     }
@@ -56,7 +59,7 @@ pub(super) fn safe_path(path: &Path) -> Result<(), String> {
         }
         current.push(component);
         match std::fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
+            Ok(metadata) if unsafe_path_metadata(&metadata) => {
                 return Err("ACP account paths must not contain symbolic links".into());
             }
             Ok(_) => {}
@@ -65,6 +68,17 @@ pub(super) fn safe_path(path: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn unsafe_path_metadata(metadata: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const REPARSE_POINT: u32 = 0x400;
+        return metadata.file_attributes() & REPARSE_POINT != 0;
+    }
+    #[cfg(not(windows))]
+    metadata.file_type().is_symlink()
 }
 
 // Old single-account builds could finish authorization without creating a
@@ -163,7 +177,7 @@ pub(super) fn read(root: &Path) -> Result<Accounts, String> {
     Ok(registry)
 }
 
-fn random_id() -> Result<String, String> {
+pub(super) fn random_id() -> Result<String, String> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes).map_err(|e| e.to_string())?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
@@ -229,7 +243,7 @@ pub(super) fn mark_saved(root: &Path) -> Result<(), String> {
     write(root, &registry)
 }
 
-pub(super) fn directory(root: &Path, id: &str) -> Result<PathBuf, String> {
+fn account_dir(root: &Path, id: &str) -> Result<PathBuf, String> {
     if !valid_id(id) {
         return Err("Invalid ACP account ID".into());
     }
@@ -240,6 +254,85 @@ pub(super) fn directory(root: &Path, id: &str) -> Result<PathBuf, String> {
     };
     safe_path(&path)?;
     Ok(path)
+}
+
+pub(super) const ISOLATED_HOME: &str = "isolated-home";
+
+pub(super) fn directory(root: &Path, id: &str) -> Result<PathBuf, String> {
+    let mut path = account_dir(root, id)?;
+    if read(root)?
+        .accounts
+        .iter()
+        .any(|account| account.id == id && account.isolated)
+    {
+        if id == "default" {
+            return Err("Invalid isolated ACP account".into());
+        }
+        path.push(ISOLATED_HOME);
+        safe_path(&path)?;
+    }
+    Ok(path)
+}
+
+pub(super) fn is_isolated_home(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == ISOLATED_HOME)
+        && path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .is_some_and(|id| id != "default" && valid_id(id))
+        && path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "accounts")
+}
+
+pub(super) fn isolated_token(home: &Path) -> PathBuf {
+    home.join(".gemini/antigravity-cli/antigravity-oauth-token")
+}
+
+pub(super) fn require_isolated_token(home: &Path) -> Result<(), String> {
+    let home = checked_isolated_home(home)?;
+    if !std::fs::metadata(isolated_token(&home)).is_ok_and(|file| file.is_file() && file.len() > 0)
+    {
+        return Err(
+            "Antigravity CLI did not save authorization in the isolated ACP profile".into(),
+        );
+    }
+    Ok(())
+}
+
+pub(super) fn checked_isolated_home(path: &Path) -> Result<PathBuf, String> {
+    safe_path(path)?;
+    let home = path
+        .canonicalize()
+        .map_err(|_| "Isolated ACP profile is unavailable")?;
+    let token = isolated_token(&home);
+    safe_path(&token)?;
+    match std::fs::symlink_metadata(&token) {
+        Ok(metadata) if metadata.is_file() => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::{MetadataExt, PermissionsExt};
+                if metadata.nlink() != 1 {
+                    return Err("Unsafe isolated ACP credential file".into());
+                }
+                std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600))
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(_) => return Err("Unsafe isolated ACP credential file".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(home)
 }
 
 pub(super) fn active(root: &Path) -> Result<PathBuf, String> {
@@ -269,7 +362,8 @@ pub(super) fn rename(root: &Path, id: &str, label: &str) -> Result<(), String> {
 }
 
 pub(super) const DUPLICATE_EMAIL: &str = "This Google account is already saved. Add a different Google account, or select the existing account";
-pub(super) const IDENTITY_UNKNOWN: &str = "Google identity could not be verified against saved accounts. The account was not added";
+pub(super) const IDENTITY_UNKNOWN: &str =
+    "Google identity could not be verified against saved accounts. The account was not added";
 
 // Do not publish a provisional record before official authentication and the
 // duplicate check. Cancelled/failed attempts are isolated, never destroyed.
@@ -278,27 +372,45 @@ pub(super) struct PendingAccount {
     pub(super) id: String,
     label: String,
     finished: bool,
+    isolated: bool,
 }
 
 impl PendingAccount {
+    #[cfg(test)]
     pub(super) fn new(root: &Path, label: &str) -> Result<Self, String> {
+        Self::create(root, label, false, false)
+    }
+
+    pub(super) fn new_isolated(
+        root: &Path,
+        label: &str,
+        replacement: bool,
+    ) -> Result<Self, String> {
+        Self::create(root, label, true, replacement)
+    }
+
+    fn create(root: &Path, label: &str, isolated: bool, replacement: bool) -> Result<Self, String> {
         let label = validate_label(label)?.to_string();
         let registry = read(root)?;
-        if registry
-            .accounts
-            .iter()
-            .filter(|a| a.saved || a.id != "default")
-            .count()
-            >= 32
+        if !replacement
+            && registry
+                .accounts
+                .iter()
+                .filter(|a| a.saved || a.id != "default")
+                .count()
+                >= 32
         {
             return Err("Up to 32 ACP accounts can be saved".into());
         }
         let id = random_id()?;
-        let path = directory(root, &id)?;
+        let path = account_dir(root, &id)?;
         if path.exists() {
             return Err("ACP account directory already exists".into());
         }
         prepare_profile(&path)?;
+        if isolated {
+            prepare_profile(&path.join(ISOLATED_HOME))?;
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -313,11 +425,17 @@ impl PendingAccount {
             id,
             label,
             finished: false,
+            isolated,
         })
     }
 
     pub(super) fn directory(&self) -> Result<PathBuf, String> {
-        directory(&self.root, &self.id)
+        let mut path = account_dir(&self.root, &self.id)?;
+        if self.isolated {
+            path.push(ISOLATED_HOME);
+        }
+        safe_path(&path)?;
+        Ok(path)
     }
 
     // A known duplicate is rejected before the registry, active selection or
@@ -325,6 +443,15 @@ impl PendingAccount {
     // fails. If identity cannot be compared, leave the registry untouched;
     // rollback moves the authorized profile to private recovery storage.
     pub(super) fn commit(&mut self, email: Option<String>) -> Result<(), String> {
+        self.commit_replacing(email, None, true)
+    }
+
+    pub(super) fn commit_replacing(
+        &mut self,
+        email: Option<String>,
+        replace: Option<&str>,
+        activate: bool,
+    ) -> Result<(), String> {
         let recovery_error = |error| {
             format!("Google authorization completed, but the account registry could not be saved. Login data is preserved at {}: {error}", self.root.join("accounts").join(&self.id).display())
         };
@@ -336,8 +463,19 @@ impl PendingAccount {
             }
         };
         let email = email.as_deref().and_then(rpc::valid_account_email);
-        let mut comparable = true;
+        let mut comparable = !self.isolated || email.is_some();
         for account in &registry.accounts {
+            if replace == Some(account.id.as_str()) {
+                if account
+                    .email
+                    .as_deref()
+                    .zip(email)
+                    .is_some_and(|(expected, actual)| !expected.eq_ignore_ascii_case(actual))
+                {
+                    return Err(IDENTITY_UNKNOWN.into());
+                }
+                continue;
+            }
             let existing = account
                 .email
                 .as_deref()
@@ -348,7 +486,11 @@ impl PendingAccount {
                     return Err(DUPLICATE_EMAIL.into());
                 }
                 (Some(_), Some(_)) => {}
-                _ if account.saved || account.id != "default" => comparable = false,
+                _ if (account.saved || account.id != "default")
+                    && (!self.isolated || account.isolated) =>
+                {
+                    comparable = false
+                }
                 _ => {}
             }
         }
@@ -356,16 +498,22 @@ impl PendingAccount {
             return Err(IDENTITY_UNKNOWN.into());
         }
         self.finished = true;
-        registry
-            .accounts
-            .retain(|a| a.id != "default" || a.saved || a.email.is_some());
+        let previous = registry.active.clone();
+        registry.accounts.retain(|a| {
+            (!activate && a.id == previous)
+                || (replace != Some(a.id.as_str())
+                    && (a.id != "default" || a.saved || a.email.is_some()))
+        });
         registry.accounts.push(Account {
             id: self.id.clone(),
             label: self.label.clone(),
             email: email.map(str::to_owned),
             saved: true,
+            isolated: self.isolated,
         });
-        registry.active = self.id.clone();
+        if activate {
+            registry.active = self.id.clone();
+        }
         write(&self.root, &registry).map_err(recovery_error)
     }
 
@@ -388,7 +536,7 @@ impl Drop for PendingAccount {
 // Move, not recursively delete. In particular the legacy default profile shares
 // its root with other accounts and the global bridge configuration.
 fn quarantine(root: &Path, id: &str, registry: Option<&Accounts>) -> Result<PathBuf, String> {
-    let source = directory(root, id)?;
+    let source = account_dir(root, id)?;
     let recycle = root
         .join("removed-accounts")
         .join(format!("{id}-{}", random_id()?));
@@ -441,6 +589,10 @@ fn quarantine(root: &Path, id: &str, registry: Option<&Accounts>) -> Result<Path
         return Err(errors.join("; "));
     }
     Ok(recycle)
+}
+
+pub(super) fn archive_replaced(root: &Path, id: &str) -> Result<(), String> {
+    quarantine(root, id, None).map(|_| ())
 }
 
 pub(super) fn remove(root: &Path, id: &str) -> Result<PathBuf, String> {

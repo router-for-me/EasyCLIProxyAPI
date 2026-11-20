@@ -101,9 +101,10 @@ export function AcpAccessPage() {
   const [operation, setOperation] = useState('');
   const [error, setError] = useState('');
   const [managingAccounts, setManagingAccounts] = useState(false);
-  const [editor, setEditor] = useState<{ account?: AcpAccount } | null>(null);
+  const [editor, setEditor] = useState<{ account?: AcpAccount; reauthorize?: AcpAccount } | null>(null);
   const [accountLabel, setAccountLabel] = useState('');
   const [formError, setFormError] = useState('');
+  const [manualAvailable, setManualAvailable] = useState<boolean | null>(null);
   const [manualLink, setManualLink] = useState<AcpAuthorizationLink | null>(null);
   const [manualResponse, setManualResponse] = useState('');
   const [manualError, setManualError] = useState('');
@@ -195,26 +196,33 @@ export function AcpAccessPage() {
   const openEditor = (account?: AcpAccount) => {
     setAccountLabel(account?.label || ''); setFormError(''); setError(''); setEditor({ account });
   };
+  useEffect(() => {
+    setManualAvailable(null);
+    if (!editor || editor.account || !hasCli) return;
+    let active = true;
+    void acpApi.manualAuthAvailable().then(available => { if (active) setManualAvailable(available); }).catch(() => { if (active) setManualAvailable(false); });
+    return () => { active = false; };
+  }, [editor, hasCli]);
   const closeEditor = () => { if (!busy) { setEditor(null); setFormError(''); } };
-  const saveAccount = async (manual = false) => {
-    if (!editor || busy) return;
+  const saveAccount = async () => {
+    if (!editor || busy || (!editor.account && !manualAvailable)) return;
     const trimmed = accountLabel.trim();
     if (!trimmed || [...trimmed].length > 80 || /[\u0000-\u001f\u007f-\u009f]/u.test(accountLabel)) {
       setFormError(t('acp.labelInvalid')); labelInput.current?.focus(); return;
     }
     setFormError('');
     const editing = editor.account;
-    const previousId = status?.activeAccount;
+    const previousIds = new Set(status?.accounts.map(account => account.id));
     const ok = await run(editing ? 'rename' : 'login', () => editing
-      ? acpApi.renameAccount(editing.id, trimmed) : !manual ? acpApi.addAccount(trimmed) : acpApi.addAccountManual(trimmed, link => {
+      ? acpApi.renameAccount(editing.id, trimmed) : acpApi.addAccount(trimmed, link => {
         if (mounted.current) setManualLink(link);
-      }));
+      }, editor.reauthorize?.id));
     if (mounted.current) { setManualLink(null); setManualResponse(''); setManualError(''); setManualSubmitting(false); }
     if (mounted.current) {
       const current = await refresh().catch(() => null);
       // Official authorization may have committed before model verification
       // failed or was cancelled. Return to its saved row, not an "add" retry.
-      if (ok || (!editing && current && current.activeAccount !== previousId)) setEditor(null);
+      if (ok || (!editing && current?.accounts.some(account => !previousIds.has(account.id)))) setEditor(null);
     }
   };
   const submitManualResponse = async () => {
@@ -230,6 +238,10 @@ export function AcpAccessPage() {
   };
   const confirmAccountAction = async (kind: 'remove' | 'logout' | 'relogin', account: AcpAccount) => {
     if (busy) return;
+    if (kind === 'relogin' && account.isolated) {
+      setAccountLabel(account.label); setFormError(''); setError(''); setEditor({ reauthorize: account });
+      return;
+    }
     if (!await askConfirmation({
       title: t(kind === 'remove' ? 'acp.removeTitle' : kind === 'logout' ? 'acp.logoutTitle' : 'acp.reloginTitle'),
       message: t(kind === 'remove' ? 'acp.removeMessage' : kind === 'logout' ? 'acp.logoutMessage' : 'acp.reloginMessage'),
@@ -274,7 +286,7 @@ export function AcpAccessPage() {
             <span className="acp-account-total">{t('acp.savedCount', { count: savedAccounts.length })}</span>
           </div>
           <div className="acp-provider-actions">
-            {!connected ? <button type="button" className="primary-button" disabled={!hasCli || busy || loading} onClick={() => void run('login', () => acpApi.connect(true))}><LogIn size={16} aria-hidden="true" />{t('acp.login')}</button> : null}
+            {!connected ? <button type="button" className="primary-button" disabled={!hasCli || busy || loading} onClick={() => activeAccount?.isolated ? void confirmAccountAction('relogin', activeAccount) : void run('login', () => acpApi.connect(true))}><LogIn size={16} aria-hidden="true" />{t('acp.login')}</button> : null}
             <button type="button" className="secondary-button" disabled={loading} aria-haspopup="dialog" onClick={() => setManagingAccounts(true)}><Users size={16} aria-hidden="true" />{t('acp.manageAccounts')}</button>
           </div>
         </div>
@@ -357,10 +369,10 @@ export function AcpAccessPage() {
         })}
       </div>
     </Dialog> : null}
-    {editor ? <Dialog as="form" size="sm" className="config-dialog acp-account-dialog acp-account-editor" title={t(editor.account ? 'acp.editNote' : 'acp.newAccount')} onClose={closeEditor} closeDisabled={busy} busy={busy} initialFocusRef={labelInput}
+    {editor ? <Dialog as="form" size="sm" className="config-dialog acp-account-dialog acp-account-editor" title={t(editor.account ? 'acp.editNote' : editor.reauthorize ? 'acp.relogin' : 'acp.newAccount')} onClose={closeEditor} closeDisabled={busy} busy={busy} initialFocusRef={labelInput}
       onSubmit={event => { event.preventDefault(); if (manualLink) void submitManualResponse(); else void saveAccount(); }} actionsClassName="acp-dialog-actions"
-      actions={<><button type="button" className="secondary-button" disabled={busy} onClick={closeEditor}>{t('common.cancel')}</button><button type="submit" className="primary-button" disabled={manualLink ? manualSubmitting || !manualResponse.trim() : busy || (!editor.account && !hasCli)}>{t(manualLink ? 'acp.submitManual' : editor.account ? 'common.save' : 'acp.addAccount')}</button></>}>
-      <label className="acp-note-field"><span className="acp-note-label"><span>{t('acp.accountNote')}</span><span className="acp-note-count" aria-hidden="true">{[...accountLabel.trim()].length}/80</span></span><input ref={labelInput} type="text" value={accountLabel} disabled={busy} aria-invalid={Boolean(formError)} aria-describedby={formError ? 'acp-note-error' : undefined} placeholder={t('acp.accountLabelPlaceholder')} onChange={event => { setAccountLabel(event.currentTarget.value); setFormError(''); }} /></label>
+      actions={<><button type="button" className="secondary-button" disabled={busy} onClick={closeEditor}>{t('common.cancel')}</button><button type="submit" className="primary-button" disabled={manualLink ? manualSubmitting || !manualResponse.trim() : busy || (!editor.account && (!hasCli || manualAvailable !== true))}>{t(manualLink ? 'acp.submitManual' : editor.account ? 'common.save' : editor.reauthorize ? 'acp.relogin' : 'acp.addAccount')}</button></>}>
+      <label className="acp-note-field"><span className="acp-note-label"><span>{t('acp.accountNote')}</span><span className="acp-note-count" aria-hidden="true">{[...accountLabel.trim()].length}/80</span></span><input ref={labelInput} type="text" value={accountLabel} disabled={busy || Boolean(editor.reauthorize)} aria-invalid={Boolean(formError)} aria-describedby={formError ? 'acp-note-error' : undefined} placeholder={t('acp.accountLabelPlaceholder')} onChange={event => { setAccountLabel(event.currentTarget.value); setFormError(''); }} /></label>
       {manualLink ? <div className="acp-note-field">
         <p>{t('acp.manualInstructions')}</p>
         <label className="acp-note-field">{t('acp.manualLink')}
@@ -373,9 +385,7 @@ export function AcpAccessPage() {
       </div> : null}
       {formError ? <p id="acp-note-error" className="acp-form-error" role="alert">{formError}</p> : null}
       {!confirmationDialog ? actionNotice : null}
-      {!editor.account && !manualLink ? <div>
-        <button type="button" className="secondary-button" disabled={busy || !hasCli} onClick={() => void saveAccount(true)}>{t('acp.useAnotherBrowser')}</button>
-      </div> : null}
+      {!editor.account && !manualLink && manualAvailable === false ? <p className="acp-form-error" role="status">{t('acp.errorManualUnsupported')}</p> : null}
       {operationStatus}
     </Dialog> : null}
     {confirmationDialog}

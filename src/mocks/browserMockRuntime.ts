@@ -1731,6 +1731,7 @@ export function createBrowserMockRuntime(
       }
 
       case 'get_acp_status': return clone(acp);
+      case 'acp_manual_auth_available': return Boolean(acp.executable);
       case 'set_acp_upstream_enabled': {
         if (acp.busy) throw new Error('An ACP operation is already running');
         if (payload.enabled && !acp.authenticated) throw new Error('Connect ACP first');

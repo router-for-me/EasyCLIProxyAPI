@@ -35,7 +35,15 @@ enum SystemPromptSupport {
     Antigravity,
 }
 
-pub(super) fn command(executable: &Path, profile: &Path, proxy: &str) -> Command {
+pub(super) fn command(executable: &Path, profile: &Path, proxy: &str) -> Result<Command, String> {
+    let isolated = super::accounts::is_isolated_home(profile);
+    let canonical;
+    let profile = if isolated {
+        canonical = super::accounts::checked_isolated_home(profile)?;
+        canonical.as_path()
+    } else {
+        profile
+    };
     let mut command = Command::new(executable);
     command
         .args(["acp", "--gemini-dir"])
@@ -53,17 +61,35 @@ pub(super) fn command(executable: &Path, profile: &Path, proxy: &str) -> Command
     // Never inherit the managed Antigravity-client route back into CPA.
     for (name, _) in std::env::vars_os() {
         let name = name.to_string_lossy();
+        let normalized = if cfg!(windows) {
+            name.to_ascii_uppercase()
+        } else {
+            name.to_string()
+        };
         if ["GEMINI_", "GOOGLE_", "GCLOUD_", "VERTEX_", "CLIPROXYAPI_"]
             .iter()
-            .any(|prefix| name.starts_with(prefix))
+            .any(|prefix| normalized.starts_with(prefix))
         {
             command.env_remove(name.as_ref());
         }
     }
     command.env("GEMINI_CLI_HOME", profile);
+    if isolated {
+        command
+            .env("HOME", profile)
+            .env("SSH_CONNECTION", "127.0.0.1 0 127.0.0.1 0")
+            .env("XDG_CONFIG_HOME", profile.join(".config"))
+            .env("XDG_DATA_HOME", profile.join(".local/share"))
+            .env("XDG_CACHE_HOME", profile.join(".cache"));
+        #[cfg(windows)]
+        command
+            .env("USERPROFILE", profile)
+            .env("APPDATA", profile.join("AppData/Roaming"))
+            .env("LOCALAPPDATA", profile.join("AppData/Local"));
+    }
     crate::configure_networked_command(&mut command, proxy);
     crate::configure_background_command(&mut command);
-    command
+    Ok(command)
 }
 
 impl Client {
@@ -102,7 +128,7 @@ impl Client {
 
     pub(super) fn spawn(executable: &Path, profile: &Path, proxy: &str) -> Result<Self, String> {
         std::fs::create_dir_all(profile.join("workspace")).map_err(|e| e.to_string())?;
-        Self::spawn_command(command(executable, profile, proxy))
+        Self::spawn_command(command(executable, profile, proxy)?)
     }
 
     pub(super) fn spawn_command(command: Command) -> Result<Self, String> {
@@ -334,13 +360,12 @@ impl Client {
         self.initialize_with_auth(cancel, false).map(|_| ())
     }
 
-    pub(super) fn initialize_manual(&mut self, cancel: &Arc<std::sync::atomic::AtomicBool>) -> Result<(), String> {
+    pub(super) fn initialize_manual(
+        &mut self,
+        cancel: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Option<super::manual_auth::TerminalLogin>, String> {
         let response = self.initialize_with_auth(cancel, true)?;
-        if response["authMethods"].as_array().is_some_and(|methods| methods.iter().any(|method| {
-            method["id"] == "terminal-login" && method["type"] == "terminal"
-                && method["args"] == json!(["--login"])
-                && method.get("env").is_none_or(|env| env.is_null() || env.as_object().is_some_and(|env| env.is_empty()))
-        })) { Ok(()) } else { Err(super::manual_auth::UNSUPPORTED.into()) }
+        Ok(super::manual_auth::TerminalLogin::advertised(&response))
     }
 
     fn initialize_with_auth(
@@ -348,7 +373,11 @@ impl Client {
         cancel: &Arc<std::sync::atomic::AtomicBool>,
         manual: bool,
     ) -> Result<Value, String> {
-        let capabilities = if manual { json!({"auth":{"terminal":true}}) } else { json!({}) };
+        let capabilities = if manual {
+            json!({"auth":{"terminal":true}})
+        } else {
+            json!({})
+        };
         let response = self.call("initialize", json!({"protocolVersion":1,"clientCapabilities":capabilities,"clientInfo":{"name":"EasyCLIProxyAPI","version":env!("CARGO_PKG_VERSION")}}), cancel, |_| {})?;
         self.supports_logout = response["agentCapabilities"]["auth"]
             .get("logout")
@@ -528,6 +557,48 @@ mod tests {
         for email in ["", "unknown", "a@b@c.test", "person @example.test"] {
             let cleared = format!("{valid}\nI1117 server_oauth.go:224] applyAuthResult: email={email}, authMethod=consumer");
             assert!(email_from_auth_log(&cleared).is_none());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires checksum-verified official CLI and a private synthetic Secret Service"]
+    fn official_isolated_credential_read_without_authorization() {
+        use super::super::{accounts, prepare_profile};
+        let executable =
+            std::path::PathBuf::from(std::env::var_os("ECPA_ACP_UNAUTHORIZED_PROBE_CLI").unwrap());
+        let root = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
+        assert!(root
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("ecpa-acp-integrated-"));
+        assert_eq!(
+            std::env::var_os("DBUS_SESSION_BUS_ADDRESS").unwrap(),
+            format!("unix:path={}/bus", root.display()).as_str()
+        );
+        let control = std::env::var_os("ECPA_ACP_CONTROL_NO_SSH").is_some();
+        for (id, marker) in [("a", "{"), ("b", "{}"), ("a", "{")] {
+            let directory = root
+                .join("accounts")
+                .join(id.repeat(32))
+                .join(accounts::ISOLATED_HOME);
+            prepare_profile(&directory).unwrap();
+            let token = accounts::isolated_token(&directory);
+            std::fs::create_dir_all(token.parent().unwrap()).unwrap();
+            std::fs::write(&token, marker).unwrap();
+            let mut command = command(&executable, &directory, "").unwrap();
+            if control {
+                command.env_remove("SSH_CONNECTION");
+            }
+            let mut client = Client::spawn_command(command).unwrap();
+            let cancel = Arc::new(AtomicBool::new(false));
+            client.initialize(&cancel).unwrap();
+            assert_eq!(
+                client.session(&directory, &cancel).unwrap_err(),
+                "Authentication required"
+            );
+            assert!(client.account_email(&directory).is_none());
         }
     }
 

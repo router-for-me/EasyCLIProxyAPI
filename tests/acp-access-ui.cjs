@@ -100,12 +100,10 @@ const path = require('node:path');
           return invoke(command, args, options);
         };
       });
-      const otherBrowser = editor.getByRole('button', { name: text('使用其他浏览器', 'Use another browser'), exact: true });
       const authResponse = editor.getByLabel(text('授权码或回跳页面完整网址', 'Authorization code or full callback URL'));
-      assert.equal(await otherBrowser.isEnabled(), true);
       await label.fill('Cancelled');
       await editor.getByRole('button', { name: text('新增并登录', 'Add and sign in'), exact: true }).click();
-      assert.equal(await authResponse.count(), 0, 'automatic Add never shows the paste field');
+      assert.equal(await authResponse.count(), 0, 'paste field stays hidden until CLI announces the link');
       await editor.getByRole('button', { name: text('取消操作', 'Cancel operation'), exact: true }).click();
       await idle();
       assert.equal(await dialog.locator('.acp-managed-account').count(), 1, 'cancelled addition leaves no record');
@@ -117,7 +115,7 @@ const path = require('node:path');
       await page.evaluate(() => {
         const invoke = window.__TAURI_INTERNALS__.invoke;
         window.__TAURI_INTERNALS__.invoke = async (command, args, options) => {
-          if (command === 'add_acp_account' && args?.label === 'Already saved' && !args.onLink) {
+          if (command === 'add_acp_account' && args?.label === 'Already saved' && args.onLink) {
             throw new Error('This Google account is already saved. Add a different Google account, or select the existing account');
           }
           if (command === 'add_acp_account' && args?.label === 'Cannot compare') {
@@ -133,7 +131,6 @@ const path = require('node:path');
       assert.equal(await dialog.locator('.acp-managed-account').count(), 1);
       assert.match(await dialog.locator('.acp-managed-account[data-current=true]').textContent(), /personal.acp@example.test/);
       assert.equal(await apiSwitch.isChecked(), true);
-      assert.equal(await otherBrowser.isEnabled(), true, 'a duplicate permits immediate manual retry');
       assert.equal(await authResponse.count(), 0);
       await label.fill('Cannot compare');
       await editor.getByRole('button', { name: text('新增并登录', 'Add and sign in'), exact: true }).click();
@@ -147,7 +144,7 @@ const path = require('node:path');
         const invoke = tauri.invoke;
         let pending;
         tauri.invoke = (command, args, options) => {
-          if (command === 'add_acp_account_manual' && args?.label === 'Work') {
+          if (command === 'add_acp_account' && args?.label === 'Work') {
             return new Promise((resolve, reject) => {
               const channelId = args.onLink.id;
               pending = { resolve, reject, args, options };
@@ -168,7 +165,7 @@ const path = require('node:path');
         };
       });
       await label.fill('Work');
-      await otherBrowser.click();
+      await editor.getByRole('button', { name: text('新增并登录', 'Add and sign in'), exact: true }).click();
       const authLink = editor.getByLabel(text('Google 授权链接（选中后复制）', 'Google authorization link (select and copy)'));
       await authLink.waitFor();
       assert.match(await authLink.inputValue(), /^https:\/\/accounts\.google\.com\//);
@@ -184,6 +181,22 @@ const path = require('node:path');
       let current = dialog.locator('.acp-managed-account[data-current=true]');
       assert.match(await current.textContent(), /Work/);
       assert.equal(await apiSwitch.isChecked(), true);
+      if (process.env.ECPA_ACP_ADD_ONLY === '1') {
+        await page.evaluate(() => {
+          const tauri = window.__TAURI_INTERNALS__;
+          const invoke = tauri.invoke;
+          tauri.invoke = (command, args, options) => {
+            if (command === 'acp_manual_auth_available') {
+              window.__acpUnsupportedChecked = true;
+              return Promise.resolve(false);
+            }
+            return invoke(command, args, options);
+          };
+        });
+        await button(text('新增账号', 'Add account')).click();
+        await page.waitForFunction(() => window.__acpUnsupportedChecked === true);
+        assert.equal(await editor.getByRole('button', { name: text('新增并登录', 'Add and sign in'), exact: true }).isEnabled(), false);
+      }
       if (process.env.ECPA_ACP_ADD_ONLY === '1') {
         console.log('PASS browser-mock ACP add regression:', locale);
         await page.close();
