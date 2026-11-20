@@ -2211,6 +2211,7 @@ export const zhCN: Record<string, string> = {
   'common.save': '保存',
   'apiAccess.modelDialog.title': '选择模型',
   'apiAccess.modelDialog.summary': '找到 {found} 个 · 已选择 {selected} 个',
+  'apiAccess.modelDialog.notReturnedByUpstream': '上游未返回',
   'apiAccess.modelDialog.deselectAll': '取消全选',
   'apiAccess.modelDialog.selectVisible': '全选当前',
   'apiAccess.modelDialog.unselected': '未选模型',

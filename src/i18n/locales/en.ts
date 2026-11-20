@@ -2212,6 +2212,7 @@ export const en: Record<MessageKey, string> = {
   'common.save': 'Save',
   'apiAccess.modelDialog.title': 'Select Models',
   'apiAccess.modelDialog.summary': '{found} found · {selected} selected',
+  'apiAccess.modelDialog.notReturnedByUpstream': 'Not returned by upstream',
   'apiAccess.modelDialog.deselectAll': 'Deselect All',
   'apiAccess.modelDialog.selectVisible': 'Select Visible',
   'apiAccess.modelDialog.unselected': 'Unselected Models',

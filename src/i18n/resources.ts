@@ -14,6 +14,7 @@ export type MessageVariables = Record<string, string | number>;
 
 export const zhTW: Record<MessageKey, string> = {
   ...createTraditionalMessages(zhCN),
+  'apiAccess.modelDialog.notReturnedByUpstream': '上游未傳回',
   'apiAccess.health.budgetExhausted': '探測預算耗盡',
   'apiAccess.health.budgetExhaustedDetail': '已收到回應，但生成預算已耗盡，無法測量首個正文 Token 的延遲。',
   'apiAccess.health.budgetSummary': '{count} 個探測預算耗盡',

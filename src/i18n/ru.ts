@@ -2371,6 +2371,7 @@ export const ru: Record<MessageKey, string> = {
   'common.save': 'Сохранить',
   'apiAccess.modelDialog.title': 'Select Модели',
   'apiAccess.modelDialog.summary': 'Найдено {found} · выбрано {selected}',
+  'apiAccess.modelDialog.notReturnedByUpstream': 'Не возвращена вышестоящим сервисом',
   'apiAccess.modelDialog.deselectAll': 'Снять выбор со всех',
   'apiAccess.modelDialog.selectVisible': 'Выбрать видимые',
   'apiAccess.modelDialog.unselected': 'Unselected Модели',

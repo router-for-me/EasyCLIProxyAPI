@@ -3854,6 +3854,16 @@ textarea:focus-visible {
   font-size: var(--font-size-meta);
 }
 
+.model-transfer-row .model-transfer-upstream-status {
+  justify-self: start;
+  max-width: 100%;
+  padding: 0 6px;
+  border: 1px solid var(--color-warning-border);
+  border-radius: var(--radius-full);
+  background: var(--color-warning-subtle);
+  color: var(--color-warning-text);
+}
+
 .model-transfer-empty {
   height: 100%;
 }

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { mkdirSync } = require('node:fs');
 
 (async () => {
-  const browser = await chromium.launch({ channel: 'msedge', headless: true, args: ['--no-proxy-server'] });
+  const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || (process.platform === 'win32' ? 'msedge' : undefined), headless: true, args: ['--no-proxy-server'] });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 820 } });
     page.setDefaultTimeout(10000);
@@ -16,6 +16,11 @@ const { mkdirSync } = require('node:fs');
     const right = dialog.getByRole('region', { name: 'Selected Models', exact: true });
     const rows = panel => panel.locator('.model-transfer-row');
     const search = panel => panel.getByRole('textbox');
+    const omission = 'Not returned by upstream';
+    const omittedRows = () => dialog.getByText(omission, { exact: true });
+    const summary = async (found, selected) => {
+      assert.equal(await dialog.locator('.model-transfer-summary').getByRole('status').innerText(), `${found} found · ${selected} selected`);
+    };
     const ready = () => page.waitForFunction(() => {
       const refresh = document.querySelector('.model-transfer-summary button');
       return refresh && !refresh.disabled;
@@ -30,8 +35,63 @@ const { mkdirSync } = require('node:fs');
       await ready();
     };
 
+    await page.goto('http://127.0.0.1:1423/tests/fixtures/model-selection.html?scenario=saved');
+    await page.evaluate(() => { window.fixtureFailFetch = true; });
+    await page.getByRole('button', { name: 'Fetch Models', exact: true }).click();
+    await ready();
+    await summary(0, 2);
+    assert.equal(await omittedRows().count(), 0, 'An initial failure provides no evidence of omissions');
+
+    const refresh = async () => {
+      await dialog.getByRole('button', { name: 'Refresh', exact: true }).click();
+      await ready();
+    };
+    await page.evaluate(() => {
+      window.fixtureFailFetch = false;
+      window.fixtureCatalog = [{ name: 'gpt-001' }, { name: 'custom-local' }];
+    });
+    await refresh();
+    await summary(2, 2);
+    assert.equal(await omittedRows().count(), 0);
+    await page.evaluate(() => { window.fixtureFailFetch = true; });
+    await refresh();
+    await summary(2, 2);
+    assert.equal(await omittedRows().count(), 0, 'A failed refresh cannot replace the last successful catalog');
+
+    await page.evaluate(() => {
+      window.fixtureFailFetch = false;
+      window.fixtureCatalog = [{ name: 'gpt-001' }, { name: 'GPT-001' }, { name: ' GPT-001 ' }];
+    });
+    await refresh();
+    await summary(1, 2);
+    const omitted = right.getByRole('button', { name: 'Remove custom-local', exact: true });
+    assert.equal(await omitted.getByText(omission, { exact: true }).isVisible(), true);
+    assert.equal(await omitted.getByText('Local alias', { exact: true }).isVisible(), true);
+    assert.equal(await omitted.getAttribute('aria-description'), omission);
+    assert.equal(await omittedRows().count(), 1, 'Case and whitespace do not create duplicate rows or omissions');
+    await search(right).fill('focus');
+    assert.equal(await omittedRows().count(), 0);
+    await summary(1, 2);
+    await right.getByRole('button', { name: 'Clear search', exact: true }).click();
+
+    await dialog.getByRole('button', { name: 'Apply Selection (2)', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    assert.deepEqual((await page.evaluate(() => window.fixtureSaved)).models, [
+      { name: ' gpt-001 ', alias: 'Focus' }, { name: 'custom-local', alias: 'Local alias' },
+    ], 'Applying a partial catalog preserves both configured models and their aliases');
+    await page.getByRole('button', { name: 'Fetch Models', exact: true }).click();
+    await ready();
+    await page.evaluate(() => { window.fixtureCatalog = []; });
+    await refresh();
+    await summary(0, 2);
+    assert.equal(await omittedRows().count(), 2, 'A successful empty catalog marks all configured rows');
+    await dialog.getByRole('button', { name: 'Apply Selection (2)', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    assert.equal((await page.evaluate(() => window.fixtureSaved)).models.length, 2);
+
     await open('saved');
     await counts(399, 2);
+    await summary(400, 2);
     await search(right).fill('FOCUS');
     assert.equal(await rows(right).count(), 1, 'Search matches saved aliases, ignoring case');
     await right.getByRole('button', { name: 'Remove Results', exact: true }).click();
@@ -74,7 +134,7 @@ const { mkdirSync } = require('node:fs');
     await dialog.getByRole('button', { name: 'Apply Selection (1)', exact: true }).click();
     await page.getByRole('button', { name: 'Save', exact: true }).click();
     const saved = await page.evaluate(() => window.fixtureSaved);
-    assert.deepEqual(saved.models, [{ name: 'gpt-001', alias: 'Focus' }]);
+    assert.deepEqual(saved.models, [{ name: ' gpt-001 ', alias: 'Focus' }]);
     assert.ok(saved.excludedModelsText.includes('gpt-002'));
 
     await page.getByRole('button', { name: 'Fetch Models', exact: true }).click();
@@ -100,11 +160,15 @@ const { mkdirSync } = require('node:fs');
     await page.getByRole('button', { name: 'Fetch Models', exact: true }).click();
     await ready();
     await counts(1, 1);
+    await summary(1, 1);
+    assert.equal(await omittedRows().count(), 1);
     await page.evaluate(async () => {
       window.fixturePending.shift()();
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     });
     await counts(1, 1);
+    await summary(1, 1);
+    assert.equal(await omittedRows().count(), 1);
     assert.equal(await left.getByRole('button', { name: 'Add fresh-model', exact: true }).count(), 1, 'Cancelled response cannot replace the current list');
 
     await open('excluded');
@@ -136,7 +200,7 @@ const { mkdirSync } = require('node:fs');
     await right.getByRole('button', { name: 'Remove dsv4', exact: true }).click();
     await right.getByRole('button', { name: 'Remove other', exact: true }).click();
     await dialog.getByRole('button', { name: 'Apply Selection (1)', exact: true }).click();
-    const exclusions = page.locator('.provider-advanced-settings textarea').last();
+    const exclusions = page.locator('textarea[placeholder^="model-old-*"]');
     const aliasInput = page.locator('.model-config-entry input').nth(1);
     const expectExclusions = async (extra) => assert.deepEqual((await exclusions.inputValue()).split('\n'), ['manual-model', 'legacy-*', ...extra]);
     await expectExclusions(['dsv4', 'other']);
@@ -174,7 +238,7 @@ const { mkdirSync } = require('node:fs');
     await expectExclusions(['dsv4', 'other']);
 
     const manualRules = 'dsv4\nother\nmanual-model\ndsv*';
-    await page.locator('.provider-advanced-settings summary').press('Enter');
+    await page.locator('.provider-advanced-settings > summary').press('Enter');
     await exclusions.fill(manualRules);
     await aliasInput.fill('other');
     await page.getByRole('button', { name: 'Save', exact: true }).click();
@@ -196,7 +260,7 @@ const { mkdirSync } = require('node:fs');
       }
       await page.screenshot({ path: `misc/model-selection-${locale}-${theme}.png` });
     }
-    console.log('PASS: 400 models, independent searches, filtered transfers, empty selection recovery, keyboard focus, refresh errors, selection persistence, cancel, stale responses, exclusions, alias collisions, alias edits, manual overrides, save, and responsive themes');
+    console.log('PASS: 400 models, independent searches, filtered transfers, empty selection recovery, keyboard focus, refresh errors, upstream omissions, empty catalogs, selection persistence, cancel, stale responses, exclusions, alias collisions, alias edits, manual overrides, save, and responsive themes');
   } finally {
     await browser.close();
   }

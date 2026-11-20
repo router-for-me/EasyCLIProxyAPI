@@ -8,10 +8,11 @@ type ModelSelectionPanelProps = {
   models: ModelOption[];
   selected: boolean;
   loading: boolean;
+  upstreamModelNames: ReadonlySet<string> | null;
   onMove: (models: ModelOption[], selected: boolean) => void;
 };
 
-export function ModelSelectionPanel({ models, selected, loading, onMove }: ModelSelectionPanelProps) {
+export function ModelSelectionPanel({ models, selected, loading, upstreamModelNames, onMove }: ModelSelectionPanelProps) {
   const { t } = useI18n();
   const titleId = useId();
   const searchRef = useRef<HTMLInputElement>(null);
@@ -48,26 +49,35 @@ export function ModelSelectionPanel({ models, selected, loading, onMove }: Model
         ) : null}
       </div>
       <div className="model-transfer-list">
-        {visibleModels.length ? visibleModels.map((model) => (
-          <button
-            type="button"
-            className="model-transfer-row"
-            key={model.name}
-            disabled={loading}
-            aria-label={t(selected ? 'apiAccess.modelDialog.removeModel' : 'apiAccess.modelDialog.addModel', { name: model.name })}
-            onClick={(event) => {
-              if (event.detail === 0) {
-                const next = event.currentTarget.nextElementSibling ?? event.currentTarget.previousElementSibling;
-                if (next instanceof HTMLElement) next.focus();
-                else searchRef.current?.focus();
-              }
-              onMove([model], !selected);
-            }}
-          >
-            <span><strong title={model.name}>{model.name}</strong>{model.alias || model.displayName ? <small title={model.alias || model.displayName}>{model.alias || model.displayName}</small> : null}</span>
-            {selected ? <X size={16} aria-hidden="true" /> : <ArrowRight size={16} aria-hidden="true" />}
-          </button>
-        )) : (
+        {visibleModels.length ? visibleModels.map((model) => {
+          const upstreamMissing = upstreamModelNames !== null && !upstreamModelNames.has(model.name.toLowerCase());
+          const missingLabel = upstreamMissing ? t('apiAccess.modelDialog.notReturnedByUpstream') : '';
+          return (
+            <button
+              type="button"
+              className="model-transfer-row"
+              key={model.name}
+              disabled={loading}
+              aria-label={t(selected ? 'apiAccess.modelDialog.removeModel' : 'apiAccess.modelDialog.addModel', { name: model.name })}
+              aria-description={missingLabel || undefined}
+              onClick={(event) => {
+                if (event.detail === 0) {
+                  const next = event.currentTarget.nextElementSibling ?? event.currentTarget.previousElementSibling;
+                  if (next instanceof HTMLElement) next.focus();
+                  else searchRef.current?.focus();
+                }
+                onMove([model], !selected);
+              }}
+            >
+              <span>
+                <strong title={model.name}>{model.name}</strong>
+                {model.alias || model.displayName ? <small title={model.alias || model.displayName}>{model.alias || model.displayName}</small> : null}
+                {missingLabel ? <small className="model-transfer-upstream-status" title={missingLabel}>{missingLabel}</small> : null}
+              </span>
+              {selected ? <X size={16} aria-hidden="true" /> : <ArrowRight size={16} aria-hidden="true" />}
+            </button>
+          );
+        }) : (
           <EmptyState variant="compact" className="model-transfer-empty">
             {t(query ? 'apiAccess.modelDialog.noMatch' : loading ? 'apiAccess.modelDialog.fetching' : selected ? 'apiAccess.modelDialog.emptySelected' : 'apiAccess.modelDialog.emptyUnselected')}
           </EmptyState>

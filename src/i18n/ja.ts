@@ -2210,6 +2210,7 @@ export const jaOverrides = {
   'common.save': '保存',
   'apiAccess.modelDialog.title': 'モデルを選択',
   'apiAccess.modelDialog.summary': '{found} 件検出 · {selected} 件選択済み',
+  'apiAccess.modelDialog.notReturnedByUpstream': '上流から返されていません',
   'apiAccess.modelDialog.deselectAll': 'すべて選択解除',
   'apiAccess.modelDialog.selectVisible': '表示中をすべて選択',
   'apiAccess.modelDialog.unselected': '未選択のモデル',
