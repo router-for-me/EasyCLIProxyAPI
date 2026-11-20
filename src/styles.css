@@ -830,6 +830,10 @@ textarea:focus-visible {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.core-module-card .version-card-actions.actions-count-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .version-card-actions button {
   display: inline-flex;
   align-items: center;
@@ -1473,7 +1477,8 @@ textarea:focus-visible {
   .app-module-card .version-card-actions.actions-count-3,
   .app-module-card .version-card-actions.has-install-now,
   .app-module-card .version-card-actions:has(> :nth-child(3)),
-  .core-module-card .version-card-actions {
+  .core-module-card .version-card-actions,
+  .core-module-card .version-card-actions.actions-count-2 {
     grid-template-columns: minmax(0, 1fr);
   }
 }
