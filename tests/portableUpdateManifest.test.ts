@@ -175,7 +175,7 @@ describe('跨平台便携更新清单', () => {
   test('only-preview 标签保留发布标签并引用带版本号文件名', async () => {
     const root = await mkdtemp(join(tmpdir(), 'easycli-preview-manifest-test-'));
     try {
-      for (const arch of ['amd64', 'aarch64']) {
+      for (const arch of ['amd64']) {
         await writeFile(
           join(root, `EasyCLIProxyAPI-v0.3.6-preview-Windows-${arch}.zip`),
           `windows ${arch} preview package`,
@@ -190,7 +190,7 @@ describe('跨平台便携更新清单', () => {
         publishedAt: '2026-11-03T00:00:00.000Z',
       });
 
-      for (const arch of ['amd64', 'aarch64']) {
+      for (const arch of ['amd64']) {
         expect(manifest.assets[`windows-${arch}`].url).toEndWith(
           `/releases/download/only-preview/EasyCLIProxyAPI-v0.3.6-preview-Windows-${arch}.zip`,
         );
@@ -199,8 +199,28 @@ describe('跨平台便携更新清单', () => {
         'https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/only-preview',
       );
       expect(manifest.version).toBe('0.3.6-preview');
+      expect(Object.keys(manifest.assets)).toEqual(['windows-amd64']);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 });
+
+for (const tag of ['preview-20261121-0146', 'v0.3.117-preview.20261121-0146']) {
+  test(`Preview ${tag} requires only Windows x64 and refuses other platform manifests`, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'easycli-preview-x64-'));
+    const version = '0.3.117-preview.20261121-0146';
+    try {
+      await writeFile(join(root, `EasyCLIProxyAPI-v${version}-Windows-amd64.zip`), 'preview');
+      const options = { directory: root, tag, version };
+      const manifest = await generatePortableUpdateManifest(options);
+      expect(Object.keys(manifest.assets)).toEqual(['windows-amd64']);
+      expect(manifest.assets['windows-amd64'].url).toContain(`/download/${tag}/`);
+      for (const platform of ['linux', 'darwin']) {
+        await expect(generatePortableUpdateManifest({ ...options, platform })).rejects.toThrow('Windows x64 only');
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}

@@ -3,6 +3,7 @@ import { readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readAppVersion, validateAppVersion } from './version.mjs';
+import { isPreviewVersion } from './release-matrix.mjs';
 import { resolveReleaseNotesHistory, validateReleaseNotes } from './release-notes.mjs';
 
 export function portableUpdateManifestName(platform) {
@@ -81,8 +82,12 @@ export async function generatePortableUpdateManifest({
   }
   if (releaseNotes !== undefined) validateReleaseNotes(releaseNotes);
 
+  const isPreview = isPreviewChannel || isPreviewVersion(version);
+  if (isPreview && normalizedPlatform !== 'windows') {
+    throw new Error('Preview update manifests support Windows x64 only');
+  }
   const assets = {};
-  for (const arch of ['amd64', 'aarch64']) {
+  for (const arch of (isPreview ? ['amd64'] : ['amd64', 'aarch64'])) {
     const filename = `EasyCLIProxyAPI-${packageTag}-${platformSpec.display}-${arch}.${platformSpec.suffix}`;
     const path = join(resolvedDirectory, filename);
     const [contents, metadata] = await Promise.all([readFile(path), stat(path)]);
