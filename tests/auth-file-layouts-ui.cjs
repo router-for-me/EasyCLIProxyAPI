@@ -167,7 +167,7 @@ const openPage = async (page, base) => {
     await openPage(page, base);
     assert.equal(await page.getByRole('radio', { name: 'Stacked', exact: true }).getAttribute('aria-checked'), 'true', 'a chosen layout survives a reload');
     await context.close();
-    // Long translated action labels must also wrap at desktop column widths and
+    // Translated action labels must remain readable at desktop column widths and
     // in the narrower cards exposed by Compact. Use fictional, local IPC only.
     for (const locale of ['en', 'zh-CN', 'zh-TW', 'ja', 'ru']) {
       const context = await browser.newContext({ viewport: { width: 1690, height: 1000 } });
@@ -187,7 +187,8 @@ const openPage = async (page, base) => {
             assert.deepEqual(await page.evaluate(cardActionIssues), [], `${locale} ${theme} ${layout} ${width}: action bounds`);
           }
           const card = page.locator('.auth-file-card:not([data-glance])').first();
-          const deleteButton = card.locator('.auth-list-icon-actions > button').last();
+          await card.locator('.auth-card-more-trigger').click();
+          const deleteButton = card.getByRole('menuitem').last();
           await deleteButton.scrollIntoViewIfNeeded();
           assert.equal(await deleteButton.evaluate(button => {
             const box = button.getBoundingClientRect();

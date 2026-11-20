@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { builtinThemes, createThemeRegistry, normalizeTheme, themeRegistry, themePreview } from '../src/themes/registry';
 import { createThemeApplicator } from '../src/themes/applyTheme';
-import { en, zhCN, zhTW, ja } from '../src/i18n/resources';
+import { en, zhCN, zhTW, ja, ru } from '../src/i18n/resources';
 import { localizeThemeLabel, type PlatformWindowMaterial, type ThemeBackdrop, type ThemeDefinition } from '../src/themes/types';
 import { warmSand } from '../src/themes/warmSand';
 import { graphite } from '../src/themes/graphite';
@@ -32,6 +32,22 @@ const rgbContrast = (foreground: number[], background: number[]) => {
 const contrast = (foreground: string, background: string) => rgbContrast(rgb(foreground), rgb(background));
 
 describe('theme registry and application', () => {
+  test('the built-in light card has a localized description without changing its palette', () => {
+    const light = themeRegistry.get('light')!;
+    expect(light.descriptionKey).toBe('app.theme.light.description');
+    for (const messages of [en, zhCN, zhTW, ja, ru]) expect(messages[light.descriptionKey!].trim().length).toBeGreaterThan(12);
+    expect(light.tokens).toEqual({});
+    expect(light.windowBackground).toBe('#ffffff');
+  });
+
+  test('the built-in dark card has a localized description without changing its palette', () => {
+    const dark = themeRegistry.get('dark')!;
+    expect(dark.descriptionKey).toBe('app.theme.dark.description');
+    for (const messages of [en, zhCN, zhTW, ja, ru]) expect(messages[dark.descriptionKey!].trim().length).toBeGreaterThan(12);
+    expect(dark.tokens).toEqual({});
+    expect(dark.windowBackground).toBe('#0b0d11');
+  });
+
   test('configured thumbs apply to both states and permit an independent active override', () => {
     for (const theme of [customControl, { ...sakura, tokens: { ...sakura.tokens, ...customControl.tokens } }]) {
       expect(themeMaterialTokens(theme).controlThumb).toBe('#843E64');
