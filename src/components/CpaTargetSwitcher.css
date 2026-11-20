@@ -31,7 +31,10 @@
     inset-inline-start: 0;
     display: grid;
     gap: 2px;
-    width: min(258px, calc(100vw - 32px));
+    width: 100%;
+    min-width: 180px;
+    max-width: calc(100vw - 32px);
+    box-sizing: border-box;
     padding: 5px;
     border: 1px solid var(--color-border-strong);
     border-radius: var(--radius-md);
@@ -39,9 +42,24 @@
     color: var(--color-text-primary);
     box-shadow: var(--config-dialog-shadow);
   }
-  .cpa-target-current { display: grid; gap: 3px; padding: 6px 8px; color: var(--color-text-secondary); font-size: 12px; }
-  .cpa-target-current code { overflow-wrap: anywhere; }
-  .cpa-target-menu > button { display: flex; align-items: center; gap: 8px; padding: 8px; text-align: start; border-radius: var(--radius-md); }
+  .cpa-target-menu > button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 8px;
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 13px;
+    text-align: start;
+    cursor: pointer;
+  }
+  .cpa-target-option-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cpa-target-check { margin-inline-start: auto; }
+  .cpa-target-menu > button:focus-visible { outline: 2px solid var(--ui-focus-ring); outline-offset: -2px; }
   .cpa-target-menu > button > svg { flex: none; }
   .cpa-target-menu > button:is(:hover,:focus-visible) { background: var(--color-surface-hover); }
   .sidebar > .cpa-target-switcher { flex-shrink: 0; margin-bottom: 10px; }

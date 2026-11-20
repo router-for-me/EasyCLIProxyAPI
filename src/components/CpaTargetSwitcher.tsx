@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ChevronDown, Link2, Monitor, Server, Undo2 } from 'lucide-react';
+import { Check, ChevronDown, Link2, Monitor, Server, Undo2 } from 'lucide-react';
 import { useI18n } from '../i18n';
 import './CpaTargetSwitcher.css';
 
@@ -19,7 +19,7 @@ export function CpaTargetSwitcher(props: Props) {
   const mode = t(props.remote ? 'remote.remote' : 'remote.localLabel');
   const endpoint = props.remote ? props.endpoint : null;
   const host = endpoint ? new URL(endpoint).host : undefined;
-  const items = () => Array.from(menu.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+  const items = () => Array.from(menu.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"], [role="menuitemradio"]') ?? []);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -88,9 +88,12 @@ export function CpaTargetSwitcher(props: Props) {
         <ChevronDown size={13} aria-hidden="true" />
       </button>
       {open ? <div className="cpa-target-menu" id={menuId} ref={menu} role="menu" aria-label={t('remote.targetMenu')}>
-        <div className="cpa-target-current" role="presentation">{t('remote.activeMode', { mode })}
-          {endpoint ? <code>{endpoint}</code> : null}
-        </div>
+        <button type="button" role="menuitemradio" aria-checked={true} tabIndex={-1}
+          title={endpoint ?? undefined} onClick={closeAndFocus}>
+          <Icon size={15} aria-hidden="true" />
+          <span className="cpa-target-option-text">{host ?? mode}</span>
+          <Check className="cpa-target-check" size={15} aria-hidden="true" />
+        </button>
         {props.remote ? <>
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => select(props.onChangeServer)}><Link2 size={15} aria-hidden="true" />{t('remote.changeServer')}</button>
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => select(props.onReturnLocal)}><Undo2 size={15} aria-hidden="true" />{t('remote.returnLocal')}</button>

@@ -21,7 +21,6 @@ const RESPONSE_LIMIT: usize = 256 * 1024;
 #[serde(rename_all = "camelCase")]
 pub(crate) enum RemoteError {
     InvalidEndpoint,
-    InsecureEndpoint,
     InvalidKey,
     KeyRequired,
     ProfileInvalid,
@@ -214,13 +213,6 @@ fn parse_endpoint(raw: &str) -> Result<Url, RemoteError> {
         || v6.is_some_and(|ip| ip.is_unspecified() || ip.is_multicast())
     {
         return Err(RemoteError::InvalidEndpoint);
-    }
-    if url.scheme() == "http"
-        && host != "localhost"
-        && !v4.is_some_and(|ip| ip.is_loopback() || ip.is_private())
-        && !v6.is_some_and(|ip| ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00)
-    {
-        return Err(RemoteError::InsecureEndpoint);
     }
     let base = format!("{}/", url.path().trim_end_matches('/'));
     url.set_path(&base);

@@ -77,13 +77,11 @@ export function CpaConnectionDialog({ connection, close, onChange }: {
         </div>
         <div className="cpa-connection-field">
           <label htmlFor={`${managementHelpId}-input`}>{t('remote.managementKey')}</label>
-          <input id={`${managementHelpId}-input`} aria-describedby={managementHelpId} className="config-dialog-text-input"
+          <input id={`${managementHelpId}-input`} className="config-dialog-text-input"
             type="password" value={key} disabled={busy} maxLength={1024} autoComplete="new-password"
             placeholder={endpoint === connection.endpoint ? t('remote.savedKey') : undefined}
             onChange={e => { setKey(e.target.value); setError(undefined); }} />
-          <p id={managementHelpId} className="cpa-connection-hint">{t('remote.managementHint')}</p>
         </div>
-        <p className="cpa-connection-hint">{t('remote.httpHint')}</p>
         {error ? <p ref={noticeRef} role="alert" className="cpa-error">{t(error)}</p> : null}
       </div>
     </Dialog>

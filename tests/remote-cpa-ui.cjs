@@ -32,12 +32,29 @@ async function assertConnectionBounds(page, dialog, { width, height }, mustScrol
   return `${width}×${height}: panel ${Math.round(panel.width)}×${Math.round(panel.height)}, body ${geometry.clientHeight}/${geometry.scrollHeight}, actions bottom ${Math.round(Math.max(...controls.map(button => button.bottom)))}`;
 }
 
+async function assertSelectedTarget(menu, name) {
+  const selected = menu.getByRole('menuitemradio', { name, exact: true });
+  assert.equal(await selected.getAttribute('aria-checked'), 'true');
+  assert.equal(await selected.locator('.cpa-target-check[aria-hidden="true"]').count(), 1);
+  assert.equal(await menu.locator('.cpa-target-current').count(), 0);
+  assert.ok(!/Current:|当前：/.test(await menu.textContent()));
+  const style = await selected.evaluate(button => {
+    const css = getComputedStyle(button);
+    const trigger = button.closest('.cpa-target-switcher').querySelector('.cpa-target-trigger');
+    return { border: css.borderTopWidth, menuWidth: button.parentElement.getBoundingClientRect().width,
+      triggerWidth: trigger.getBoundingClientRect().width };
+  });
+  assert.equal(style.border, '0px');
+  assert.ok(style.menuWidth >= style.triggerWidth - 1 && style.menuWidth <= Math.max(180, style.triggerWidth) + 1,
+    JSON.stringify(style));
+}
+
 async function assertMenuBounds(page, menu) {
   const box = await menu.boundingBox();
   const view = page.viewportSize();
   assert.ok(box.x >= 0 && box.x + box.width <= view.width && box.y >= 0 && box.y + box.height <= view.height,
     `menu is clipped: ${JSON.stringify({ box, view })}`);
-  assert.ok(await menu.getByRole('menuitem').first().evaluate(button => {
+  assert.ok(await menu.locator('[role="menuitem"], [role="menuitemradio"]').first().evaluate(button => {
     const rect = button.getBoundingClientRect();
     return button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
   }), 'menu action must be unobscured');
@@ -63,7 +80,17 @@ async function assertMenuBounds(page, menu) {
     assert.equal(await page.locator('main').getByRole('button', { name: 'Connect Remote CPA' }).count(), 0);
     await opener.press('ArrowDown');
     assert.equal(await opener.getAttribute('aria-expanded'), 'true');
+    const localSelected = menu.getByRole('menuitemradio', { name: 'Built-in CPA', exact: true });
+    await assertSelectedTarget(menu, 'Built-in CPA');
+    assert.ok(await localSelected.evaluate(el => document.activeElement === el));
+    await page.keyboard.press('ArrowDown');
     assert.ok(await connectItem.evaluate(el => document.activeElement === el));
+    await page.keyboard.press('ArrowUp');
+    await localSelected.click();
+    assert.equal(await menu.count(), 0);
+    assert.ok(await opener.evaluate(el => document.activeElement === el));
+    assert.equal(await page.getByRole('dialog').count(), 0);
+    await opener.press('ArrowDown');
     await assertMenuBounds(page, menu);
     await page.keyboard.press('Escape');
     assert.equal(await menu.count(), 0);
@@ -152,9 +179,19 @@ async function assertMenuBounds(page, menu) {
     await remoteTrigger.press('ArrowUp');
     assert.ok(await focused(returnItem));
     await page.keyboard.press('Home');
+    const remoteSelected = menu.getByRole('menuitemradio', { name: '127.0.0.1:8888', exact: true });
+    assert.ok(await focused(remoteSelected));
+    await assertSelectedTarget(menu, '127.0.0.1:8888');
+    await page.keyboard.press('ArrowDown');
     assert.ok(await focused(changeItem));
+    await page.keyboard.press('Home');
+    await remoteSelected.press('Enter');
+    assert.equal(await menu.count(), 0);
+    assert.equal(await page.getByRole('dialog').count(), 0);
+    assert.equal(await remoteTrigger.count(), 1);
+    await remoteTrigger.press('ArrowDown');
     await assertMenuBounds(page, menu);
-    assert.equal(await menu.getByText('http://127.0.0.1:8888/', { exact: true }).count(), 1);
+    assert.equal(await menu.getByText('http://127.0.0.1:8888/', { exact: true }).count(), 0);
     await page.keyboard.press('Escape');
     assert.ok(await focused(remoteTrigger));
     const reviewed = page.getByRole('button', { name: 'I reviewed the latest keys' });
@@ -286,6 +323,7 @@ async function assertMenuBounds(page, menu) {
     await chinese.getByRole('button', { name: '内置 CPA', exact: true }).click();
     const cnMenu = chinese.getByRole('menu', { name: 'CPA 目标' });
     await assertMenuBounds(chinese, cnMenu);
+    await assertSelectedTarget(cnMenu, '内置 CPA');
     await cnMenu.getByRole('menuitem', { name: '连接远程 CPA' }).click();
     const cnDialog = chinese.getByRole('dialog', { name: '连接远程 CPA' });
     await cnDialog.getByLabel('CPA 服务地址').fill(originA);
@@ -300,6 +338,7 @@ async function assertMenuBounds(page, menu) {
     await chinese.getByText('客户端密钥：1 个').waitFor();
     await chinese.getByRole('button', { name: '远程 CPA: 127.0.0.1:8888' }).click();
     await assertMenuBounds(chinese, cnMenu);
+    await assertSelectedTarget(cnMenu, '127.0.0.1:8888');
     assert.ok(await chinese.locator('.cpa-remote-workspace').evaluate(node => node.scrollWidth <= node.clientWidth));
     await chinese.close();
     assert.deepEqual(pageErrors, []);

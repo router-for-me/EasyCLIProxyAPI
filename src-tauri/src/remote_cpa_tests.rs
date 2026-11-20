@@ -9,7 +9,7 @@ const KEY: &str = "fixture-management-key";
 const ETAG: &str = "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"";
 
 #[test]
-fn validates_endpoint_base_and_keeps_plain_http_private() {
+fn validates_endpoint_base_and_accepts_http_and_https() {
     for (input, expected) in [
         (" http://127.0.0.1:8317 ", "http://127.0.0.1:8317/"),
         ("http://localhost:8317", "http://localhost:8317/"),
@@ -28,11 +28,9 @@ fn validates_endpoint_base_and_keeps_plain_http_private() {
         "http://example.com",
         "http://8.8.8.8",
         "http://169.254.169.254",
+        "http://[2001:db8::1]/cpa",
     ] {
-        assert_eq!(
-            parse_endpoint(input).unwrap_err(),
-            RemoteError::InsecureEndpoint
-        );
+        assert_eq!(parse_endpoint(input).unwrap().as_str(), format!("{input}/"));
     }
     for input in [
         "ftp://127.0.0.1",

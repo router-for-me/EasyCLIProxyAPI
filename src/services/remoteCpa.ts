@@ -36,7 +36,7 @@ export function parseClientKeys(text: string): string[] {
 // Only display closed-set native error codes. Never render raw exceptions (which
 // can contain request arguments, URLs, authorization headers, or response bodies).
 const remoteErrors = new Set([
-  'invalidEndpoint', 'insecureEndpoint', 'invalidKey', 'keyRequired', 'profileInvalid', 'profileWrite',
+  'invalidEndpoint', 'invalidKey', 'keyRequired', 'profileInvalid', 'profileWrite',
   'busy', 'notActive', 'localRunning', 'endpointChanged', 'notAuthorized', 'unreachable', 'transport',
   'redirect', 'unsupported', 'serverRejected', 'invalidResponse', 'conflict', 'invalidKeys',
   'keyMatchesManagement', 'saveUnconfirmed',
