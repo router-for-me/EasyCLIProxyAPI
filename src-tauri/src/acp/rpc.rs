@@ -70,6 +70,7 @@ impl Client {
     // official login-result log, never another profile or credential storage.
     pub(super) fn account_email(&self, profile: &Path) -> Option<String> {
         let directory = profile.join(".gemini/antigravity-cli/log");
+        super::accounts::safe_path(&directory).ok()?;
         let suffix = format!("-{}.log", self.child.id());
         let path = std::fs::read_dir(directory)
             .ok()?
@@ -79,6 +80,7 @@ impl Client {
                 let name = name.to_string_lossy();
                 name.starts_with("acp-server-")
                     && name.ends_with(&suffix)
+                    && entry.file_type().is_ok_and(|kind| kind.is_file())
                     && entry
                         .metadata()
                         .ok()
@@ -87,6 +89,7 @@ impl Client {
             })
             .max_by_key(|entry| entry.file_name())?
             .path();
+        super::accounts::safe_path(&path).ok()?;
         let mut file = std::fs::File::open(path).ok()?;
         let length = file.metadata().ok()?.len();
         file.seek(SeekFrom::Start(length.saturating_sub(512 * 1024)))
@@ -326,7 +329,25 @@ impl Client {
         &mut self,
         cancel: &Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<(), String> {
-        let response = self.call("initialize", json!({"protocolVersion":1,"clientCapabilities":{},"clientInfo":{"name":"EasyCLIProxyAPI","version":env!("CARGO_PKG_VERSION")}}), cancel, |_| {})?;
+        self.initialize_with_auth(cancel, false).map(|_| ())
+    }
+
+    pub(super) fn initialize_manual(&mut self, cancel: &Arc<std::sync::atomic::AtomicBool>) -> Result<(), String> {
+        let response = self.initialize_with_auth(cancel, true)?;
+        if response["authMethods"].as_array().is_some_and(|methods| methods.iter().any(|method| {
+            method["id"] == "terminal-login" && method["type"] == "terminal"
+                && method["args"] == json!(["--login"])
+                && method.get("env").is_none_or(|env| env.is_null() || env.as_object().is_some_and(|env| env.is_empty()))
+        })) { Ok(()) } else { Err(super::manual_auth::UNSUPPORTED.into()) }
+    }
+
+    fn initialize_with_auth(
+        &mut self,
+        cancel: &Arc<std::sync::atomic::AtomicBool>,
+        manual: bool,
+    ) -> Result<Value, String> {
+        let capabilities = if manual { json!({"auth":{"terminal":true}}) } else { json!({}) };
+        let response = self.call("initialize", json!({"protocolVersion":1,"clientCapabilities":capabilities,"clientInfo":{"name":"EasyCLIProxyAPI","version":env!("CARGO_PKG_VERSION")}}), cancel, |_| {})?;
         self.supports_logout = response["agentCapabilities"]["auth"]
             .get("logout")
             .is_some_and(|value| value.is_object() || value == true);
@@ -341,7 +362,7 @@ impl Client {
         } else {
             SystemPromptSupport::Unavailable
         };
-        Ok(())
+        Ok(response)
     }
 
     pub(super) fn logout(
@@ -454,6 +475,10 @@ fn email_from_auth_log(log: &str) -> Option<String> {
         .split_once(',')?
         .0
         .trim();
+    valid_account_email(email).map(str::to_owned)
+}
+
+pub(super) fn valid_account_email(email: &str) -> Option<&str> {
     let (local, domain) = email.split_once('@')?;
     if local.is_empty()
         || !domain.contains('.')
@@ -465,7 +490,7 @@ fn email_from_auth_log(log: &str) -> Option<String> {
     {
         return None;
     }
-    Some(email.to_string())
+    Some(email)
 }
 
 impl Drop for Client {

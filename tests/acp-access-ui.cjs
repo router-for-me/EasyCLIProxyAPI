@@ -45,7 +45,7 @@ const path = require('node:path');
       assert.match(await dialog.locator('.acp-account-empty').textContent(), text(/尚未添加账号/, /No saved accounts/));
       await button(text('新增账号', 'Add account')).click();
       let editor = page.locator('.acp-account-editor');
-      let label = page.getByLabel(text('账号备注', 'Account label'), { exact: true });
+      let label = editor.locator('.acp-note-field > input[type=text]').first();
       await label.fill('  ');
       await editor.getByRole('button', { name: text('新增并登录', 'Add and sign in'), exact: true }).click();
       await editor.locator('#acp-note-error').waitFor();
@@ -74,8 +74,9 @@ const path = require('node:path');
       assert.match(await page.locator('.acp-probe-result').textContent(), /ACP_OK/);
       const apiSwitch = page.locator('.acp-api-switch input');
       assert.equal(await apiSwitch.isChecked(), false, 'sign-in never starts API');
-      await apiSwitch.check();
+      await apiSwitch.click();
       await idle();
+      await page.waitForFunction(() => document.querySelector('.acp-api-switch input')?.checked);
       await page.locator('.acp-api-details > summary').click();
       assert.match(await page.locator('.acp-api-details').textContent(), /acp\/gemini-3.8-flash-low/);
       await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -84,8 +85,27 @@ const path = require('node:path');
 
       await manage.click();
       await button(text('新增账号', 'Add account')).click();
+      await page.evaluate(() => {
+        const invoke = window.__TAURI_INTERNALS__.invoke;
+        let rejectPending;
+        window.__TAURI_INTERNALS__.invoke = (command, args, options) => {
+          if (command === 'add_acp_account' && args?.label === 'Cancelled') {
+            return new Promise((_, reject) => { rejectPending = reject; });
+          }
+          if (command === 'cancel_acp_operation' && rejectPending) {
+            rejectPending(new Error('ACP request cancelled'));
+            rejectPending = undefined;
+            return Promise.resolve();
+          }
+          return invoke(command, args, options);
+        };
+      });
+      const otherBrowser = editor.getByRole('button', { name: text('使用其他浏览器', 'Use another browser'), exact: true });
+      const authResponse = editor.getByLabel(text('授权码或回跳页面完整网址', 'Authorization code or full callback URL'));
+      assert.equal(await otherBrowser.isEnabled(), true);
       await label.fill('Cancelled');
       await editor.getByRole('button', { name: text('新增并登录', 'Add and sign in'), exact: true }).click();
+      assert.equal(await authResponse.count(), 0, 'automatic Add never shows the paste field');
       await editor.getByRole('button', { name: text('取消操作', 'Cancel operation'), exact: true }).click();
       await idle();
       assert.equal(await dialog.locator('.acp-managed-account').count(), 1, 'cancelled addition leaves no record');
@@ -94,14 +114,81 @@ const path = require('node:path');
       assert.match(await editor.locator('.acp-action-notice').textContent(), /ACP request cancelled/);
       assert.equal(await label.getAttribute('aria-invalid'), 'false', 'cancelled authorization does not invalidate a valid label');
       assert.equal(await editor.locator('#acp-note-error').count(), 0);
-      await label.fill('Work');
+      await page.evaluate(() => {
+        const invoke = window.__TAURI_INTERNALS__.invoke;
+        window.__TAURI_INTERNALS__.invoke = async (command, args, options) => {
+          if (command === 'add_acp_account' && args?.label === 'Already saved' && !args.onLink) {
+            throw new Error('This Google account is already saved. Add a different Google account, or select the existing account');
+          }
+          if (command === 'add_acp_account' && args?.label === 'Cannot compare') {
+            throw new Error('Google identity could not be verified against saved accounts. The account was not added');
+          }
+          return invoke(command, args, options);
+        };
+      });
+      await label.fill('Already saved');
       await editor.getByRole('button', { name: text('新增并登录', 'Add and sign in'), exact: true }).click();
       await idle();
+      assert.match(await editor.locator('.acp-action-notice').textContent(), text(/此 Google 账号已在列表中/, /This Google account is already in the list/));
+      assert.equal(await dialog.locator('.acp-managed-account').count(), 1);
+      assert.match(await dialog.locator('.acp-managed-account[data-current=true]').textContent(), /personal.acp@example.test/);
+      assert.equal(await apiSwitch.isChecked(), true);
+      assert.equal(await otherBrowser.isEnabled(), true, 'a duplicate permits immediate manual retry');
+      assert.equal(await authResponse.count(), 0);
+      await label.fill('Cannot compare');
+      await editor.getByRole('button', { name: text('新增并登录', 'Add and sign in'), exact: true }).click();
+      await idle();
+      assert.match(await editor.locator('.acp-action-notice').textContent(), text(/无法确认这是不同的 Google 账号/, /Could not verify that this is a different Google account/));
+      assert.equal(await dialog.locator('.acp-managed-account').count(), 1);
+      assert.match(await dialog.locator('.acp-managed-account[data-current=true]').textContent(), /personal.acp@example.test/);
+      assert.equal(await apiSwitch.isChecked(), true);
+      await page.evaluate(() => {
+        const tauri = window.__TAURI_INTERNALS__;
+        const invoke = tauri.invoke;
+        let pending;
+        tauri.invoke = (command, args, options) => {
+          if (command === 'add_acp_account_manual' && args?.label === 'Work') {
+            return new Promise((resolve, reject) => {
+              const channelId = args.onLink.id;
+              pending = { resolve, reject, args, options };
+              tauri.runCallback(channelId, { index: 0, message: { attempt: 'manual-fixture', url: 'https://accounts.google.com/o/oauth2/auth?state=synthetic' } });
+            });
+          }
+          if (command === 'submit_acp_account_authorization') {
+            if (!pending || args.attempt !== 'manual-fixture' || args.response !== '4/synthetic') {
+              return Promise.reject(new Error('Enter the authorization code or the official Antigravity callback URL'));
+            }
+            const original = pending;
+            pending = undefined;
+            invoke('add_acp_account', original.args, original.options).then(original.resolve, original.reject);
+            tauri.runCallback(original.args.onLink.id, { index: 1, end: true });
+            return Promise.resolve();
+          }
+          return invoke(command, args, options);
+        };
+      });
+      await label.fill('Work');
+      await otherBrowser.click();
+      const authLink = editor.getByLabel(text('Google 授权链接（选中后复制）', 'Google authorization link (select and copy)'));
+      await authLink.waitFor();
+      assert.match(await authLink.inputValue(), /^https:\/\/accounts\.google\.com\//);
+      assert.equal(await dialog.locator('.acp-managed-account').count(), 1, 'no commit before terminal authorization');
+      const submit = editor.getByRole('button', { name: text('完成授权', 'Complete authorization'), exact: true });
+      await authResponse.fill('invalid');
+      await submit.click();
+      assert.match(await editor.locator('.acp-form-error').textContent(), text(/请粘贴本次授权码/, /Paste the code/));
+      await authResponse.fill('4/synthetic');
+      await submit.click();
       await editor.waitFor({ state: 'detached' });
       assert.equal(await dialog.locator('.acp-managed-account').count(), 2);
       let current = dialog.locator('.acp-managed-account[data-current=true]');
       assert.match(await current.textContent(), /Work/);
       assert.equal(await apiSwitch.isChecked(), true);
+      if (process.env.ECPA_ACP_ADD_ONLY === '1') {
+        console.log('PASS browser-mock ACP add regression:', locale);
+        await page.close();
+        continue;
+      }
       await current.getByRole('button', { name: text('修改“Work”的备注', 'Edit label for “Work”'), exact: true }).click();
       const longLabel = 'Work '.repeat(16).trim();
       await label.fill(longLabel);

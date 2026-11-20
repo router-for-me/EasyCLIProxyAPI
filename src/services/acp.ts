@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { Channel, invoke } from '@tauri-apps/api/core';
 
 export type AcpAccount = { id: string; label: string; email?: string | null; saved: boolean };
 export type AcpModel = { id: string; name: string; reasoningLevels?: string[] };
@@ -20,11 +20,19 @@ export type AcpStatus = {
 export type AcpProbeResult = {
   text: string; model: string; durationMs: number; firstTextMs: number | null; stopReason: string;
 };
+export type AcpAuthorizationLink = { attempt: string; url: string };
 export const acpApi = {
   status: () => invoke<AcpStatus>('get_acp_status'),
   connect: (login: boolean) => invoke<AcpStatus>('acp_connect', { login }),
   switchAccount: (accountId: string) => invoke<AcpStatus>('switch_acp_account', { accountId }),
   addAccount: (label: string) => invoke<AcpStatus>('add_acp_account', { label }),
+  addAccountManual: (label: string, receive: (link: AcpAuthorizationLink) => void) => {
+    const onLink = new Channel<AcpAuthorizationLink>();
+    onLink.onmessage = receive;
+    return invoke<AcpStatus>('add_acp_account_manual', { label, onLink });
+  },
+  submitAccountAuthorization: (attempt: string, response: string) =>
+    invoke<void>('submit_acp_account_authorization', { attempt, response }),
   reloginAccount: () => invoke<AcpStatus>('relogin_acp_account'),
   renameAccount: (accountId: string, label: string) => invoke<AcpStatus>('rename_acp_account', { accountId, label }),
   removeAccount: (accountId: string) => invoke<AcpStatus>('remove_acp_account', { accountId }),
@@ -53,12 +61,18 @@ const accountErrorKeys: Record<string, string> = {
   'Invalid ACP account registry': 'acp.errorAccountRegistry',
   'An ACP operation is already running': 'acp.errorAccountBusy',
   'Wait for the current ACP operation to finish': 'acp.errorAccountBusy',
+  'The installed Antigravity CLI does not offer supported terminal sign-in': 'acp.errorManualUnsupported',
+  'Antigravity terminal sign-in did not complete': 'acp.errorManualFailed',
+  'Enter the authorization code or the official Antigravity callback URL': 'acp.errorManualInput',
+  'This Antigravity authorization request is no longer waiting for a code': 'acp.errorManualInactive',
   'ACP request cancelled': 'acp.errorCancelled',
   'Account saved; connection not verified: ACP request cancelled': 'acp.errorSavedCancelled',
 };
 export function acpErrorMessageKey(error: string): string | null {
   const exact = accountErrorKeys[error];
   if (exact) return exact;
+  if (error.startsWith('This Google account is already saved.')) return 'acp.errorDuplicateIdentity';
+  if (error.startsWith('Google identity could not be verified against saved accounts.')) return 'acp.errorIdentityUnknown';
   if (error.includes('ACP API provider configuration sync failed: ')) return 'acp.errorProviderSyncFailed';
   if (error.startsWith('Google authorization completed, but the account registry could not be saved. Login data is preserved at ')) return 'acp.errorSaveAuthorizedAccount';
   if (error.startsWith('Account saved; connection not verified: ')) return 'acp.errorSavedUnverified';

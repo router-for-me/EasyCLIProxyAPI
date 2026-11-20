@@ -8,7 +8,7 @@ import { Select } from '../components/Select';
 import { Switch } from '../components/Switch';
 import { useI18n } from '../i18n';
 import { usePrivacyMask } from '../privacy';
-import { acpApi, acpErrorMessageKey, type AcpAccount, type AcpStatus } from '../services/acp';
+import { acpApi, acpErrorMessageKey, type AcpAccount, type AcpAuthorizationLink, type AcpStatus } from '../services/acp';
 import { openExternalUrl } from '../services/appSettings';
 import './AcpAccessPage.css';
 
@@ -104,6 +104,10 @@ export function AcpAccessPage() {
   const [editor, setEditor] = useState<{ account?: AcpAccount } | null>(null);
   const [accountLabel, setAccountLabel] = useState('');
   const [formError, setFormError] = useState('');
+  const [manualLink, setManualLink] = useState<AcpAuthorizationLink | null>(null);
+  const [manualResponse, setManualResponse] = useState('');
+  const [manualError, setManualError] = useState('');
+  const [manualSubmitting, setManualSubmitting] = useState(false);
   const { askConfirmation, confirmationDialog } = useConfirmation();
   const [copied, setCopied] = useState(false);
   const mounted = useRef(false);
@@ -192,7 +196,7 @@ export function AcpAccessPage() {
     setAccountLabel(account?.label || ''); setFormError(''); setError(''); setEditor({ account });
   };
   const closeEditor = () => { if (!busy) { setEditor(null); setFormError(''); } };
-  const saveAccount = async () => {
+  const saveAccount = async (manual = false) => {
     if (!editor || busy) return;
     const trimmed = accountLabel.trim();
     if (!trimmed || [...trimmed].length > 80 || /[\u0000-\u001f\u007f-\u009f]/u.test(accountLabel)) {
@@ -202,13 +206,27 @@ export function AcpAccessPage() {
     const editing = editor.account;
     const previousId = status?.activeAccount;
     const ok = await run(editing ? 'rename' : 'login', () => editing
-      ? acpApi.renameAccount(editing.id, trimmed) : acpApi.addAccount(trimmed));
+      ? acpApi.renameAccount(editing.id, trimmed) : !manual ? acpApi.addAccount(trimmed) : acpApi.addAccountManual(trimmed, link => {
+        if (mounted.current) setManualLink(link);
+      }));
+    if (mounted.current) { setManualLink(null); setManualResponse(''); setManualError(''); setManualSubmitting(false); }
     if (mounted.current) {
       const current = await refresh().catch(() => null);
       // Official authorization may have committed before model verification
       // failed or was cancelled. Return to its saved row, not an "add" retry.
       if (ok || (!editing && current && current.activeAccount !== previousId)) setEditor(null);
     }
+  };
+  const submitManualResponse = async () => {
+    if (!manualLink || !manualResponse.trim() || manualSubmitting) return;
+    setManualSubmitting(true); setManualError('');
+    try {
+      await acpApi.submitAccountAuthorization(manualLink.attempt, manualResponse.trim());
+      setManualResponse(''); setManualLink(null);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setManualError(t(acpErrorMessageKey(message) || 'acp.errorManualFailed'));
+    } finally { setManualSubmitting(false); }
   };
   const confirmAccountAction = async (kind: 'remove' | 'logout' | 'relogin', account: AcpAccount) => {
     if (busy) return;
@@ -340,11 +358,24 @@ export function AcpAccessPage() {
       </div>
     </Dialog> : null}
     {editor ? <Dialog as="form" size="sm" className="config-dialog acp-account-dialog acp-account-editor" title={t(editor.account ? 'acp.editNote' : 'acp.newAccount')} onClose={closeEditor} closeDisabled={busy} busy={busy} initialFocusRef={labelInput}
-      onSubmit={event => { event.preventDefault(); void saveAccount(); }} actionsClassName="acp-dialog-actions"
-      actions={<><button type="button" className="secondary-button" disabled={busy} onClick={closeEditor}>{t('common.cancel')}</button><button type="submit" className="primary-button" disabled={busy || (!editor.account && !hasCli)}>{t(editor.account ? 'common.save' : 'acp.addAccount')}</button></>}>
+      onSubmit={event => { event.preventDefault(); if (manualLink) void submitManualResponse(); else void saveAccount(); }} actionsClassName="acp-dialog-actions"
+      actions={<><button type="button" className="secondary-button" disabled={busy} onClick={closeEditor}>{t('common.cancel')}</button><button type="submit" className="primary-button" disabled={manualLink ? manualSubmitting || !manualResponse.trim() : busy || (!editor.account && !hasCli)}>{t(manualLink ? 'acp.submitManual' : editor.account ? 'common.save' : 'acp.addAccount')}</button></>}>
       <label className="acp-note-field"><span className="acp-note-label"><span>{t('acp.accountNote')}</span><span className="acp-note-count" aria-hidden="true">{[...accountLabel.trim()].length}/80</span></span><input ref={labelInput} type="text" value={accountLabel} disabled={busy} aria-invalid={Boolean(formError)} aria-describedby={formError ? 'acp-note-error' : undefined} placeholder={t('acp.accountLabelPlaceholder')} onChange={event => { setAccountLabel(event.currentTarget.value); setFormError(''); }} /></label>
+      {manualLink ? <div className="acp-note-field">
+        <p>{t('acp.manualInstructions')}</p>
+        <label className="acp-note-field">{t('acp.manualLink')}
+          <input type="text" readOnly value={manualLink.url} onFocus={event => event.currentTarget.select()} spellCheck={false} autoComplete="off" />
+        </label>
+        <label className="acp-note-field">{t('acp.manualResponse')}
+          <input type="password" value={manualResponse} onChange={event => { setManualResponse(event.currentTarget.value); setManualError(''); }} disabled={manualSubmitting} maxLength={3072} autoComplete="off" spellCheck={false} />
+        </label>
+        {manualError ? <p className="acp-form-error" role="alert">{manualError}</p> : null}
+      </div> : null}
       {formError ? <p id="acp-note-error" className="acp-form-error" role="alert">{formError}</p> : null}
       {!confirmationDialog ? actionNotice : null}
+      {!editor.account && !manualLink ? <div>
+        <button type="button" className="secondary-button" disabled={busy || !hasCli} onClick={() => void saveAccount(true)}>{t('acp.useAnotherBrowser')}</button>
+      </div> : null}
       {operationStatus}
     </Dialog> : null}
     {confirmationDialog}

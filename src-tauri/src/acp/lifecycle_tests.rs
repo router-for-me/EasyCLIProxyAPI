@@ -18,6 +18,30 @@ fn lifecycle_rpc_helper() {
                 .unwrap();
             writeln!(log, "{method}").unwrap();
         }
+        if method == "authenticate" {
+            assert_eq!(value["params"], json!({"methodId":"oauth-personal"}));
+        }
+        let late_identity = matches!(mode.as_str(), "late-distinct" | "late-duplicate");
+        if (method == "authenticate" && !late_identity && mode != "auth-fails")
+            || (method == "session/new" && late_identity)
+        {
+            if let Some(profile) = std::env::var_os("ECPA_ACP_LIFECYCLE_PROFILE") {
+                let path = PathBuf::from(profile).join(".gemini/antigravity-cli/log");
+                std::fs::create_dir_all(&path).unwrap();
+                let email = if matches!(mode.as_str(), "duplicate" | "late-duplicate") {
+                    "OLD@example.test"
+                } else {
+                    "new@example.test"
+                };
+                std::fs::write(
+                    path.join(format!("acp-server-fixture-{}.log", std::process::id())),
+                    format!(
+                        "I server_oauth.go:9] applyAuthResult: email={email}, authenticated=true\n"
+                    ),
+                )
+                .unwrap();
+            }
+        }
         if mode == "cancel-after-auth" && method == "session/new" {
             std::thread::sleep(std::time::Duration::from_secs(10));
             return;
@@ -64,6 +88,10 @@ pub(super) fn client(mode: &str) -> rpc::Client {
 }
 
 pub(super) fn tracked_client(mode: &str, calls: Option<&Path>) -> rpc::Client {
+    fixture_client(mode, calls, None)
+}
+
+fn fixture_client(mode: &str, calls: Option<&Path>, profile: Option<&Path>) -> rpc::Client {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
         .args([
@@ -77,6 +105,9 @@ pub(super) fn tracked_client(mode: &str, calls: Option<&Path>) -> rpc::Client {
         .stderr(Stdio::null());
     if let Some(calls) = calls {
         command.env("ECPA_ACP_LIFECYCLE_CALLS", calls);
+    }
+    if let Some(profile) = profile {
+        command.env("ECPA_ACP_LIFECYCLE_PROFILE", profile);
     }
     crate::configure_background_command(&mut command);
     rpc::Client::spawn_command(command).unwrap()
@@ -149,7 +180,7 @@ fn successful_auth_is_committed_before_failed_or_cancelled_model_verification() 
             true,
             false,
             &cancel,
-            &mut client(mode),
+            &mut fixture_client(mode, None, Some(&directory)),
             Some(&mut pending)
         )
         .is_err());
@@ -165,6 +196,256 @@ fn successful_auth_is_committed_before_failed_or_cancelled_model_verification() 
         assert!(!state.snapshot().unwrap().upstream_enabled);
         std::fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[test]
+fn known_duplicate_preserves_previous_registration_models_and_api() {
+    let (root, state) = fixture();
+    let mut pending = accounts::PendingAccount::new(&root, "Duplicate").unwrap();
+    let directory = pending.directory().unwrap();
+    let registry_path = root.join("accounts.json");
+    let registry = std::fs::read(&registry_path).unwrap();
+    let api_path = root.join("bridge.json");
+    std::fs::write(&api_path, br#"{"enabled":true}"#).unwrap();
+    state.status.lock().unwrap().upstream_enabled = true;
+    let calls = root.join("methods");
+    let error = connect_profile(
+        &state,
+        &root,
+        &directory,
+        true,
+        false,
+        &Arc::new(AtomicBool::new(false)),
+        &mut fixture_client("duplicate", Some(&calls), Some(&directory)),
+        Some(&mut pending),
+    )
+    .unwrap_err();
+    assert_eq!(error, accounts::DUPLICATE_EMAIL);
+    pending.rollback().unwrap();
+    assert!(!directory.exists());
+    assert_eq!(std::fs::read(&registry_path).unwrap(), registry);
+    assert_eq!(
+        std::fs::read_to_string(&calls).unwrap(),
+        "initialize\nauthenticate\n"
+    );
+    assert!(bridge::upstream_enabled(&root).unwrap());
+    let status = state.snapshot().unwrap();
+    assert!(status.authenticated && status.upstream_enabled);
+    assert_eq!(status.models[0].id, "old-model");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn distinct_identity_is_saved_and_becomes_active() {
+    let (root, state) = fixture();
+    let mut pending = accounts::PendingAccount::new(&root, "New identity").unwrap();
+    let directory = pending.directory().unwrap();
+    connect_profile(
+        &state,
+        &root,
+        &directory,
+        true,
+        false,
+        &Arc::new(AtomicBool::new(false)),
+        &mut fixture_client("ok", None, Some(&directory)),
+        Some(&mut pending),
+    )
+    .unwrap();
+    let registry = accounts::read(&root).unwrap();
+    assert_eq!(registry.active, pending.id);
+    assert_eq!(
+        registry.accounts[1].email.as_deref(),
+        Some("new@example.test")
+    );
+    assert_eq!(state.snapshot().unwrap().models[0].id, "offline-test");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn identity_exposed_during_session_discovery_is_checked_before_any_switch() {
+    for mode in ["late-distinct", "late-duplicate"] {
+        let (root, state) = fixture();
+        let mut pending = accounts::PendingAccount::new(&root, "Second account").unwrap();
+        let directory = pending.directory().unwrap();
+        let calls = root.join("methods");
+        let result = connect_profile(
+            &state,
+            &root,
+            &directory,
+            true,
+            false,
+            &Arc::new(AtomicBool::new(false)),
+            &mut fixture_client(mode, Some(&calls), Some(&directory)),
+            Some(&mut pending),
+        );
+        let registry = accounts::read(&root).unwrap();
+        let status = state.snapshot().unwrap();
+        if mode == "late-distinct" {
+            result.unwrap();
+            assert_eq!(registry.accounts.len(), 2);
+            assert_eq!(registry.active, pending.id);
+            assert_eq!(status.models[0].id, "offline-test");
+        } else {
+            assert_eq!(result.unwrap_err(), accounts::DUPLICATE_EMAIL);
+            pending.rollback().unwrap();
+            assert!(!directory.exists());
+            assert_eq!(registry.accounts.len(), 1);
+            assert_eq!(registry.active, "default");
+            assert_eq!(status.models[0].id, "old-model");
+        }
+        assert_eq!(
+            std::fs::read_to_string(&calls).unwrap(),
+            "initialize\nauthenticate\nsession/new\n"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn ordinary_reauthorization_records_identity_even_if_models_are_unavailable() {
+    let (root, state) = fixture();
+    let result = connect_session(
+        &state,
+        &root,
+        true,
+        true,
+        &Arc::new(AtomicBool::new(false)),
+        &mut fixture_client("models-fail", None, Some(&root)),
+    );
+    assert!(result.is_err());
+    assert_eq!(
+        accounts::read(&root).unwrap().accounts[0].email.as_deref(),
+        Some("new@example.test")
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn incomparable_authorization_is_quarantined_without_registering_or_switching() {
+    for (previous_email, report_new) in [
+        (None, true),
+        (Some("invalid"), true),
+        (Some("old@example.test"), false),
+    ] {
+        let (root, state) = fixture();
+        accounts::set_active_email(&root, previous_email.map(str::to_owned)).unwrap();
+        let registry_path = root.join("accounts.json");
+        let registry = std::fs::read(&registry_path).unwrap();
+        let api_path = root.join("bridge.json");
+        std::fs::write(&api_path, br#"{"enabled":true}"#).unwrap();
+        state.status.lock().unwrap().upstream_enabled = true;
+        let mut pending = accounts::PendingAccount::new(&root, "Identity recovery").unwrap();
+        let directory = pending.directory().unwrap();
+        std::fs::write(directory.join("fake-authorization"), "fixture").unwrap();
+        let calls = root.join("methods");
+        let error = connect_profile(
+            &state,
+            &root,
+            &directory,
+            true,
+            false,
+            &Arc::new(AtomicBool::new(false)),
+            &mut fixture_client(
+                "ok",
+                Some(&calls),
+                report_new.then_some(directory.as_path()),
+            ),
+            Some(&mut pending),
+        )
+        .unwrap_err();
+        assert_eq!(error, accounts::IDENTITY_UNKNOWN);
+        pending.rollback().unwrap();
+        assert!(!directory.exists());
+        let recovery = accounts::recoveries_path(&root)
+            .read_dir()
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(
+            std::fs::read_to_string(recovery.join(&pending.id).join("fake-authorization")).unwrap(),
+            "fixture"
+        );
+        assert_eq!(std::fs::read(&registry_path).unwrap(), registry);
+        assert_eq!(
+            std::fs::read_to_string(&calls).unwrap(),
+            if report_new {
+                "initialize\nauthenticate\n"
+            } else {
+                "initialize\nauthenticate\nsession/new\n"
+            }
+        );
+        assert!(bridge::upstream_enabled(&root).unwrap());
+        let status = state.snapshot().unwrap();
+        assert!(status.authenticated && status.upstream_enabled);
+        assert_eq!(status.models[0].id, "old-model");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn terminal_authorized_profile_refresh_persists_distinct_account_but_not_duplicate() {
+    for mode in ["late-distinct", "late-duplicate", "no-identity"] {
+        let (root, state) = fixture();
+        let mut pending = accounts::PendingAccount::new(&root, "Second").unwrap();
+        let directory = pending.directory().unwrap();
+        let calls = root.join("methods");
+        let result = finish_manual_add(
+            &state,
+            &root,
+            &directory,
+            &Arc::new(AtomicBool::new(false)),
+            &mut fixture_client(
+                mode,
+                Some(&calls),
+                (mode != "no-identity").then_some(directory.as_path()),
+            ),
+            &mut pending,
+        );
+        let registry = accounts::read(&root).unwrap();
+        if mode == "late-distinct" {
+            result.unwrap();
+            assert_eq!(registry.accounts.len(), 2);
+            assert_eq!(registry.active, pending.id);
+        } else {
+            assert_eq!(
+                result.unwrap_err(),
+                if mode == "late-duplicate" {
+                    accounts::DUPLICATE_EMAIL
+                } else {
+                    accounts::IDENTITY_UNKNOWN
+                }
+            );
+            pending.rollback().unwrap();
+            assert_eq!(registry.accounts.len(), 1);
+            assert_eq!(registry.active, "default");
+            assert_eq!(state.snapshot().unwrap().models[0].id, "old-model");
+        }
+        assert_eq!(
+            std::fs::read_to_string(calls).unwrap(),
+            "initialize\nsession/new\n"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn ordinary_sign_in_relogin_and_refresh_keep_the_existing_contract() {
+    let (root, state) = fixture();
+    let calls = root.join("methods");
+    for (login, relogin) in [(true, false), (true, true), (false, false)] {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut client = fixture_client("ok", Some(&calls), None);
+        connect_session(&state, &root, login, relogin, &cancel, &mut client).unwrap();
+    }
+    assert_eq!(
+        std::fs::read_to_string(calls).unwrap(),
+        "initialize\nauthenticate\nsession/new\ninitialize\nlogout\nauthenticate\nsession/new\ninitialize\nsession/new\n"
+    );
+    assert_eq!(accounts::read(&root).unwrap().active, "default");
+    assert!(state.snapshot().unwrap().authenticated);
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -266,7 +547,7 @@ fn reset_account_retires_models_probe_and_preserves_explicit_global_switch() {
 fn failed_switch_stays_selected_and_never_revives_old_capabilities() {
     let (root, state) = fixture();
     let mut pending = accounts::PendingAccount::new(&root, "New").unwrap();
-    pending.commit(None).unwrap();
+    pending.commit(Some("second@example.test".into())).unwrap();
     let id = pending.id.clone();
     accounts::select(&root, "default").unwrap();
     reset_account(&state).unwrap();

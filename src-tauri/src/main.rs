@@ -2986,6 +2986,8 @@ fn main() {
             acp::acp_connect,
             acp::switch_acp_account,
             acp::add_acp_account,
+            acp::add_acp_account_manual,
+            acp::submit_acp_account_authorization,
             acp::relogin_acp_account,
             acp::rename_acp_account,
             acp::remove_acp_account,

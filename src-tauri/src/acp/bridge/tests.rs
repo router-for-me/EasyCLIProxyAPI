@@ -126,8 +126,9 @@ fn successful_login_refresh_relogin_and_account_switch_do_not_enable_api() {
         assert!(state.bridge.lock().unwrap().is_none());
         assert!(!upstream_enabled(&directory).unwrap());
     }
+    accounts::set_active_email(&directory, Some("first@example.test".into())).unwrap();
     let mut pending = accounts::PendingAccount::new(&directory, "Second").unwrap();
-    pending.commit(None).unwrap();
+    pending.commit(Some("second@example.test".into())).unwrap();
     let registry = pending.id.clone();
     let account = accounts::active(&directory).unwrap();
     assert_ne!(account, directory);
@@ -1850,8 +1851,9 @@ async fn reauthorization_runs_after_successful_logout_despite_provider_error_but
 #[tokio::test]
 async fn damaged_provider_does_not_prevent_selection_or_current_local_removal() {
     let (app, root, _) = damaged_account_runtime("malformed").await;
+    accounts::set_active_email(&root, Some("first@example.test".into())).unwrap();
     let mut pending = accounts::PendingAccount::new(&root, "Second").unwrap();
-    pending.commit(None).unwrap();
+    pending.commit(Some("second@example.test".into())).unwrap();
     accounts::select(&root, "default").unwrap();
     let state = app.state::<AcpState>();
     select_account_local(state.inner(), &root, &pending.id).unwrap();

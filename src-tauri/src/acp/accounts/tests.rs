@@ -316,11 +316,20 @@ fn legacy_default_without_email_survives_new_authorization_and_new_account_remov
     )
     .unwrap();
     assert!(read(&root).unwrap().accounts[0].saved);
+    let mut pending = PendingAccount::new(&root, "Unverified").unwrap();
+    assert_eq!(
+        pending.commit(Some("new@example.test".into())).unwrap_err(),
+        IDENTITY_UNKNOWN
+    );
+    pending.rollback().unwrap();
+    assert_eq!(read(&root).unwrap().accounts.len(), 1);
+    // A successful official connection can subsequently supply identity.
+    set_active_email(&root, Some("legacy@example.test".into())).unwrap();
     let new = add(&root, "New");
     let registry = read(&root).unwrap();
     assert_eq!(registry.accounts.len(), 2);
     assert_eq!(registry.accounts[0].label, "Legacy personal note");
-    assert!(registry.accounts[0].email.is_none());
+    assert_eq!(registry.accounts[0].email.as_deref(), Some("legacy@example.test"));
     select(&root, "default").unwrap();
     assert_eq!(
         read_selected(&active(&root).unwrap()).unwrap(),
@@ -367,6 +376,14 @@ fn missing_registry_with_legacy_profile_or_selected_model_preserves_default_acro
         assert!(legacy.accounts[0].email.is_none());
         // Reading migration state is side-effect free and does not invent email.
         assert!(!root.join("accounts.json").exists());
+        let mut pending = PendingAccount::new(&root, "Unverified").unwrap();
+        assert_eq!(
+            pending.commit(Some("new@example.test".into())).unwrap_err(),
+            IDENTITY_UNKNOWN
+        );
+        pending.rollback().unwrap();
+        assert!(!root.join("accounts.json").exists());
+        set_active_email(&root, Some("legacy@example.test".into())).unwrap();
         let new = add(&root, "New");
         assert_eq!(read(&root).unwrap().accounts.len(), 2, "{history}");
         select(&root, "default").unwrap();
@@ -381,7 +398,7 @@ fn missing_registry_with_legacy_profile_or_selected_model_preserves_default_acro
         assert_eq!(registry.accounts.len(), 1);
         assert!(registry.accounts[0].saved);
         assert_eq!(registry.accounts[0].label, "Default");
-        assert!(registry.accounts[0].email.is_none());
+        assert_eq!(registry.accounts[0].email.as_deref(), Some("legacy@example.test"));
         if history == "official-profile" {
             assert!(root
                 .join(".gemini/antigravity-cli/history-fixture")

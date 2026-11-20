@@ -268,10 +268,11 @@ pub(super) fn rename(root: &Path, id: &str, label: &str) -> Result<(), String> {
     write(root, &registry)
 }
 
-// A provisional profile never enters accounts.json. The receipt of a successful
-// authenticate response is the commit point, BEFORE session/new can fail or be
-// cancelled. Before that point cancellation restores the old selection because
-// it was never changed; login data is quarantined, never destroyed.
+pub(super) const DUPLICATE_EMAIL: &str = "This Google account is already saved. Add a different Google account, or select the existing account";
+pub(super) const IDENTITY_UNKNOWN: &str = "Google identity could not be verified against saved accounts. The account was not added";
+
+// Do not publish a provisional record before official authentication and the
+// duplicate check. Cancelled/failed attempts are isolated, never destroyed.
 pub(super) struct PendingAccount {
     root: PathBuf,
     pub(super) id: String,
@@ -319,21 +320,49 @@ impl PendingAccount {
         directory(&self.root, &self.id)
     }
 
+    // A known duplicate is rejected before the registry, active selection or
+    // runtime changes. Preserve official success for recovery when persistence
+    // fails. If identity cannot be compared, leave the registry untouched;
+    // rollback moves the authorized profile to private recovery storage.
     pub(super) fn commit(&mut self, email: Option<String>) -> Result<(), String> {
-        // Receipt of official success owns this profile even if persistence
-        // fails; Drop must never quarantine an acknowledged successful login.
-        self.finished = true;
         let recovery_error = |error| {
             format!("Google authorization completed, but the account registry could not be saved. Login data is preserved at {}: {error}", self.root.join("accounts").join(&self.id).display())
         };
-        let mut registry = read(&self.root).map_err(&recovery_error)?;
+        let mut registry = match read(&self.root) {
+            Ok(registry) => registry,
+            Err(error) => {
+                self.finished = true;
+                return Err(recovery_error(error));
+            }
+        };
+        let email = email.as_deref().and_then(rpc::valid_account_email);
+        let mut comparable = true;
+        for account in &registry.accounts {
+            let existing = account
+                .email
+                .as_deref()
+                .map(str::trim)
+                .and_then(rpc::valid_account_email);
+            match (existing, email) {
+                (Some(existing), Some(new)) if existing.eq_ignore_ascii_case(new) => {
+                    return Err(DUPLICATE_EMAIL.into());
+                }
+                (Some(_), Some(_)) => {}
+                _ if account.saved || account.id != "default" => comparable = false,
+                _ => {}
+            }
+        }
+        if !comparable {
+            return Err(IDENTITY_UNKNOWN.into());
+        }
+        self.finished = true;
         registry
             .accounts
             .retain(|a| a.id != "default" || a.saved || a.email.is_some());
         registry.accounts.push(Account {
             id: self.id.clone(),
             label: self.label.clone(),
-            email,
+            email: email.map(str::to_owned),
             saved: true,
         });
         registry.active = self.id.clone();

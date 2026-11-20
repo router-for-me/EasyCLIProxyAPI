@@ -3,6 +3,7 @@ mod agent;
 mod bridge;
 #[cfg(test)]
 mod lifecycle_tests;
+mod manual_auth;
 mod rpc;
 mod tool_transport;
 pub(crate) use bridge::restore;
@@ -61,6 +62,7 @@ pub(crate) struct AcpState {
     bridge: Mutex<Option<bridge::Runtime>>,
     bridge_transition: tokio::sync::Mutex<()>,
     agents: agent::Sessions,
+    manual_auth: manual_auth::ManualAuth,
 }
 
 impl AcpState {
@@ -285,10 +287,7 @@ pub(crate) async fn switch_acp_account(
 }
 
 #[tauri::command]
-pub(crate) async fn add_acp_account(
-    app: tauri::AppHandle,
-    label: String,
-) -> Result<AcpStatus, String> {
+pub(crate) async fn add_acp_account(app: tauri::AppHandle, label: String) -> Result<AcpStatus, String> {
     let guard = begin(&app, "login")?;
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     if crate::find_antigravity_cli(&home).is_none() {
@@ -296,6 +295,77 @@ pub(crate) async fn add_acp_account(
     }
     let pending = accounts::PendingAccount::new(&profile(&crate::core_base_dir()?), &label)?;
     connect(app, true, false, Some(pending), guard).await
+}
+
+#[tauri::command]
+pub(crate) async fn add_acp_account_manual(
+    app: tauri::AppHandle,
+    label: String,
+    on_link: tauri::ipc::Channel<manual_auth::ManualLink>,
+) -> Result<AcpStatus, String> {
+    let guard = begin(&app, "login")?;
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let executable = crate::find_antigravity_cli(&home)
+        .ok_or("Install official Antigravity CLI before adding an account")?;
+    let root = profile(&crate::core_base_dir()?);
+    let mut pending = accounts::PendingAccount::new(&root, &label)?;
+    let directory = pending.directory()?;
+    let proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AcpState>();
+        let result = (|| {
+            // Terminal authentication is not an ACP authenticate RPC. Use the
+            // advertised official invocation, then reconnect to the same profile.
+            let mut probe = rpc::Client::spawn(&executable, &directory, &proxy)?;
+            probe.initialize_manual(&guard.cancel)?;
+            drop(probe);
+            let mut command = rpc::command(&executable, &directory, &proxy);
+            command.arg("--login");
+            state.manual_auth.run(command, &pending.id, &guard.cancel, |link| {
+                on_link.send(link).map_err(|_| String::from(manual_auth::FAILED))
+            })?;
+            let mut client = rpc::Client::spawn(&executable, &directory, &proxy)?;
+            finish_manual_add(state.inner(), &root, &directory, &guard.cancel, &mut client, &mut pending)
+        })();
+        let result = if let Err(error) = result {
+            let error = match pending.rollback() {
+                Ok(()) => error,
+                Err(cleanup) => format!("{error}; pending login data could not be isolated: {cleanup}"),
+            };
+            record_error(state.inner(), &error);
+            Err(error)
+        } else { Ok(()) };
+        drop(guard);
+        result?;
+        get_acp_status(app.clone(), app.state::<AcpState>())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub(crate) fn submit_acp_account_authorization(
+    state: tauri::State<'_, AcpState>, attempt: String, response: String,
+) -> Result<(), String> {
+    state.manual_auth.submit(&attempt, &response)
+}
+
+fn finish_manual_add(
+    state: &AcpState, root: &Path, profile: &Path,
+    cancel: &Arc<AtomicBool>, client: &mut rpc::Client,
+    pending: &mut accounts::PendingAccount,
+) -> Result<(), String> {
+    // The fresh server loads the terminal-authorized profile. Only its own
+    // official identity log is trusted; neither a label nor user input is identity.
+    client.initialize(cancel)?;
+    let session = client.session(profile, cancel)?;
+    if cancel.load(Ordering::Acquire) { return Err("ACP request cancelled".into()); }
+    pending.commit(client.account_email(profile))?;
+    let discovered = (|| {
+        reset_account(state)?;
+        refresh_account_identity(state, root)?;
+        mark_session(state, &session, profile)
+    })();
+    if discovered.is_err() { let _ = reset_account(state); }
+    combine_account_errors(discovered, sync_account_models(state))
 }
 
 #[tauri::command]
@@ -469,6 +539,9 @@ async fn connect(
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let executable = match crate::find_antigravity_cli(&home) {
         Some(executable) => executable,
+        None if pending.is_some() => {
+            return Err("Install official Antigravity CLI before adding an account".into());
+        }
         None => {
             clear_account(&app)?;
             let state = app.state::<AcpState>();
@@ -602,6 +675,7 @@ fn connect_profile(
             client.logout(cancel)?;
             accounts::set_active_email(root, None)?;
         }
+        let mut discovery = None;
         if login {
             client.call(
                 "authenticate",
@@ -610,9 +684,22 @@ fn connect_profile(
                 |_| {},
             )?;
             if let Some(pending) = pending.as_mut() {
-                // Official success is the commit point even if model discovery
-                // or independent provider-file maintenance later fails.
-                pending.commit(client.account_email(profile))?;
+                // The ACP result has no standard identity field. If the owned
+                // process has not logged identity yet, allow the normal session
+                // discovery call to expose it before comparing with saved accounts.
+                let mut email = client.account_email(profile);
+                if email.is_none()
+                    && accounts::read(root)
+                        .is_ok_and(|registry| registry.accounts.iter().any(|account| account.saved))
+                {
+                    let result = client.session(profile, cancel);
+                    email = client.account_email(profile);
+                    if email.is_none() && cancel.load(Ordering::Acquire) {
+                        return result.and(Err("ACP request cancelled".into()));
+                    }
+                    discovery = Some(result);
+                }
+                pending.commit(email)?;
                 touches_current = true;
                 reset_account(state)?;
                 maintenance = combine_account_errors(
@@ -621,15 +708,22 @@ fn connect_profile(
                 );
             } else {
                 accounts::mark_saved(root)?;
+                // Keep verified identity when a legacy account reauthorizes,
+                // even if models cannot subsequently be discovered.
+                if let Some(email) = client.account_email(profile) {
+                    accounts::set_active_email(root, Some(email))?;
+                }
             }
         }
-        let session = client.session(profile, cancel).map_err(|error| {
-            if pending.is_some() {
-                format!("Account saved; connection not verified: {error}")
-            } else {
-                error
-            }
-        })?;
+        let session = discovery
+            .unwrap_or_else(|| client.session(profile, cancel))
+            .map_err(|error| {
+                if pending.is_some() {
+                    format!("Account saved; connection not verified: {error}")
+                } else {
+                    error
+                }
+            })?;
         refresh_account_identity(state, root)?;
         mark_session(state, &session, profile)?;
         accounts::mark_saved(root)?;
