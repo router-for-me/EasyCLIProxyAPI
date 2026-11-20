@@ -509,6 +509,8 @@ function createState(scenario: BrowserMockScenario) {
       currentVersion: '0.2.97',
       latestVersion: '0.3.0',
       updateAvailable: true,
+      action: 'update',
+      downloadSource: 'github',
       releaseUrl: 'https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest',
       releaseNotes: {
         'zh-CN': '## Browser Mock 更新示例\n\n- 新增界面调试模式\n- 改进启动体验',
@@ -1289,12 +1291,15 @@ export function createBrowserMockRuntime(
   const applyMockUpdateChannel = (channel: string) => {
     const normalized = channel.trim() || 'stable';
     state.appUpdateInfo.updateChannel = normalized;
-    if (normalized.startsWith('preview')) {
+    const preview = normalized.startsWith('preview');
+    state.appUpdateInfo.action = preview ? 'switchChannel' : 'update';
+    state.appUpdateInfo.updateAvailable = !preview;
+    if (preview) {
       const tag = normalized === 'preview' ? 'preview-20261104-1623' : normalized;
-      state.appUpdateInfo.latestVersion = '0.3.0-preview.202611041623';
+      state.appUpdateInfo.latestVersion = '0.3.0-preview.20261104-1623';
       state.appUpdateInfo.currentBuildAt = isoHoursAgo(42);
       state.appUpdateInfo.releaseUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/${tag}`;
-      state.appUpdateInfo.downloadFileName = 'EasyCLIProxyAPI-v0.3.0-preview.202611041623-Windows-amd64.zip';
+      state.appUpdateInfo.downloadFileName = 'EasyCLIProxyAPI-v0.3.0-preview.20261104-1623-Windows-amd64.zip';
       state.appUpdateInfo.downloadUrl = `https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/${tag}/${state.appUpdateInfo.downloadFileName}`;
     } else {
       state.appUpdateInfo.latestVersion = '0.3.0';
@@ -1586,6 +1591,7 @@ export function createBrowserMockRuntime(
       }
       case 'check_app_update': return clone({
         ...state.appUpdateInfo,
+        downloadSource: state.versionSource.source,
         skippedReleaseNotes: state.appUpdateInfo.updateChannel === 'stable' && state.appUpdateInfo.updateAvailable
           ? state.appUpdateInfo.skippedReleaseNotes
           : [],

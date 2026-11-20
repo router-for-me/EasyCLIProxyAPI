@@ -122,6 +122,7 @@ pub(crate) struct Status {
 struct Control {
     status: Status,
     download: Option<CancellationToken>,
+    app_channel_revision: u64,
 }
 
 #[derive(Default)]
@@ -152,7 +153,21 @@ impl AutoUpdateState {
         version: &str,
         error: Option<String>,
     ) {
+        self.report_unless_cancelled(None, phase, target, version, error);
+    }
+
+    fn report_unless_cancelled(
+        &self,
+        token: Option<&CancellationToken>,
+        phase: &'static str,
+        target: &'static str,
+        version: &str,
+        error: Option<String>,
+    ) {
         if let Ok(mut control) = self.control() {
+            if token.is_some_and(CancellationToken::is_cancelled) {
+                return;
+            }
             control.status = Status {
                 phase,
                 target: Some(target),
@@ -171,6 +186,55 @@ impl AutoUpdateState {
         }
         self.wake.notify_one();
     }
+}
+
+pub(crate) fn begin_manual_app_update(
+    app: &tauri::AppHandle,
+    updates: &AppUpdateState,
+    token: CancellationToken,
+) -> Result<GuiConfigFile, String> {
+    let state = app.state::<AutoUpdateState>();
+    let _control = state.control()?;
+    let config = app.state::<GuiConfigState>().snapshot()?;
+    updates.start(token)?;
+    Ok(config)
+}
+
+pub(crate) fn change_application_channel(app: &tauri::AppHandle, channel: &str) -> Result<(), String> {
+    let state = app.state::<AutoUpdateState>();
+    let mut control = state.control()?;
+    let gui_config = app.state::<GuiConfigState>();
+    let config = gui_config.snapshot()?;
+    if config.effective_update_channel() == channel {
+        return Ok(());
+    }
+    let task = app.state::<AppUpdateState>().snapshot();
+    if (task.running && !task.automatic)
+        || (control.status.phase == "installing" && control.status.target == Some("app"))
+    {
+        return Err("An application update is in progress; the channel cannot change yet".into());
+    }
+    validate_version_download_source(
+        &config.selected_download_candidate(),
+        configured_gitcode_gui_repository().is_some() && channel == "stable",
+    )?;
+    // Invalidate the record before persisting the new choice. The package
+    // must not become eligible again if the user later switches back.
+    let old = prepared::take_app_record_at(&core_base_dir()?)?;
+    gui_config.set_update_channel(channel)?;
+    control.app_channel_revision = control.app_channel_revision.wrapping_add(1);
+    if let Some(token) = &control.download {
+        token.cancel();
+    }
+    if control.status.target == Some("app") {
+        control.status = Status::default();
+    }
+    drop(control);
+    if let Some(old) = old {
+        old.cleanup_payload();
+    }
+    state.wake.notify_one();
+    Ok(())
 }
 
 #[tauri::command]
@@ -292,8 +356,27 @@ pub(crate) fn cache_application(
     config: &GuiConfigFile,
     token: &CancellationToken,
 ) -> Result<(), String> {
+    let prepared = prepared::capture_app(config, descriptor)?;
+    let state = app.state::<AutoUpdateState>();
+    let _control = state.control()?;
     matching_download(app, config, token)?;
-    store_prepared(&prepared::capture_app(config, descriptor)?)
+    store_prepared(&prepared)
+}
+
+fn app_accepts_automatic_candidate(config: &GuiConfigFile, current: &str, target: &str) -> bool {
+    matches!(
+        app_update_action(&config.effective_update_channel(), current, target),
+        Ok(Some(AppUpdateAction::Update))
+    )
+}
+
+fn cache_is_applicable(cached: &PreparedUpdate, config: &GuiConfigFile, current: &str) -> bool {
+    cached.matches(config)
+        && if cached.target() == "app" {
+            app_accepts_automatic_candidate(config, current, &cached.version)
+        } else {
+            newer(current, &cached.version)
+        }
 }
 
 fn present_cache(
@@ -309,8 +392,7 @@ fn present_cache(
         }
     };
     if let Some(cached) = cached {
-        if cached.matches(config) && current.is_some_and(|version| newer(version, &cached.version))
-        {
+        if current.is_some_and(|version| cache_is_applicable(&cached, config, version)) {
             return Ok(Some(cached));
         }
         cached.discard()?;
@@ -357,7 +439,10 @@ pub(crate) async fn startup(app: &tauri::AppHandle) -> bool {
     for target in TARGETS {
         let mut version = String::new();
         let result: Result<bool, String> = async {
-            let config = app.state::<GuiConfigState>().snapshot()?;
+            let (config, app_channel_revision) = {
+                let control = state.control()?;
+                (app.state::<GuiConfigState>().snapshot()?, control.app_channel_revision)
+            };
             if !config.auto_update.includes(target) {
                 return Ok(false);
             }
@@ -378,6 +463,9 @@ pub(crate) async fn startup(app: &tauri::AppHandle) -> bool {
             }
             {
                 let mut control = state.control()?;
+                if target == "app" && control.app_channel_revision != app_channel_revision {
+                    return Ok(false);
+                }
                 matching_download(app, &config, &CancellationToken::new())?;
                 if app.state::<CoreProcessState>().is_shutting_down() {
                     return Ok(false);
@@ -468,7 +556,7 @@ async fn download_target(
             return Ok(cached_version);
         }
         matching_download(app, config, token)?;
-        state.report("downloading", target, version, None);
+        state.report_unless_cancelled(Some(token), "downloading", target, version, None);
         let result = async {
             let staged = core_runtime::prepare_core_automatically(
                 app.clone(),
@@ -489,19 +577,18 @@ async fn download_target(
     } else {
         let (info, pending) = metadata(token, app_update::resolve_app_update(config)).await?;
         *version = info.latest_version;
-        if !info.auto_update_supported || !should_download(version)? {
+        if info.action != Some(AppUpdateAction::Update)
+            || !info.auto_update_supported
+            || !should_download(version)?
+        {
             return Ok(cached_version);
         }
         matching_download(app, config, token)?;
         let pending = pending.ok_or("No installable application package")?;
-        state.report("downloading", target, version, None);
+        state.report_unless_cancelled(Some(token), "downloading", target, version, None);
         let updates = app.state::<AppUpdateState>();
         let preserve_core = cfg!(any(windows, target_os = "macos"));
-        updates.start(token.clone())?;
-        updates.update_task(|task| {
-            task.automatic = true;
-            task.preserve_core = preserve_core;
-        });
+        updates.start_with_mode(token.clone(), true, preserve_core)?;
         let result = async {
             updates.start_download(&pending)?;
             app_update::download_and_stage_portable_app_update(
@@ -536,14 +623,16 @@ pub(crate) async fn run(app: tauri::AppHandle) {
             return;
         }
         let delay = if let Ok(_operation) = state.try_operation() {
-            if let Ok(config) = app.state::<GuiConfigState>().snapshot() {
-                let token = CancellationToken::new();
-                {
-                    let Ok(mut control) = state.control() else {
-                        return;
-                    };
+            let token = CancellationToken::new();
+            let config = {
+                let Ok(mut control) = state.control() else {
+                    return;
+                };
+                app.state::<GuiConfigState>().snapshot().inspect(|_| {
                     control.download = Some(token.clone());
-                }
+                })
+            };
+            if let Ok(config) = config {
                 for target in TARGETS {
                     if token.is_cancelled() {
                         break;
@@ -555,7 +644,7 @@ pub(crate) async fn run(app: tauri::AppHandle) {
                     }
                     match result {
                         Ok(Some(version)) => {
-                            state.report("waiting-startup", target, &version, None)
+                            state.report_unless_cancelled(Some(&token), "waiting-startup", target, &version, None)
                         }
                         Ok(None) => {}
                         Err(error) => {
@@ -567,7 +656,7 @@ pub(crate) async fn run(app: tauri::AppHandle) {
                                     continue;
                                 }
                             }
-                            state.report("failed", target, &version, Some(error));
+                            state.report_unless_cancelled(Some(&token), "failed", target, &version, Some(error));
                         }
                     }
                 }

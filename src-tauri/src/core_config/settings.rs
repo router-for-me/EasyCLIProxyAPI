@@ -2313,6 +2313,13 @@ pub(crate) fn write_gui_config_to_path(
         .unwrap_or_default();
     let root = document.as_table_mut();
     crate::auto_update::write_settings(root, &config.auto_update)?;
+    // A missing preference follows the installed binary; only explicit
+    // selections must survive switching binaries or unrelated settings saves.
+    if let Some(channel) = config.update_channel.as_deref() {
+        set_codex_table_item(root, "update-channel", value(channel));
+    } else {
+        root.remove("update-channel");
+    }
     if config.usage_statistics_disabled == Some(true) {
         set_codex_table_item(root, "usage_statistics_disabled", value(true));
     } else {

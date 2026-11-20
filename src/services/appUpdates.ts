@@ -1,10 +1,14 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { AppLocale } from '../i18n/index';
 
+export type AppUpdateAction = 'update' | 'switchChannel';
+
 export type AppUpdateInfo = {
   currentVersion: string;
   latestVersion: string;
   updateAvailable: boolean;
+  action: AppUpdateAction | null;
+  downloadSource: string;
   releaseUrl: string;
   releaseNotes: Partial<Record<AppLocale, string>> | null;
   skippedReleaseNotes?: { version: string; releaseNotes: Partial<Record<AppLocale, string>> }[];
@@ -50,8 +54,17 @@ export const checkAppUpdate = (): Promise<AppUpdateInfo> =>
 export const getAppUpdateTask = (): Promise<AppUpdateTask> =>
   invoke<AppUpdateTask>('get_app_update_task');
 
-export const startAppUpdate = (preserveCore = false): Promise<void> =>
-  invoke<void>('start_app_update', { preserveCore });
+export type AppUpdateOffer = Pick<AppUpdateInfo, 'updateChannel' | 'latestVersion' | 'downloadSource' | 'releaseUrl'> & {
+  action: AppUpdateAction;
+};
+
+export const startAppUpdate = (offer: AppUpdateOffer, preserveCore = false): Promise<void> => {
+  const { updateChannel, latestVersion, downloadSource, releaseUrl, action } = offer;
+  return invoke<void>('start_app_update', {
+    offer: { updateChannel, latestVersion, downloadSource, releaseUrl, action },
+    preserveCore,
+  });
+};
 
 export const cancelAppUpdate = (): Promise<void> =>
   invoke<void>('cancel_app_update');

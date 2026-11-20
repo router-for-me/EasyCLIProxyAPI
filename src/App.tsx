@@ -61,7 +61,6 @@ import {
   type PluginNavOverride,
 } from './services/pluginNavigation';
 import { languageOptions, useI18n } from './i18n';
-import { getUpdateChannel, setUpdateChannel } from './services/appUpdates';
 import { AppUpdateDialog, AppUpdateProvider, useAppUpdate } from './appUpdate';
 import { appUpdateIndicatorState } from './appUpdateModel';
 import { forgetUpdatedPlugins, pluginUpdateIndicatorState } from './pluginUpdateModel';
@@ -180,7 +179,7 @@ function App() {
 
 function AppContent() {
   const { locale, setLocale, t } = useI18n();
-  const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing, check: appUpdateCheck } = useAppUpdate();
+  const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing, channel: appUpdateChannel, changeChannel: changeAppUpdateChannel } = useAppUpdate();
   const logoTapRef = useRef<{ count: number; timer: number | null }>({ count: 0, timer: null });
   const handleLogoTap = useCallback(() => {
     const tap = logoTapRef.current;
@@ -196,16 +195,12 @@ function AppContent() {
         window.clearTimeout(tap.timer);
         tap.timer = null;
       }
-      void (async () => {
-        const current = await getUpdateChannel().catch(() => 'stable');
-        const next = current === 'preview' ? 'stable' : 'preview';
-        const applied = await setUpdateChannel(next as 'stable' | 'preview').catch(() => null);
-        if (applied && typeof appUpdateCheck === 'function') {
-          await appUpdateCheck();
-        }
-      })();
+      if (appUpdateChannel) {
+        const next = appUpdateChannel.startsWith('preview') ? 'stable' : 'preview';
+        void changeAppUpdateChannel(next).catch(() => undefined);
+      }
     }
-  }, [appUpdateCheck]);
+  }, [appUpdateChannel, changeAppUpdateChannel]);
   const { latest: coreLatest, hasUpdate: coreHasUpdate } = useCoreUpdate();
   const [active, setActive] = useState<AppPageId>('home');
   const workspaceRef = useRef<HTMLDivElement>(null);

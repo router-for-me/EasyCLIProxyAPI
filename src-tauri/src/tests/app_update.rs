@@ -18,16 +18,118 @@ fn release_atom_parser_reads_first_release_tag() {
 }
 
 #[test]
-fn app_update_comparison_uses_semantic_versions() {
-    assert!(is_app_update_available("v0.1.9", "v0.2.0").unwrap());
-    assert!(is_app_update_available("v0.2.0-beta.1", "v0.2.0").unwrap());
-    assert!(!is_app_update_available("v0.2.0", "v0.2.0").unwrap());
-    assert!(!is_app_update_available("v0.2.0", "v0.1.9").unwrap());
-    assert!(!is_app_update_available("v0.3.6-preview.20261103-1929", "v0.3.6-preview.20261103-1929").unwrap());
-    assert!(is_app_update_available("v0.3.6-preview.20261102-1830", "v0.3.6-preview.20261103-1929").unwrap());
-    assert!(is_app_update_available("v0.3.76-pr.584.587.1", "v0.3.76").unwrap());
-    assert!(is_app_update_available("v0.3.76-dev", "v0.3.76").unwrap());
-    assert!(is_app_update_available("v0.3.6-pr.584.587.1", "v0.3.76").unwrap());
+fn app_update_actions_follow_semver_and_explicit_selection() {
+    use AppUpdateAction::{SwitchChannel, Update};
+    for (channel, installed, target, expected) in [
+        ("stable", "v0.3.117", "0.3.117", None),
+        ("stable", "0.3.117+one", "0.3.117+two", None),
+        ("stable", "0.3.117", "0.3.116", None),
+        ("stable", "0.3.117", "0.3.118", Some(Update)),
+        ("stable", "0.3.117-pr.584.1", "0.3.117", Some(Update)),
+        ("stable", "0.3.117-dev", "0.3.117", Some(Update)),
+        ("stable", "0.3.117-dev", "0.3.116", None),
+        ("stable", "0.3.117-pr.584.1", "0.3.116", None),
+        ("preview", "0.3.117-pr.584.1", "0.3.93-preview.20261109-1316", None),
+        ("preview-20261109-1316", "0.3.117-dev", "0.3.93-preview.20261109-1316", None),
+        ("preview", "0.3.93-preview.20261109-1316", "v0.3.93-preview.20261109-1316", None),
+        ("preview", "0.3.93-preview.20261109-1316", "0.3.93-preview.20261108-1700", None),
+        ("preview", "0.3.93-preview.20261109-1316", "0.3.93-preview.20261110-1300", Some(Update)),
+        ("preview", "0.3.117-preview.20261108-1700", "0.3.93-preview.20261109-1316", None),
+        ("preview", "0.3.93-preview.2", "0.3.93-preview.10", Some(Update)),
+        ("stable", "0.3.93-preview.20261109-1316", "0.3.93", Some(SwitchChannel)),
+        ("stable", "0.3.93-preview.20261109-1316", "0.3.117", Some(SwitchChannel)),
+        ("stable", "0.3.118-preview.20261120-0920", "0.3.117", None),
+        ("preview", "0.3.117", "0.3.93-preview.20261109-1316", None),
+        ("preview", "0.3.93", "0.3.93-preview.20261109-1316", None),
+        ("preview", "0.3.92", "0.3.93-preview.20261109-1316", Some(SwitchChannel)),
+        ("preview-20261109-1316", "0.3.93-preview.20261109-1316", "0.3.93-preview.20261109-1316", None),
+        ("preview-20261109-1316", "0.3.93-preview.20261110-1612", "0.3.93-preview.20261109-1316", None),
+        ("preview-20261109-1316", "0.3.93-preview.20261108-1612", "0.3.93-preview.20261109-1316", Some(SwitchChannel)),
+    ] {
+        assert_eq!(app_update_action(channel, installed, target).unwrap(), expected, "{channel}: {installed} -> {target}");
+    }
+    for (channel, target) in [("stable", "0.3.118-preview.1"), ("preview", "0.3.118"), ("preview", "invalid"), ("preview", "0.3.118-pr.584.1")] {
+        assert!(app_update_action(channel, "0.3.117", target).is_err(), "{channel}: {target}");
+    }
+}
+
+#[test]
+fn app_update_release_must_match_the_selected_tag_and_version() {
+    const BASE: &str = "https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/";
+    for (selected, manifest_tag, version, matches) in [
+        (None, "v0.3.117", "v0.3.117", true),
+        (None, "v0.3.116", "v0.3.117", false),
+        (None, "preview-20261109-1316", "0.3.93-preview.20261109-1316", false),
+        (Some("preview-20261109-1316"), "preview-20261109-1316", "0.3.93-preview.20261109-1316", true),
+        (Some("preview-20261108-1316"), "preview-20261109-1316", "0.3.93-preview.20261109-1316", false),
+        (Some("preview-20261109-1316"), "preview-20261109-1316", "0.3.93-preview.20261108-1316", false),
+        (Some("preview-legacy"), "preview-legacy", "0.3.93-preview", true),
+    ] {
+        assert_eq!(validate_app_update_release(selected, &format!("{BASE}{manifest_tag}"), version).is_ok(), matches);
+    }
+}
+
+#[test]
+fn app_update_offer_matches_only_the_confirmed_action_and_target() {
+    let info: AppUpdateInfo = app_update_info_for_offer_test();
+    for (field, new_value) in [
+        ("updateChannel", "stable"), ("downloadSource", "gh-fast"),
+        ("latestVersion", "v0.3.94-preview.20261109-1316"),
+        ("releaseUrl", "https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/preview-other"),
+        ("action", "update"),
+    ] {
+        let mut offer = serde_json::to_value(&info).unwrap();
+        offer[field] = serde_json::Value::String(new_value.into());
+        let offer: AppUpdateOffer = serde_json::from_value(offer).unwrap();
+        assert!(!offer.matches(&info), "changed {field} should invalidate the offer");
+    }
+    let offer: AppUpdateOffer = serde_json::from_value(serde_json::to_value(&info).unwrap()).unwrap();
+    assert!(offer.matches(&info));
+}
+
+fn app_update_info_for_offer_test() -> AppUpdateInfo {
+    AppUpdateInfo {
+        current_version: "v0.3.92".into(),
+        latest_version: "v0.3.93-preview.20261109-1316".into(),
+        update_available: false,
+        action: Some(AppUpdateAction::SwitchChannel),
+        download_source: "github".into(),
+        update_channel: "preview".into(),
+        release_url: "https://github.com/router-for-me/EasyCLIProxyAPI/releases/tag/preview-20261109-1316".into(),
+        published_at: String::new(),
+        current_build_at: None,
+        release_notes: HashMap::new(),
+        skipped_release_notes: Vec::new(),
+        auto_update_supported: true,
+        preserve_core_supported: false,
+        download_url: None,
+        download_size_bytes: None,
+        download_file_name: None,
+        unsupported_reason: None,
+    }
+}
+
+#[test]
+fn app_update_channel_preference_survives_an_unrelated_save() {
+    let root = agent_test_home("app-update-channel-persistence");
+    let path = root.join("config.toml");
+    let cfg = GuiConfigFile::default();
+    write_gui_config_to_path(&cfg, &path).unwrap();
+    let saved = fs::read_to_string(&path).unwrap();
+    assert!(!saved.contains("update-channel"));
+    assert_eq!(toml::from_str::<GuiConfigFile>(&saved).unwrap().update_channel, None);
+    for channel in ["preview", "preview-20261109-1316", "stable"] {
+        let mut cfg: GuiConfigFile = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        cfg.update_channel = Some(channel.into());
+        write_gui_config_to_path(&cfg, &path).unwrap();
+        let mut reloaded: GuiConfigFile = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        reloaded.debug = !reloaded.debug;
+        write_gui_config_to_path(&reloaded, &path).unwrap();
+        let reloaded: GuiConfigFile = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(reloaded.update_channel.as_deref(), Some(channel));
+        assert_eq!(reloaded.effective_update_channel(), channel);
+    }
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -1930,12 +2032,13 @@ fn update_runtime_ack_is_bound_to_live_gui_pid_and_target_version() {
 }
 
 #[test]
-fn timestamped_preview_versions_are_recognized() {
-    assert!(is_timestamped_preview_version("v0.3.6-preview.20261106-1137"));
-    assert!(is_timestamped_preview_version("0.3.6-preview.20261106-1137"));
-    assert!(!is_timestamped_preview_version("v0.3.6"));
-    assert!(!is_timestamped_preview_version("v0.3.6-preview-Linux-amd64"));
-    assert!(!is_timestamped_preview_version("v0.3.6-dev"));
+fn app_update_installed_channel_is_identified_by_the_binary_prerelease() {
+    for version in ["v0.3.6-preview.20261106-1137", "0.3.6-preview"] {
+        assert!(is_installed_preview(version), "{version}");
+    }
+    for version in ["v0.3.6", "v0.3.6+preview", "v0.3.6-miaomiao.1", "0.3.6-pr.9", "0.3.6-dev"] {
+        assert!(!is_installed_preview(version), "{version}");
+    }
 }
 
 #[test]

@@ -20,6 +20,76 @@ fn automatic_updates_never_reinstall_or_downgrade() {
 }
 
 #[test]
+fn application_automatic_policy_never_switches_channel_or_installs_pins() {
+    let mut config = GuiConfigFile::default();
+    for (channel, installed, candidate, expected) in [
+        ("stable", "0.3.117", "0.3.117", false),
+        ("stable", "0.3.117", "0.3.116", false),
+        ("stable", "0.3.117", "0.3.118", true),
+        ("stable", "0.3.117-preview.1", "0.3.117", false),
+        ("stable", "0.3.118-preview.1", "0.3.117", false),
+        ("preview", "0.3.117", "0.3.118-preview.1", false),
+        ("preview", "0.3.117", "0.3.93-preview.1", false),
+        ("preview", "0.3.117-preview.1", "0.3.117-preview.2", true),
+        ("preview", "0.3.117-preview.1", "0.3.117", false),
+        ("preview-old", "0.3.117-preview.1", "0.3.117-preview.2", false),
+        ("preview-old", "0.3.117-preview.2", "0.3.117-preview.1", false),
+    ] {
+        config.update_channel = Some(channel.into());
+        assert_eq!(app_accepts_automatic_candidate(&config, installed, candidate), expected, "{channel}: {installed} -> {candidate}");
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn pending_automatic_application_from_the_old_channel_is_not_applicable_or_resurrected() {
+    let root = unique_test_temp_path("automatic-app-pending-channel");
+    fs::create_dir_all(&root).unwrap();
+    let mut config = GuiConfigFile::default();
+    config.auto_update.enabled = true;
+    config.auto_update.update_app = true;
+    config.update_channel = Some("stable".into());
+    let current = "0.3.117";
+    let candidate = "0.3.118";
+    // Exercise the durable record with a non-executable descriptor fixture.
+    let descriptor = serde_json::json!({
+        "parentPid": 0,
+        "stagedExe": "staged", "currentManifest": "current", "stagedManifest": "manifest",
+        "backupExe": "backup", "backupManifest": "backup-manifest", "currentCoreVersion": "version",
+        "stagedCoreVersion": "next-version", "backupCoreVersion": "backup-version",
+        "stagedCoreArchive": "staged-core", "installCoreArchive": false, "targetCoreArchive": "core",
+        "ackPath": "ack", "workDir": "work", "targetVersion": candidate, "currentExe": "application",
+        "preserveCore": false,
+    });
+    let payload = Payload::App { descriptor: serde_json::from_value(descriptor).unwrap(), files: Vec::new() };
+    let cached = PreparedUpdate { version: candidate.into(), origin: prepared::origin(&config), executable: root.join("app"), payload };
+    cached.save_at(&root).unwrap();
+    assert!(cache_is_applicable(&cached, &config, current));
+    assert!(!cache_is_applicable(&cached, &config, candidate));
+    let removed = prepared::take_app_record_at(&root).unwrap().unwrap();
+    config.update_channel = Some("preview".into());
+    assert!(!cache_is_applicable(&removed, &config, current));
+    config.update_channel = Some("stable".into());
+    assert!(PreparedUpdate::load_at(&root, "app").unwrap().is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cancelled_download_does_not_restore_stale_status_after_channel_change() {
+    let state = AutoUpdateState::default();
+    let token = CancellationToken::new();
+    state.report_unless_cancelled(Some(&token), "downloading", "app", "0.3.118", None);
+    assert_eq!(state.control().unwrap().status.phase, "downloading");
+    {
+        let mut control = state.control().unwrap();
+        token.cancel();
+        control.status = Status::default();
+    }
+    state.report_unless_cancelled(Some(&token), "waiting-startup", "app", "0.3.118", None);
+    assert!(state.control().unwrap().status.target.is_none());
+}
+
+#[test]
 fn saved_policy_round_trips_and_preserves_unrelated_fields() {
     let root = unique_test_temp_path("automatic-update-config");
     std::fs::create_dir_all(&root).unwrap();
@@ -204,7 +274,7 @@ fn download_identity_tracks_source_channel_and_proxy_only() {
     changed.download_source = VersionDownloadSource::GhFast;
     assert_ne!(original, prepared::origin(&changed));
     changed = config.clone();
-    changed.update_channel = "preview".into();
+    changed.update_channel = Some("preview".into());
     assert_ne!(original, prepared::origin(&changed));
     changed = config.clone();
     changed.auto_update.enabled = true;

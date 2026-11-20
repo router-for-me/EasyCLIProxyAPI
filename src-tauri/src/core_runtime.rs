@@ -1248,26 +1248,6 @@ pub(crate) fn release_tag_from_url(url: &reqwest::Url) -> Option<String> {
     }
 }
 
-pub(crate) fn is_app_update_available(current: &str, latest: &str) -> Result<bool, String> {
-    let parse = |value: &str| {
-        semver::Version::parse(value.trim().trim_start_matches('v'))
-            .map_err(|error| format!("Failed to parse version {value}: {error}"))
-    };
-    let current_version = parse(current)?;
-    let latest_version = parse(latest)?;
-    if latest_version > current_version {
-        return Ok(true);
-    }
-    // Allow updating from a prerelease / PR / dev build to a stable release with equal or greater base version
-    if !current_version.pre.is_empty()
-        && latest_version.pre.is_empty()
-        && (latest_version.major, latest_version.minor, latest_version.patch)
-            >= (current_version.major, current_version.minor, current_version.patch)
-    {
-        return Ok(true);
-    }
-    Ok(false)
-}
 
 #[cfg(test)]
 pub(crate) fn parse_release_assets(html: &str) -> Vec<GithubAsset> {

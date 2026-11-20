@@ -289,24 +289,111 @@ pub(crate) fn open_external_url(app: tauri::AppHandle, url: String) -> Result<()
     open_external_url_inner(&app, &url)
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum AppUpdateAction {
+    Update,
+    SwitchChannel,
+}
+
+fn parse_app_version(version: &str) -> Result<semver::Version, String> {
+    semver::Version::parse(version.trim().trim_start_matches('v'))
+        .map_err(|error| format!("Failed to parse version {version}: {error}"))
+}
+
+fn is_preview_version(version: &semver::Version) -> bool {
+    version.pre.split('.').next() == Some("preview")
+}
+
+pub(crate) fn is_installed_preview(version: &str) -> bool {
+    parse_app_version(version).is_ok_and(|version| is_preview_version(&version))
+}
+
+pub(crate) fn app_update_action(
+    channel: &str,
+    installed: &str,
+    target: &str,
+) -> Result<Option<AppUpdateAction>, String> {
+    let installed = parse_app_version(installed)?;
+    let target = parse_app_version(target)?;
+    let wants_preview = channel != "stable";
+    if (wants_preview && !is_preview_version(&target))
+        || (!wants_preview && !target.pre.is_empty())
+    {
+        return Err("Application update version does not match the selected channel".into());
+    }
+    if !target.cmp_precedence(&installed).is_gt() {
+        return Ok(None);
+    }
+    // Choosing a pin or changing release family requires explicit approval,
+    // but never overrides the requirement that the target be newer.
+    Ok(Some(if channel.starts_with("preview-") || wants_preview != is_preview_version(&installed) {
+        AppUpdateAction::SwitchChannel
+    } else {
+        AppUpdateAction::Update
+    }))
+}
+
+pub(crate) fn validate_app_update_release(
+    selected_tag: Option<&str>,
+    release_url: &str,
+    version: &str,
+) -> Result<(), String> {
+    let release_tag = release_url.trim_end_matches('/').rsplit('/').next().unwrap_or_default();
+    let expected = match selected_tag {
+        Some(tag) => tag == release_tag,
+        None => release_tag.strip_prefix('v') == Some(version.trim_start_matches('v')),
+    };
+    if !expected {
+        return Err("Application update manifest does not match the selected release".into());
+    }
+    // Published timestamped releases use the same stamp in the tag and the
+    // binary version. Non-timestamped legacy pins are identified by exact tag.
+    if preview_stamp_key(release_tag).is_some()
+        && parse_app_version(version)?.pre.as_str() != release_tag.replacen("preview-", "preview.", 1)
+    {
+        return Err("Application update version does not match the preview release tag".into());
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AppUpdateOffer {
+    update_channel: String,
+    download_source: String,
+    latest_version: String,
+    release_url: String,
+    action: AppUpdateAction,
+}
+
+impl AppUpdateOffer {
+    pub(crate) fn matches(&self, info: &AppUpdateInfo) -> bool {
+        self.update_channel == info.update_channel
+            && self.download_source == info.download_source
+            && self.latest_version == info.latest_version
+            && self.release_url == info.release_url
+            && Some(self.action) == info.action
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn check_app_update(
-    state: tauri::State<'_, AppUpdateState>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<AppUpdateInfo, String> {
     let config = gui_config_state.snapshot()?;
     let (info, _) = resolve_app_update(&config).await?;
-    state.set_available(AppUpdateTask {
-        phase: if info.update_available {
-            "available".to_string()
-        } else {
-            "idle".to_string()
-        },
-        target_version: info.update_available.then(|| info.latest_version.clone()),
-        total_bytes: info.download_size_bytes,
-        ..AppUpdateTask::default()
-    });
+    let current = gui_config_state.snapshot()?;
+    if !app_update_selection_matches(&config, &current) {
+        return Err("Application update settings changed. Check for updates again".into());
+    }
     Ok(info)
+}
+
+fn app_update_selection_matches(checked: &GuiConfigFile, current: &GuiConfigFile) -> bool {
+    checked.effective_update_channel() == current.effective_update_channel()
+        && checked.selected_download_candidate().key() == current.selected_download_candidate().key()
+        && checked.proxy_url == current.proxy_url
 }
 
 pub(crate) async fn resolve_app_update(
@@ -327,7 +414,7 @@ pub(crate) async fn resolve_app_update(
     )?;
     let requested_source = config.selected_download_candidate();
     let current_version = normalize_version(env!("CARGO_PKG_VERSION"));
-    let update_channel = normalize_update_channel(&config.update_channel);
+    let update_channel = config.effective_update_channel();
     let mut channel_tag = update_channel_tag(&update_channel);
     validate_version_download_source(
         &requested_source,
@@ -358,29 +445,15 @@ pub(crate) async fn resolve_app_update(
         fetch_portable_update_manifest(&client, requested_source.clone(), channel_tag.as_deref())
             .await?;
     let latest_version = normalize_version(&manifest.version);
+    validate_app_update_release(channel_tag.as_deref(), &manifest.release_url, &latest_version)?;
     let current_build_at = local_portable_app_built_at();
-    let local_manifest = read_local_portable_app_manifest();
-    let is_test_env = is_test_or_prerelease_version(&current_version)
-        || local_manifest.as_ref().is_some_and(|m| {
-            is_test_or_prerelease_version(&m.version)
-                || normalize_version(&m.version) != current_version
-        });
-    let mut update_available = is_app_update_available(&current_version, &latest_version)?;
-    if !update_available && is_test_env {
-        update_available = true;
-    }
-    if !update_available
-        && is_preview
-        && is_timestamped_preview_version(&latest_version)
-        && normalize_version(&latest_version) != current_version
-    {
-        update_available = true;
-    }
+    let action = app_update_action(&update_channel, &current_version, &latest_version)?;
     let target = portable_update_target();
     let asset_catalog = manifest.full_assets.as_ref().unwrap_or(&manifest.assets);
     let asset = target.and_then(|(key, _)| asset_catalog.get(key)).cloned();
     let download_url = asset
         .as_ref()
+        .filter(|_| action.is_some())
         .map(|value| portable_update_download_url(value, &resolved_source))
         .transpose()?;
     let download_file_name = download_url
@@ -388,17 +461,13 @@ pub(crate) async fn resolve_app_update(
         .and_then(portable_update_asset_file_name);
     let download_size_bytes = asset.as_ref().map(|value| value.size_bytes);
     let mut manifest_error = None;
-    let portable_support =
-        target.map(
-            |(_, arch)| match validate_local_portable_app_manifest(arch) {
-                Ok(supported) => supported || is_preview || is_test_env,
-                Err(_) if is_preview || is_test_env => true,
-                Err(error) => {
-                    manifest_error = Some(error);
-                    false
-                }
-            },
-        );
+    let portable_support = target.map(|(_, arch)| match validate_local_portable_app_manifest(arch) {
+        Ok(supported) => supported,
+        Err(error) => {
+            manifest_error = Some(error);
+            false
+        }
+    });
     let auto_update_supported = portable_support == Some(true) && asset.is_some();
     let unsupported_reason = if auto_update_supported {
         None
@@ -412,7 +481,7 @@ pub(crate) async fn resolve_app_update(
         )
     };
 
-    let pending = if update_available && auto_update_supported {
+    let pending = if action.is_some() && auto_update_supported {
         let (_, arch) = target.expect("portable target checked above");
         Some(PendingAppUpdate {
             version: latest_version.clone(),
@@ -422,7 +491,7 @@ pub(crate) async fn resolve_app_update(
     } else {
         None
     };
-    let skipped_release_notes = if update_available && !is_preview {
+    let skipped_release_notes = if action == Some(AppUpdateAction::Update) && !is_preview {
         skipped_release_notes(
             &manifest.release_notes_history,
             &current_version,
@@ -434,7 +503,9 @@ pub(crate) async fn resolve_app_update(
     let info = AppUpdateInfo {
         current_version,
         latest_version,
-        update_available,
+        update_available: action == Some(AppUpdateAction::Update),
+        action,
+        download_source: resolved_source.key(),
         release_url: manifest.release_url,
         release_notes: manifest.release_notes,
         skipped_release_notes,
@@ -911,6 +982,7 @@ async fn fetch_preview_tags_from_api(
     let releases = response.json::<Vec<serde_json::Value>>().await.ok()?;
     let tags: Vec<String> = releases
         .iter()
+        .filter(|release| release.get("draft").and_then(serde_json::Value::as_bool) != Some(true))
         .filter_map(|release| release.get("tag_name")?.as_str().map(str::to_string))
         .collect();
     select_latest_preview_tag(&tags)
@@ -1041,35 +1113,13 @@ pub(crate) fn read_local_portable_app_manifest() -> Option<PortableAppManifest> 
 
 pub(crate) fn local_portable_app_built_at() -> Option<String> {
     let manifest = read_local_portable_app_manifest()?;
+    if normalize_version(&manifest.version) != normalize_version(env!("CARGO_PKG_VERSION")) {
+        return None;
+    }
     manifest
         .built_at
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty() && chrono::DateTime::parse_from_rfc3339(value).is_ok())
-}
-
-pub(crate) fn is_test_or_prerelease_version(version: &str) -> bool {
-    let trimmed = version.trim().trim_start_matches('v');
-    let lower = trimmed.to_ascii_lowercase();
-    lower.contains("preview")
-        || lower.contains("pr.")
-        || lower.contains("-pr")
-        || lower.contains("dev")
-        || lower.contains("test")
-        || lower.contains("alpha")
-        || lower.contains("beta")
-        || lower.contains("rc")
-        || lower.contains("dirty")
-        || semver::Version::parse(trimmed)
-            .map(|v| !v.pre.is_empty())
-            .unwrap_or(false)
-}
-
-pub(crate) fn is_timestamped_preview_version(version: &str) -> bool {
-    let trimmed = version.trim().trim_start_matches('v');
-    match trimmed.to_ascii_lowercase().split_once("-preview.") {
-        Some((_, stamp)) => !stamp.is_empty(),
-        None => false,
-    }
 }
 
 pub(crate) fn validate_local_portable_app_manifest(expected_arch: &str) -> Result<bool, String> {
@@ -1083,16 +1133,13 @@ pub(crate) fn validate_local_portable_app_manifest(expected_arch: &str) -> Resul
         .map_err(|error| format!("Failed to parse portable version marker: {error}"))?;
     let binary_version = env!("CARGO_PKG_VERSION");
     let version_matches = normalize_version(&manifest.version) == normalize_version(binary_version);
-    let is_test_environment = is_test_or_prerelease_version(&manifest.version)
-        || is_test_or_prerelease_version(binary_version)
-        || !version_matches;
 
     Ok(manifest.schema_version == 1
         && manifest.application == "EasyCLIProxyAPI"
         && Some(manifest.platform.as_str()) == portable_update_platform_key()
         && manifest.arch == expected_arch
         && manifest.auto_update
-        && (version_matches || is_test_environment))
+        && version_matches)
 }
 
 #[tauri::command]
@@ -1116,7 +1163,13 @@ pub(crate) async fn start_app_update(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppUpdateState>,
     preserve_core: Option<bool>,
+    offer: AppUpdateOffer,
 ) -> Result<(), String> {
+    if app_update_action(&offer.update_channel, env!("CARGO_PKG_VERSION"), &offer.latest_version)?
+        != Some(offer.action)
+    {
+        return Err("No newer application update matches the confirmed offer".into());
+    }
     let preserve_core = preserve_core.unwrap_or(false);
     let update_operation = app.state::<auto_update::AutoUpdateState>().try_operation()?;
     if preserve_core && !cfg!(any(windows, target_os = "macos")) {
@@ -1126,7 +1179,7 @@ pub(crate) async fn start_app_update(
         return Err("The current platform does not support in-app automatic upgrades".to_string());
     }
     let token = CancellationToken::new();
-    state.start(token.clone())?;
+    let config = auto_update::begin_manual_app_update(&app, state.inner(), token.clone())?;
     state.update_task(|task| task.preserve_core = preserve_core);
     let task = state.snapshot();
     let _ = app.emit(APP_UPDATE_PROGRESS_EVENT, task);
@@ -1136,20 +1189,22 @@ pub(crate) async fn start_app_update(
         let outcome = async {
             let state = update_app.state::<AppUpdateState>();
             let gui_config_state = update_app.state::<GuiConfigState>();
-            // Pin the source for the whole operation, including manifest refresh
-            // and archive download, even if settings change while checking.
-            let config = gui_config_state.snapshot()?;
+            // Refresh for availability and asset identity, but never replace
+            // the target the user actually confirmed with a different release.
             let pending = refresh_app_update_for_install(state.inner(), &token, async {
-                let (info, pending) =
-                    resolve_app_update(&config).await?;
-                pending.ok_or_else(|| {
-                    if info.update_available {
-                        info.unsupported_reason
-                            .unwrap_or_else(|| "The current version does not support automatic updates".to_string())
-                    } else {
-                        "No application update is currently available to install. Check for updates again".to_string()
-                    }
-                })
+                if offer.update_channel != config.effective_update_channel()
+                    || offer.download_source != config.selected_download_candidate().key()
+                {
+                    return Err("Application update settings changed. Check for updates again".into());
+                }
+                let (info, pending) = resolve_app_update(&config).await?;
+                if !offer.matches(&info)
+                    || !app_update_selection_matches(&config, &gui_config_state.snapshot()?)
+                {
+                    return Err("Application update offer changed. Check for updates again".into());
+                }
+                pending.ok_or_else(|| info.unsupported_reason
+                    .unwrap_or_else(|| "The current version does not support in-app updates".to_string()))
             })
             .await?;
             let _ = update_app.emit(APP_UPDATE_PROGRESS_EVENT, state.snapshot());
@@ -1410,6 +1465,12 @@ pub(crate) async fn launch_prepared_portable_update(
     app: &tauri::AppHandle,
     descriptor: &UpdateDescriptor,
 ) -> Result<(), String> {
+    if !parse_app_version(&descriptor.target_version)?
+        .cmp_precedence(&parse_app_version(env!("CARGO_PKG_VERSION"))?)
+        .is_gt()
+    {
+        return Err("The prepared application update is not newer than the installed version".into());
+    }
     let work_dir = &descriptor.work_dir;
     let descriptor_path = work_dir.join("update-descriptor.json");
     write_bytes_atomically(
@@ -3182,7 +3243,7 @@ pub(crate) async fn list_update_channels(
     let source = config.selected_download_candidate();
     validate_version_download_source(&source, configured_gitcode_gui_repository().is_some())?;
     let mut channels = vec!["stable".to_string(), "preview".to_string()];
-    let selected_channel = normalize_update_channel(&config.update_channel);
+    let selected_channel = config.effective_update_channel();
     if !channels.contains(&selected_channel) {
         channels.push(selected_channel);
     }
@@ -3213,6 +3274,9 @@ pub(crate) async fn list_update_channels(
         if response.status().is_success() {
             if let Ok(releases) = response.json::<Vec<serde_json::Value>>().await {
                 for release in releases {
+                    if release.get("draft").and_then(serde_json::Value::as_bool) == Some(true) {
+                        continue;
+                    }
                     let Some(tag) = release.get("tag_name").and_then(|value| value.as_str()) else {
                         continue;
                     };
@@ -3242,16 +3306,20 @@ pub(crate) fn get_update_channel(
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<String, String> {
     let config = gui_config_state.snapshot()?;
-    Ok(normalize_update_channel(&config.update_channel))
+    Ok(config.effective_update_channel())
 }
 
 #[tauri::command]
 pub(crate) fn set_update_channel(
-    gui_config_state: tauri::State<'_, GuiConfigState>,
+    app: tauri::AppHandle,
     channel: String,
 ) -> Result<String, String> {
-    let channel = normalize_update_channel(&channel);
-    gui_config_state.set_update_channel(&channel)?;
-    Ok(channel)
+    let channel = channel.trim();
+    let normalized = if channel.eq_ignore_ascii_case("stable") {
+        "stable".to_string()
+    } else {
+        update_channel_tag(channel).ok_or("Unsupported application update channel")?
+    };
+    auto_update::change_application_channel(&app, &normalized)?;
+    Ok(normalized)
 }
-

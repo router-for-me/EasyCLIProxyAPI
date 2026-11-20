@@ -1,5 +1,5 @@
 import { onAppUpdateProgress } from './services/events';
-import { checkAppUpdate, getAppUpdateTask, startAppUpdate, cancelAppUpdate } from './services/appUpdates';
+import { checkAppUpdate, getAppUpdateTask, getUpdateChannel, setUpdateChannel, startAppUpdate, cancelAppUpdate } from './services/appUpdates';
 import type { AppUpdateInfo, AppUpdateTask } from './services/appUpdates';
 import { MessageNotice } from './appNotice';
 import {
@@ -32,7 +32,11 @@ type AppUpdateContextValue = {
   confirmOpen: boolean;
   hasUpdate: boolean;
   processing: boolean;
+  channel: string;
+  changingSelection: boolean;
   check: () => Promise<void>;
+  changeChannel: (next: string) => Promise<void>;
+  changeSelection: <T>(mutation: () => Promise<T>) => Promise<T>;
   requestInstall: () => void;
   dismissConfirm: () => void;
   install: (preserveCore?: boolean) => Promise<void>;
@@ -58,31 +62,65 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [channel, setChannel] = useState('');
+  const [changingSelection, setChangingSelection] = useState(false);
+  const selectionPending = useRef(false);
+  const checkGeneration = useRef(0);
   const startupCheckStarted = useRef(false);
 
   const check = useCallback(async () => {
+    if (selectionPending.current) return;
+    const generation = ++checkGeneration.current;
+    const isCurrent = () => generation === checkGeneration.current;
     setChecking(true);
+    setInfo(null);
+    setConfirmOpen(false);
     setError('');
+    let resolved = false;
+    void getUpdateChannel().then((selected) => {
+      if (isCurrent() && !resolved) setChannel(selected);
+    }).catch(() => undefined);
     try {
       const result = await checkAppUpdate();
+      if (!isCurrent()) return;
+      resolved = true;
+      setChannel(result.updateChannel);
       setInfo(result);
-      setTask((current) => (
-        current.running
-          ? current
-          : {
-              ...current,
-              phase: result.updateAvailable ? 'available' : 'idle',
-              targetVersion: result.updateAvailable ? result.latestVersion : null,
-              message: null,
-            }
-      ));
+      setTask((current) => current.running ? current : {
+        ...idleTask,
+        phase: result.action ? 'available' : 'idle',
+        targetVersion: result.action ? result.latestVersion : null,
+      });
     } catch (nextError) {
-      setInfo(null);
-      setError(String(nextError));
+      if (isCurrent()) setError(String(nextError));
     } finally {
-      setChecking(false);
+      if (isCurrent()) setChecking(false);
     }
   }, []);
+
+  // Invalidate the old offer *before* saving settings. Even a response that
+  // completes during the save must not resurrect the old install or badge.
+  const changeSelection = useCallback(async <T,>(mutation: () => Promise<T>) => {
+    if (selectionPending.current) throw new Error('Application update selection is already changing');
+    selectionPending.current = true;
+    ++checkGeneration.current;
+    setChangingSelection(true);
+    setChecking(false);
+    setInfo(null);
+    setError('');
+    setConfirmOpen(false);
+    try {
+      return await mutation();
+    } finally {
+      selectionPending.current = false;
+      setChangingSelection(false);
+      void check();
+    }
+  }, [check]);
+
+  const changeChannel = useCallback((next: string) => changeSelection(async () => {
+    setChannel(await setUpdateChannel(next));
+  }), [changeSelection]);
 
   useEffect(() => {
     let disposed = false;
@@ -118,14 +156,15 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const install = useCallback(async (preserveCore = false) => {
+    if (!info?.action || !info.autoUpdateSupported || selectionPending.current) return;
     setConfirmOpen(false);
     setError('');
     try {
-      await startAppUpdate(preserveCore);
+      await startAppUpdate({ ...info, action: info.action }, preserveCore);
     } catch (nextError) {
       setError(String(nextError));
     }
-  }, []);
+  }, [info]);
 
   const cancel = useCallback(async () => {
     setError('');
@@ -144,12 +183,18 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     confirmOpen,
     hasUpdate: Boolean(info?.updateAvailable),
     processing: task.running,
+    channel,
+    changingSelection,
     check,
-    requestInstall: () => setConfirmOpen(true),
+    changeChannel,
+    changeSelection,
+    requestInstall: () => {
+      if (info?.action && info.autoUpdateSupported && !selectionPending.current) setConfirmOpen(true);
+    },
     dismissConfirm: () => setConfirmOpen(false),
     install,
     cancel,
-  }), [cancel, check, checking, confirmOpen, error, info, install, task]);
+  }), [cancel, changeChannel, changeSelection, changingSelection, channel, check, checking, confirmOpen, error, info, install, task]);
 
   return <AppUpdateContext.Provider value={value}>{children}</AppUpdateContext.Provider>;
 }
@@ -176,6 +221,7 @@ export function AppUpdateDialog() {
     if (confirmOpen) setRestartCore(true);
   }, [confirmOpen]);
   const preserveCore = info?.preserveCoreSupported === true && !restartCore;
+  const switching = info?.action === 'switchChannel';
   if (!confirmOpen && !task.running) return null;
 
   const percent = task.percent ?? (
@@ -196,14 +242,18 @@ export function AppUpdateDialog() {
       <div className="install-dialog-heading">
         <span>{t('appUpdate.eyebrow')}</span>
         <h2 id="app-update-dialog-title">
-          {confirmOpen ? t('appUpdate.confirmTitle') : t('appUpdate.progressTitle')}
+          {confirmOpen ? t(switching ? 'appUpdate.installSelected' : 'appUpdate.confirmTitle') : t('appUpdate.progressTitle')}
         </h2>
       </div>
 
       {confirmOpen ? (
         <>
           <p className="app-update-confirm-copy">
-            {t('appUpdate.confirmDescription', { version: info?.latestVersion ?? '' })}
+            {switching
+              ? t('appUpdate.confirmSwitch', {
+                current: info?.currentVersion ?? '', version: info?.latestVersion ?? '',
+              })
+              : t('appUpdate.confirmDescription', { version: info?.latestVersion ?? '' })}
           </p>
           <Checkbox checked={!preserveCore} onChange={event => setRestartCore(event.target.checked)}
             disabled={!info?.preserveCoreSupported} label={t('appUpdate.restartCore')} aria-describedby="app-update-core-hint" />
@@ -216,7 +266,7 @@ export function AppUpdateDialog() {
             </button>
             <button type="button" className="primary-button" onClick={() => void install(preserveCore)}>
               <Download size={15} aria-hidden="true" />
-              {t(preserveCore ? 'appUpdate.installOnly' : 'appUpdate.installNow')}
+              {t(switching ? 'appUpdate.installSelected' : preserveCore ? 'appUpdate.installOnly' : 'appUpdate.installNow')}
             </button>
           </div>
         </>

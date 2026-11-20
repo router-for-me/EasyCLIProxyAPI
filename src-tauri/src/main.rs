@@ -484,6 +484,8 @@ struct AppUpdateInfo {
     current_version: String,
     latest_version: String,
     update_available: bool,
+    action: Option<AppUpdateAction>,
+    download_source: String,
     release_url: String,
     release_notes: HashMap<String, String>,
     skipped_release_notes: Vec<SkippedReleaseNotes>,
@@ -691,8 +693,7 @@ struct GuiConfigFile {
     api_access_remarks: Vec<GuiApiAccessRemark>,
     management_secret_key: String,
     debug: bool,
-    #[serde(default = "default_update_channel")]
-    update_channel: String,
+    update_channel: Option<String>,
     commercial_mode: bool,
     auto_update: auto_update::AutoUpdateSettings,
     logging_to_file: bool,
@@ -868,6 +869,14 @@ fn normalize_custom_download_mirror_url(value: &str) -> Result<String, String> {
 }
 
 impl GuiConfigFile {
+    fn effective_update_channel(&self) -> String {
+        self.update_channel
+            .as_deref()
+            .filter(|channel| !channel.trim().is_empty())
+            .map(normalize_update_channel)
+            .unwrap_or_else(default_update_channel)
+    }
+
     fn selected_download_candidate(&self) -> VersionDownloadCandidate {
         if self.download_source == VersionDownloadSource::Custom
             && self
@@ -999,7 +1008,7 @@ impl Default for GuiConfigFile {
             api_access_remarks: Vec::new(),
             management_secret_key: LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string(),
             debug: false,
-            update_channel: default_update_channel(),
+            update_channel: None,
             auto_update: auto_update::AutoUpdateSettings::default(),
             commercial_mode: false,
             logging_to_file: false,
@@ -1314,7 +1323,7 @@ fn default_true() -> bool {
 
 fn default_update_channel() -> String {
     // A preview binary keeps following the preview channel until switched explicitly.
-    if env!("CARGO_PKG_VERSION").to_ascii_lowercase().contains("preview") {
+    if is_installed_preview(env!("CARGO_PKG_VERSION")) {
         "preview".to_string()
     } else {
         "stable".to_string()
@@ -1933,6 +1942,7 @@ impl AppUpdateState {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     fn set_available(&self, task: AppUpdateTask) {
         if let Ok(mut inner) = self.inner.lock() {
             if !inner.task.running {
@@ -1942,6 +1952,15 @@ impl AppUpdateState {
     }
 
     fn start(&self, token: CancellationToken) -> Result<(), String> {
+        self.start_with_mode(token, false, false)
+    }
+
+    fn start_with_mode(
+        &self,
+        token: CancellationToken,
+        automatic: bool,
+        preserve_core: bool,
+    ) -> Result<(), String> {
         let mut inner = self
             .inner
             .lock()
@@ -1954,6 +1973,8 @@ impl AppUpdateState {
             running: true,
             cancellable: true,
             phase: "checking".to_string(),
+            automatic,
+            preserve_core,
             ..AppUpdateTask::default()
         };
         Ok(())
@@ -2330,7 +2351,7 @@ impl GuiConfigState {
 
     fn set_update_channel(&self, update_channel: &str) -> Result<GuiConfigFile, String> {
         self.update(|config| {
-            config.update_channel = update_channel.to_string();
+            config.update_channel = Some(update_channel.to_string());
             Ok(())
         })
     }

@@ -34,7 +34,7 @@ pub(super) struct CheckedFile {
 pub(super) fn origin(config: &GuiConfigFile) -> String {
     let identity = serde_json::to_vec(&(
         config.selected_download_candidate().key(),
-        &config.update_channel,
+        config.effective_update_channel(),
         &config.proxy_url,
     ))
     .expect("string tuple serializes");
@@ -196,12 +196,24 @@ impl PreparedUpdate {
     }
 
     pub fn remove_record(target: &str) -> Result<(), String> {
-        match fs::remove_file(record_path(&core_base_dir()?, target)?) {
+        Self::remove_record_at(&core_base_dir()?, target)
+    }
+
+    fn remove_record_at(base: &Path, target: &str) -> Result<(), String> {
+        match fs::remove_file(record_path(base, target)?) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(format!("Cannot remove prepared update record: {error}")),
         }
     }
+}
+
+/// Unlink the durable record before a channel change, even if it is malformed.
+/// The caller serializes this with application cache publication.
+pub(super) fn take_app_record_at(base: &Path) -> Result<Option<PreparedUpdate>, String> {
+    let old = PreparedUpdate::load_at(base, "app").ok().flatten();
+    PreparedUpdate::remove_record_at(base, "app")?;
+    Ok(old)
 }
 
 fn safe_relative(path: &Path) -> bool {
