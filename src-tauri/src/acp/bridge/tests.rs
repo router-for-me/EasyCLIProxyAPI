@@ -73,6 +73,10 @@ fn streaming_backpressure_preserves_chunks_and_can_be_cancelled() {
             model: "test".into(),
             created: 1,
             started: false,
+            native: false,
+            previous: None,
+            sequence: 0,
+            text_started: false,
         };
         let worker = std::thread::spawn(move || events.send(Ok("next".into())));
         if cancel_wait {
@@ -85,6 +89,37 @@ fn streaming_backpressure_preserves_chunks_and_can_be_cancelled() {
             assert!(!cancel.load(Ordering::Acquire));
         }
     }
+}
+
+#[test]
+fn stalled_stream_releases_the_writer_even_when_receiver_stays_open() {
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+    sender.try_send(Ok("queued".into())).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let events = CompletionStream {
+        sender,
+        cancel: cancel.clone(),
+        id: "test".into(),
+        model: "test".into(),
+        created: 1,
+        started: true,
+        native: true,
+        previous: None,
+        sequence: 1,
+        text_started: true,
+    };
+    let (finished, done) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let _ = finished
+            .send(events.send_with_stall_limit(Ok("next".into()), Duration::from_millis(50)));
+    });
+    let result = done.recv_timeout(Duration::from_secs(2));
+    let cancelled = cancel.swap(true, Ordering::AcqRel);
+    worker.join().unwrap();
+    assert!(result.unwrap().unwrap_err().contains("stopped reading"));
+    assert!(cancelled);
+    assert_eq!(receiver.try_recv().unwrap().unwrap(), "queued");
+    assert!(receiver.try_recv().is_err());
 }
 
 fn bridge_fixture() -> (tauri::App<tauri::test::MockRuntime>, PathBuf) {
@@ -137,6 +172,8 @@ fn successful_login_refresh_relogin_and_account_switch_do_not_enable_api() {
         &Settings {
             enabled: true,
             port: 0,
+            account_pool: false,
+            prompt_profile: PromptProfile::Append,
         },
     )
     .unwrap();
@@ -398,6 +435,8 @@ async fn restore_only_runs_for_explicit_saved_enablement() {
         &Settings {
             enabled: false,
             port: 12345,
+            account_pool: false,
+            prompt_profile: PromptProfile::Append,
         },
     )
     .unwrap();
@@ -411,6 +450,8 @@ async fn restore_only_runs_for_explicit_saved_enablement() {
         &Settings {
             enabled: true,
             port: 12345,
+            account_pool: false,
+            prompt_profile: PromptProfile::Append,
         },
     )
     .unwrap();
@@ -436,6 +477,8 @@ async fn disable_wins_over_a_restore_that_already_started_connecting() {
         &Settings {
             enabled: true,
             port: 0,
+            account_pool: false,
+            prompt_profile: PromptProfile::Append,
         },
     )
     .unwrap();
@@ -1013,6 +1056,32 @@ fn official_cli_completes_a_chat_client_request_with_system_and_empty_tools() {
 }
 
 #[test]
+fn native_responses_preserves_long_multipart_instructions_without_duplication() {
+    let core = "Synthetic developer directions.\n".repeat(600);
+    let parsed = responses::parse(
+        &json!({
+            "model":"acp/test-model",
+            "instructions":"top-level instructions",
+            "input":[
+                {"type":"message","role":"developer","content":[
+                    {"type":"input_text","text":core}, {"type":"input_text","text":"tail\n"}
+                ]},
+                {"type":"message","role":"user","content":"independent question"}
+            ]
+        }),
+        &models(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        parsed.system,
+        format!("top-level instructions\n\n{core}tail\n")
+    );
+    assert_eq!(parsed.prompt.len(), 1);
+    assert_eq!(parsed.prompt[0].as_text(), Some("independent question"));
+}
+
+#[test]
 fn system_messages_are_separate_from_the_user_turn() {
     let mut value = request(false);
     value["messages"] = json!([
@@ -1067,6 +1136,81 @@ fn unsupported_roles_name_the_role() {
 }
 
 #[test]
+fn context_document_recognition_is_exact_and_role_scoped() {
+    for prefix in ["\u{feff}", ACP_TEMPLATE_TITLE] {
+        let document = format!("{prefix}{ACP_TEMPLATE}");
+        let mut body = request(false);
+        body["messages"] =
+            json!([{"role":"system","content":document},{"role":"user","content":document}]);
+        for policy in [PromptProfile::Append, PromptProfile::FirstTurnContext] {
+            let mut req = parse_with_profile(&body, &models(), policy).unwrap();
+            assert_eq!(req.system, document);
+            req.frame_opening().unwrap();
+            assert_eq!(
+                req.prompt.last().unwrap().as_text(),
+                Some(document.as_str())
+            );
+            if policy == PromptProfile::Append {
+                assert_eq!(req.system, document);
+            } else {
+                assert_eq!(
+                    req.prompt[0].as_text().unwrap(),
+                    format!("Client context:\n{ACP_TEMPLATE}")
+                );
+            }
+        }
+        for other in [
+            format!("{document} "),
+            format!("{prefix}custom instruction"),
+            format!("p{document}"),
+            document.replace("concise", "precise"),
+        ] {
+            assert_eq!(context_text(&other), other);
+        }
+    }
+}
+
+#[test]
+fn profile_normalizes_only_bridge_generated_history_separators() {
+    assert_eq!(
+        serde_json::from_str::<Settings>("{}")
+            .unwrap()
+            .prompt_profile,
+        PromptProfile::Append
+    );
+    assert!(serde_json::from_str::<Settings>(r#"{"prompt_profile":"guess"}"#).is_err());
+    let mut body = request(false);
+    let literal = "do not change\n\nAssistant: literal\n\nUser: literal\r\n";
+    body["messages"] = json!([{"role":"developer","content":literal},{"role":"user","content":literal},{"role":"assistant","content":"a"},{"role":"user","content":"b"}]);
+    for (policy, sep) in [
+        (PromptProfile::Append, "\n\n"),
+        (PromptProfile::FirstTurnContext, "\n"),
+    ] {
+        let mut req = parse_with_profile(&body, &models(), policy).unwrap();
+        req.frame_opening().unwrap();
+        assert_eq!(
+            req.prompt.last().unwrap().as_text().unwrap(),
+            format!("User: {literal}{sep}Assistant: a{sep}User: b")
+        );
+        if policy == PromptProfile::Append {
+            assert_eq!(req.system, literal);
+            assert_eq!(req.prompt.len(), 1);
+        } else {
+            assert!(req.system.is_empty());
+            assert_eq!(req.prompt.len(), 2);
+            assert_eq!(
+                req.prompt[0].as_text().unwrap(),
+                format!("Client context:\n{literal}")
+            );
+        }
+    }
+    body["messages"] =
+        json!([{"role":"system","content":"X".repeat(MAX_BODY-1)},{"role":"user","content":"a"}]);
+    let mut req = parse_with_profile(&body, &models(), PromptProfile::FirstTurnContext).unwrap();
+    assert!(req.frame_opening().unwrap_err().contains("1 MiB"));
+}
+
+#[test]
 fn oversized_flattened_prompt_is_rejected() {
     let mut value = request(false);
     let big = "x".repeat(MAX_BODY - 8);
@@ -1087,6 +1231,7 @@ fn fake_official_server() {
     let mut selected = String::new();
     let mut system = String::new();
     let mut tool_config = Value::Null;
+    let mut prompt_count = 0;
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else { break };
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
@@ -1101,6 +1246,7 @@ fn fake_official_server() {
                 result
             }
             "session/new" => {
+                assert_eq!(prompt_count, 0, "unexpected ACP session recreation");
                 tool_config = value["params"]["mcpServers"][0].clone();
                 system = value["params"]["_meta"]["antigravity"]["systemPrompt"]["append"]
                     .as_str()
@@ -1119,8 +1265,152 @@ fn fake_official_server() {
                     !selected.is_empty(),
                     "explicit model selection must precede inference"
                 );
-                let blocks = &value["params"]["prompt"];
+                let context_mode = std::env::var("ECPA_TEST_CONTEXT").as_deref() == Ok("yes");
+                let raw = &value["params"]["prompt"];
+                let mut task = raw.clone();
+                let mut framed = false;
+                if context_mode
+                    && raw[0]["text"]
+                        .as_str()
+                        .is_some_and(|t| t.starts_with("Client context:\n"))
+                {
+                    assert_eq!(prompt_count, 0, "context replayed on continuation");
+                    assert_eq!(raw[0]["text"], "Client context:\nα\r\n第一条\n\n保持顺序\n");
+                    assert!(!system.contains("第一条"));
+                    assert!(if tool_config.is_null() {
+                        system.is_empty()
+                    } else {
+                        system.contains("Do not use local built-in tools")
+                    });
+                    framed = true;
+                    task.as_array_mut().unwrap().remove(0);
+                }
+                let blocks = &task;
                 let prompt = blocks[0]["text"].as_str().unwrap_or("");
+                prompt_count += 1;
+                assert_eq!(value["params"]["sessionId"], "isolated-session");
+                if matches!(
+                    prompt,
+                    "native-first" | "native-second" | "native-third" | "native-independent"
+                ) {
+                    let expected = match prompt {
+                        "native-second" => 2,
+                        "native-third" => 3,
+                        _ => 1,
+                    };
+                    assert_eq!(
+                        prompt_count, expected,
+                        "native continuation did not reuse the process/session"
+                    );
+                    assert_eq!(
+                        *blocks,
+                        json!([{"type":"text","text":prompt}]),
+                        "history was replayed"
+                    );
+                }
+                if matches!(prompt, "mixed-first" | "mixed-next") {
+                    if context_mode {
+                        assert!(system.is_empty());
+                        assert_eq!(framed, prompt_count == 1);
+                    } else {
+                        assert_eq!(system, "α\r\n第一条\n\n保持顺序\n");
+                    }
+                    assert_eq!(prompt_count, if prompt == "mixed-first" { 1 } else { 2 });
+                    assert_eq!(*blocks, json!([{"type":"text","text":prompt}]));
+                }
+                if context_mode
+                    && (prompt == "mixed-history-start" || prompt.contains("mixed-history-fresh"))
+                {
+                    assert!(framed);
+                }
+                if prompt.contains("mixed-history-fresh") {
+                    assert_eq!(prompt_count, 1);
+                    assert!(prompt.contains("mixed-history-start"));
+                }
+                if prompt == "mixed-history-delta" {
+                    assert_eq!(prompt_count, 2);
+                    if context_mode {
+                        assert!(system.is_empty());
+                        assert_eq!(framed, prompt_count == 1);
+                    } else {
+                        assert_eq!(system, "α\r\n第一条\n\n保持顺序\n");
+                    }
+                    assert_eq!(*blocks, json!([{"type":"text","text":prompt}]));
+                }
+                if prompt == "scoped-delta" {
+                    assert_eq!(
+                        prompt_count, 2,
+                        "a full transcript should produce only the second ACP prompt delta"
+                    );
+                }
+                if prompt.contains("scoped-divergent") || prompt.contains("scoped-other-key") {
+                    assert_eq!(
+                        prompt_count, 1,
+                        "untrusted or divergent history must use a fresh ACP process"
+                    );
+                }
+                if prompt == "account-route" {
+                    let text = std::env::var("ECPA_ACP_TEST_ACCOUNT").unwrap();
+                    println!(
+                        "{}",
+                        json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"isolated-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":text}}}})
+                    );
+                    println!(
+                        "{}",
+                        json!({"jsonrpc":"2.0","id":value["id"],"result":{"stopReason":"end_turn"}})
+                    );
+                    std::io::stdout().flush().unwrap();
+                    continue;
+                }
+                if prompt == "native-tools" {
+                    assert!(tool_config.get("_meta").is_none());
+                    assert_eq!(tool_config["name"], "api_client");
+                    let mut helper = Command::new(tool_config["command"].as_str().unwrap());
+                    for arg in tool_config["args"].as_array().unwrap() {
+                        helper.arg(arg.as_str().unwrap());
+                    }
+                    for var in tool_config["env"].as_array().unwrap() {
+                        helper.env(
+                            var["name"].as_str().unwrap(),
+                            var["value"].as_str().unwrap(),
+                        );
+                    }
+                    let mut helper = helper
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::null())
+                        .spawn()
+                        .unwrap();
+                    let mut input = helper.stdin.take().unwrap();
+                    let mut replies =
+                        std::io::BufReader::new(helper.stdout.take().unwrap()).lines();
+                    let call = |input: &mut std::process::ChildStdin, id: u64, arg: &str| {
+                        writeln!(input,"{}",json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"lookup","arguments":{"key":arg}}})).unwrap();
+                    };
+                    let mut read = || {
+                        let reply = replies
+                            .by_ref()
+                            .find_map(|line| serde_json::from_str::<Value>(&line.unwrap()).ok())
+                            .unwrap();
+                        let id = reply["id"].as_u64().unwrap();
+                        (
+                            id,
+                            reply["result"]["content"][0]["text"]
+                                .as_str()
+                                .unwrap()
+                                .to_owned(),
+                        )
+                    };
+                    call(&mut input, 11, "alpha");
+                    call(&mut input, 12, "beta");
+                    let results = BTreeMap::from([read(), read()]);
+                    assert_eq!(results[&11], "RESULT-alpha");
+                    assert_eq!(results[&12], "RESULT-beta");
+                    call(&mut input, 13, "gamma");
+                    assert_eq!(read(), (13, "RESULT-gamma".to_owned()));
+                    drop(input);
+                    assert!(helper.wait().unwrap().success());
+                }
                 if selected == "plain-model"
                     || ["inspect-image", "use-client-tool-with-image"].contains(&prompt)
                 {
@@ -1135,11 +1425,73 @@ fn fake_official_server() {
                         );
                     }
                 }
+                if matches!(
+                    prompt,
+                    "typed-upstream-permission"
+                        | "typed-upstream-quota-after-text"
+                        | "ordinary-upstream-words"
+                ) {
+                    if prompt != "typed-upstream-permission" {
+                        let text = if prompt == "ordinary-upstream-words" {
+                            "Example error codes: RESOURCE_EXHAUSTED and PERMISSION_DENIED."
+                        } else {
+                            "partial"
+                        };
+                        println!(
+                            "{}",
+                            json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"isolated-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":text}}}})
+                        );
+                    }
+                    if prompt == "ordinary-upstream-words" {
+                        println!(
+                            "{}",
+                            json!({"jsonrpc":"2.0","id":value["id"],"result":{"stopReason":"end_turn"}})
+                        );
+                    } else {
+                        let status = if prompt == "typed-upstream-permission" {
+                            "PERMISSION_DENIED"
+                        } else {
+                            "RESOURCE_EXHAUSTED"
+                        };
+                        println!(
+                            "{}",
+                            json!({"jsonrpc":"2.0","id":value["id"],"error":{"code":-32603,"message":"private process detail with RESOURCE_EXHAUSTED and https://example.invalid/secret","data":{"status":status}}})
+                        );
+                    }
+                    std::io::stdout().flush().unwrap();
+                    continue;
+                }
+                if prompt == "foreign-update-before-rejection" {
+                    for session in [json!("unrelated-session"), Value::Null] {
+                        println!(
+                            "{}",
+                            json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":session,"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"not from this turn"}}}})
+                        );
+                    }
+                    println!(
+                        "{}",
+                        json!({"jsonrpc":"2.0","id":value["id"],"error":{"code":-32603,"message":"fixture","data":{"status":"PERMISSION_DENIED"}}})
+                    );
+                    std::io::stdout().flush().unwrap();
+                    continue;
+                }
+                if prompt == "empty-before-permission-error" {
+                    println!(
+                        "{}",
+                        json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"isolated-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":""}}}})
+                    );
+                    println!(
+                        "{}",
+                        json!({"jsonrpc":"2.0","id":value["id"],"error":{"code":-32603,"message":"private failure detail","data":{"status":"PERMISSION_DENIED"}}})
+                    );
+                    std::io::stdout().flush().unwrap();
+                    continue;
+                }
                 if prompt == "fail-before-output" || prompt == "fail-after-output" {
                     if prompt == "fail-after-output" {
                         println!(
                             "{}",
-                            json!({"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"partial"}}}})
+                            json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"isolated-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"partial"}}}})
                         );
                     }
                     println!(
@@ -1149,7 +1501,16 @@ fn fake_official_server() {
                     std::io::stdout().flush().unwrap();
                     continue;
                 }
-                if ["use-client-tool", "use-client-tool-with-image"].contains(&prompt) {
+                if [
+                    "use-client-tool",
+                    "use-client-tool-with-image",
+                    "mixed-context-tool",
+                ]
+                .contains(&prompt)
+                {
+                    if prompt == "mixed-context-tool" {
+                        assert_eq!(framed, context_mode);
+                    }
                     let env = tool_config["env"].as_array().unwrap();
                     let port: u16 = env
                         .iter()
@@ -1219,7 +1580,7 @@ fn fake_official_server() {
     }
 }
 
-fn spawn_fake(executable: &Path, _: &Path, _: &str) -> Result<rpc::Client, String> {
+fn spawn_fake(executable: &Path, profile: &Path, _: &str) -> Result<rpc::Client, String> {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
         .args([
@@ -1228,10 +1589,26 @@ fn spawn_fake(executable: &Path, _: &Path, _: &str) -> Result<rpc::Client, Strin
             "--nocapture",
         ])
         .env("ECPA_ACP_BRIDGE_TEST_HELPER", "1")
+        .env(
+            "ECPA_ACP_TEST_ACCOUNT",
+            if accounts::is_isolated_home(profile) {
+                profile.parent().unwrap().file_name().unwrap()
+            } else {
+                std::ffi::OsStr::new("default")
+            },
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    if executable == Path::new("fake-image-cli") {
+    command.env(
+        "ECPA_TEST_CONTEXT",
+        if executable == Path::new("fake-context-cli") {
+            "yes"
+        } else {
+            "no"
+        },
+    );
+    if executable == Path::new("fake-image-cli") || executable == Path::new("fake-context-cli") {
         command.env("ECPA_ACP_TEST_IMAGE", "1");
     } else {
         command.env_remove("ECPA_ACP_TEST_IMAGE");
@@ -1259,13 +1636,24 @@ fn official_agent_waits_for_client_tool_and_continues() {
     let models = model_list(&discovery.session(&profile, &cancel).unwrap());
     let mut value = json!({"model":"acp/gemini-3.8-flash-high","messages":[{"role":"user","content":"Call lookup with key alpha. Wait for its returned secret and reply with the secret. Do not guess."}],"tools":[{"type":"function","function":{"name":"lookup","description":"Look up a secret. The API client executes this.","parameters":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}}}]});
     let request = parse_completion(&value, &models).unwrap();
-    let identity = json!({"test":"native"});
+    let identity = Identity {
+        account: request_pool::AccountRoute {
+            id: "test".into(),
+            profile: profile.clone(),
+        },
+        model: request.model.clone(),
+        system: request.system.clone(),
+        instructions_bytes: request.instructions_bytes,
+        tools: request.tools.clone(),
+        protocol: Protocol::Chat,
+        caller: None,
+    };
     let sessions = super::super::agent::Sessions::default();
     let session = sessions
-        .start(&request, identity.clone(), &profile, discovery)
+        .start(&request, identity.clone(), discovery)
         .unwrap();
     let output = sessions
-        .collect(&session, &request, &cancel, |_| {})
+        .collect(&session, &request, &cancel, false, |_| {})
         .unwrap();
     assert!(
         !output.calls.is_empty(),
@@ -1273,6 +1661,7 @@ fn official_agent_waits_for_client_tool_and_continues() {
         output.text
     );
     assert_eq!(output.calls[0]["function"]["name"], "lookup");
+    sessions.publish(&session, None, &output, &cancel).unwrap();
     let marker = format!(
         "TOOL_SECRET_{}",
         super::super::tool_transport::secret().unwrap()
@@ -1288,9 +1677,9 @@ fn official_agent_waits_for_client_tool_and_continues() {
             .push(json!({"role":"tool","tool_call_id":call["id"],"content":marker}));
     }
     let request = parse_completion(&value, &models).unwrap();
-    let session = sessions.resume(&request, &identity).unwrap().unwrap();
+    let session = sessions.resume(&request, &identity, None).unwrap().unwrap();
     let output = sessions
-        .collect(&session, &request, &cancel, |_| {})
+        .collect(&session, &request, &cancel, false, |_| {})
         .unwrap();
     assert!(
         output.calls.is_empty(),
@@ -1326,6 +1715,7 @@ async fn authenticated_http_bridge_lists_models_completes_streams_and_cancels_di
         listener,
         "internal-test-key".into(),
         stop.clone(),
+        PromptProfile::Append,
         spawn_fake,
     ));
     let http = reqwest::Client::builder()
@@ -1407,7 +1797,8 @@ async fn authenticated_http_bridge_lists_models_completes_streams_and_cancels_di
             .unwrap();
         assert_eq!(response.status(), if after_output { 200 } else { 502 });
         let body = response.text().await.unwrap();
-        assert!(body.contains("simulated upstream failure"));
+        assert!(body.contains("The upstream ACP agent returned an error"));
+        assert!(!body.contains("simulated upstream failure"));
         assert!(
             !body.contains("[DONE]"),
             "a failed stream cannot finish successfully: {body}"
@@ -1468,6 +1859,16 @@ async fn authenticated_http_bridge_lists_models_completes_streams_and_cancels_di
 #[tokio::test]
 #[ignore = "requires ECPA_ACP_TEST_CORE pointing to a CPA v8 executable; starts an isolated kernel"]
 async fn real_cpa_lists_and_routes_registered_acp_models() {
+    verify_real_cpa(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires ECPA_ACP_TEST_CORE; checks provider removal via the isolated kernel watcher"]
+async fn real_cpa_removes_registered_acp_models_on_hot_reload() {
+    verify_real_cpa(true).await;
+}
+
+async fn verify_real_cpa(check_reload: bool) {
     let executable =
         PathBuf::from(std::env::var_os("ECPA_ACP_TEST_CORE").expect("Set ECPA_ACP_TEST_CORE"));
     let directory = crate::unique_test_temp_path("acp-cpa-contract");
@@ -1492,6 +1893,7 @@ async fn real_cpa_lists_and_routes_registered_acp_models() {
         listener,
         "internal-test-key".into(),
         stop.clone(),
+        PromptProfile::Append,
         spawn_fake,
     ));
     let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1714,11 +2116,12 @@ async fn real_cpa_lists_and_routes_registered_acp_models() {
                 let reply = http.post(format!("{base}/v1/{path}")).bearer_auth("isolated-client-key").json(&payload).send().await.map_err(|e|e.to_string())?;
                 let status = reply.status();
                 let body = reply.text().await.map_err(|e|e.to_string())?;
-                if !body.contains("simulated upstream failure") || body.contains("response.completed") || (!after_output && status.as_u16() != 502) {
+                if !body.contains("The upstream ACP agent returned an error") || body.contains("simulated upstream failure") || body.contains("response.completed") || (!after_output && status.as_u16() != 502) {
                     return Err(format!("CPA failure {path}: {status}: {body}"));
                 }
             }
         }
+        if !check_reload { return Ok(()); }
         register_at(&config, None, "", &[])?;
         for _ in 0..50 {
             let body: Value = http
@@ -1778,6 +2181,7 @@ async fn http_bridge_flattens_multi_turn_history_into_the_prompt() {
         listener,
         "internal-test-key".into(),
         stop.clone(),
+        PromptProfile::Append,
         spawn_fake,
     ));
     let http = reqwest::Client::builder()
@@ -1920,10 +2324,21 @@ async fn provider_sync_failure_does_not_skip_official_logout_or_drop_saved_recor
             let runtime = runtime.as_ref().unwrap();
             (runtime.url.clone(), runtime.key.clone())
         };
-        let reply = reqwest::Client::builder().no_proxy().build().unwrap()
-            .post(format!("{url}/chat/completions")).bearer_auth(key)
-            .json(&request(false)).send().await.unwrap();
-        assert_eq!(reply.status().as_u16(), 503, "live bridge must gate stale provider requests after logout");
+        let reply = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .post(format!("{url}/chat/completions"))
+            .bearer_auth(key)
+            .json(&request(false))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            reply.status().as_u16(),
+            503,
+            "live bridge must gate stale provider requests after logout"
+        );
         drop(state);
         drop(app);
         cleanup_account_runtime_fixture(root);
@@ -2031,6 +2446,7 @@ async fn http_image_capability_and_agent_continuation_work_in_both_modes() {
         listener,
         "test-key".into(),
         stop.clone(),
+        PromptProfile::Append,
         spawn_fake,
     ));
     let http = reqwest::Client::builder()
@@ -2137,5 +2553,666 @@ async fn http_image_capability_and_agent_continuation_work_in_both_modes() {
     }
     stop.cancel();
     server.await.unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+async fn native_listener(
+    app: &tauri::App<tauri::test::MockRuntime>,
+    directory: &Path,
+) -> (String, CancellationToken, tokio::task::JoinHandle<()>) {
+    app.manage(crate::GuiConfigState::new(crate::GuiConfigFile::default()));
+    {
+        let state = app.state::<AcpState>();
+        let mut status = state.status.lock().unwrap();
+        status.models = models();
+        status.authenticated = true;
+        status.upstream_enabled = true;
+        status.executable = Some("fake-image-cli".into());
+        status.profile = directory.to_string_lossy().into_owned();
+        status.active_account = "default".into();
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/v1/responses", listener.local_addr().unwrap());
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(serve(
+        app.handle().clone(),
+        listener,
+        "internal-test-key".into(),
+        stop.clone(),
+        PromptProfile::Append,
+        spawn_fake,
+    ));
+    (url, stop, server)
+}
+
+fn native_request(client: &reqwest::Client, url: &str, input: Value) -> reqwest::RequestBuilder {
+    client
+        .post(url)
+        .bearer_auth("internal-test-key")
+        .json(&input)
+}
+
+fn native_frames(body: &str) -> Vec<Value> {
+    let mut frames = Vec::new();
+    for frame in body.split("\n\n").filter(|frame| !frame.is_empty()) {
+        let (name, data) = frame.split_once("\ndata: ").unwrap();
+        let event: Value = serde_json::from_str(data).unwrap();
+        assert_eq!(name.strip_prefix("event: ").unwrap(), event["type"]);
+        assert_eq!(event["sequence_number"], frames.len() + 1);
+        frames.push(event);
+    }
+    frames
+}
+
+#[tokio::test]
+async fn native_responses_reuses_only_explicit_live_context_and_emits_sse() {
+    let (app, directory) = bridge_fixture();
+    let (url, stop, server) = native_listener(&app, &directory).await;
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let create =
+        |input| json!({"model":"acp/test-model","input":input,"instructions":"stay concise"});
+    let initial = http
+        .post(&url)
+        .json(&create("native-first"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(initial.status(), 401);
+    let first: Value = native_request(&http, &url, create("native-first"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let previous = first["id"].as_str().unwrap();
+    assert_eq!(previous.len(), "resp_acp_".len() + 48);
+    assert_eq!(first["object"], "response");
+    assert_eq!(first["output"][0]["content"][0]["text"], "ACP_OK");
+    let mut second = create("native-second");
+    second["previous_response_id"] = json!(previous);
+    for (key, invalid) in [
+        (
+            "previous_response_id",
+            json!("resp_acp_000000000000000000000000000000000000000000000000"),
+        ),
+        ("instructions", json!("changed")),
+        ("model", json!("acp/test-model-low")),
+        ("tools", json!([{"type":"function","name":"changed"}])),
+        (
+            "input",
+            json!([{"role":"assistant","content":"modified historical reply"},{"role":"user","content":"native-second"}]),
+        ),
+    ] {
+        let mut divergent = second.clone();
+        divergent[key] = invalid;
+        assert_eq!(
+            native_request(&http, &url, divergent)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400,
+            "{key} unexpectedly claimed the turn"
+        );
+    }
+    // An unrelated request with the same model and instructions creates its
+    // own process. It cannot implicitly append to the first caller's session.
+    let independent: Value = native_request(&http, &url, create("native-independent"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_ne!(independent["id"], first["id"]);
+    second["stream"] = json!(true);
+    second.as_object_mut().unwrap().remove("instructions");
+    let stream = native_request(&http, &url, second.clone())
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    assert_eq!(stream.headers()["content-type"], "text/event-stream");
+    let frames = native_frames(&stream.text().await.unwrap());
+    assert_eq!(frames[0]["type"], "response.created");
+    assert_eq!(frames[1]["type"], "response.in_progress");
+    assert!(frames
+        .iter()
+        .any(|v| v["type"] == "response.output_text.delta" && v["delta"] == "ACP_"));
+    let last = frames.last().unwrap();
+    assert_eq!(last["type"], "response.completed");
+    assert_eq!(last["response"]["previous_response_id"], previous);
+    assert_ne!(last["response"]["id"], previous);
+    assert_eq!(
+        native_request(&http, &url, second)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+    let third: Value = native_request(&http, &url, json!({"model":"acp/test-model","previous_response_id":last["response"]["id"],"input":"native-third"})).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+    assert_eq!(third["output"][0]["content"][0]["text"], "ACP_OK");
+    let failed = native_request(
+        &http,
+        &url,
+        json!({"model":"acp/test-model","input":"fail-after-output","stream":true}),
+    )
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap();
+    let failed = native_frames(&failed.text().await.unwrap());
+    assert_eq!(failed.last().unwrap()["type"], "error");
+    assert!(failed
+        .iter()
+        .all(|frame| frame["type"] != "response.completed"));
+    let state = app.state::<AcpState>();
+    reset_account(&state).unwrap();
+    state.status.lock().unwrap().authenticated = true;
+    assert_eq!(
+        native_request(
+            &http,
+            &url,
+            json!({"model":"acp/test-model","previous_response_id":third["id"],"input":"unused"})
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        400
+    );
+    stop.cancel();
+    server.await.unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn native_responses_keeps_parallel_and_consecutive_tool_batches_on_one_prompt() {
+    let (app, directory) = bridge_fixture();
+    let (url, stop, server) = native_listener(&app, &directory).await;
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let tools = json!([{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"key":{"type":"string"}}}}]);
+    let open = native_request(&http, &url, json!({"model":"acp/test-model","input":"native-tools","tools":tools,"parallel_tool_calls":true,"stream":true})).send().await.unwrap();
+    let status = open.status();
+    let body = open.text().await.unwrap();
+    assert_eq!(status, 200, "{body}");
+    let frames = native_frames(&body);
+    let response = &frames.last().unwrap()["response"];
+    assert_eq!(frames.last().unwrap()["type"], "response.completed");
+    assert_eq!(
+        frames
+            .iter()
+            .filter(|v| v["type"] == "response.function_call_arguments.delta")
+            .count(),
+        2
+    );
+    let calls = response["output"].as_array().unwrap();
+    assert_eq!(calls.len(), 2);
+    let output = |call: &Value| {
+        let args: Value = serde_json::from_str(call["arguments"].as_str().unwrap()).unwrap();
+        json!({"type":"function_call_output","call_id":call["call_id"],"output":format!("RESULT-{}",args["key"].as_str().unwrap())})
+    };
+    let a = output(&calls[0]);
+    let b = output(&calls[1]);
+    let follow = |id, outputs: Vec<Value>| json!({"model":"acp/test-model","previous_response_id":id,"input":outputs});
+    for input in [vec![a.clone()], vec![a.clone(), a.clone()]] {
+        assert_eq!(
+            native_request(&http, &url, follow(response["id"].clone(), input))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400
+        );
+    }
+    assert_eq!(
+        native_request(
+            &http,
+            &url,
+            json!({"model":"acp/test-model","input":[a.clone(),b.clone()]})
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        400
+    );
+    let middle: Value = native_request(&http, &url, follow(response["id"].clone(), vec![b, a]))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(middle["output"].as_array().unwrap().len(), 1);
+    assert_eq!(middle["output"][0]["type"], "function_call");
+    let gamma = output(&middle["output"][0]);
+    assert_eq!(gamma["output"], "RESULT-gamma");
+    let last: Value = native_request(
+        &http,
+        &url,
+        follow(middle["id"].clone(), vec![gamma.clone()]),
+    )
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(last["output"][0]["content"][0]["text"], "ACP_OK");
+    assert_eq!(
+        native_request(&http, &url, follow(middle["id"].clone(), vec![gamma]))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+    app.state::<AcpState>().agents.clear();
+    stop.cancel();
+    server.await.unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn opt_in_pool_uses_distinct_accounts_and_keeps_continuation_sticky() {
+    let (app, directory) = bridge_fixture();
+    prepare_profile(&directory).unwrap();
+    let mut saved =
+        accounts::PendingAccount::new_isolated(&directory, "Synthetic alternate", false).unwrap();
+    let alternate = saved.directory().unwrap();
+    let token = accounts::isolated_token(&alternate);
+    std::fs::create_dir_all(token.parent().unwrap()).unwrap();
+    crate::write_codex_private_file(&token, b"synthetic non-credential").unwrap();
+    saved
+        .commit_replacing(Some("alternate@example.test".into()), None, false)
+        .unwrap();
+    let (url, stop, server) = native_listener(&app, &directory).await;
+    let state = app.state::<AcpState>();
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let wait = || {
+        native_request(
+            &http,
+            &url,
+            json!({"model":"acp/test-model","input":"wait","stream":true}),
+        )
+    };
+    let route = || {
+        native_request(
+            &http,
+            &url,
+            json!({"model":"acp/test-model","input":"account-route"}),
+        )
+    };
+    let ready = || async {
+        tokio::time::timeout(Duration::from_secs(4), async {
+            while state.snapshot().unwrap().busy {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+    };
+    let mut legacy = wait().send().await.unwrap().error_for_status().unwrap();
+    assert!(legacy.chunk().await.unwrap().is_some());
+    assert_eq!(route().send().await.unwrap().status(), 429);
+    drop(legacy);
+    ready().await;
+    *state.request_pool.root.lock().unwrap() = Some(directory.clone());
+    let preferred: Value = route()
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(preferred["output"][0]["content"][0]["text"], "default");
+    let mut primary = wait().send().await.unwrap().error_for_status().unwrap();
+    assert!(primary.chunk().await.unwrap().is_some());
+    let routed: Value = route()
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(routed["output"][0]["content"][0]["text"], saved.id);
+    let mut secondary = wait().send().await.unwrap().error_for_status().unwrap();
+    assert!(secondary.chunk().await.unwrap().is_some());
+    let continue_routed = || {
+        native_request(
+            &http,
+            &url,
+            json!({"model":"acp/test-model","input":"account-route","previous_response_id":routed["id"]}),
+        )
+    };
+    assert_eq!(continue_routed().send().await.unwrap().status(), 429);
+    assert_eq!(route().send().await.unwrap().status(), 429);
+    assert!(begin(app.handle(), "logout").is_err());
+    state.cancel();
+    drop(primary);
+    drop(secondary);
+    ready().await;
+    let sticky: Value = continue_routed()
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(sticky["output"][0]["content"][0]["text"], saved.id);
+    assert_eq!(state.snapshot().unwrap().active_account, "default");
+    state.agents.clear();
+    stop.cancel();
+    server.await.unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn account_pool_opt_in_is_global_and_does_not_enable_access() {
+    let (app, directory) = bridge_fixture();
+    let config = directory.join("config.yaml");
+    std::fs::write(&config, "openai-compatibility: []\n").unwrap();
+    assert!(!read_settings(&directory).unwrap().account_pool);
+    std::fs::write(
+        settings_path(&directory),
+        br#"{"account_pool":true,"prompt_profile":"first_turn_context"}"#,
+    )
+    .unwrap();
+    assert!(!upstream_enabled(&directory).unwrap());
+    set_enabled(app.handle(), &directory, &config, true, false)
+        .await
+        .unwrap();
+    let state = app.state::<AcpState>();
+    assert_eq!(
+        state.request_pool.root.lock().unwrap().as_ref(),
+        Some(&directory)
+    );
+    set_enabled(app.handle(), &directory, &config, false, false)
+        .await
+        .unwrap();
+    assert!(state.request_pool.root.lock().unwrap().is_none());
+    let settings = read_settings(&directory).unwrap();
+    assert!(!settings.enabled);
+    assert!(settings.account_pool);
+    assert_eq!(settings.prompt_profile, PromptProfile::FirstTurnContext);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires pinned ECPA_ACP_TEST_CORE and built ECPA_ACP_TEST_NATIVE_PLUGIN; uses simulated ACP"]
+async fn real_cpa_native_executor_reuses_acp_session_and_returns_tool_results() {
+    real_cpa_native_profile(PromptProfile::Append).await
+}
+
+#[tokio::test]
+#[ignore = "requires pinned CPA and native plugin; uses simulated ACP"]
+async fn real_cpa_native_first_turn_context() {
+    real_cpa_native_profile(PromptProfile::FirstTurnContext).await
+}
+
+async fn real_cpa_native_profile(policy: PromptProfile) {
+    let core = PathBuf::from(std::env::var_os("ECPA_ACP_TEST_CORE").expect("set CPA executable"));
+    let library = PathBuf::from(
+        std::env::var_os("ECPA_ACP_TEST_NATIVE_PLUGIN").expect("set native plugin library"),
+    );
+    let (app, directory) = bridge_fixture();
+    app.manage(crate::GuiConfigState::new(crate::GuiConfigFile::default()));
+    {
+        let state = app.state::<AcpState>();
+        let mut status = state.status.lock().unwrap();
+        status.upstream_enabled = true;
+        status.executable = Some(
+            if policy == PromptProfile::Append {
+                "fake-image-cli"
+            } else {
+                "fake-context-cli"
+            }
+            .into(),
+        );
+    }
+    let state = app.state::<AcpState>();
+    let plugins = directory.join("plugins");
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        os => os,
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        arch => arch,
+    };
+    let plugin_path = plugins.join(os).join(arch);
+    std::fs::create_dir_all(&plugin_path).unwrap();
+    std::fs::copy(
+        &library,
+        plugin_path.join(format!(
+            "ecpa-acp-responses.{}",
+            library.extension().unwrap().to_str().unwrap()
+        )),
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let bridge_port = listener.local_addr().unwrap().port();
+    let key = bridge_key(&directory).unwrap();
+    save_settings(
+        &directory,
+        &Settings {
+            enabled: true,
+            port: bridge_port,
+            account_pool: false,
+            prompt_profile: policy,
+        },
+    )
+    .unwrap();
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(serve(
+        app.handle().clone(),
+        listener,
+        key.clone(),
+        stop.clone(),
+        read_settings(&directory).unwrap().prompt_profile,
+        spawn_fake,
+    ));
+    let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = reservation.local_addr().unwrap().port();
+    drop(reservation);
+    let mut document: serde_norway::Value = serde_norway::to_value(json!({
+        "config-version":8,"server":{"host":"127.0.0.1","port":port},
+        "management":{"disable-control-panel":true,"disable-auto-update-panel":true},
+        "oauth":{"auth-dir":directory.join("auth")},"access":{"api-keys":["internal-test-key","different-caller"]},
+        "requests":{"retry":3},"streaming":{"bootstrap-retries":3},
+        "plugins":{"enabled":true,"dir":plugins,"configs":{"ecpa-acp-responses":{"enabled":true,"bridge_profile":directory}}}
+    })).unwrap();
+    let upstream = format!("http://127.0.0.1:{bridge_port}/v1");
+    patch_provider(
+        &mut document,
+        Some(provider_entry(&upstream, &key, &models(), true).unwrap()),
+    )
+    .unwrap();
+    let config = directory.join("config.yaml");
+    std::fs::write(&config, serde_norway::to_string(&document).unwrap()).unwrap();
+    let log_path = directory.join("core.log");
+    let mut command = Command::new(core);
+    command
+        .arg("-config")
+        .arg(&config)
+        .arg("--local-model")
+        .current_dir(&directory)
+        .env("HOME", &directory)
+        .env("XDG_CONFIG_HOME", &directory)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(std::fs::File::create(&log_path).unwrap()))
+        .stderr(Stdio::null());
+    crate::configure_background_command(&mut command);
+    let mut core = crate::spawn_core_child(command).unwrap();
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let base = format!("http://127.0.0.1:{port}");
+    let url = format!("{base}/v1/responses");
+    let create = |input: Value| json!({"model":"acp/test-model","input":input});
+    let checked = |value: Value| async {
+        let response = native_request(&http, &url, value)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = response.status();
+        let body = response.text().await.map_err(|e| e.to_string())?;
+        if !status.is_success() {
+            return Err(format!("native response failed: {status} {body}"));
+        }
+        Ok(body)
+    };
+    let checked_json = |value| async {
+        serde_json::from_str::<Value>(&checked(value).await?).map_err(|e| e.to_string())
+    };
+    let result: Result<(),String> = async {
+        for _ in 0..80 {
+            if let Ok(response) = http.get(format!("{base}/v1/models")).bearer_auth("internal-test-key").send().await {
+                if response.text().await.is_ok_and(|body|body.contains("acp/test-model")) { break; }
+            }
+            if core.try_wait().map_err(|e|e.to_string())?.is_some() { return Err("isolated CPA exited".into()); }
+            tokio::time::sleep(Duration::from_millis(80)).await;
+        }
+        let unauthorized = http.post(&url).json(&create(json!("native-first"))).send().await.map_err(|e|e.to_string())?;
+        if unauthorized.status() != 401 { return Err("CPA authentication did not reject a missing client key".into()); }
+        let top = "α\r\n第一条";
+        let directive = "保持顺序\n";
+        let mixed = |user: &str| json!({"model":"acp/test-model","instructions":top,"input":[{"role":"developer","content":directive},{"role":"user","content":user}]});
+        let mixed_id = checked_json(mixed("mixed-first")).await?["id"].clone();
+        let repeat = |instructions:Value| json!({"model":"acp/test-model","previous_response_id":mixed_id,"instructions":instructions,"input":"mixed-next"});
+        for changed in [Value::Null,json!(""),json!(format!("{top}\n\n{directive}")),json!("changed")] {
+            let invalid = native_request(&http,&url,repeat(changed)).send().await.map_err(|e|e.to_string())?;
+            if invalid.status()!=400 {return Err("A changed or cleared top-level instruction claimed a mixed-source session".into());}
+        }
+        checked_json(repeat(json!(top))).await?;
+        let history = checked_json(mixed("mixed-history-start")).await?;
+        let next_history = |suffix: &str| json!([{"role":"user","content":"mixed-history-start"}, history["output"][0], {"role":"user","content":suffix}]);
+        checked_json(json!({"model":"acp/test-model","instructions":format!("{top}\n\n{directive}"),"input":next_history("mixed-history-fresh")})).await?;
+        let mut replay=next_history("mixed-history-delta");
+        replay.as_array_mut().unwrap().insert(0,json!({"role":"developer","content":directive}));
+        checked_json(json!({"model":"acp/test-model","instructions":top,"input":replay})).await?;
+        let mut mixed_tool = mixed("mixed-context-tool");
+        mixed_tool["tools"]=json!([{"type":"function","name":"lookup","parameters":{"type":"object"}}]);
+        let tool = checked_json(mixed_tool).await?;
+        let result = checked_json(json!({"model":"acp/test-model","previous_response_id":tool["id"],"instructions":top,"input":[{"type":"function_call_output","call_id":tool["output"][0]["call_id"],"output":"mixed tool reply"}]})).await?;
+        if result["output"][0]["content"][0]["text"] != "mixed tool reply" {return Err("Mixed-source instructions did not retain the pending tool prompt".into());}
+
+        let first = checked_json(create(json!("native-first"))).await?;
+        let id = first["id"].as_str().filter(|id|id.starts_with("resp_acp_")).ok_or("first request did not use native ACP upstream")?;
+        let mut spoof = create(json!("should not continue"));
+        spoof["previous_response_id"] = json!(id);
+        spoof["client_metadata"] = json!({"caller_scope":"internal-test-key"});
+        let cross = http.post(&url).bearer_auth("different-caller")
+            .header("X-Ecpa-Acp-Caller-Scope", "a".repeat(64)).json(&spoof)
+            .send().await.map_err(|e|e.to_string())?;
+        if cross.status() != 400 { return Err("different CPA client key could claim another caller's response".into()); }
+        let mut second = create(json!("native-second"));
+        second["previous_response_id"] = json!(id);
+        second["stream"] = json!(true);
+        let stream = checked(second).await?;
+        let final_frame = stream.lines().filter_map(|line|line.strip_prefix("data: ")).filter_map(|data|serde_json::from_str::<Value>(data).ok()).find(|v|v["type"]=="response.completed").ok_or_else(||format!("native stream did not complete: {stream}"))?;
+        if final_frame["response"]["previous_response_id"] != id { return Err("CPA lost native continuation ID".into()); }
+        let mut third = create(json!("native-third"));
+        third["previous_response_id"] = final_frame["response"]["id"].clone();
+        if checked_json(third).await?["output"][0]["content"][0]["text"] != "ACP_OK" { return Err("native ACP session did not carry the third delta".into()); }
+        let mut open = create(json!("use-client-tool"));
+        open["tools"] = json!([{"type":"function","name":"lookup","parameters":{"type":"object"}}]);
+        let open = checked_json(open).await?;
+        let call = &open["output"][0];
+        if call["type"] != "function_call" { return Err(format!("ACP did not return a native function item: {open}")); }
+        let mut result = create(json!([{"type":"function_call_output","call_id":call["call_id"],"output":"ECPA_TOOL_RESULT"}]));
+        result["previous_response_id"] = open["id"].clone();
+        if checked_json(result.clone()).await?["output"][0]["content"][0]["text"] != "ECPA_TOOL_RESULT" { return Err("native tool result did not return to the original ACP prompt".into()); }
+        if native_request(&http,&url,result).send().await.map_err(|e|e.to_string())?.status() != 400 { return Err("replayed native tool result was not rejected".into()); }
+        let scoped_origin = checked_json(create(json!("scoped-first"))).await?;
+        let scoped = |initial: &str, suffix: &str| create(json!([
+            {"role":"user","content":initial},
+            scoped_origin["output"][0],
+            {"role":"user","content":suffix}
+        ]));
+        checked_json(scoped("edited-history", "scoped-divergent")).await?;
+        let other = http.post(&url).bearer_auth("different-caller").json(&scoped("scoped-first", "scoped-other-key"))
+            .send().await.map_err(|e|e.to_string())?;
+        other.error_for_status().map_err(|e|e.to_string())?;
+        checked_json(scoped("scoped-first", "scoped-delta")).await?;
+        let permission = native_request(&http,&url,create(json!("typed-upstream-permission"))).send().await.map_err(|e|e.to_string())?;
+        if permission.status()!=403 { return Err(format!("Incorrect typed HTTP status: {}",permission.status())); }
+        let permission=permission.text().await.map_err(|e|e.to_string())?;
+        if !permission.contains("denied permission")||permission.contains("example.invalid") {return Err("Typed HTTP response was not sanitized".into());}
+        let mut stale=create(json!("foreign-update-before-rejection")); stale["stream"]=json!(true);
+        let response=native_request(&http,&url,stale).send().await.map_err(|e|e.to_string())?;
+        let status=response.status(); let body=response.text().await.map_err(|e|e.to_string())?;
+        if status!=403 || body.contains("not from this turn") || body.contains("response.created") || !body.contains("denied permission") {return Err(format!("Unrelated session update committed the response: status={status}"));}
+        let mut empty=create(json!("empty-before-permission-error"));
+        empty["stream"]=json!(true);
+        let empty=native_request(&http,&url,empty).send().await.map_err(|e|e.to_string())?;
+        let empty_status=empty.status();
+        let empty_body=empty.text().await.map_err(|e|e.to_string())?;
+        if empty_status!=403 || empty_body.contains("response.created") || empty_body.contains("private failure detail") || !empty_body.contains("denied permission") {
+            return Err(format!("Empty ACP text committed the stream before a rejection: {empty_status} {empty_body}"));
+        }
+        let mut quota=create(json!("typed-upstream-quota-after-text"));quota["stream"]=json!(true);
+        let quota=checked(quota).await?;
+        let terminal=quota.lines().filter_map(|line|line.strip_prefix("data: ")).filter_map(|line|serde_json::from_str::<Value>(line).ok()).find(|value|value["type"]=="error");
+        if !quota.contains("partial") || quota.contains("response.completed") || quota.contains("example.invalid") || !terminal.is_some_and(|event|event["error"]["code"]=="rate_limit_error") { return Err(format!("Incorrect typed SSE termination: {quota}")); }
+        let local_quota=http.post(format!("{upstream}/responses")).bearer_auth(&key)
+            .json(&json!({"model":"acp/test-model","input":"typed-upstream-quota-after-text","stream":true}))
+            .send().await.map_err(|e|e.to_string())?.error_for_status().map_err(|e|e.to_string())?.text().await.map_err(|e|e.to_string())?;
+        let local_terminal=local_quota.lines().filter_map(|line|line.strip_prefix("data: ")).filter_map(|line|serde_json::from_str::<Value>(line).ok()).find(|value|value["type"]=="error");
+        if !local_terminal.is_some_and(|event|event["code"]=="rate_limit_error"&&event["status"]==429) {return Err("Loopback Responses SSE omitted its error status".into());}
+        let normal=checked_json(create(json!("ordinary-upstream-words"))).await?;
+        if normal["output"][0]["content"][0]["text"]!="Example error codes: RESOURCE_EXHAUSTED and PERMISSION_DENIED." { return Err("ordinary assistant text was misclassified".into()); }
+        let framed_chat = json!({"model":"acp/test-model","messages":[{"role":"system","content":top},{"role":"developer","content":directive},{"role":"user","content":"mixed-first"}]});
+        let chat = http.post(format!("{base}/v1/chat/completions")).bearer_auth("internal-test-key").json(&framed_chat).send().await.map_err(|e|e.to_string())?;
+        chat.error_for_status().map_err(|e|e.to_string())?;
+        let legacy = http.post(format!("{base}/v1/chat/completions")).bearer_auth("internal-test-key").json(&request(false)).send().await.map_err(|e|e.to_string())?;
+        let legacy: Value = legacy.error_for_status().map_err(|e|e.to_string())?.json().await.map_err(|e|e.to_string())?;
+        if legacy["choices"][0]["message"]["content"] != "ACP_OK" { return Err("Chat fallback is not intact".into()); }
+        Ok(())
+    }.await;
+    let _ = crate::terminate_child(&mut core);
+    state.agents.clear();
+    stop.cancel();
+    server.await.unwrap();
+    if let Err(error) = result {
+        panic!(
+            "{error}; isolated CPA log: {}",
+            std::fs::read_to_string(log_path).unwrap_or_default()
+        );
+    }
     std::fs::remove_dir_all(directory).unwrap();
 }

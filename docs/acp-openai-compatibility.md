@@ -2,6 +2,10 @@
 
 评审日期：2026-11-17。代码基线：`dev` 的 `a0fa48e5`；本机官方 Antigravity CLI `1.4.12`，CPA 内核 `8.0.63`。本文件记录验证结果和实现边界，不代表通用工具调用已经实现。
 
+## 2026-11-21：原生 Responses 的边界
+
+ECPA 已在内部认证回环入口实现 HTTP Responses / SSE、显式 `previous_response_id`、同 ACP 进程与会话 ID 的增量多轮，以及标准 stdio MCP 并行结果回传。真实 CPA 8.0.78 (`db7f177d`) 的录包检查表明：普通 OpenAI-compatible 路由将请求送到 Chat Completions 并丢失续接 ID；Codex API key 路由虽然走 `/responses`，但普通与流式 HTTP 执行器都会删除 `previous_response_id`。因此保留 Chat 配置用于默认兼容路径和模型发现。不改内核即可在同机显式安装并启用 [CPA 原生执行器](../plugins/acp-responses/README.md)：隔离的真实 CPA 8.0.78 + ECPA 桥接 + 模拟 ACP 已验证公共 HTTP `/v1/responses` 的鉴权、SSE、同会话三轮及函数结果回传。该执行器尚未随桌面包发布；Linux 上已用真实 Codex CLI 0.166.0 与已登录的官方 ACP CLI 1.5.14 完成验收：启用显式的 [ACP Codex 配置](../plugins/acp-responses/README.md#codex-cli-opt-in-profile) 后，HTTP 全历史能在同一 ACP 会话增量续接，独立的受控只读 MCP 工具也能在原 ACP prompt 回传。默认的长 Codex 指令仍会超时，桥接不会静默删改指令。账号池使用方式见 [ACP access](acp-access.md)。
+
 ## 后续修复与验收（2026-11-17）
 
 本分支已实现内部 MCP 工具传输与等待状态。它不要求用户安装 MCP，也不会取消 ACP prompt 来模拟正常工具结束。返回工具调用后保留原 CLI 执行，客户端下一次回传结果时交回原 MCP 请求。

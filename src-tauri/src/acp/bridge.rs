@@ -1,3 +1,7 @@
+pub(super) mod responses;
+
+use super::agent::{Identity, Protocol};
+use super::request_pool::{begin_request, AdmissionError};
 use super::*;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use http_body_util::{BodyExt, Full, Limited, StreamBody};
@@ -8,15 +12,31 @@ use std::convert::Infallible;
 use tokio_util::sync::CancellationToken;
 
 const PROVIDER: &str = "ecpa-antigravity-acp";
-const MAX_BODY: usize = 1024 * 1024;
+pub(super) const MAX_BODY: usize = 1024 * 1024;
+pub(super) const IMAGE_UNSUPPORTED: &str = "The connected ACP CLI does not advertise image input; remove the image or use an image-capable CLI";
+pub(super) fn has_images(prompt: &[PromptBlock]) -> bool {
+    prompt
+        .iter()
+        .any(|block| matches!(block, PromptBlock::Image { .. }))
+}
 type Body = http_body_util::combinators::UnsyncBoxBody<Bytes, Infallible>;
 pub(super) type SpawnClient = fn(&Path, &Path, &str) -> Result<rpc::Client, String>;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum PromptProfile {
+    #[default]
+    Append,
+    FirstTurnContext,
+}
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
 struct Settings {
     enabled: bool,
     port: u16,
+    account_pool: bool,
+    prompt_profile: PromptProfile,
 }
 
 pub(super) struct Runtime {
@@ -247,12 +267,19 @@ async fn set_enabled<R: tauri::Runtime>(
                 &Settings {
                     enabled: false,
                     port: settings.port,
+                    account_pool: settings.account_pool,
+                    prompt_profile: settings.prompt_profile,
                 },
             )?;
         }
         status.upstream_enabled = false;
         status.upstream_url = None;
         runtime.take();
+        *state
+            .request_pool
+            .root
+            .lock()
+            .map_err(|_| "ACP pool unavailable")? = None;
         state.agents.clear();
         drop(status);
         drop(runtime);
@@ -300,6 +327,8 @@ async fn set_enabled<R: tauri::Runtime>(
                 &Settings {
                     enabled: true,
                     port,
+                    account_pool: settings.account_pool,
+                    prompt_profile: settings.prompt_profile,
                 },
             ) {
                 let rollback = register_at(config, None, "", &[]).err();
@@ -320,8 +349,21 @@ async fn set_enabled<R: tauri::Runtime>(
                 status.upstream_url = Some(url);
             }
             let app = app.clone();
-            tauri::async_runtime::spawn(serve(app, listener, key, stop, rpc::Client::spawn));
+            tauri::async_runtime::spawn(serve(
+                app,
+                listener,
+                key,
+                stop,
+                settings.prompt_profile,
+                rpc::Client::spawn,
+            ));
         }
+        *state
+            .request_pool
+            .root
+            .lock()
+            .map_err(|_| "ACP pool unavailable")? =
+            settings.account_pool.then(|| profile.to_path_buf());
     }
     drop(_guard);
     let _ = tauri::Emitter::emit(app, crate::CONFIG_FILES_CHANGED_EVENT, ());
@@ -367,7 +409,12 @@ pub(super) fn sync_models(state: &AcpState) -> Result<(), String> {
         .lock()
         .map_err(|_| "ACP bridge state unavailable")?;
     if let Some(runtime) = runtime.as_ref() {
-        register_at(&runtime.config, Some(&runtime.url), &runtime.key, &status.models)?;
+        register_at(
+            &runtime.config,
+            Some(&runtime.url),
+            &runtime.key,
+            &status.models,
+        )?;
     }
     Ok(())
 }
@@ -377,6 +424,7 @@ async fn serve<R: tauri::Runtime>(
     listener: tokio::net::TcpListener,
     key: String,
     stop: CancellationToken,
+    policy: PromptProfile,
     spawn: SpawnClient,
 ) {
     loop {
@@ -390,7 +438,7 @@ async fn serve<R: tauri::Runtime>(
         let stop = stop.clone();
         tauri::async_runtime::spawn(async move {
             let service = hyper::service::service_fn(move |request| {
-                handle(app.clone(), request, key.clone(), spawn)
+                handle(app.clone(), request, key.clone(), policy, spawn)
             });
             tokio::select! {
                 _ = stop.cancelled() => {},
@@ -415,10 +463,12 @@ fn error(status: StatusCode, message: impl AsRef<str>) -> Response<Body> {
 }
 
 pub(super) struct Completion {
+    pub policy: PromptProfile,
     pub model: String,
     pub alias: String,
     pub prompt: Vec<PromptBlock>,
     pub system: String,
+    pub instructions_bytes: usize,
     pub stream: bool,
     pub ignored_parameters: Vec<&'static str>,
     pub tools: Vec<Value>,
@@ -456,10 +506,23 @@ struct CompletionStream {
     model: String,
     created: u64,
     started: bool,
+    native: bool,
+    previous: Option<String>,
+    sequence: u64,
+    text_started: bool,
 }
 
 impl CompletionStream {
-    fn send(&self, mut frame: Result<String, RunError>) -> Result<(), String> {
+    fn send(&self, frame: Result<String, RunError>) -> Result<(), String> {
+        self.send_with_stall_limit(frame, std::time::Duration::from_secs(30))
+    }
+
+    fn send_with_stall_limit(
+        &self,
+        mut frame: Result<String, RunError>,
+        limit: std::time::Duration,
+    ) -> Result<(), String> {
+        let started = std::time::Instant::now();
         loop {
             if self.cancel.load(Ordering::Acquire) {
                 return Err("ACP API client disconnected or request cancelled".into());
@@ -467,6 +530,10 @@ impl CompletionStream {
             match self.sender.try_send(frame) {
                 Ok(()) => return Ok(()),
                 Err(tokio::sync::mpsc::error::TrySendError::Full(pending)) => {
+                    if started.elapsed() >= limit {
+                        self.cancel.store(true, Ordering::Release);
+                        return Err("ACP client stopped reading the response stream".into());
+                    }
                     frame = pending;
                     // Apply backpressure without blocking cancellation or
                     // treating an ordinary burst of tokens as a disconnect.
@@ -488,6 +555,51 @@ impl CompletionStream {
         self.send(Ok(format!("data: {value}\n\n")))
     }
 
+    fn event(&mut self, kind: &str, mut data: Value) -> Result<(), String> {
+        self.sequence += 1;
+        data["type"] = json!(kind);
+        data["sequence_number"] = json!(self.sequence);
+        self.send(Ok(format!("event: {kind}\ndata: {data}\n\n")))
+    }
+
+    fn response_start(&mut self) -> Result<(), String> {
+        if !self.started {
+            let value = responses::envelope(
+                &self.id,
+                &self.model,
+                self.created,
+                self.previous.as_deref(),
+                None,
+            );
+            self.event("response.created", json!({"response":value}))?;
+            self.event("response.in_progress", json!({"response":value}))?;
+            self.started = true;
+        }
+        Ok(())
+    }
+
+    fn text(&mut self, part: &str) -> Result<(), String> {
+        // Empty ACP deltas are not visible output. In particular, do not
+        // commit HTTP 200 before a subsequent upstream failure is known.
+        if part.is_empty() {
+            return Ok(());
+        }
+        if !self.native {
+            return self.delta(json!({"content":part}));
+        }
+        self.response_start()?;
+        let item = responses::text_item(&self.id, None);
+        if !self.text_started {
+            self.event(
+                "response.output_item.added",
+                json!({"output_index":0,"item":item}),
+            )?;
+            self.event("response.content_part.added", json!({"item_id":item["id"],"output_index":0,"content_index":0,"part":responses::text_part("")}))?;
+            self.text_started = true;
+        }
+        self.event("response.output_text.delta", json!({"item_id":item["id"],"output_index":0,"content_index":0,"delta":part,"logprobs":[]}))
+    }
+
     fn delta(&mut self, delta: Value) -> Result<(), String> {
         if !self.started {
             self.chunk(json!({"role":"assistant","content":""}), None)?;
@@ -497,6 +609,37 @@ impl CompletionStream {
     }
 
     fn finish(&mut self, output: &Output) -> Result<(), String> {
+        if self.native {
+            self.response_start()?;
+            let response = responses::envelope(
+                &self.id,
+                &self.model,
+                self.created,
+                self.previous.as_deref(),
+                Some(output),
+            );
+            for (index, item) in response["output"].as_array().unwrap().iter().enumerate() {
+                if item["type"] == "message" {
+                    self.event("response.output_text.done", json!({"item_id":item["id"],"output_index":index,"content_index":0,"text":output.text,"logprobs":[]}))?;
+                    self.event("response.content_part.done", json!({"item_id":item["id"],"output_index":index,"content_index":0,"part":item["content"][0]}))?;
+                } else {
+                    let mut added = item.clone();
+                    added["status"] = json!("in_progress");
+                    added["arguments"] = json!("");
+                    self.event(
+                        "response.output_item.added",
+                        json!({"output_index":index,"item":added}),
+                    )?;
+                    self.event("response.function_call_arguments.delta", json!({"item_id":item["id"],"output_index":index,"delta":item["arguments"]}))?;
+                    self.event("response.function_call_arguments.done", json!({"item_id":item["id"],"output_index":index,"arguments":item["arguments"],"name":item["name"]}))?;
+                }
+                self.event(
+                    "response.output_item.done",
+                    json!({"output_index":index,"item":item}),
+                )?;
+            }
+            return self.event("response.completed", json!({"response":response}));
+        }
         if !self.started {
             self.delta(json!({"content":""}))?;
         }
@@ -506,9 +649,10 @@ impl CompletionStream {
 }
 
 #[derive(Debug)]
-enum RunError {
+pub(super) enum RunError {
     InvalidRequest(String),
     Upstream(String),
+    Rejected(rpc::Rejection),
 }
 
 impl From<String> for RunError {
@@ -517,17 +661,72 @@ impl From<String> for RunError {
     }
 }
 
+impl From<rpc::RpcFailure> for RunError {
+    fn from(error: rpc::RpcFailure) -> Self {
+        match error {
+            rpc::RpcFailure::Local(message) => Self::Upstream(message),
+            rpc::RpcFailure::Remote { kind, .. } => Self::Rejected(kind),
+        }
+    }
+}
+
 impl RunError {
-    fn parts(self) -> (StatusCode, String) {
+    fn parts(self) -> (StatusCode, &'static str, String) {
+        use rpc::Rejection::*;
         match self {
-            Self::InvalidRequest(message) => (StatusCode::BAD_REQUEST, message),
-            Self::Upstream(message) => (upstream_status(&message), message),
+            Self::InvalidRequest(message) => {
+                (StatusCode::BAD_REQUEST, "invalid_request_error", message)
+            }
+            Self::Upstream(message) => (upstream_status(&message), "upstream_error", message),
+            Self::Rejected(kind) => {
+                let (status, code, message) = match kind {
+                    InvalidRequest => (
+                        StatusCode::BAD_REQUEST,
+                        "invalid_request_error",
+                        "ACP rejected the prompt parameters",
+                    ),
+                    Authentication => (
+                        StatusCode::UNAUTHORIZED,
+                        "authentication_error",
+                        "The upstream ACP account needs authentication",
+                    ),
+                    Permission => (
+                        StatusCode::FORBIDDEN,
+                        "permission_denied",
+                        "The upstream ACP service denied permission",
+                    ),
+                    Quota => (
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "rate_limit_error",
+                        "The upstream ACP service reported a resource or rate limit",
+                    ),
+                    Overloaded => (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "overloaded_error",
+                        "The upstream ACP service is unavailable",
+                    ),
+                    Timeout => (
+                        StatusCode::GATEWAY_TIMEOUT,
+                        "upstream_timeout",
+                        "The upstream ACP service reported a deadline exceeded",
+                    ),
+                    Unknown => (
+                        StatusCode::BAD_GATEWAY,
+                        "upstream_error",
+                        "The upstream ACP agent returned an error",
+                    ),
+                };
+                (status, code, message.into())
+            }
         }
     }
 
     fn into_response(self) -> Response<Body> {
-        let (status, message) = self.parts();
-        error(status, message)
+        let (status, code, message) = self.parts();
+        response(
+            status,
+            json!({"error":{"message":message,"type":code,"code":code}}),
+        )
     }
 }
 
@@ -770,6 +969,7 @@ pub(super) fn tool_text(message: &Value) -> Result<String, String> {
 fn plan_prompt(
     messages: &[Value],
     ignored: &mut Vec<&'static str>,
+    policy: PromptProfile,
 ) -> Result<(Vec<PromptBlock>, String), String> {
     let mut turns = Vec::new();
     let mut system = Vec::new();
@@ -854,7 +1054,12 @@ fn plan_prompt(
     } else {
         let mut prompt = Vec::new();
         for (index, (label, blocks)) in turns.into_iter().enumerate() {
-            let separator = if index == 0 { "" } else { "\n\n" };
+            // Normalize only our own inter-turn blank line; never scan message text.
+            let separator = match (index, policy) {
+                (0, _) => "",
+                (_, PromptProfile::FirstTurnContext) => "\n",
+                (_, PromptProfile::Append) => "\n\n",
+            };
             push_text(&mut prompt, &format!("{separator}{label}: "));
             for block in blocks {
                 if let Some(text) = block.as_text() {
@@ -876,7 +1081,16 @@ fn plan_prompt(
     Ok((prompt, system))
 }
 
+#[cfg(test)]
 pub(super) fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Completion, String> {
+    parse_with_profile(value, models, PromptProfile::Append)
+}
+
+fn parse_with_profile(
+    value: &Value,
+    models: &[AcpModel],
+    policy: PromptProfile,
+) -> Result<Completion, String> {
     let object = value.as_object().ok_or("Request body must be an object")?;
     for key in object.keys() {
         if key == "service_tier" {
@@ -1030,7 +1244,7 @@ pub(super) fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Com
     let messages = value["messages"]
         .as_array()
         .ok_or("messages must be an array")?;
-    let (prompt, system) = plan_prompt(messages, &mut ignored_parameters)?;
+    let (prompt, system) = plan_prompt(messages, &mut ignored_parameters, policy)?;
     let results: Vec<_> = messages
         .iter()
         .rev()
@@ -1061,10 +1275,12 @@ pub(super) fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Com
         }
     }
     Ok(Completion {
+        policy,
         model: selected.into(),
         alias: format!("acp/{}", model.id),
         prompt,
         system,
+        instructions_bytes: 0,
         stream,
         ignored_parameters,
         tools: tools.to_vec(),
@@ -1073,21 +1289,59 @@ pub(super) fn parse_completion(value: &Value, models: &[AcpModel]) -> Result<Com
     })
 }
 
+// ECPA's optional, human-readable Markdown export. Recognize only the complete
+// shipped document, never a heading found inside arbitrary client instructions.
+const ACP_TEMPLATE: &str = include_str!("../../../plugins/acp-responses/codex-acp-instructions.md");
+const ACP_TEMPLATE_TITLE: &str = "# ECPA ACP instructions\n\n";
+
+fn context_text(system: &str) -> &str {
+    for prefix in ["\u{feff}", ACP_TEMPLATE_TITLE] {
+        if system.len() == prefix.len() + ACP_TEMPLATE.len()
+            && system.strip_prefix(prefix) == Some(ACP_TEMPLATE)
+        {
+            return ACP_TEMPLATE;
+        }
+    }
+    system
+}
+
+impl Completion {
+    // Called only for a new ACP session. Stored identity and continuation deltas
+    // always retain the canonical, unframed request.
+    fn frame_opening(&mut self) -> Result<(), String> {
+        if self.policy == PromptProfile::Append || self.system.is_empty() {
+            return Ok(());
+        }
+        let context = format!("Client context:\n{}", context_text(&self.system));
+        if self
+            .prompt
+            .iter()
+            .fold(context.len(), |n, b| n.saturating_add(b.body_len()))
+            > MAX_BODY
+        {
+            return Err("ACP framed prompt exceeds 1 MiB".into());
+        }
+        self.prompt.insert(0, PromptBlock::Text { text: context });
+        self.system.clear();
+        Ok(())
+    }
+}
+
 fn complete<F: FnMut(&str)>(
     client: &mut rpc::Client,
     profile: &Path,
     request: &Completion,
     cancel: &Arc<AtomicBool>,
     mut chunk: F,
-) -> Result<String, String> {
+) -> Result<String, RunError> {
     let session = client.session_with_system(profile, &request.system, cancel)?;
     client.model(&session, &request.model, cancel)?;
     let mut text = String::new();
     let mut oversized = false;
-    let result = client.call(
-        "session/prompt",
+    let result = client.agent_prompt(
         json!({"sessionId":session["sessionId"],"prompt":request.prompt}),
         cancel,
+        false,
         |update| {
             if update["sessionUpdate"] == "agent_message_chunk"
                 && update["content"]["type"] == "text"
@@ -1105,14 +1359,11 @@ fn complete<F: FnMut(&str)>(
         },
     );
     if oversized {
-        return Err("ACP response exceeds 1 MiB".into());
+        return Err("ACP response exceeds 1 MiB".to_owned().into());
     }
     let result = result?;
     if result["stopReason"] != "end_turn" {
-        return Err(format!(
-            "ACP turn did not complete: {}",
-            result["stopReason"]
-        ));
+        return Err(format!("ACP turn did not complete: {}", result["stopReason"]).into());
     }
     Ok(text)
 }
@@ -1121,15 +1372,17 @@ async fn handle<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     request: Request<Incoming>,
     key: String,
+    policy: PromptProfile,
     spawn: SpawnClient,
 ) -> Result<Response<Body>, Infallible> {
-    Ok(handle_inner(app, request, key, spawn).await)
+    Ok(handle_inner(app, request, key, policy, spawn).await)
 }
 
 async fn handle_inner<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     request: Request<Incoming>,
     key: String,
+    policy: PromptProfile,
     spawn: SpawnClient,
 ) -> Response<Body> {
     if request
@@ -1145,6 +1398,7 @@ async fn handle_inner<R: tauri::Runtime>(
         Ok(status) => status,
         Err(e) => return error(StatusCode::SERVICE_UNAVAILABLE, e),
     };
+    let native = request.uri().path() == "/v1/responses";
     match (request.method().as_str(), request.uri().path()) {
         ("GET", "/v1/models") => {
             return response(
@@ -1152,11 +1406,11 @@ async fn handle_inner<R: tauri::Runtime>(
                 json!({"object":"list","data":status.models.iter().map(|model| json!({"id":format!("acp/{}", model.id),"object":"model","created":0,"owned_by":PROVIDER})).collect::<Vec<_>>()}),
             )
         }
-        ("POST", "/v1/chat/completions") => {}
+        ("POST", "/v1/chat/completions" | "/v1/responses") => {}
         _ => {
             return error(
                 StatusCode::NOT_FOUND,
-                "ACP supports /v1/models and /v1/chat/completions only",
+                "ACP supports /v1/models, /v1/chat/completions and /v1/responses only",
             )
         }
     }
@@ -1166,6 +1420,18 @@ async fn handle_inner<R: tauri::Runtime>(
             "ACP API access is not connected",
         );
     }
+    // Only the private authenticated bridge may carry the executor's derived
+    // caller scope. The public executor constructs the request from scratch.
+    let caller = if native {
+        request
+            .headers()
+            .get("x-ecpa-acp-caller-scope")
+            .and_then(|v| v.to_str().ok())
+            .filter(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit()))
+            .map(str::to_owned)
+    } else {
+        None
+    };
     let bytes = match tokio::time::timeout(
         std::time::Duration::from_secs(10),
         Limited::new(request.into_body(), MAX_BODY).collect(),
@@ -1185,25 +1451,118 @@ async fn handle_inner<R: tauri::Runtime>(
         Ok(value) => value,
         Err(_) => return error(StatusCode::BAD_REQUEST, "Invalid JSON request"),
     };
-    let guard = match begin(&app, "request") {
-        Ok(guard) => guard,
-        Err(e) => return error(StatusCode::TOO_MANY_REQUESTS, e),
+    let previous = if native {
+        match responses::previous(&value) {
+            Ok(previous) => previous.map(str::to_owned),
+            Err(e) => return error(StatusCode::BAD_REQUEST, e),
+        }
+    } else {
+        None
     };
-    // Capture the account after reserving the operation slot. A switch could
-    // have completed while the request body was being read.
-    let status = match state.snapshot() {
-        Ok(status) if status.authenticated && status.upstream_enabled => status,
-        _ => {
+    let context = match previous
+        .as_deref()
+        .map(|id| state.agents.context(id, caller.as_deref()))
+        .transpose()
+    {
+        Ok(context) => context,
+        Err(e) => return error(StatusCode::BAD_REQUEST, e),
+    };
+    let full = if native && previous.is_none() {
+        match responses::parse_with_profile(&value, &status.models, None, policy) {
+            Ok(request) => Some(request),
+            Err(e) => return error(StatusCode::BAD_REQUEST, e),
+        }
+    } else {
+        None
+    };
+    let history_match = match (full.as_ref(), caller.as_deref()) {
+        (Some(request), Some(caller)) => match state.agents.history_match(request, caller) {
+            Ok(found) => found,
+            Err(e) => return error(StatusCode::SERVICE_UNAVAILABLE, e),
+        },
+        _ => None,
+    };
+    // Chat tool calls are also sticky; ordinary Chat has no continuation scope.
+    let chat_pin = if !native {
+        value["messages"]
+            .as_array()
+            .and_then(|messages| {
+                messages
+                    .iter()
+                    .rev()
+                    .take_while(|message| message["role"] == "tool")
+                    .last()
+            })
+            .and_then(|tool| tool["tool_call_id"].as_str())
+    } else {
+        None
+    };
+    let chat_identity = match chat_pin
+        .map(|id| state.agents.chat_identity(id))
+        .transpose()
+    {
+        Ok(identity) => identity,
+        Err(e) => return error(StatusCode::BAD_REQUEST, e),
+    };
+    let pinned = context
+        .as_ref()
+        .map(|context| &context.identity.account)
+        .or(chat_identity.as_ref())
+        .or(history_match.as_ref().map(|(_, account, _)| account));
+    let (guard, status) = match begin_request(&app, pinned) {
+        Ok(admitted) => admitted,
+        Err(AdmissionError::Busy) => {
+            return error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "An ACP operation is already running or the account pool is busy",
+            )
+        }
+        Err(AdmissionError::Disconnected) => {
             return error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "ACP API access is not connected",
             )
         }
+        Err(AdmissionError::Stale) => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "The ACP continuation account is no longer available",
+            )
+        }
     };
-    let request = match parse_completion(&value, &status.models) {
+    let mut request = match if native {
+        responses::parse_with_profile(&value, &status.models, context.as_ref(), policy)
+    } else {
+        parse_with_profile(&value, &status.models, policy)
+    } {
         Ok(request) => request,
         Err(e) => return error(StatusCode::BAD_REQUEST, e),
     };
+    if native && previous.is_none() && history_match.is_none() && !request.results.is_empty() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "A live ACP function output requires previous_response_id",
+        );
+    }
+    if let Some((_, _, count)) = &history_match {
+        if request.results.is_empty() {
+            let suffix = request
+                .messages
+                .iter()
+                .filter(|m| m["role"] != "system" && m["role"] != "developer")
+                .skip(*count)
+                .cloned()
+                .collect::<Vec<_>>();
+            request.prompt = match plan_prompt(&suffix, &mut request.ignored_parameters, policy) {
+                Ok((prompt, _)) => prompt,
+                Err(e) => return error(StatusCode::BAD_REQUEST, e),
+            };
+        }
+    }
+    let continuation = previous
+        .as_deref()
+        .or(history_match.as_ref().map(|(id, _, _)| id.as_str()));
+    let preserve_transcript = native && previous.is_none();
     let executable = match status.executable {
         Some(path) => PathBuf::from(path),
         None => {
@@ -1213,13 +1572,7 @@ async fn handle_inner<R: tauri::Runtime>(
             )
         }
     };
-    let profile = PathBuf::from(&status.profile);
-    if !profile.is_absolute() {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "ACP account profile is unavailable; check the connection",
-        );
-    }
+    let profile = guard.account.profile.clone();
     let proxy = match app.state::<crate::GuiConfigState>().snapshot() {
         Ok(config) => config.proxy_url,
         Err(e) => return error(StatusCode::SERVICE_UNAVAILABLE, e),
@@ -1238,18 +1591,38 @@ async fn handle_inner<R: tauri::Runtime>(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let id = format!(
-        "chatcmpl-acp-{created}-{}",
-        NEXT_ID.fetch_add(1, Ordering::Relaxed)
-    );
-    let agent_identity = json!({"profile":profile,"model":request.model,"system":request.system,"tools":request.tools});
-    let resumed = if !request.results.is_empty() {
-        match state.agents.resume(&request, &agent_identity) {
-            Ok(session) => session,
-            Err(error_message) => return error(StatusCode::BAD_REQUEST, error_message),
+    let id = if native {
+        match tool_transport::secret() {
+            Ok(secret) => format!("resp_acp_{secret}"),
+            Err(_) => {
+                return error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "ACP continuation IDs unavailable",
+                )
+            }
         }
     } else {
-        None
+        format!(
+            "chatcmpl-acp-{created}-{}",
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        )
+    };
+    let agent_identity = Identity {
+        account: guard.account.clone(),
+        model: request.model.clone(),
+        system: request.system.clone(),
+        instructions_bytes: request.instructions_bytes,
+        tools: request.tools.clone(),
+        caller,
+        protocol: if native {
+            Protocol::Responses
+        } else {
+            Protocol::Chat
+        },
+    };
+    let resumed = match state.agents.resume(&request, &agent_identity, continuation) {
+        Ok(session) => session,
+        Err(error_message) => return error(StatusCode::BAD_REQUEST, error_message),
     };
     let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
     let mut events = CompletionStream {
@@ -1259,6 +1632,10 @@ async fn handle_inner<R: tauri::Runtime>(
         model: model.clone(),
         created,
         started: false,
+        native,
+        previous: previous.clone(),
+        sequence: 0,
+        text_started: false,
     };
     let worker_app = app.clone();
     let worker = tauri::async_runtime::spawn_blocking(move || {
@@ -1266,7 +1643,7 @@ async fn handle_inner<R: tauri::Runtime>(
         let result: Result<Output, RunError> = (|| {
             let mut send_text = |part: &str| {
                 if stream {
-                    if events.delta(json!({"content":part})).is_err() {
+                    if events.text(part).is_err() {
                         _guard.cancel.store(true, Ordering::Release);
                     }
                 }
@@ -1277,19 +1654,13 @@ async fn handle_inner<R: tauri::Runtime>(
                 // history matching rejects changed attachments on continuation.
                 Some(session) => session,
                 None => {
+                    request.frame_opening().map_err(RunError::InvalidRequest)?;
                     let mut client = spawn(&executable, &profile, &proxy)?;
                     client.initialize(&_guard.cancel)?;
-                    if !client.supports_prompt_images()
-                        && request
-                            .prompt
-                            .iter()
-                            .any(|block| matches!(block, PromptBlock::Image { .. }))
-                    {
-                        return Err(RunError::InvalidRequest(
-                            "The connected ACP CLI does not advertise image input; remove the image or use an image-capable CLI".into(),
-                        ));
+                    if !client.supports_prompt_images() && has_images(&request.prompt) {
+                        return Err(RunError::InvalidRequest(IMAGE_UNSUPPORTED.into()));
                     }
-                    if request.tools.is_empty() {
+                    if !native && request.tools.is_empty() {
                         let text =
                             complete(&mut client, &profile, &request, &_guard.cancel, send_text)?;
                         return Ok(Output {
@@ -1297,16 +1668,17 @@ async fn handle_inner<R: tauri::Runtime>(
                             calls: Vec::new(),
                         });
                     }
-                    state
-                        .agents
-                        .start(&request, agent_identity, &profile, client)?
+                    state.agents.start(&request, agent_identity, client)?
                 }
             };
-            let output =
-                state
-                    .agents
-                    .collect(&session, &request, &_guard.cancel, &mut send_text)?;
-            if stream && !output.calls.is_empty() {
+            let output = state.agents.collect(
+                &session,
+                &request,
+                &_guard.cancel,
+                preserve_transcript,
+                &mut send_text,
+            )?;
+            if stream && !native && !output.calls.is_empty() {
                 let calls: Vec<_> = output
                     .calls
                     .iter()
@@ -1319,12 +1691,40 @@ async fn handle_inner<R: tauri::Runtime>(
                     .collect();
                 events.delta(json!({"tool_calls":calls}))?;
             }
+            if _guard.cancel.load(Ordering::Acquire) {
+                return Err("ACP API client disconnected or request cancelled"
+                    .to_owned()
+                    .into());
+            }
+            state.agents.publish(
+                &session,
+                native.then_some(events.id.as_str()),
+                &output,
+                &_guard.cancel,
+            )?;
             Ok(output)
         })();
         if stream {
             match result {
                 Ok(output) => {
-                    let _ = events.finish(&output);
+                    if events.finish(&output).is_err() {
+                        let state = worker_app.state::<AcpState>();
+                        if native {
+                            state.agents.abandon(&events.id);
+                        }
+                        for call in &output.calls {
+                            if let Some(id) = call["id"].as_str() {
+                                state.agents.abandon(id);
+                            }
+                        }
+                    }
+                }
+                Err(error) if native && events.started => {
+                    let (status, code, message) = error.parts();
+                    let _ = events.event(
+                        "error",
+                        json!({"code":code,"message":message,"param":null,"status":status.as_u16()}),
+                    );
                 }
                 Err(error) => {
                     let _ = events.send(Err(error));
@@ -1358,8 +1758,8 @@ async fn handle_inner<R: tauri::Runtime>(
                             // An SSE error terminates the stream; never append
                             // a success finish_reason or [DONE] after it.
                             receiver.close();
-                            let (status, message) = error.parts();
-                            let value = json!({"error":{"message":message,"type":"upstream_error","code":status.as_u16()}});
+                            let (status, code, message) = error.parts();
+                            let value = json!({"error":{"message":message,"type":code,"code":status.as_u16()}});
                             format!("event: error\ndata: {value}\n\n")
                         }
                     };
@@ -1379,6 +1779,10 @@ async fn handle_inner<R: tauri::Runtime>(
         let result = worker.await;
         drop(cancel);
         match result {
+            Ok(Some(Ok(output))) if native => response(
+                StatusCode::OK,
+                responses::envelope(&id, &model, created, previous.as_deref(), Some(&output)),
+            ),
             Ok(Some(Ok(output))) => response(
                 StatusCode::OK,
                 json!({"id":id,"object":"chat.completion","created":created,"model":model,"choices":[{"index":0,"message":output.message(),"finish_reason":output.finish(),"logprobs":null}]}),

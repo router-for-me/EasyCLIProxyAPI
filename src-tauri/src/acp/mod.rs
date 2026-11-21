@@ -4,6 +4,7 @@ mod bridge;
 #[cfg(test)]
 mod lifecycle_tests;
 mod manual_auth;
+mod request_pool;
 mod rpc;
 mod tool_transport;
 pub(crate) use bridge::restore;
@@ -62,11 +63,13 @@ pub(crate) struct AcpState {
     bridge: Mutex<Option<bridge::Runtime>>,
     bridge_transition: tokio::sync::Mutex<()>,
     agents: agent::Sessions,
+    request_pool: request_pool::Pool,
     manual_auth: manual_auth::ManualAuth,
 }
 
 impl AcpState {
     pub(crate) fn cancel(&self) {
+        self.request_pool.cancel();
         if let Ok(guard) = self.cancel.lock() {
             if let Some(cancel) = guard.as_ref() {
                 cancel.store(true, Ordering::Release);

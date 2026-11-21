@@ -13,6 +13,73 @@ fn request_timeout(method: &str) -> Duration {
     })
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Rejection {
+    InvalidRequest,
+    Authentication,
+    Permission,
+    Quota,
+    Overloaded,
+    Timeout,
+    Unknown,
+}
+
+#[derive(Debug)]
+pub(super) enum RpcFailure {
+    Local(String),
+    Remote { kind: Rejection, message: String },
+}
+
+impl From<String> for RpcFailure {
+    fn from(error: String) -> Self {
+        Self::Local(error)
+    }
+}
+impl From<&str> for RpcFailure {
+    fn from(error: &str) -> Self {
+        Self::Local(error.into())
+    }
+}
+impl RpcFailure {
+    fn remote(error: &Value) -> Self {
+        // Only the matched JSON-RPC error envelope can supply a machine code.
+        // The error message, assistant text, and progress updates are not codes.
+        let data = &error["data"];
+        let kind = match data["status"]
+            .as_str()
+            .or_else(|| data["error"]["status"].as_str())
+        {
+            Some("INVALID_ARGUMENT") => Rejection::InvalidRequest,
+            Some("UNAUTHENTICATED") => Rejection::Authentication,
+            Some("PERMISSION_DENIED") => Rejection::Permission,
+            Some("RESOURCE_EXHAUSTED") => Rejection::Quota,
+            Some("UNAVAILABLE") => Rejection::Overloaded,
+            Some("DEADLINE_EXCEEDED") => Rejection::Timeout,
+            // Unknown status must not be turned into a known rejection by text.
+            Some(_) => Rejection::Unknown,
+            None => match error["code"].as_i64() {
+                // ACP's protocol-defined authentication error.
+                Some(-32000) => Rejection::Authentication,
+                Some(-32602) => Rejection::InvalidRequest,
+                _ => Rejection::Unknown,
+            },
+        };
+        Self::Remote {
+            kind,
+            message: error["message"]
+                .as_str()
+                .unwrap_or("ACP request failed")
+                .into(),
+        }
+    }
+
+    fn local_message(self) -> String {
+        match self {
+            Self::Local(message) | Self::Remote { message, .. } => message,
+        }
+    }
+}
+
 pub(super) struct Client {
     child: crate::CoreChild,
     input: mpsc::SyncSender<WriteRequest>,
@@ -268,19 +335,25 @@ impl Client {
         F: FnMut(Value),
     {
         self.call_with_timeout(method, params, cancel, request_timeout(method), update)
+            .map_err(RpcFailure::local_message)
     }
 
     pub(super) fn agent_prompt<F: FnMut(Value)>(
         &mut self,
         params: Value,
         cancel: &Arc<std::sync::atomic::AtomicBool>,
+        waits_for_tools: bool,
         update: F,
-    ) -> Result<Value, String> {
+    ) -> Result<Value, RpcFailure> {
         self.call_with_timeout(
             "session/prompt",
             params,
             cancel,
-            Duration::from_secs(720),
+            if waits_for_tools {
+                Duration::from_secs(720)
+            } else {
+                request_timeout("session/prompt")
+            },
             update,
         )
     }
@@ -292,16 +365,17 @@ impl Client {
         cancel: &Arc<std::sync::atomic::AtomicBool>,
         timeout: Duration,
         update: F,
-    ) -> Result<Value, String>
+    ) -> Result<Value, RpcFailure>
     where
         F: FnMut(Value),
     {
         let result = self.receive_response(method, params, cancel, timeout, update);
         // A timed-out/cancelled stream cannot be reused safely. Stop the owned
         // process before releasing the operation slot, even if the CLI is silent.
-        if let Err(error) = &result {
-            crate::terminate_child(&mut self.child)
-                .map_err(|cleanup| format!("{error}; failed to stop ACP process: {cleanup}"))?;
+        if result.is_err() {
+            if let Err(cleanup) = crate::terminate_child(&mut self.child) {
+                return Err(format!("Failed to stop ACP process: {cleanup}").into());
+            }
         }
         result
     }
@@ -313,7 +387,7 @@ impl Client {
         cancel: &Arc<std::sync::atomic::AtomicBool>,
         timeout: Duration,
         mut update: F,
-    ) -> Result<Value, String>
+    ) -> Result<Value, RpcFailure>
     where
         F: FnMut(Value),
     {
@@ -321,6 +395,10 @@ impl Client {
             return Err("ACP request cancelled".into());
         }
         let deadline = Instant::now() + timeout;
+        let session = params["sessionId"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
         self.next_id += 1;
         let id = self.next_id;
         self.send(
@@ -337,7 +415,8 @@ impl Client {
                 return Err(format!(
                     "ACP {method} timed out after {} seconds",
                     timeout.as_secs_f64()
-                ));
+                )
+                .into());
             }
             let message = match self
                 .output
@@ -348,21 +427,25 @@ impl Client {
                 Err(_) => return Err("ACP output disconnected".into()),
             };
             if message.get("method").is_some() {
+                let current_session = session
+                    .as_deref()
+                    .is_some_and(|id| message["params"]["sessionId"].as_str() == Some(id));
                 if let Some(request_id) = message.get("id") {
                     let response = if message["method"] == "session/request_permission" {
                         let tool = &message["params"]["toolCall"];
-                        let permitted = self.api_tools.iter().any(|name| {
-                            [tool["name"].as_str(), tool["title"].as_str()]
-                                .into_iter()
-                                .flatten()
-                                .any(|label| {
-                                    label == name
-                                        || label == format!("api_client/{name}")
-                                        || label == format!("api_client__{name}")
-                                        || label == format!("mcp_api_client_{name}")
-                                        || label == format!("mcp__api_client__{name}")
-                                })
-                        });
+                        let permitted = current_session
+                            && method == "session/prompt"
+                            && self.api_tools.iter().any(|name| {
+                                [tool["name"].as_str(), tool["title"].as_str()]
+                                    .into_iter()
+                                    .flatten()
+                                    .any(|label| {
+                                        label == format!("api_client/{name}")
+                                            || label == format!("api_client__{name}")
+                                            || label == format!("mcp_api_client_{name}")
+                                            || label == format!("mcp__api_client__{name}")
+                                    })
+                            });
                         let option = message["params"]["options"].as_array().and_then(|options| {
                             options
                                 .iter()
@@ -374,15 +457,12 @@ impl Client {
                         json!({"jsonrpc":"2.0", "id":request_id, "error":{"code":-32601,"message":"ACP client capability disabled"}})
                     };
                     self.send(response, cancel, deadline)?;
-                } else if message["method"] == "session/update" {
+                } else if current_session && message["method"] == "session/update" {
                     update(message["params"]["update"].clone());
                 }
             } else if message["id"] == id {
                 if let Some(error) = message.get("error") {
-                    return Err(error["message"]
-                        .as_str()
-                        .unwrap_or("ACP request failed")
-                        .to_string());
+                    return Err(RpcFailure::remote(error));
                 }
                 return Ok(message["result"].clone());
             }
@@ -453,7 +533,7 @@ impl Client {
         profile: &Path,
         cancel: &Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<Value, String> {
-        self.session_with_system(profile, "", cancel)
+        self.new_session(profile, "", &[], false, cancel)
     }
 
     pub(super) fn session_with_system(
@@ -472,6 +552,17 @@ impl Client {
         servers: &[Value],
         cancel: &Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<Value, String> {
+        self.new_session(profile, system, servers, true, cancel)
+    }
+
+    fn new_session(
+        &mut self,
+        profile: &Path,
+        system: &str,
+        servers: &[Value],
+        restrict_tools: bool,
+        cancel: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Value, String> {
         let mut params = json!({"cwd":profile.join("workspace"),"mcpServers":[]});
         if !system.is_empty() {
             match self.system_prompt {
@@ -484,9 +575,8 @@ impl Client {
                 SystemPromptSupport::Unavailable => return Err("The installed ACP CLI does not advertise system instructions support; update Antigravity CLI".into()),
             }
         }
-        if !servers.is_empty() {
-            params["mcpServers"] = json!(servers);
-            params["_meta"]["antigravity"]["eagerMcpServers"] = json!(true);
+        params["mcpServers"] = json!(servers);
+        if restrict_tools {
             params["_meta"]["agy"]["disabledTools"] = json!([
                 "list_directory",
                 "search_directory",
@@ -575,6 +665,39 @@ impl Drop for Client {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn only_structured_error_fields_classify_a_remote_rejection() {
+        for status in [
+            "INVALID_ARGUMENT",
+            "UNAUTHENTICATED",
+            "PERMISSION_DENIED",
+            "RESOURCE_EXHAUSTED",
+            "UNAVAILABLE",
+            "DEADLINE_EXCEEDED",
+        ] {
+            let failure = RpcFailure::remote(
+                &json!({"code":-32603,"message":"not the status","data":{"error":{"status":status}}}),
+            );
+            assert!(
+                matches!(failure, RpcFailure::Remote { kind, .. } if !matches!(kind, Rejection::Unknown))
+            );
+        }
+        assert!(matches!(
+            RpcFailure::remote(&json!({"code":-32603,"message":"UNAVAILABLE HTTP 503"})),
+            RpcFailure::Remote {
+                kind: Rejection::Unknown,
+                ..
+            }
+        ));
+        assert!(matches!(
+            RpcFailure::remote(&json!({"code":-32000,"message":"only local UI detail"})),
+            RpcFailure::Remote {
+                kind: Rejection::Authentication,
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn identity_uses_only_latest_official_auth_result() {
@@ -736,12 +859,38 @@ console.log('ACP_WINDOWS_FIXTURE_OK');
         }
         let mut request = String::new();
         std::io::stdin().read_line(&mut request).unwrap();
+        if mode == "permission-session" {
+            let prompt: Value = serde_json::from_str(&request).unwrap();
+            let mut outcomes = Vec::new();
+            for (index, session) in [json!("other"), Value::Null, json!("test")]
+                .into_iter()
+                .enumerate()
+            {
+                let id = format!("permission-{index}");
+                println!(
+                    "{}",
+                    json!({"jsonrpc":"2.0","id":id,"method":"session/request_permission","params":{"sessionId":session,"toolCall":{"title":"api_client/lookup"},"options":[{"optionId":"once","kind":"allow_once"}]}})
+                );
+                std::io::stdout().flush().unwrap();
+                let mut reply = String::new();
+                std::io::stdin().read_line(&mut reply).unwrap();
+                let reply: Value = serde_json::from_str(&reply).unwrap();
+                assert_eq!(reply["id"], id);
+                outcomes.push(reply["result"]["outcome"].clone());
+            }
+            println!(
+                "{}",
+                json!({"jsonrpc":"2.0","id":prompt["id"],"result":outcomes})
+            );
+            std::io::stdout().flush().unwrap();
+            return;
+        }
         let started = Instant::now();
         while started.elapsed() < Duration::from_secs(15) {
             if mode == "updates" {
                 println!(
                     "{}",
-                    json!({"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"still working"}}}})
+                    json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"test","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"still working"}}}})
                 );
                 std::io::stdout().flush().unwrap();
             }
@@ -766,6 +915,25 @@ console.log('ACP_WINDOWS_FIXTURE_OK');
     }
 
     #[test]
+    fn only_the_active_prompt_can_request_its_declared_tool() {
+        let mut client = unresponsive_client("permission-session");
+        client.allow_api_tools(&[json!({"function":{"name":"lookup"}})]);
+        let outcomes = client
+            .call_with_timeout(
+                "session/prompt",
+                json!({"sessionId":"test"}),
+                &Arc::new(AtomicBool::new(false)),
+                Duration::from_secs(3),
+                |_| {},
+            )
+            .unwrap();
+        assert_eq!(
+            outcomes,
+            json!([{"outcome":"cancelled"},{"outcome":"cancelled"},{"outcome":"selected","optionId":"once"}])
+        );
+    }
+
+    #[test]
     fn silent_server_times_out_and_is_reaped() {
         let mut client = unresponsive_client("silent");
         let cancel = Arc::new(AtomicBool::new(false));
@@ -778,7 +946,8 @@ console.log('ACP_WINDOWS_FIXTURE_OK');
                 Duration::from_millis(100),
                 |_| {},
             )
-            .unwrap_err();
+            .unwrap_err()
+            .local_message();
         assert!(error.contains("initialize timed out"), "{error}");
         assert!(started.elapsed() < Duration::from_secs(5));
         assert!(client.child.try_wait().unwrap().is_some());
@@ -797,7 +966,8 @@ console.log('ACP_WINDOWS_FIXTURE_OK');
                 Duration::from_millis(150),
                 |_| {},
             )
-            .unwrap_err();
+            .unwrap_err()
+            .local_message();
         assert!(error.contains("write timed out"), "{error}");
         assert!(started.elapsed() < Duration::from_secs(5));
         assert!(client.child.try_wait().unwrap().is_some());
@@ -816,7 +986,8 @@ console.log('ACP_WINDOWS_FIXTURE_OK');
                 Duration::from_secs(1),
                 |_| updates += 1,
             )
-            .unwrap_err();
+            .unwrap_err()
+            .local_message();
         assert!(updates > 0);
         assert!(error.contains("session/prompt timed out"), "{error}");
         assert!(client.child.try_wait().unwrap().is_some());

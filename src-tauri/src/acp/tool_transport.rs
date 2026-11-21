@@ -7,6 +7,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 const LIMIT: u64 = 1024 * 1024;
+const MAX_HANDLERS: usize = 32;
 pub(super) const TOOL_WAIT: Duration = Duration::from_secs(600);
 
 pub(super) enum Event {
@@ -15,7 +16,7 @@ pub(super) enum Event {
         call: Value,
         result: mpsc::SyncSender<Value>,
     },
-    Done(Result<(), String>),
+    Done(Result<(), bridge::RunError>),
 }
 
 pub(super) struct Transport {
@@ -61,22 +62,25 @@ impl Transport {
         let config = json!({"name":"api_client","command":executable,"args":args,"env":[
             {"name":"ECPA_ACP_TOOL_PORT","value":port.to_string()},
             {"name":"ECPA_ACP_TOOL_KEY","value":key}
-        ],"_meta":{"antigravity":{"forceAllToolsEager":true}}});
+        ]});
         let declarations: Vec<_> = tools.iter().map(|tool| {
             let f = &tool["function"];
             json!({"name":f["name"],"description":f["description"].as_str().unwrap_or(""),
                 "inputSchema":f.get("parameters").cloned().unwrap_or_else(||json!({"type":"object","properties":{}}))})
         }).collect();
-        let stop = cancel.clone();
+        let declarations = Arc::new(declarations);
+        let stop = Arc::new(AtomicBool::new(false));
+        let shutdown = stop.clone();
         let worker = std::thread::spawn(move || {
             let mut handlers = Vec::new();
-            while !cancel.load(Ordering::Acquire) {
+            while !shutdown.load(Ordering::Acquire) && !cancel.load(Ordering::Acquire) {
                 match listener.accept() {
-                    Ok((socket, _)) => {
+                    Ok((socket, _)) if handlers.len() < MAX_HANDLERS => {
                         let key = key.clone();
                         let tools = declarations.clone();
                         let events = events.clone();
                         let cancel = cancel.clone();
+                        let shutdown = shutdown.clone();
                         handlers.push(std::thread::spawn(move || {
                             let _ = socket.set_read_timeout(Some(Duration::from_secs(2)));
                             let _ = socket.set_write_timeout(Some(Duration::from_secs(2)));
@@ -84,11 +88,12 @@ impl Transport {
                             let request_id = frame.as_ref().ok().and_then(|frame|frame["request"].get("id")).cloned().unwrap_or(Value::Null);
                             let reply = frame.and_then(|frame| {
                                 if frame["key"].as_str() != Some(key.as_str()) { return Err("Invalid internal tool key".into()); }
-                                handle(&frame["request"], &tools, &events, &cancel)
+                                handle_with_shutdown(&frame["request"], &tools, &events, &cancel, &shutdown)
                             }).unwrap_or_else(|error| json!({"jsonrpc":"2.0","id":request_id,"error":{"code":-32602,"message":error}}));
                             let _ = writeln!(&socket, "{reply}");
                         }));
                     }
+                    Ok(_) => {}
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(10))
                     }
@@ -124,11 +129,12 @@ impl Drop for Transport {
     }
 }
 
-fn handle(
+fn handle_with_shutdown(
     request: &Value,
     tools: &[Value],
     events: &mpsc::SyncSender<Event>,
     cancel: &Arc<AtomicBool>,
+    shutdown: &AtomicBool,
 ) -> Result<Value, String> {
     let result = match request["method"].as_str().unwrap_or("") {
         "initialize" => {
@@ -168,7 +174,10 @@ fn handle(
                 .map_err(|_| "Tool event queue unavailable")?;
             let deadline = Instant::now() + TOOL_WAIT;
             loop {
-                if cancel.load(Ordering::Acquire) || Instant::now() >= deadline {
+                if Instant::now() >= deadline {
+                    cancel.store(true, Ordering::Release);
+                }
+                if cancel.load(Ordering::Acquire) || shutdown.load(Ordering::Acquire) {
                     return Err("Client tool call cancelled or expired".into());
                 }
                 match receiver.recv_timeout(Duration::from_millis(50)) {
@@ -200,13 +209,34 @@ fn read_frame(socket: &TcpStream) -> Result<Value, String> {
     serde_json::from_str(&line).map_err(|e| e.to_string())
 }
 
+fn forward(port: u16, key: &str, request: &Value) -> Result<Value, String> {
+    let address = (std::net::Ipv4Addr::LOCALHOST, port).into();
+    let mut socket =
+        TcpStream::connect_timeout(&address, Duration::from_secs(2)).map_err(|e| e.to_string())?;
+    socket
+        .set_read_timeout(Some(TOOL_WAIT + Duration::from_secs(5)))
+        .map_err(|e| e.to_string())?;
+    socket
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .map_err(|e| e.to_string())?;
+    writeln!(socket, "{}", json!({"key":key,"request":request})).map_err(|e| e.to_string())?;
+    read_frame(&socket)
+}
+
+fn write_helper_reply(response: &Value) -> Result<(), String> {
+    let mut output = std::io::stdout().lock();
+    writeln!(output, "{response}").map_err(|e| e.to_string())?;
+    output.flush().map_err(|e| e.to_string())
+}
+
 pub(crate) fn run_helper() -> Result<(), String> {
     let port: u16 = std::env::var("ECPA_ACP_TOOL_PORT")
         .map_err(|_| "Missing tool port")?
         .parse()
         .map_err(|_| "Invalid tool port")?;
-    let key = std::env::var("ECPA_ACP_TOOL_KEY").map_err(|_| "Missing tool key")?;
+    let key = Arc::new(std::env::var("ECPA_ACP_TOOL_KEY").map_err(|_| "Missing tool key")?);
     let mut input = BufReader::new(std::io::stdin());
+    let mut in_flight = BTreeMap::<String, std::thread::JoinHandle<()>>::new();
     loop {
         let mut line = String::new();
         let length = input
@@ -217,25 +247,36 @@ pub(crate) fn run_helper() -> Result<(), String> {
         if length == 0 {
             return Ok(());
         }
-        if length as u64 > LIMIT {
-            return Err("MCP request exceeds 1 MiB".into());
+        if length as u64 > LIMIT || !line.ends_with('\n') {
+            return Err("Invalid or oversized MCP request frame".into());
         }
         let request: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
-        if request.get("id").is_none() {
+        let Some(id) = request
+            .get("id")
+            .filter(|id| id.is_string() || id.is_number())
+        else {
+            continue;
+        };
+        in_flight.retain(|_, task| !task.is_finished());
+        let rpc_id = id.to_string();
+        if in_flight.contains_key(&rpc_id) {
             continue;
         }
-        let mut socket =
-            TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).map_err(|e| e.to_string())?;
-        socket
-            .set_read_timeout(Some(TOOL_WAIT + Duration::from_secs(5)))
-            .map_err(|e| e.to_string())?;
-        socket
-            .set_write_timeout(Some(Duration::from_secs(2)))
-            .map_err(|e| e.to_string())?;
-        writeln!(socket, "{}", json!({"key":key,"request":request})).map_err(|e| e.to_string())?;
-        let response = read_frame(&socket)?;
-        println!("{response}");
-        std::io::stdout().flush().map_err(|e| e.to_string())?;
+        if in_flight.len() >= MAX_HANDLERS {
+            write_helper_reply(
+                &json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":"Too many concurrent MCP requests"}}),
+            )?;
+            continue;
+        }
+        // A pending tools/call must not block further MCP frames on stdin.
+        // JSON-RPC associates potentially out-of-order replies by request ID.
+        let key = key.clone();
+        in_flight.insert(rpc_id, std::thread::spawn(move || {
+            let response = forward(port, &key, &request).unwrap_or_else(|_| {
+                json!({"jsonrpc":"2.0","id":request["id"],"error":{"code":-32000,"message":"ACP tool transport closed"}})
+            });
+            let _ = write_helper_reply(&response);
+        }));
     }
 }
 
@@ -245,17 +286,44 @@ mod tests {
 
     #[test]
     fn tool_result_waits_for_client_and_cancellation_releases_it() {
-        let tools = vec![json!({"name":"lookup","inputSchema":{"type":"object","properties":{"key":{"type":"string"}}}})];
+        let tools = vec![
+            json!({"name":"lookup","inputSchema":{"type":"object","properties":{"key":{"type":"string"}}}}),
+        ];
         for cancelled in [false, true] {
             let (sender, receiver) = mpsc::sync_channel(2);
             let cancel = Arc::new(AtomicBool::new(false));
-            let flag = cancel.clone(); let declarations = tools.clone();
-            let worker = std::thread::spawn(move || handle(&json!({"id":9,"method":"tools/call","params":{"name":"lookup","arguments":{"key":"alpha","toolSummary":"presentation"}}}), &declarations, &sender, &flag));
-            let Event::Tool { call, result } = receiver.recv_timeout(Duration::from_secs(2)).unwrap() else { panic!("missing tool event") };
+            let flag = cancel.clone();
+            let declarations = tools.clone();
+            let worker = std::thread::spawn(move || {
+                handle_with_shutdown(
+                    &json!({"id":9,"method":"tools/call","params":{"name":"lookup","arguments":{"key":"alpha","toolSummary":"presentation"}}}),
+                    &declarations,
+                    &sender,
+                    &flag,
+                    &AtomicBool::new(false),
+                )
+            });
+            let Event::Tool { call, result } =
+                receiver.recv_timeout(Duration::from_secs(2)).unwrap()
+            else {
+                panic!("missing tool event")
+            };
             assert_eq!(call["function"]["arguments"], "{\"key\":\"alpha\"}");
-            assert!(!worker.is_finished(), "MCP call must wait for the client result");
-            if cancelled { cancel.store(true,Ordering::Release); assert!(worker.join().unwrap().is_err()); }
-            else { result.send(json!({"content":[{"type":"text","text":"RESULT"}]})).unwrap(); let response = worker.join().unwrap().unwrap(); assert_eq!(response["id"],9); assert_eq!(response["result"]["content"][0]["text"],"RESULT"); }
+            assert!(
+                !worker.is_finished(),
+                "MCP call must wait for the client result"
+            );
+            if cancelled {
+                cancel.store(true, Ordering::Release);
+                assert!(worker.join().unwrap().is_err());
+            } else {
+                result
+                    .send(json!({"content":[{"type":"text","text":"RESULT"}]}))
+                    .unwrap();
+                let response = worker.join().unwrap().unwrap();
+                assert_eq!(response["id"], 9);
+                assert_eq!(response["result"]["content"][0]["text"], "RESULT");
+            }
         }
     }
 

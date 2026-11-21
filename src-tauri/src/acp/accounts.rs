@@ -308,6 +308,30 @@ pub(super) fn require_isolated_token(home: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// An isolated, saved account can be considered for another concurrent API
+// slot only while its own credential file is present. This is a read-only
+// eligibility check; rpc::command revalidates the profile when spawning.
+pub(super) fn pool_profile(root: &Path, account: &Account) -> Option<PathBuf> {
+    if !account.saved || !account.isolated || account.id == "default" {
+        return None;
+    }
+    let home = account_dir(root, &account.id).ok()?.join(ISOLATED_HOME);
+    let token = isolated_token(&home);
+    safe_path(&token).ok()?;
+    let metadata = std::fs::symlink_metadata(token).ok()?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 {
+            return None;
+        }
+    }
+    Some(home)
+}
+
 pub(super) fn checked_isolated_home(path: &Path) -> Result<PathBuf, String> {
     safe_path(path)?;
     let home = path
