@@ -102,8 +102,13 @@ jobs:
             version="$(node scripts/version.mjs "${release_tag#v}")"
           elif [[ "$is_preview_run" == "true" ]]; then
             base_version="${source_version%%[-+]*}"
-            preview_stamp="$(node scripts/preview-tag.mjs --stamp)"
-            release_tag="preview-${preview_stamp}"
+            # A supplied timestamp identifies the exact source ref and authored notes.
+            if [[ "$release_tag" =~ ^preview-([0-9]{8}-[0-9]{4})$ ]]; then
+              preview_stamp="${BASH_REMATCH[1]}"
+            else
+              preview_stamp="$(node scripts/preview-tag.mjs --stamp)"
+              release_tag="preview-${preview_stamp}"
+            fi
             version="${base_version}-preview.${preview_stamp}"
           elif [ -z "$release_tag" ]; then
             release_tag="v$source_version"
@@ -616,7 +621,8 @@ jobs:
             gh release create "$RELEASE_TAG" "${release_args[@]}" artifacts/*
           fi
 
-          if [[ "$is_unique_preview" == "true" ]]; then
+          # Publishing an explicit tag must not remove unrelated releases.
+          if [[ "$is_unique_preview" == "true" && "$GITHUB_REF_TYPE" != "tag" ]]; then
             older_tags="$(gh release list --limit 200 --json tagName --jq '.[].tagName' 2>/dev/null \
               | grep -E '^preview-[0-9]{8}-[0-9]{4}$' \
               | sort -r \

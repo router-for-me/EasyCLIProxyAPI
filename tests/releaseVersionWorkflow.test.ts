@@ -143,10 +143,49 @@ describe('release version resolution workflow', () => {
     }
   });
 
+  it.each(['push', 'workflow_dispatch'])('retains the supplied timestamped Preview tag for %s', (event) => {
+    const stamp = '20261121-0146';
+    const tag = `preview-${stamp}`;
+    const resolved = runResolveVersionScript({
+      EVENT_NAME: event,
+      REF_TYPE: event === 'push' ? 'tag' : 'branch',
+      REF_NAME: event === 'push' ? tag : 'dev',
+      REQUESTED_VERSION: tag,
+    });
+    expect(resolved).toEqual({
+      tag,
+      version: `${baseVersion}-preview.${stamp}`,
+      release_family: 'preview',
+      stable_series_version: anchors.stable,
+      preview_series_version: stamp,
+    });
+  });
+
   it('builds pull requests only from Roomen', () => {
     expect(String(releaseWorkflow.jobs.version.if)).toContain("github.event.pull_request.user.login == 'Roomen'");
     expect(releaseWorkflow.on.pull_request.types).not.toContain('edited');
   });
+});
+
+it('publishes an explicit Preview tag without pruning other releases', () => {
+  const publish = releaseWorkflow.jobs.publish.steps.find((step: any) => step.name === 'Publish release');
+  const result = spawnSync('bash', ['-c', `
+    gh() {
+      case "$1 $2" in
+        'release view') return 1 ;;
+        'release create') printf '%s\\n' "$1 $2 $3" ;;
+        'release list'|'release delete') printf '%s\\n' "unexpected $1 $2" ;;
+        *) return 2 ;;
+      esac
+    }
+    ${publish.run}
+  `], {
+    env: { ...process.env, RELEASE_TAG: 'preview-20261121-0146', GITHUB_REF_TYPE: 'tag',
+      GITHUB_SHA: 'source-revision', RUNNER_TEMP: tmpdir(), MANUAL_PRERELEASE: '' },
+    encoding: 'utf8',
+  });
+  expect(result.status).toBe(0);
+  expect(result.stdout.trim()).toBe('release create preview-20261121-0146');
 });
 
 describe('resolved release build matrix', () => {
