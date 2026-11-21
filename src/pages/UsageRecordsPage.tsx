@@ -559,6 +559,7 @@ export function UsageRecordsPage() {
             <strong>
               {status?.state === 'collecting'
                 ? t('usage.collector.collecting')
+                : status?.state === 'disabled' ? t('remote.usageDisabled')
                 : status?.state === 'error'
                 ? t('usage.collector.error')
                 : t('usage.collector.waiting')}

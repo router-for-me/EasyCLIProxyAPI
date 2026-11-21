@@ -13,11 +13,12 @@ import './AutoUpdatePanel.css';
 type AutoUpdatePanelProps = {
   /** Renders as an inset block instead of a standalone card. */
   embedded?: boolean;
+  hostOnly?: boolean;
   /** Application capability is informational; core updates are configured independently. */
   appUnavailableHint?: string;
 };
 
-export function AutoUpdatePanel({ embedded = false, appUnavailableHint }: AutoUpdatePanelProps = {}) {
+export function AutoUpdatePanel({ embedded = false, hostOnly = false, appUnavailableHint }: AutoUpdatePanelProps = {}) {
   const { t } = useI18n();
   const [status, setStatus] = useState<AutoUpdateStatus | null>(null);
   const [draft, setDraft] = useState<AutoUpdateSettings | null>(null);
@@ -33,6 +34,7 @@ export function AutoUpdatePanel({ embedded = false, appUnavailableHint }: AutoUp
     return () => { mounted.current = false; ++revision.current; };
   }, []);
   useEffect(() => {
+    if (hostOnly) return;
     let pending = false;
     const stop = pollWhileActive(() => {
       if (pending || mutating.current) return;
@@ -48,7 +50,7 @@ export function AutoUpdatePanel({ embedded = false, appUnavailableHint }: AutoUp
       }).finally(() => { pending = false; });
     }, 5000);
     return () => { ++revision.current; stop(); };
-  }, []);
+  }, [hostOnly]);
 
   const action = async (operation: () => Promise<AutoUpdateStatus>, replaceDraft = false) => {
     ++revision.current;

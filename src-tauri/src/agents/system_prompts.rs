@@ -373,6 +373,7 @@ fn persist_prompt_state_locked(state: &GlobalPromptState) -> Result<(), String> 
 }
 
 pub(crate) fn agent_effective_loopback_origin(client_id: &str, core_port: u16) -> String {
+    if let Ok(origin) = crate::remote_cpa::AGENT_ORIGIN.try_with(Clone::clone) { return origin; }
     let normalized = client_id.trim().to_ascii_lowercase();
     if let Ok(guard) = PROMPT_STATE.lock() {
         if let Some(&proxy_port) = guard.active_ports.get(&normalized) {

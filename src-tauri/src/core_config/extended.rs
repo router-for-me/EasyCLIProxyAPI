@@ -944,7 +944,7 @@ fn render_patch(
     render_yaml_value_changes(&prepared, &before, updated)
 }
 
-fn prepare_patch(
+pub(crate) fn prepare_extended_patch(
     content: &str,
     changes: &[ExtendedConfigChange],
 ) -> Result<(String, ExtendedConfigResult), String> {
@@ -1202,7 +1202,7 @@ pub(crate) fn save_extended_core_config(
     let path = core_install_dir()?.join(CORE_CONFIG_FILE);
     let content = fs::read_to_string(&path)
         .map_err(|error| format!("Cannot read kernel configuration: {error}"))?;
-    let (updated, result) = prepare_patch(&content, &changes)?;
+    let (updated, result) = prepare_extended_patch(&content, &changes)?;
     let mut config_guard = gui_config_state
         .inner
         .lock()
@@ -1302,7 +1302,7 @@ mod tests {
         ] {
             for (value, remove) in [(json!(false), false), (json!(true), false), (json!("chat"), false), (json!("passthrough"), false), (Json::Null, true)] {
                 let edits = vec![change(initial, "multimedia/disable-image-generation", value.clone(), remove)];
-                let (saved, _) = prepare_patch(initial, &edits).unwrap();
+                let (saved, _) = prepare_extended_patch(initial, &edits).unwrap();
                 let mut config = GuiConfigFile::default();
                 assert!(record_image_generation_preference(&mut config, &edits));
                 assert!(!record_image_generation_preference(&mut config, &edits));
@@ -1384,7 +1384,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
             ),
             change(content, "management/allow-remote", json!(true), false),
         ];
-        let (rendered, result) = prepare_patch(content, &changes).unwrap();
+        let (rendered, result) = prepare_extended_patch(content, &changes).unwrap();
         assert!(rendered.contains("# keep heading"));
         assert!(rendered.contains("# preserve hint"));
         assert_eq!(
@@ -1404,10 +1404,10 @@ client: {codex: {optimize-multi-agent-v2: false}}
         let content = "config-version: 8\nplugins: {enabled: false}\n";
         let valid = change(content, "plugins/enabled", json!(true), false);
         let invalid = change(content, "server/port", json!(2), false);
-        assert!(prepare_patch(content, &[valid.clone(), invalid]).is_err());
+        assert!(prepare_extended_patch(content, &[valid.clone(), invalid]).is_err());
         let mut stale = valid.clone();
         stale.expected = json!(true);
-        assert!(prepare_patch(content, &[stale])
+        assert!(prepare_extended_patch(content, &[stale])
             .unwrap_err()
             .contains("changed externally"));
         for (path, value) in [
@@ -1418,11 +1418,11 @@ client: {codex: {optimize-multi-agent-v2: false}}
             ("oauth/model-alias/plugin-x", json!("bad")),
         ] {
             assert!(
-                prepare_patch(content, &[change(content, path, value, false)]).is_err(),
+                prepare_extended_patch(content, &[change(content, path, value, false)]).is_err(),
                 "{path}"
             );
         }
-        assert!(prepare_patch("bad: [yaml", &[valid]).is_err());
+        assert!(prepare_extended_patch("bad: [yaml", &[valid]).is_err());
     }
 
     #[test]
@@ -1435,19 +1435,19 @@ client: {codex: {optimize-multi-agent-v2: false}}
             false,
         );
         assert_eq!(
-            prepare_patch(content, &[good]).unwrap().1.config["credentials"]["concurrency"]
+            prepare_extended_patch(content, &[good]).unwrap().1.config["credentials"]["concurrency"]
                 ["lifecycle-config-revision"],
             7
         );
         let remove = change(content, "credentials/concurrency", Json::Null, true);
-        assert!(prepare_patch(content, &[remove]).is_err());
+        assert!(prepare_extended_patch(content, &[remove]).is_err());
         let bad = change(
             content,
             "credentials/concurrency",
             json!({"lifecycle-config-revision":8,"max-limit":20}),
             false,
         );
-        assert!(prepare_patch(content, &[bad]).is_err());
+        assert!(prepare_extended_patch(content, &[bad]).is_err());
     }
 
     #[test]
@@ -1459,7 +1459,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
             json!({"claude":{"header-defaults":{"user-agent":"new"}}}),
             false,
         );
-        let (rendered, result) = prepare_patch(content, &[change]).unwrap();
+        let (rendered, result) = prepare_extended_patch(content, &[change]).unwrap();
         let document: serde_norway::Value = serde_norway::from_str(&rendered).unwrap();
         assert_eq!(document["codex"]["optimize-multi-agent-v2"], true);
         assert!(document["codex"].get("response-steering").is_none());
@@ -1473,7 +1473,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
     #[test]
     fn extended_mixed_remove_does_not_resurrect_legacy_fallback() {
         let content = "config-version: 8\ncodex: {response-steering: true, live-media-relay: {enabled: true}}\noauth: {providers: {codex: {response-steering: false, live-media-relay: {enabled: false}}}}\n";
-        let (rendered, result) = prepare_patch(
+        let (rendered, result) = prepare_extended_patch(
             content,
             &[change(content, "oauth/providers/codex", Json::Null, true)],
         )
@@ -1487,7 +1487,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
         let original = "config-version: 8\nplugins: {configs: {example: {enabled: true}}}\n";
         let empty = change(original, "plugins/configs", json!({}), false);
         let disk = format!("{original}custom-extension: {{untouched: true}}\n");
-        let (_, result) = prepare_patch(&disk, &[empty]).unwrap();
+        let (_, result) = prepare_extended_patch(&disk, &[empty]).unwrap();
         assert_eq!(result.config["plugins"]["configs"], json!({}));
         assert_eq!(result.config["custom-extension"]["untouched"], true);
     }
@@ -1515,7 +1515,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
                 false,
             ),
         ];
-        let (_, result) = prepare_patch(content, &changes).unwrap();
+        let (_, result) = prepare_extended_patch(content, &changes).unwrap();
         assert_eq!(
             result.config["oauth"]["model-alias"]["plugin-example"][0]["fork"],
             false
@@ -1526,7 +1526,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
             json!({"max-sessions":2,"udp-port-min":10000,"udp-port-max":10002}),
             false,
         );
-        assert!(prepare_patch(content, &[bad]).is_err());
+        assert!(prepare_extended_patch(content, &[bad]).is_err());
     }
     #[test]
     fn extended_validates_network_duration_payload_and_alias_values() {
@@ -1583,7 +1583,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
         ];
         for (path, value) in rejected {
             assert!(
-                prepare_patch(content, &[change(content, path, value, false)]).is_err(),
+                prepare_extended_patch(content, &[change(content, path, value, false)]).is_err(),
                 "{path}"
             );
         }
@@ -1622,7 +1622,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
             ),
         ];
         for (path, value) in accepted {
-            prepare_patch(content, &[change(content, path, value, false)])
+            prepare_extended_patch(content, &[change(content, path, value, false)])
                 .unwrap_or_else(|error| panic!("{path}: {error}"));
         }
     }
@@ -1643,14 +1643,14 @@ client: {codex: {optimize-multi-agent-v2: false}}
             assert!(!validate_string(&path, value), "{value}");
         }
         let content = "config-version: 8\n";
-        let (_, result) = prepare_patch(
+        let (_, result) = prepare_extended_patch(
             content,
             &[change(content, &path.join("/"), json!("6h"), false)],
         )
         .unwrap();
         assert_eq!(result.config["oauth"]["providers"]["antigravity"]["tos-pause-window"], "6h");
         assert!(
-            prepare_patch(
+            prepare_extended_patch(
                 content,
                 &[change(content, &path.join("/"), json!("abc"), false)]
             )
@@ -1666,7 +1666,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
             {"pattern": "(?m)^RFC 2119[^\\n]*\\n?", "replacement": ""},
             {"pattern": "internal-only", "replacement": "Assistant"}
         ]);
-        let (_, result) = prepare_patch(content, &[change(content, path, rules, false)]).unwrap();
+        let (_, result) = prepare_extended_patch(content, &[change(content, path, rules, false)]).unwrap();
         let saved = result.config["oauth"]["providers"]["antigravity"]["sensitive-patterns-replace"]
             .as_array()
             .unwrap()
@@ -1683,12 +1683,12 @@ client: {codex: {optimize-multi-agent-v2: false}}
             json!([{"pattern": "ok", "unexpected": true}]),
         ] {
             assert!(
-                prepare_patch(content, &[change(content, path, rejected.clone(), false)]).is_err(),
+                prepare_extended_patch(content, &[change(content, path, rejected.clone(), false)]).is_err(),
                 "{rejected}"
             );
         }
         assert!(
-            prepare_patch(
+            prepare_extended_patch(
                 content,
                 &[change(
                     content,
@@ -1706,7 +1706,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
     fn extended_session_affinity_rebind_accepts_never() {
         let content = "config-version: 8\n";
         for value in ["any", "quota", "never"] {
-            prepare_patch(
+            prepare_extended_patch(
                 content,
                 &[change(
                     content,
@@ -1718,7 +1718,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
             .unwrap_or_else(|error| panic!("{value}: {error}"));
         }
         assert!(
-            prepare_patch(
+            prepare_extended_patch(
                 content,
                 &[change(
                     content,
@@ -1734,7 +1734,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
     #[test]
     fn extended_deleting_empty_native_object_removes_hidden_legacy_fallback() {
         let content = "config-version: 8\ncodex: {response-steering: true, optimize-multi-agent-v2: true}\noauth: {providers: {codex: {}}}\n";
-        let (_, result) = prepare_patch(
+        let (_, result) = prepare_extended_patch(
             content,
             &[change(content, "oauth/providers/codex", Json::Null, true)],
         )
@@ -1749,7 +1749,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
     #[test]
     fn extended_auth_directory_edit_marks_restart_and_removes_legacy_value() {
         let content = "config-version: 8\nauth-dir: old\noauth: {auth-dir: current}\n";
-        let (rendered, result) = prepare_patch(
+        let (rendered, result) = prepare_extended_patch(
             content,
             &[change(
                 content,
@@ -1768,7 +1768,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
     #[test]
     fn extended_github_token_is_writable_in_native_and_legacy_layouts() {
         let native = "config-version: 8\nserver: {port: 8317}\n";
-        let (rendered, result) = prepare_patch(
+        let (rendered, result) = prepare_extended_patch(
             native,
             &[change(
                 native,
@@ -1785,7 +1785,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
 
         let configured =
             "config-version: 8\nserver: {github-token: kept-secret}\nplugins: {enabled: false}\n";
-        let (rendered, _) = prepare_patch(
+        let (rendered, _) = prepare_extended_patch(
             configured,
             &[change(configured, "plugins/enabled", json!(true), false)],
         )
@@ -1796,7 +1796,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
         let legacy = "port: 8317\ngithub-token: old-secret\n";
         let view = extended_config_view(&serde_norway::from_str(legacy).unwrap()).unwrap();
         assert_eq!(view["server"]["github-token"], "old-secret");
-        let (rendered, _) = prepare_patch(
+        let (rendered, _) = prepare_extended_patch(
             legacy,
             &[change(
                 legacy,
@@ -1810,7 +1810,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
         assert_eq!(document["github-token"], "new-secret");
         assert!(document.get("server").is_none());
 
-        let (rendered, _) = prepare_patch(
+        let (rendered, _) = prepare_extended_patch(
             legacy,
             &[change(legacy, "server/github-token", Json::Null, true)],
         )
@@ -1833,7 +1833,7 @@ client: {codex: {optimize-multi-agent-v2: false}}
             ("server/github-token", json!("github-secret")),
         ] {
             let (_, result) =
-                prepare_patch(content, &[change(content, path, value, false)]).unwrap();
+                prepare_extended_patch(content, &[change(content, path, value, false)]).unwrap();
             assert!(!result.restart_required, "{path} supports live updates");
         }
         for (path, value) in [
@@ -1841,11 +1841,11 @@ client: {codex: {optimize-multi-agent-v2: false}}
             ("oauth/auth-dir", json!("~/selected-oauth")),
         ] {
             let (_, result) =
-                prepare_patch(content, &[change(content, path, value, false)]).unwrap();
+                prepare_extended_patch(content, &[change(content, path, value, false)]).unwrap();
             assert!(result.restart_required, "{path} requires a restart");
         }
         let unchanged = "config-version: 8\nmanagement: {allow-remote: false}\n";
-        let (_, result) = prepare_patch(
+        let (_, result) = prepare_extended_patch(
             unchanged,
             &[change(
                 unchanged,

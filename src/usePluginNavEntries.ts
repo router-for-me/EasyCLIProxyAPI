@@ -10,7 +10,7 @@ import {
 import { isPluginInstalled } from './services/pluginStatus';
 import { readKnownPluginUpdates, runStartupPluginUpdateCheck, subscribePluginUpdates } from './pluginUpdateModel';
 
-export function usePluginNavEntries(coreReady: boolean) {
+export function usePluginNavEntries(coreReady: boolean, targetRevision?: number) {
   const [entries, setEntries] = useState<PluginNavEntry[]>(readCachedPluginNavEntries);
   const [plugins, setPlugins] = useState<PluginListEntry[]>([]);
   const [fetched, setFetched] = useState(false);
@@ -38,6 +38,9 @@ export function usePluginNavEntries(coreReady: boolean) {
       return undefined;
     }
     let cancelled = false;
+    setEntries([]);
+    setPlugins([]);
+    setFetched(false);
     void (async () => {
       try {
         const supported = await getPluginSupport();
@@ -46,7 +49,7 @@ export function usePluginNavEntries(coreReady: boolean) {
         const next = data?.pluginsEnabled ? collectPluginResourceEntries(data.plugins).map(toPluginNavEntry) : [];
         setEntries(next);
         setPlugins(data?.pluginsEnabled ? data.plugins : []);
-        writeCachedPluginNavEntries(next);
+        if (targetRevision === undefined) writeCachedPluginNavEntries(next);
         setFetched(true);
         // Start once installed plugins are actually known, never from a rerender.
         if (data?.pluginsEnabled && data.plugins.some(isPluginInstalled)) {
@@ -58,7 +61,7 @@ export function usePluginNavEntries(coreReady: boolean) {
       }
     })();
     return () => { cancelled = true; };
-  }, [coreReady, revision]);
+  }, [coreReady, revision, targetRevision]);
 
   return { entries, plugins, fetched, pluginUpdates };
 }

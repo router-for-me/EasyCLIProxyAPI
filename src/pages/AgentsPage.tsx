@@ -7,6 +7,7 @@ import { Tabs } from '../components/Tabs';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { Switch } from '../components/Switch';
 import { getCoreConfigSettings, type CoreApiKey } from '../services/coreSettings';
+import { selectedRemoteEndpoint } from '../services/remoteCpa';
 import { maskSecret } from '../services/managementApi';
 import { onConfigFilesChanged } from '../services/events';
 import {
@@ -205,11 +206,7 @@ const createClaudeBooleanByClient = (): Record<ClaudeModelMappingClientId, boole
   'claude-desktop': false,
 });
 
-let claudeModelMappingsDraftCache = createClaudeModelMappingsByClient();
-let claudeCustomMappingCache = createClaudeBooleanByClient();
-const claudeModelMappingsDirtyCache = createClaudeBooleanByClient();
-let codexOauthConfigurationDraftCache: boolean | null = null;
-let agentFormEditBaselineCache: Partial<Record<AgentClientId, AgentFormValues>> = {};
+
 
 const claudeMappingRoles = [
   { key: 'fable', contextKey: 'fable1m', labelKey: 'agents.claudeDesktopMapping.fable' },
@@ -246,7 +243,7 @@ type AgentSubpageDefinition = {
   clients?: readonly AgentClientId[];
 };
 
-const agentDefinitions: AgentDefinition[] = [
+export const agentDefinitions: AgentDefinition[] = [
   {
     id: 'claude-code',
     name: 'Claude Code',
@@ -384,15 +381,26 @@ const DEFAULT_AGENT_VIEW_STATE: AgentViewState = {
   launchError: '',
 };
 
-let agentViewStateCache: Record<'full' | 'embedded', Partial<Record<AgentClientId, AgentViewState>>> = {
-  full: {},
-  embedded: {},
-};
+function newAgentDrafts() {
+  return {
+    claudeModelMappingsDraftCache: createClaudeModelMappingsByClient(),
+    claudeCustomMappingCache: createClaudeBooleanByClient(), claudeModelMappingsDirtyCache: createClaudeBooleanByClient(),
+    codexOauthConfigurationDraftCache: null as boolean | null,
+    agentFormEditBaselineCache: {} as Partial<Record<AgentClientId, AgentFormValues>>,
+    agentViewStateCache: { full: {}, embedded: {} } as Record<'full' | 'embedded', Partial<Record<AgentClientId, AgentViewState>>>,
+  };
+}
+const draftsByInstance = new Map<string, ReturnType<typeof newAgentDrafts>>();
+function agentDrafts(scope: string) {
+  const cached = draftsByInstance.get(scope);
+  if (cached) return cached;
+  const drafts = newAgentDrafts(); draftsByInstance.set(scope, drafts); return drafts;
+}
+function agentStorageKey(key: string, scope: string) { return scope ? `${key}:${scope}` : key; }
 
 const AGENT_MODEL_SELECTIONS_KEY = 'cpa-gui.agent-model-selections.v1';
 // Keep the last successful data across page visits; revalidate it in the background.
-let agentStatusesCache: AgentConfigStatus[] | null = null;
-const agentModelsCache: Partial<Record<AgentClientId, ModelOption[]>> = {};
+
 // A Codex daemon restart outlives page visits; a remounted page waits on it instead of starting another.
 let codexCliServiceRestart: Promise<void> | null = null;
 const AGENT_SELECTED_CLIENT_KEY = 'cpa-gui.agent-selected-client.v1';
@@ -437,10 +445,10 @@ const writeSelectedAgentClient = (client: AgentClientId) => {
   }
 };
 
-const readAgentModelSelections = (): Partial<Record<AgentClientId, string>> => {
+const readAgentModelSelections = (scope: string): Partial<Record<AgentClientId, string>> => {
   if (typeof window === 'undefined') return {};
   try {
-    const payload = window.localStorage.getItem(AGENT_MODEL_SELECTIONS_KEY);
+    const payload = window.localStorage.getItem(agentStorageKey(AGENT_MODEL_SELECTIONS_KEY, scope));
     if (!payload) return {};
     const parsed = JSON.parse(payload) as Record<string, unknown>;
     return agentDefinitions.reduce<Partial<Record<AgentClientId, string>>>((result, agent) => {
@@ -454,21 +462,21 @@ const readAgentModelSelections = (): Partial<Record<AgentClientId, string>> => {
 };
 
 const writeAgentModelSelections = (
-  selections: Partial<Record<AgentClientId, string>>,
+  selections: Partial<Record<AgentClientId, string>>, scope: string,
 ) => {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(AGENT_MODEL_SELECTIONS_KEY, JSON.stringify(selections));
+    window.localStorage.setItem(agentStorageKey(AGENT_MODEL_SELECTIONS_KEY, scope), JSON.stringify(selections));
   } catch {
   }
 };
 
 const AGENT_API_KEY_SELECTIONS_KEY = 'agent-api-key-selections';
 
-const readAgentApiKeySelections = (): Partial<Record<AgentClientId, string>> => {
+const readAgentApiKeySelections = (scope: string): Partial<Record<AgentClientId, string>> => {
   if (typeof window === 'undefined') return {};
   try {
-    const payload = window.localStorage.getItem(AGENT_API_KEY_SELECTIONS_KEY);
+    const payload = window.localStorage.getItem(agentStorageKey(AGENT_API_KEY_SELECTIONS_KEY, scope));
     if (!payload) return {};
     const parsed = JSON.parse(payload) as Record<string, unknown>;
     return agentDefinitions.reduce<Partial<Record<AgentClientId, string>>>((result, agent) => {
@@ -482,11 +490,11 @@ const readAgentApiKeySelections = (): Partial<Record<AgentClientId, string>> => 
 };
 
 const writeAgentApiKeySelections = (
-  selections: Partial<Record<AgentClientId, string>>,
+  selections: Partial<Record<AgentClientId, string>>, scope: string,
 ) => {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(AGENT_API_KEY_SELECTIONS_KEY, JSON.stringify(selections));
+    window.localStorage.setItem(agentStorageKey(AGENT_API_KEY_SELECTIONS_KEY, scope), JSON.stringify(selections));
   } catch {
   }
 };
@@ -511,7 +519,7 @@ const writeAgentLaunchDirectoryHistory = (history: AgentLaunchDirectoryHistory) 
   }
 };
 
-function AgentMark({ definition, size = 26 }: { definition: AgentDefinition; size?: number }) {
+export function AgentMark({ definition, size = 26 }: { definition: AgentDefinition; size?: number }) {
   if (definition.icon) {
     return <img src={definition.icon} alt="" className="provider-logo" />;
   }
@@ -565,8 +573,10 @@ type AgentsPageProps = {
 
 export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsPageProps = {}) {
   const { t } = useI18n();
+  const scope = selectedRemoteEndpoint() ?? '';
+  const drafts = agentDrafts(scope);
   const [selected, setSelected] = useState<AgentClientId>(readSelectedAgentClient);
-  const [viewStateByClient, setViewStateByClient] = useState(() => agentViewStateCache);
+  const [viewStateByClient, setViewStateByClient] = useState(() => drafts.agentViewStateCache);
   const viewMode = embedded ? 'embedded' : 'full';
   const viewState = viewStateByClient[viewMode][selected] ?? DEFAULT_AGENT_VIEW_STATE;
   const activeSubpage = viewState.subpage === 'sessions' && (embedded || selected !== 'codex')
@@ -580,7 +590,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           [client]: { ...(current[viewMode][client] ?? DEFAULT_AGENT_VIEW_STATE), ...patch },
         },
       };
-      agentViewStateCache = next;
+      drafts.agentViewStateCache = next;
       return next;
     });
   };
@@ -593,7 +603,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const setConfigurationNotice = (configurationNotice: string) => updateViewState({ configurationNotice });
   const setClearNotice = (clearNotice: string) => updateViewState({ clearNotice });
   const setLaunchError = (launchError: string) => updateViewState({ launchError });
-  const [statuses, setStatuses] = useState<AgentConfigStatus[]>(() => agentStatusesCache ?? []);
+  const agentModelsCache = useRef<Partial<Record<AgentClientId, ModelOption[]>>>({}).current;
+  const [statuses, setStatuses] = useState<AgentConfigStatus[]>([]);
   const [executablePaths, setExecutablePaths] = useState(() => readAgentExecutablePaths());
   const [configDirectories, setConfigDirectories] = useState(readAgentConfigDirectories);
   const [modelData, setModelData] = useState(() => ({
@@ -601,11 +612,11 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   }));
   const models = modelData.client === selected ? modelData.models : agentModelsCache[selected] ?? [];
   const [modelByClient, setModelByClient] = useState<Partial<Record<AgentClientId, string>>>(
-    readAgentModelSelections,
+    () => readAgentModelSelections(scope),
   );
   const [coreApiKeys, setCoreApiKeys] = useState<CoreApiKey[]>([]);
   const [apiKeyByClient, setApiKeyByClient] = useState<Partial<Record<AgentClientId, string>>>(
-    readAgentApiKeySelections,
+    () => readAgentApiKeySelections(scope),
   );
 
   useEffect(() => {
@@ -629,18 +640,18 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     };
   }, []);
   const [formEditBaselineByClient, setFormEditBaselineByClient] = useState(
-    () => ({ ...agentFormEditBaselineCache }),
+    () => ({ ...drafts.agentFormEditBaselineCache }),
   );
   const [claudeModelMappingsDraftByClient, setClaudeModelMappingsDraftByClientState] = useState(
     () => ({
-      'claude-code': { ...claudeModelMappingsDraftCache['claude-code'] },
-      'claude-desktop': { ...claudeModelMappingsDraftCache['claude-desktop'] },
+      'claude-code': { ...drafts.claudeModelMappingsDraftCache['claude-code'] },
+      'claude-desktop': { ...drafts.claudeModelMappingsDraftCache['claude-desktop'] },
     }),
   );
   const [claudeCustomMappingByClient, setClaudeCustomMappingByClientState] = useState(
-    () => ({ ...claudeCustomMappingCache }),
+    () => ({ ...drafts.claudeCustomMappingCache }),
   );
-  const [loading, setLoading] = useState(() => agentStatusesCache === null);
+  const [loading, setLoading] = useState(true);
   const [modelLoading, setModelLoading] = useState(false);
   const [busyAction, setBusyAction] = useState<
     'backup' | 'apply' | 'close-config' | 'default' | 'clear' | 'install-pi' | 'update-pi' | 'repair-pi' | 'uninstall-pi' | 'oauth-check' | 'remote-compaction' | 'approval-model' | 'native-oauth' | 'directory' | 'launch' | 'launch-cli' | 'launch-app' | 'restart-app' | 'stop-deepseek' | 'restart-deepseek' | null
@@ -688,13 +699,13 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   );
   const [oauthLoginRequiredAction, setOauthLoginRequiredAction] = useState<OAuthLoginRequiredAction | null>(null);
   const [oauthConfigurationDraft, setOauthConfigurationDraftState] = useState<boolean | null>(
-    () => codexOauthConfigurationDraftCache,
+    () => drafts.codexOauthConfigurationDraftCache,
   );
   const [piProviderUpdateStatus, setPiProviderUpdateStatus] = useState<PiProviderUpdateStatus | null>(null);
   const modelRequestRef = useRef(0);
   const statusRequestRef = useRef(0);
   const piUpdateRequestRef = useRef(0);
-  const claudeModelMappingsDirtyRef = useRef(claudeModelMappingsDirtyCache);
+  const claudeModelMappingsDirtyRef = useRef(drafts.claudeModelMappingsDirtyCache);
 
   const setClaudeModelMappingsDraftByClient = useCallback((
     update: (
@@ -703,7 +714,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   ) => {
     setClaudeModelMappingsDraftByClientState((current) => {
       const next = update(current);
-      claudeModelMappingsDraftCache = next;
+      drafts.claudeModelMappingsDraftCache = next;
       return next;
     });
   }, []);
@@ -715,13 +726,13 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   ) => {
     setClaudeCustomMappingByClientState((current) => {
       const next = update(current);
-      claudeCustomMappingCache = next;
+      drafts.claudeCustomMappingCache = next;
       return next;
     });
   }, []);
 
   const setOauthConfigurationDraft = useCallback((value: boolean | null) => {
-    codexOauthConfigurationDraftCache = value;
+    drafts.codexOauthConfigurationDraftCache = value;
     setOauthConfigurationDraftState(value);
   }, []);
 
@@ -734,9 +745,6 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setStatuses(nextStatuses);
   }, [executablePaths]);
 
-  useEffect(() => {
-    if (statuses.length) agentStatusesCache = statuses;
-  }, [statuses]);
 
   useEffect(() => () => {
     // Responses from a previous visit must not overwrite the shared cache.
@@ -765,7 +773,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
           ...current,
           [client]: resolveAgentModelSelection(nextModels, current[client] || preferredModel),
         };
-        writeAgentModelSelections(next);
+        writeAgentModelSelections(next, scope);
         return next;
       });
     } catch (requestError) {
@@ -788,7 +796,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   }, [loadStatuses]);
 
   useEffect(() => {
-    setLoading(agentStatusesCache === null);
+    setLoading(true);
     setDetectionError('');
     void loadStatuses()
       .catch((requestError) => setDetectionError(String(requestError)))
@@ -864,7 +872,8 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
   const oauthConfiguration = oauthConfigurationDraft
     ?? activeStatus?.oauthConfiguration
     ?? false;
-  const configuredApiKey = activeStatus?.currentApiKey ?? null;
+  const candidateKey = activeStatus?.currentApiKey ?? null;
+  const configuredApiKey = !selectedRemoteEndpoint() || coreApiKeys.some(entry => entry.apiKey === candidateKey) ? candidateKey : null;
   const savedApiKey = apiKeyByClient[selected];
   const effectiveSelectedApiKey = useMemo(() => {
     if (savedApiKey !== undefined && (coreApiKeys.some((k) => k.apiKey === savedApiKey) || savedApiKey === configuredApiKey)) {
@@ -882,7 +891,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     trackFormEdit({ ...formValues, apiKey: value });
     setApiKeyByClient((current) => {
       const next = { ...current, [selected]: value };
-      writeAgentApiKeySelections(next);
+      writeAgentApiKeySelections(next, scope);
       return next;
     });
   };
@@ -1041,7 +1050,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       const next = { ...current };
       if (sameAgentFormValues(baseline, nextValues)) delete next[selected];
       else next[selected] = baseline;
-      agentFormEditBaselineCache = next;
+      drafts.agentFormEditBaselineCache = next;
       return next;
     });
   };
@@ -1050,7 +1059,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setFormEditBaselineByClient((current) => {
       const next = { ...current };
       delete next[selected];
-      agentFormEditBaselineCache = next;
+      drafts.agentFormEditBaselineCache = next;
       return next;
     });
   };
@@ -1174,7 +1183,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setModelSelectionError('');
     setModelByClient((current) => {
       const next = { ...current, [selected]: model.name };
-      writeAgentModelSelections(next);
+      writeAgentModelSelections(next, scope);
       return next;
     });
   };
@@ -1399,7 +1408,15 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       if (isClaudeModelMappingClient) {
         claudeModelMappingsDirtyRef.current[selected] = false;
       }
-      await reloadStatusesAfterAction();
+      try {
+        setDetectionError('');
+        await loadStatuses(true);
+      } catch (refreshError) {
+        setOauthConfigurationDraft(null);
+        onConfigurationApplied?.();
+        setConfigurationError(t('agents.backup.refreshFailed', { error: String(refreshError) }));
+        return;
+      }
       if (isDeepSeekHarnessClient) await loadModels('deepseek-harness');
       setOauthConfigurationDraft(null);
       setConfigurationNotice(t(result.outcome === 'unchanged' ? 'agents.backup.unchanged' : 'agents.backup.updated'));
@@ -1518,7 +1535,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
       const refreshed = await refreshAgentConfigStatuses({ executableOverrides: executablePaths });
       setStatuses(refreshed);
       const current = refreshed.find((status) => status.id === selected)?.currentModel;
-      setModelByClient((values) => { const next = { ...values, [selected]: current ?? '' }; writeAgentModelSelections(next); return next; });
+      setModelByClient((values) => { const next = { ...values, [selected]: current ?? '' }; writeAgentModelSelections(next, scope); return next; });
       setConfigurationNotice(t('agents.backup.updated'));
       onConfigurationApplied?.();
       setOauthConfigurationDraft(null);
@@ -1672,6 +1689,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
     setLaunchError('');
     try {
       await launchAgentCommand({
+        apiKey: effectiveSelectedApiKey,
         client: selected,
         target: target.id,
         executablePath: executablePaths[selected] ?? null,
@@ -2541,7 +2559,7 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
         const refreshed = await refreshAgentConfigStatuses({ executableOverrides: executablePaths });
         setStatuses(refreshed);
         const current = refreshed.find((status) => status.id === selected)?.currentModel;
-        setModelByClient((values) => { const next = { ...values, [selected]: current ?? '' }; writeAgentModelSelections(next); return next; });
+        setModelByClient((values) => { const next = { ...values, [selected]: current ?? '' }; writeAgentModelSelections(next, scope); return next; });
         setConfigurationNotice(t('agents.backup.restored'));
       }} /> : null}
 

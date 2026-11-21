@@ -97,8 +97,9 @@ pub(crate) fn inspect_agent_config_statuses_with_overrides(
             let results = &results;
             let home = &home;
             let candidate_keys = candidate_keys;
+            let origin = crate::remote_cpa::AGENT_ORIGIN.try_with(Clone::clone).ok();
             workers.push(scope.spawn(move || {
-                AGENT_CONFIG_DIRECTORIES.sync_scope(
+                let inspect = || AGENT_CONFIG_DIRECTORIES.sync_scope(
                     config_directories.clone(),
                     || -> Result<(), String> {
                         loop {
@@ -178,7 +179,8 @@ pub(crate) fn inspect_agent_config_statuses_with_overrides(
                             })?[index] = Some(status);
                         }
                     },
-                )
+                );
+                match origin { Some(origin) => crate::remote_cpa::AGENT_ORIGIN.sync_scope(origin, inspect), None => inspect() }
             }));
         }
         for worker in workers {
@@ -215,10 +217,19 @@ pub(crate) fn refresh_agent_config_status_cache(
 
 #[tauri::command]
 pub(crate) async fn get_agent_config_statuses(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     app: tauri::AppHandle,
     executable_overrides: Option<HashMap<String, String>>,
     config_directories: Option<AgentConfigDirectories>,
 ) -> Result<Vec<AgentConfigStatus>, String> {
+    if target_revision.is_some() || remote.is_remote().await {
+        return remote.agent_operation(target_revision, None, async {
+            let config = crate::remote_cpa::AGENT_CONFIG.with(Clone::clone);
+            let directories = validate_agent_config_directories(config_directories)?;
+            inspect_agent_config_statuses_with_overrides(&app, &config, &executable_overrides.unwrap_or_default(), &directories)
+        }).await;
+    }
     let config_directories = validate_agent_config_directories(config_directories)?;
     let custom_paths = !config_directories.is_empty()
         || executable_overrides
@@ -262,10 +273,19 @@ pub(crate) async fn get_agent_config_statuses(
 
 #[tauri::command]
 pub(crate) async fn refresh_agent_config_statuses(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     app: tauri::AppHandle,
     executable_overrides: Option<HashMap<String, String>>,
     config_directories: Option<AgentConfigDirectories>,
 ) -> Result<Vec<AgentConfigStatus>, String> {
+    if target_revision.is_some() || remote.is_remote().await {
+        return remote.agent_operation(target_revision, None, async {
+            let config = crate::remote_cpa::AGENT_CONFIG.with(Clone::clone);
+            let directories = validate_agent_config_directories(config_directories)?;
+            inspect_agent_config_statuses_with_overrides(&app, &config, &executable_overrides.unwrap_or_default(), &directories)
+        }).await;
+    }
     let config_directories = validate_agent_config_directories(config_directories)?;
     let custom_paths = !config_directories.is_empty()
         || executable_overrides
@@ -296,10 +316,13 @@ pub(crate) async fn refresh_agent_config_statuses(
 
 #[tauri::command]
 pub(crate) async fn get_agent_models(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     _app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     client: String,
 ) -> Result<Vec<AgentModelOption>, String> {
+    remote.agent_operation(target_revision, None, async move {
     if client.trim().eq_ignore_ascii_case(PI_AGENT_ID) {
         let config = gui_config_state.snapshot()?;
         return fetch_pi_agent_models(config.port, effective_agent_api_key(&config)).await;
@@ -313,6 +336,7 @@ pub(crate) async fn get_agent_models(
     let config = gui_config_state.snapshot()?;
     let prepared = fetch_prepared_agent_models(client, &config).await?;
     Ok(prepared.models)
+    }).await
 }
 
 pub(crate) async fn resolve_pi_default_model(
@@ -836,68 +860,86 @@ pub(crate) async fn save_codex_model_catalog_editor_in_directories(
 
 #[tauri::command]
 pub(crate) async fn get_thinking_aliases(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<Vec<ThinkingAliasEntry>, String> {
-    let config = gui_config_state.snapshot()?;
-    let content = fetch_management_config_yaml(&config).await?;
-    thinking_aliases_from_yaml(&content)
+    remote.management_operation(target_revision, async move {
+        let config = gui_config_state.snapshot()?;
+        let content = fetch_management_config_yaml(&config).await?;
+        thinking_aliases_from_yaml(&content)
+    }).await
 }
 
 #[tauri::command]
 pub(crate) async fn get_model_alias_sources(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<Vec<ThinkingAliasSource>, String> {
-    let config = gui_config_state.snapshot()?;
-    let content = fetch_management_config_yaml(&config).await?;
-    let available_models =
-        fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
-    let definitions = fetch_oauth_model_definitions(&config).await;
-    Ok(resolved_oauth_alias_sources(
-        &content,
-        &definitions,
-        &available_models,
-        AliasSourceCapability::Base,
-    )?
-    .into_iter()
-    .map(|resolved| resolved.source)
-    .collect())
+    remote.agent_operation(target_revision, None, async move {
+        let config = gui_config_state.snapshot()?;
+        let content = fetch_management_config_yaml(&config).await?;
+        let available_models =
+            fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
+        let definitions = fetch_oauth_model_definitions(&config).await;
+        Ok(resolved_oauth_alias_sources(
+            &content,
+            &definitions,
+            &available_models,
+            AliasSourceCapability::Base,
+        )?
+        .into_iter()
+        .map(|resolved| resolved.source)
+        .collect())
+    }).await
 }
 
 #[tauri::command]
 pub(crate) async fn get_thinking_alias_sources(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<Vec<ThinkingAliasSource>, String> {
-    let config = gui_config_state.snapshot()?;
-    let content = fetch_management_config_yaml(&config).await?;
-    let available_models =
-        fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
-    let definitions = fetch_oauth_model_definitions(&config).await;
-    Ok(resolved_oauth_alias_sources(
-        &content,
-        &definitions,
-        &available_models,
-        AliasSourceCapability::Reasoning,
-    )?
-    .into_iter()
-    .map(|resolved| resolved.source)
-    .collect())
+    remote.agent_operation(target_revision, None, async move {
+        let config = gui_config_state.snapshot()?;
+        let content = fetch_management_config_yaml(&config).await?;
+        let available_models =
+            fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
+        let definitions = fetch_oauth_model_definitions(&config).await;
+        Ok(resolved_oauth_alias_sources(
+            &content,
+            &definitions,
+            &available_models,
+            AliasSourceCapability::Reasoning,
+        )?
+        .into_iter()
+        .map(|resolved| resolved.source)
+        .collect())
+    }).await
 }
 
 #[tauri::command]
 pub(crate) async fn get_model_alias_edit_source(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     alias: String,
     entry: Option<ThinkingAliasEntry>,
 ) -> Result<ModelAliasEditContext, String> {
-    let config = gui_config_state.snapshot()?;
-    let alias = existing_thinking_alias_model_id(&alias, "Alias model")?;
-    let content = fetch_management_config_yaml(&config).await?;
-    let definitions = fetch_oauth_model_definitions(&config).await;
-    model_alias_edit_context_for_mapping(&content, &alias, &definitions, entry.as_ref())
+    remote.management_operation(target_revision, async move {
+        let config = gui_config_state.snapshot()?;
+        let alias = existing_thinking_alias_model_id(&alias, "Alias model")?;
+        let content = fetch_management_config_yaml(&config).await?;
+        let definitions = fetch_oauth_model_definitions(&config).await;
+        model_alias_edit_context_for_mapping(&content, &alias, &definitions, entry.as_ref())
+    }).await
 }
 
 #[tauri::command]
 pub(crate) async fn create_thinking_alias(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     source_id: String,
     alias: String,
@@ -907,186 +949,208 @@ pub(crate) async fn create_thinking_alias(
     original_alias: Option<String>,
     original_entry: Option<ThinkingAliasEntry>,
 ) -> Result<Vec<ThinkingAliasEntry>, String> {
-    let config = gui_config_state.snapshot()?;
-    let source_id = source_id.trim().to_string();
-    if source_id.is_empty() {
-        return Err("Select the source model first".to_string());
-    }
-    let original_alias = original_alias
-        .as_deref()
-        .map(|original| existing_thinking_alias_model_id(original, "Alias model"))
-        .transpose()?;
-    let alias = match original_alias.as_deref() {
-        Some(original) if original.eq_ignore_ascii_case(alias.trim()) => {
-            existing_thinking_alias_model_id(&alias, "Alias model")?
+    remote.agent_operation(target_revision, None, async move {
+        let config = gui_config_state.snapshot()?;
+        let source_id = source_id.trim().to_string();
+        if source_id.is_empty() {
+            return Err("Select the source model first".to_string());
         }
-        _ => validate_thinking_alias_model_id(&alias, "Alias model")?,
-    };
-    let effort = if effort.trim().is_empty() {
-        String::new()
-    } else {
-        validate_thinking_alias_effort(&effort)?
-    };
-    let service_tier = service_tier.as_deref().or_else(|| fast.unwrap_or(false).then_some("priority"));
-    validate_alias_service_tier(service_tier)?;
-    let fast = service_tier.is_some();
-    let content = fetch_management_config_yaml(&config).await?;
-    let definitions = fetch_oauth_model_definitions(&config).await;
-    let capability = if !effort.is_empty() {
-        AliasSourceCapability::Reasoning
-    } else if fast {
-        AliasSourceCapability::Fast
-    } else {
-        AliasSourceCapability::Base
-    };
-    let source = if let Some(original) = original_alias.as_deref()
-        .filter(|original| source_id == model_alias_edit_source_id(original))
-    {
-        resolve_model_alias_edit_source_for_mapping(&content, original, &definitions, original_entry.as_ref())?
-    } else {
-        let available_models =
-            fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
-        resolved_oauth_alias_sources(&content, &definitions, &available_models, capability)?
-            .into_iter()
-            .find(|source| source.source.id == source_id)
-            .ok_or_else(|| {
-                "The source model is no longer available in the kernel, or its configuration source has changed. Refresh and select it again".to_string()
-            })?
-    };
-    if fast && !alias_source_supports_fast(&source) {
-        return Err("Fast supports only OpenAI-compatible API, Codex API, or Codex OAuth model sources".to_string());
-    }
-    if !effort.is_empty()
-        && !source
-            .source
-            .reasoning_levels
-            .iter()
-            .any(|level| level.eq_ignore_ascii_case(&effort))
-    {
-        return Err(format!(
-            "Reasoning effort {effort} is not among the levels currently supported by model {}",
-            source.source.model
-        ));
-    }
-    if source.source.model.eq_ignore_ascii_case(&alias) {
-        return Err("Alias model cannot be the same as the source model".to_string());
-    }
+        let original_alias = original_alias
+            .as_deref()
+            .map(|original| existing_thinking_alias_model_id(original, "Alias model"))
+            .transpose()?;
+        let alias = match original_alias.as_deref() {
+            Some(original) if original.eq_ignore_ascii_case(alias.trim()) => {
+                existing_thinking_alias_model_id(&alias, "Alias model")?
+            }
+            _ => validate_thinking_alias_model_id(&alias, "Alias model")?,
+        };
+        let effort = if effort.trim().is_empty() {
+            String::new()
+        } else {
+            validate_thinking_alias_effort(&effort)?
+        };
+        let service_tier = service_tier.as_deref().or_else(|| fast.unwrap_or(false).then_some("priority"));
+        validate_alias_service_tier(service_tier)?;
+        let fast = service_tier.is_some();
+        let content = fetch_management_config_yaml(&config).await?;
+        let definitions = fetch_oauth_model_definitions(&config).await;
+        let capability = if !effort.is_empty() {
+            AliasSourceCapability::Reasoning
+        } else if fast {
+            AliasSourceCapability::Fast
+        } else {
+            AliasSourceCapability::Base
+        };
+        let source = if let Some(original) = original_alias.as_deref()
+            .filter(|original| source_id == model_alias_edit_source_id(original))
+        {
+            resolve_model_alias_edit_source_for_mapping(&content, original, &definitions, original_entry.as_ref())?
+        } else {
+            let available_models =
+                fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
+            resolved_oauth_alias_sources(&content, &definitions, &available_models, capability)?
+                .into_iter()
+                .find(|source| source.source.id == source_id)
+                .ok_or_else(|| {
+                    "The source model is no longer available in the kernel, or its configuration source has changed. Refresh and select it again".to_string()
+                })?
+        };
+        if fast && !alias_source_supports_fast(&source) {
+            return Err("Fast supports only OpenAI-compatible API, Codex API, or Codex OAuth model sources".to_string());
+        }
+        if !effort.is_empty()
+            && !source
+                .source
+                .reasoning_levels
+                .iter()
+                .any(|level| level.eq_ignore_ascii_case(&effort))
+        {
+            return Err(format!(
+                "Reasoning effort {effort} is not among the levels currently supported by model {}",
+                source.source.model
+            ));
+        }
+        if source.source.model.eq_ignore_ascii_case(&alias) {
+            return Err("Alias model cannot be the same as the source model".to_string());
+        }
 
-    let updated = match original_alias.as_deref() {
-        Some(original) => edit_model_alias_with_tier_in_yaml_for_mapping(&content, original, &source, &alias, &effort, service_tier, original_entry.as_ref())?,
-        None => add_model_alias_with_tier_to_yaml(&content, &source, &alias, &effort, service_tier)?,
-    };
-    put_management_alias_config_changes(&config, &content, &updated).await?;
-    thinking_aliases_from_yaml(&updated)
+        let updated = match original_alias.as_deref() {
+            Some(original) => edit_model_alias_with_tier_in_yaml_for_mapping(&content, original, &source, &alias, &effort, service_tier, original_entry.as_ref())?,
+            None => add_model_alias_with_tier_to_yaml(&content, &source, &alias, &effort, service_tier)?,
+        };
+        put_management_alias_config_changes(&config, &content, &updated).await?;
+        thinking_aliases_from_yaml(&updated)
+    }).await
 }
 
 #[tauri::command]
 pub(crate) async fn delete_thinking_alias(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     alias: String,
     oauth_channel: Option<String>,
     entry: Option<ThinkingAliasEntry>,
 ) -> Result<Vec<ThinkingAliasEntry>, String> {
-    let config = gui_config_state.snapshot()?;
-    let alias = existing_thinking_alias_model_id(&alias, "Alias model")?;
-    let content = fetch_management_config_yaml(&config).await?;
-    let updated = match entry.as_ref() {
-        Some(entry) => remove_model_alias_mapping_from_yaml(&content, &alias, entry)?,
-        None => remove_thinking_alias_from_yaml_for_channel(&content, &alias, oauth_channel.as_deref())?,
-    };
-    put_management_alias_config_changes(&config, &content, &updated).await?;
-    thinking_aliases_from_yaml(&updated)
+    remote.management_operation(target_revision, async move {
+        let config = gui_config_state.snapshot()?;
+        let alias = existing_thinking_alias_model_id(&alias, "Alias model")?;
+        let content = fetch_management_config_yaml(&config).await?;
+        let updated = match entry.as_ref() {
+            Some(entry) => remove_model_alias_mapping_from_yaml(&content, &alias, entry)?,
+            None => remove_thinking_alias_from_yaml_for_channel(&content, &alias, oauth_channel.as_deref())?,
+        };
+        put_management_alias_config_changes(&config, &content, &updated).await?;
+        thinking_aliases_from_yaml(&updated)
+    }).await
 }
 
 #[tauri::command]
 pub(crate) async fn get_speed_aliases(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<Vec<SpeedAliasEntry>, String> {
-    let config = gui_config_state.snapshot()?;
-    let content = fetch_management_config_yaml(&config).await?;
-    speed_aliases_from_yaml(&content)
+    remote.management_operation(target_revision, async move {
+        let config = gui_config_state.snapshot()?;
+        let content = fetch_management_config_yaml(&config).await?;
+        speed_aliases_from_yaml(&content)
+    }).await
 }
 
 #[tauri::command]
 pub(crate) async fn get_speed_alias_sources(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<Vec<ThinkingAliasSource>, String> {
-    let config = gui_config_state.snapshot()?;
-    let content = fetch_management_config_yaml(&config).await?;
-    let available_models =
-        fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
-    let definitions = fetch_oauth_model_definitions(&config).await;
-    Ok(resolved_oauth_alias_sources(
-        &content,
-        &definitions,
-        &available_models,
-        AliasSourceCapability::Fast,
-    )?
-    .into_iter()
-    .map(|resolved| resolved.source)
-    .collect())
+    remote.agent_operation(target_revision, None, async move {
+        let config = gui_config_state.snapshot()?;
+        let content = fetch_management_config_yaml(&config).await?;
+        let available_models =
+            fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
+        let definitions = fetch_oauth_model_definitions(&config).await;
+        Ok(resolved_oauth_alias_sources(
+            &content,
+            &definitions,
+            &available_models,
+            AliasSourceCapability::Fast,
+        )?
+        .into_iter()
+        .map(|resolved| resolved.source)
+        .collect())
+    }).await
 }
 
 #[tauri::command]
 pub(crate) async fn create_speed_alias(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     source_id: String,
     alias: String,
     service_tier: Option<String>,
 ) -> Result<Vec<SpeedAliasEntry>, String> {
-    let config = gui_config_state.snapshot()?;
-    let source_id = source_id.trim().to_string();
-    if source_id.is_empty() {
-        return Err("Select the source model first".to_string());
-    }
-    let alias = validate_thinking_alias_model_id(&alias, "Alias model")?;
-    let content = fetch_management_config_yaml(&config).await?;
-    let available_models =
-        fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
-    let definitions = fetch_oauth_model_definitions(&config).await;
-    let sources = resolved_oauth_alias_sources(
-        &content,
-        &definitions,
-        &available_models,
-        AliasSourceCapability::Fast,
-    )?;
-    let source = sources
-        .iter()
-        .find(|source| source.source.id == source_id)
-        .cloned()
-        .ok_or_else(|| {
-            "The source model is no longer available in the kernel, or its configuration source has changed. Refresh and try again".to_string()
-        })?;
-    if source.source.model.eq_ignore_ascii_case(&alias) {
-        return Err("Alias model cannot be the same as the source model".to_string());
-    }
-    let tier = service_tier.as_deref().unwrap_or("priority");
-    validate_alias_service_tier(Some(tier))?;
-    let updated = if tier == "priority" {
-        add_speed_alias_to_yaml(&content, &source, &alias)?
-    } else {
-        add_model_alias_with_tier_to_yaml(&content, &source, &alias, "", Some(tier))?
-    };
-    put_management_alias_config_changes(&config, &content, &updated).await?;
-    speed_aliases_from_yaml(&updated)
+    remote.agent_operation(target_revision, None, async move {
+        let config = gui_config_state.snapshot()?;
+        let source_id = source_id.trim().to_string();
+        if source_id.is_empty() {
+            return Err("Select the source model first".to_string());
+        }
+        let alias = validate_thinking_alias_model_id(&alias, "Alias model")?;
+        let content = fetch_management_config_yaml(&config).await?;
+        let available_models =
+            fetch_agent_models(config.port, effective_agent_api_key(&config)).await?;
+        let definitions = fetch_oauth_model_definitions(&config).await;
+        let sources = resolved_oauth_alias_sources(
+            &content,
+            &definitions,
+            &available_models,
+            AliasSourceCapability::Fast,
+        )?;
+        let source = sources
+            .iter()
+            .find(|source| source.source.id == source_id)
+            .cloned()
+            .ok_or_else(|| {
+                "The source model is no longer available in the kernel, or its configuration source has changed. Refresh and try again".to_string()
+            })?;
+        if source.source.model.eq_ignore_ascii_case(&alias) {
+            return Err("Alias model cannot be the same as the source model".to_string());
+        }
+        let tier = service_tier.as_deref().unwrap_or("priority");
+        validate_alias_service_tier(Some(tier))?;
+        let updated = if tier == "priority" {
+            add_speed_alias_to_yaml(&content, &source, &alias)?
+        } else {
+            add_model_alias_with_tier_to_yaml(&content, &source, &alias, "", Some(tier))?
+        };
+        put_management_alias_config_changes(&config, &content, &updated).await?;
+        speed_aliases_from_yaml(&updated)
+    }).await
 }
 
 #[tauri::command]
 pub(crate) async fn delete_speed_alias(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     alias: String,
     oauth_channel: Option<String>,
     entry: Option<ThinkingAliasEntry>,
 ) -> Result<Vec<SpeedAliasEntry>, String> {
-    let config = gui_config_state.snapshot()?;
-    let alias = existing_thinking_alias_model_id(&alias, "Alias model")?;
-    let content = fetch_management_config_yaml(&config).await?;
-    let updated = match entry.as_ref() {
-        Some(entry) => remove_model_alias_mapping_from_yaml(&content, &alias, entry)?,
-        None => remove_speed_alias_from_yaml_for_channel(&content, &alias, oauth_channel.as_deref())?,
-    };
-    put_management_alias_config_changes(&config, &content, &updated).await?;
-    speed_aliases_from_yaml(&updated)
+    remote.management_operation(target_revision, async move {
+        let config = gui_config_state.snapshot()?;
+        let alias = existing_thinking_alias_model_id(&alias, "Alias model")?;
+        let content = fetch_management_config_yaml(&config).await?;
+        let updated = match entry.as_ref() {
+            Some(entry) => remove_model_alias_mapping_from_yaml(&content, &alias, entry)?,
+            None => remove_speed_alias_from_yaml_for_channel(&content, &alias, oauth_channel.as_deref())?,
+        };
+        put_management_alias_config_changes(&config, &content, &updated).await?;
+        speed_aliases_from_yaml(&updated)
+    }).await
 }
 
 pub(crate) async fn fetch_agent_models(
@@ -1104,11 +1168,12 @@ pub(crate) async fn fetch_agent_model_payload(
     if port == 0 {
         return Err("Invalid kernel port".to_string());
     }
-    let tls_enabled = managed_core_tls_enabled();
+    let tls_enabled = crate::remote_cpa::AGENT_ORIGIN.try_with(|_| ()).is_err() && managed_core_tls_enabled();
     let client = reqwest::Client::builder()
         .no_proxy()
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
         .danger_accept_invalid_certs(tls_enabled)
         .build()
         .map_err(|error| format!("Failed to create model list client: {error}"))?;
@@ -1178,11 +1243,12 @@ async fn fetch_client_runtime_models(
     if port == 0 {
         return Err("Invalid kernel port".to_string());
     }
-    let tls_enabled = managed_core_tls_enabled();
+    let tls_enabled = crate::remote_cpa::AGENT_ORIGIN.try_with(|_| ()).is_err() && managed_core_tls_enabled();
     let client = reqwest::Client::builder()
         .no_proxy()
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
         .danger_accept_invalid_certs(tls_enabled)
         .build()
         .map_err(|error| format!("Failed to create Codex model list client: {error}"))?;
@@ -1538,6 +1604,8 @@ pub(crate) fn prepare_codex_agent_models(
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn apply_agent_config(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     client: String,
@@ -1549,6 +1617,7 @@ pub(crate) async fn apply_agent_config(
     api_key: Option<String>,
     config_directories: Option<AgentConfigDirectories>,
 ) -> Result<AgentConfigActionResult, String> {
+    remote.agent_operation(target_revision, api_key.clone(), async move {
     let directories = validate_agent_config_directories(config_directories)?;
     AGENT_CONFIG_DIRECTORIES
         .scope(directories, async move {
@@ -1566,6 +1635,7 @@ pub(crate) async fn apply_agent_config(
             .await
         })
         .await
+    }).await
 }
 
 pub(crate) async fn apply_agent_config_in_directories(
@@ -1651,6 +1721,8 @@ pub(crate) fn clear_codex_config_in_directories(app: tauri::AppHandle) -> Result
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn set_agent_config_enabled(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     client: String,
@@ -1663,6 +1735,7 @@ pub(crate) async fn set_agent_config_enabled(
     api_key: Option<String>,
     config_directories: Option<AgentConfigDirectories>,
 ) -> Result<AgentConfigActionResult, String> {
+    remote.agent_operation(target_revision, api_key.clone(), async move {
     let directories = validate_agent_config_directories(config_directories)?;
     AGENT_CONFIG_DIRECTORIES
         .scope(directories, async move {
@@ -1681,6 +1754,7 @@ pub(crate) async fn set_agent_config_enabled(
             .await
         })
         .await
+    }).await
 }
 
 pub(crate) async fn set_agent_config_enabled_in_directories(
@@ -1761,6 +1835,8 @@ pub(crate) async fn set_agent_config_enabled_in_directories(
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn update_agent_config(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     client: String,
@@ -1772,6 +1848,7 @@ pub(crate) async fn update_agent_config(
     api_key: Option<String>,
     config_directories: Option<AgentConfigDirectories>,
 ) -> Result<AgentConfigActionResult, String> {
+    remote.agent_operation(target_revision, api_key.clone(), async move {
     let directories = validate_agent_config_directories(config_directories)?;
     AGENT_CONFIG_DIRECTORIES
         .scope(directories, async move {
@@ -1789,6 +1866,7 @@ pub(crate) async fn update_agent_config(
             .await
         })
         .await
+    }).await
 }
 
 pub(crate) async fn update_agent_config_in_directories(

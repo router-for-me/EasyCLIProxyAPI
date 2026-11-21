@@ -14,10 +14,8 @@ import { initializeWindowActivity } from './services/windowActivity';
 
 async function bootstrap() {
   const connection = await getCpaConnection().catch(() => undefined);
-  if (connection && !connection.remoteActive) {
-    await initializeWindowActivity();
-    await Promise.all([initializeUsagePreferences(), initializeThemePreferences().then(() => initializeTheme()), initializePrivacyMode()]);
-  }
+  await initializeWindowActivity();
+  await Promise.all([initializeUsagePreferences(), initializeThemePreferences().then(() => initializeTheme()), initializePrivacyMode()]);
   if (import.meta.env.DEV && !isTauri()) {
     const { installBrowserMock } = await import('./mocks/browserMock');
     installBrowserMock();

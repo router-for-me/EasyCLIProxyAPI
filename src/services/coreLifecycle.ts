@@ -1,5 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 
+import { remoteTargetRevision } from './remoteCpa';
+import { managementApi } from './managementApi';
+
 export type CoreStatus = {
   installed: boolean;
   running: boolean;
@@ -20,7 +23,9 @@ export type CoreStatus = {
 };
 
 export const getCoreStatus = (): Promise<CoreStatus> =>
-  invoke<CoreStatus>('get_core_status');
+  remoteTargetRevision() === undefined ? invoke<CoreStatus>('get_core_status') : managementApi.get('/config/config-version').then(() => ({
+    installed: false, running: true, ready: true, starting: false, managed: false, processId: null, currentVersion: null, installDir: '', binaryPath: null, message: '',
+  }));
 
 export const restartCoreProcess = (): Promise<CoreStatus> =>
   invoke<CoreStatus>('restart_core_process');

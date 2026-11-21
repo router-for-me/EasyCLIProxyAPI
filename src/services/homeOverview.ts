@@ -1,3 +1,5 @@
+import { invokeUsage } from './usage';
+import { remoteTargetRevision } from './remoteCpa';
 import { invoke } from '@tauri-apps/api/core';
 import { dedupeAuthFiles, isOAuthCredentialFile } from './authFiles';
 import { authFileHealth, normalizeAuthFileCooldowns } from './authFileHealth';
@@ -129,10 +131,10 @@ export async function loadHomeOverview(coreReady: boolean, nowMs = Date.now()): 
   };
   const [usage, credentials, providerKeys, models] = await Promise.allSettled([
     // Usage is stored locally and remains meaningful while the core is stopped.
-    invoke<unknown>('get_usage_overview', { query }).then(summarizeHomeUsage),
+    invokeUsage<unknown>('get_usage_overview', { query }).then(summarizeHomeUsage),
     coreReady ? managementApi.get('/credentials').then(summarizeHomeCredentials) : Promise.resolve(null),
     coreReady ? loadProviderKeys() : Promise.resolve(null),
-    coreReady ? invoke<unknown>('get_core_models').then(normalizeHomeModels) : Promise.resolve(null),
+    coreReady ? invoke<unknown>('get_core_models', { targetRevision: remoteTargetRevision() }).then(normalizeHomeModels) : Promise.resolve(null),
   ]);
   const errors: HomeOverviewSnapshot['errors'] = {};
   const result = <T>(key: HomeOverviewMetric, settled: PromiseSettledResult<T>): T | null => {

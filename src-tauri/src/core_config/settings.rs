@@ -270,6 +270,7 @@ pub(crate) fn managed_core_tls_enabled() -> bool {
 }
 
 pub(crate) fn managed_core_loopback_origin(port: u16) -> String {
+    if let Ok(origin) = crate::remote_cpa::AGENT_ORIGIN.try_with(Clone::clone) { return origin; }
     #[cfg(test)]
     {
         core_loopback_origin(port, false)

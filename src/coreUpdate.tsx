@@ -70,7 +70,7 @@ export function requestLatestCore(force = false) {
 
 const CoreUpdateContext = createContext<CoreUpdateContextValue | null>(null);
 
-export function CoreUpdateProvider({ children }: { children: ReactNode }) {
+export function CoreUpdateProvider({ children, enabled = true }: { children: ReactNode; enabled?: boolean }) {
   const { status } = useCoreRuntime();
   const [latest, setLatest] = useState<CoreLatest | null>(cachedLatest);
   const [error, setError] = useState(cachedLatestError);
@@ -111,13 +111,14 @@ export function CoreUpdateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
     if (!latestAutoCheckStarted) {
       latestAutoCheckStarted = true;
       void check();
     } else if (latestCheckPromise) {
       void check();
     }
-  }, [check]);
+  }, [check, enabled]);
 
   const value = useMemo<CoreUpdateContextValue>(() => ({
     latest,

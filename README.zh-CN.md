@@ -47,7 +47,7 @@ EasyCLIProxyAPI 是基于 [CLIProxyAPI](https://github.com/router-for-me/CLIProx
 
 ### 管理外部 CPA
 
-[连接已运行的 CPA 实例](docs/remote-cpa.md)，支持本机其他目录、局域网或云服务器。远程模式通过 v8 管理接口管理客户端 API 密钥，不接管进程。
+[连接已运行的 CPA 实例](docs/remote-cpa.md)，支持本机其他目录、局域网或云服务器。验证后 ECPA 自动切换工作区，可直接管理远端的 API 接入、凭证文件、路由和客户端密钥，不需要打开 WebUI。
 
 ### OAuth 账号授权
 

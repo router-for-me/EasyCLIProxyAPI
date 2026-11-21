@@ -1,5 +1,8 @@
 import type { GenerationSpeedMode } from './usageMetrics';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke as nativeInvoke } from '@tauri-apps/api/core';
+import { selectedTargetRevision } from './remoteCpa';
+export const invokeUsage = <T>(command: string, args?: Record<string, unknown>) => nativeInvoke<T>(command, { ...args, targetRevision: selectedTargetRevision() });
+const invoke = invokeUsage;
 import type { UsageTimelinePoint } from './usageTrend';
 
 export type UsageEventPage = {
@@ -65,7 +68,7 @@ export type UsageEventQuery = {
 };
 
 export type CollectorStatus = {
-  state: 'waiting-core' | 'collecting' | 'error';
+  state: 'waiting-core' | 'disabled' | 'collecting' | 'error';
   message: string;
   lastCollectedAt: string | null;
   totalRecords: number;

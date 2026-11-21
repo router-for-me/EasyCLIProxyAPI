@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invokeCoreSetting as invoke } from './coreSettings';
 import type { ReactNode } from 'react';
 
 export type TemplateText = string | { zh: string; en: string; ja?: string; ru?: string };

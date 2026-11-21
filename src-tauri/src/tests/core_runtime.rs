@@ -391,12 +391,11 @@ fn observed_child_exit_schedules_recovery_once_without_a_new_monitor() {
 fn intentional_child_stop_does_not_request_recovery() {
     let state = CoreProcessState::new(false);
     state.store_child(spawn_core_child(core_child_sleep_command()).unwrap()).unwrap();
-    // Same ordering as stop_core_process_inner, without scanning or stopping
-    // any real installed kernels in the developer's workspace.
-    state.recovery.cancel();
-    let mut child = state.take_child().unwrap();
-    terminate_child(&mut child).unwrap();
-    drop(child);
+    let mut unrelated = core_child_sleep_command().spawn().unwrap();
+    stop_core_processes(&state, false).unwrap();
+    assert!(unrelated.try_wait().unwrap().is_none());
+    unrelated.kill().unwrap();
+    unrelated.wait().unwrap();
     assert_eq!(state.managed_pid(), None);
     assert!(!state.recovery.wants_running());
     assert!(state.recovery.status().is_none());

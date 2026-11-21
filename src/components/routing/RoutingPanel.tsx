@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { managementApi } from '../../services/managementApi';
-import { getUsageEvents, type UsageRecord } from '../../services/usage';
+import { useI18n } from '../../i18n';
+import { selectedRemoteEndpoint } from '../../services/remoteCpa';
+import { getUsageCollectorStatus, getUsageEvents, type UsageRecord } from '../../services/usage';
 import { pollWhileActive, windowActivity } from '../../services/windowActivity';
 import { onUsageRecordsUpdated } from '../../services/events';
 import { buildLiveRouting, routingCooldowns, routingCredentials, routingFinishedAt, routingRecordId, type RoutingCooldown, type RoutingCredential } from '../../services/usageRouting';
@@ -8,6 +10,7 @@ import { RoutingSnapshot } from './RoutingSnapshot';
 import './RoutingPanel.css';
 
 export function RoutingPanel({ coreReady = true }: { coreReady?: boolean }) {
+  const { t } = useI18n();
   const [paused, setPaused] = useState(false);
   const [records, setRecords] = useState<UsageRecord[]>([]);
   const [cooldowns, setCooldowns] = useState<RoutingCooldown[]>([]);
@@ -28,9 +31,10 @@ export function RoutingPanel({ coreReady = true }: { coreReady?: boolean }) {
       if (busy || disposed || !windowActivity.active()) return;
       busy = true;
       try {
-        const [events, credentials] = await Promise.allSettled([
+        const [events, credentials, collector] = await Promise.allSettled([
           getUsageEvents({ query: { page: 1, page_size: 200 } }),
           coreReady ? managementApi.get<unknown>('/credentials') : Promise.reject(new Error('Core not running')),
+          selectedRemoteEndpoint() ? getUsageCollectorStatus() : Promise.resolve(null),
         ]);
         if (disposed || !windowActivity.active()) return;
         const received = Date.now();
@@ -39,7 +43,9 @@ export function RoutingPanel({ coreReady = true }: { coreReady?: boolean }) {
           const items = events.value.items;
           const fresh = seen ? items.filter(record => !seen!.has(routingRecordId(record)) && routingFinishedAt(record) >= visibleSince && routingFinishedAt(record) >= received - 10_000) : [];
           seen = new Set(items.map(routingRecordId));
-          setRecords(items); setPackets(fresh); setError(''); setUpdated(received);
+          setRecords(items); setPackets(fresh);
+          const state = collector.status === 'fulfilled' ? collector.value : null;
+          setError(collector.status === 'rejected' ? String(collector.reason) : state?.state === 'disabled' ? t('remote.usageDisabled') : state?.state === 'error' ? state.message : ''); setUpdated(received);
           setTruncated(events.value.total > 200 && items.length === 200 && routingFinishedAt(items[items.length - 1]) >= received - 60_000);
           if (packetTimer) clearTimeout(packetTimer);
           packetTimer = setTimeout(() => { if (!disposed) setPackets([]); }, 2000);
@@ -56,7 +62,7 @@ export function RoutingPanel({ coreReady = true }: { coreReady?: boolean }) {
     const stopPolling = pollWhileActive(() => { void refresh(); }, 3000, () => { seen = undefined; visibleSince = Date.now(); setPackets([]); });
     const stopClock = pollWhileActive(() => setNow(Date.now()), 1000);
     return () => { disposed = true; stopPolling(); stopClock(); stopEvents?.(); if (packetTimer) clearTimeout(packetTimer); };
-  }, [paused, coreReady]);
+  }, [paused, coreReady, t]);
   const view = useMemo(() => buildLiveRouting(records, cooldowns, now, credentials), [records, cooldowns, now, credentials]);
   return <RoutingSnapshot view={view} packets={packets} now={now} paused={paused}
     updated={updated} error={error} cooldownError={cooldownError} truncated={truncated}

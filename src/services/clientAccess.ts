@@ -1,3 +1,4 @@
+import { selectedRemoteEndpoint } from './remoteCpa';
 import { getCurrentLocale, translate } from '../i18n';
 
 export type ClientApiProfile = {
@@ -24,6 +25,8 @@ export function webUiManagementUrl(
   tlsEnabled = false,
   listenHost = '127.0.0.1',
 ): string {
+  const external = selectedRemoteEndpoint();
+  if (external) return `${external.replace(/\/$/, '')}/management.html#/login`;
   const scheme = tlsEnabled ? 'https' : 'http';
   const host = urlHost(normalizedConnectHost(listenHost));
   return `${scheme}://${host}:${safeLocalPort(port)}/management.html#/login`;
@@ -37,7 +40,7 @@ export function clientApiProfiles(
   const safePort = safeLocalPort(port);
   const scheme = tlsEnabled ? 'https' : 'http';
   const connectHost = normalizedConnectHost(listenHost);
-  const origin = `${scheme}://${urlHost(connectHost)}:${safePort}`;
+  const origin = selectedRemoteEndpoint()?.replace(/\/$/, '') ?? `${scheme}://${urlHost(connectHost)}:${safePort}`;
 
   return [
     {

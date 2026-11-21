@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invokeCoreSetting as invoke } from './coreSettings';
 
 export type ProviderSection =
   | 'gemini-api-key'

@@ -53,7 +53,7 @@ const idleTask: AppUpdateTask = {
 
 const AppUpdateContext = createContext<AppUpdateContextValue | null>(null);
 
-export function AppUpdateProvider({ children }: { children: ReactNode }) {
+export function AppUpdateProvider({ children, enabled = true }: { children: ReactNode; enabled?: boolean }) {
   const [info, setInfo] = useState<AppUpdateInfo | null>(null);
   const [task, setTask] = useState<AppUpdateTask>(idleTask);
   const [error, setError] = useState('');
@@ -91,6 +91,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
     let disposed = false;
     let stopListening: (() => void) | undefined;
 
@@ -121,7 +122,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       disposed = true;
       stopListening?.();
     };
-  }, []);
+  }, [enabled]);
 
   const install = useCallback(async (preserveCore = false) => {
     setInstallOffer(null);

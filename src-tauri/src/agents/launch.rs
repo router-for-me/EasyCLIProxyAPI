@@ -119,7 +119,11 @@ pub(crate) fn normalize_agent_terminal(value: &str) -> String {
 }
 
 #[tauri::command]
-pub(crate) fn launch_agent(
+pub(crate) async fn launch_agent(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
+    api_key: Option<String>,
+    config_directories: Option<AgentConfigDirectories>,
     app: tauri::AppHandle,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     deepseek_process_state: tauri::State<'_, DeepSeekHarnessProcessState>,
@@ -131,6 +135,9 @@ pub(crate) fn launch_agent(
     deepseek_harness_options: Option<DeepSeekHarnessLaunchOptions>,
     custom_arguments: Option<String>,
 ) -> Result<(), String> {
+    let terminal = normalize_agent_terminal(&gui_config_state.snapshot()?.default_terminal);
+    let directories = validate_agent_config_directories(config_directories)?;
+    remote.agent_operation(target_revision, api_key, AGENT_CONFIG_DIRECTORIES.scope(directories, async move {
     let custom_arguments = parse_custom_launch_arguments(custom_arguments.as_deref())?;
     if target.as_deref() == Some("app") && !custom_arguments.is_empty() {
         return Err("Custom startup arguments are only supported for CLI launches".into());
@@ -143,7 +150,6 @@ pub(crate) fn launch_agent(
         .home_dir()
         .map_err(|error| format!("Failed to get user directory: {error}"))?;
     let config = gui_config_state.snapshot()?;
-    let terminal = normalize_agent_terminal(&config.default_terminal);
     let requested_target = target
         .as_deref()
         .map(str::trim)
@@ -309,6 +315,7 @@ pub(crate) fn launch_agent(
         (_, "app") => Err(format!("{} does not support desktop App launch mode", client.name())),
         _ => Err("Unsupported agent launch mode".to_string()),
     }
+    })).await
 }
 
 #[derive(Debug)]

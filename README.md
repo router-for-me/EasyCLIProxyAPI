@@ -53,7 +53,7 @@ automatically download or install updates.
 
 ### External CPA management
 
-[Connect to a running CPA instance](docs/remote-cpa.md) on this computer, on a private network, or in the cloud. Remote CPA manages client API keys through the v8 management API without taking over the process.
+[Connect to a running CPA instance](docs/remote-cpa.md) on this computer, on a private network, or in the cloud. Manage provider access, credentials, routing and client keys directly in ECPA through the v8 management API.
 
 ### OAuth account authorization
 

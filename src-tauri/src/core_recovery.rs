@@ -119,7 +119,7 @@ impl CoreRecovery {
         self.policy.lock().ok()?.status.clone()
     }
 
-    fn halt(&self, detail: String) {
+    pub(crate) fn halt(&self, detail: String) {
         eprintln!("CPA kernel automatic recovery paused: {detail}");
         if let Ok(mut policy) = self.policy.lock() {
             policy.armed = false;

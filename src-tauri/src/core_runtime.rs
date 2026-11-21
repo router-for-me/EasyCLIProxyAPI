@@ -2113,6 +2113,10 @@ pub(crate) fn configure_networked_command(command: &mut Command, proxy_url: &str
 }
 
 pub(crate) fn stop_core_process_inner(process_state: &CoreProcessState) -> Result<(), String> {
+    stop_core_processes(process_state, true)
+}
+
+pub(crate) fn stop_core_processes(process_state: &CoreProcessState, include_untracked: bool) -> Result<(), String> {
     process_state.recovery.cancel();
     let mut stopped_any = false;
     let mut errors = Vec::new();
@@ -2134,7 +2138,7 @@ pub(crate) fn stop_core_process_inner(process_state: &CoreProcessState) -> Resul
         })
         .map(|process| process.process_id)
         .collect::<Vec<_>>();
-    if let Ok(install_dir) = core_install_dir() {
+    if let Some(install_dir) = include_untracked.then(core_install_dir).and_then(Result::ok) {
         if let Some(binary_path) = find_core_binary(&install_dir) {
             process_ids.extend(find_core_process_ids(&binary_path));
         }
@@ -2154,7 +2158,7 @@ pub(crate) fn stop_core_process_inner(process_state: &CoreProcessState) -> Resul
 
     if !errors.is_empty() {
         Err(errors.join("；"))
-    } else if stopped_any {
+    } else if stopped_any || !include_untracked {
         Ok(())
     } else {
         Err("CPA kernel is not currently running".to_string())

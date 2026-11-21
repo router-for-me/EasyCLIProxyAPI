@@ -137,7 +137,7 @@ export function SensitiveWordsPage({ active = true, onDirtyChange }: { active?: 
     setBusy('save');
     setError('');
     try {
-      const result = await saveCoreSensitiveWordsSettings({ settings });
+      const result = await saveCoreSensitiveWordsSettings({ expected: saved, settings });
       if (token === session.current) {
         setSaved(result);
         setRows(toEntries(result));
@@ -166,7 +166,7 @@ export function SensitiveWordsPage({ active = true, onDirtyChange }: { active?: 
         setError(st('cloudNotSaved'));
         return;
       }
-      const result = await saveCoreSensitiveWordsSettings({ settings: toSettings(merged) });
+      const result = await saveCoreSensitiveWordsSettings({ expected: saved, settings: toSettings(merged) });
       if (token !== session.current) return;
       setSaved(result);
       setRows(toEntries(result));

@@ -30,6 +30,11 @@ export const updateQuotaCache = (updater: QuotaCacheUpdater) => {
   listeners.forEach((listener) => listener());
 };
 
+export const resetTargetQuotaCache = () => {
+  generation += 1;
+  updateQuotaCache({});
+};
+
 export const pruneQuotaCache = (validKeys: Set<string>) => {
   updateQuotaCache((current) => {
     const next = Object.fromEntries(

@@ -3,7 +3,7 @@ import { Check, ChevronDown, Link2, Monitor, Server, Undo2 } from 'lucide-react'
 import { useI18n } from '../i18n';
 import './CpaTargetSwitcher.css';
 
-type Props = { disabled?: boolean } & (
+type Props = { disabled?: boolean; endpoints?: string[]; onPick?: (endpoint: string) => void } & (
   | { remote?: false; onConnect: () => void }
   | { remote: true; endpoint: string | null; onChangeServer: () => void; onReturnLocal: () => void }
 );
@@ -94,8 +94,13 @@ export function CpaTargetSwitcher(props: Props) {
           <span className="cpa-target-option-text">{host ?? mode}</span>
           <Check className="cpa-target-check" size={15} aria-hidden="true" />
         </button>
+        {props.endpoints?.filter(saved => saved !== endpoint).map(saved => (
+          <button key={saved} type="button" role="menuitemradio" aria-checked={false} tabIndex={-1} title={saved} onClick={() => select(() => props.onPick?.(saved))}>
+            <Server size={15} aria-hidden="true" /><span className="cpa-target-option-text">{saved.replace(/\/$/, '')}</span>
+          </button>
+        ))}
         {props.remote ? <>
-          <button type="button" role="menuitem" tabIndex={-1} onClick={() => select(props.onChangeServer)}><Link2 size={15} aria-hidden="true" />{t('remote.changeServer')}</button>
+          <button type="button" role="menuitem" tabIndex={-1} onClick={() => select(props.onChangeServer)}><Link2 size={15} aria-hidden="true" />{t('remote.connect')}</button>
           <button type="button" role="menuitem" tabIndex={-1} onClick={() => select(props.onReturnLocal)}><Undo2 size={15} aria-hidden="true" />{t('remote.returnLocal')}</button>
         </> : <button type="button" role="menuitem" tabIndex={-1} onClick={() => select(props.onConnect)}><Link2 size={15} aria-hidden="true" />{t('remote.connect')}</button>}
       </div> : null}

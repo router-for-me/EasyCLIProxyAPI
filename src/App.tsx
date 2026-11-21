@@ -70,9 +70,8 @@ import { useThemePreference } from './theme';
 import { usePrivacyMode } from './privacy';
 import { Dialog } from './components/Dialog';
 import { EmptyState } from './components/EmptyState';
-import { CpaTargetSwitcher } from './components/CpaTargetSwitcher';
-import { CpaConnectionDialog, RemoteCpaPage } from './pages/RemoteCpaPage';
-import { cpaConnectionPending, getCpaConnection, type CpaConnection } from './services/remoteCpa';
+import { CpaConnectionDialog, CpaWorkspaceTarget } from './pages/RemoteCpaPage';
+import { getCpaConnection, type CpaConnection } from './services/remoteCpa';
 
 const QQ_CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
 const DISCORD_SERVER_URL = 'https://discord.gg/PxvX4D9kgs';
@@ -168,7 +167,7 @@ function HomePage() {
 function App({ initialConnection }: { initialConnection?: CpaConnection }) {
   const { t } = useI18n();
   const [connection, setConnection] = useState(initialConnection);
-  const [connectionOpen, setConnectionOpen] = useState(false);
+  const [connectionDraft, setConnectionDraft] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -178,8 +177,8 @@ function App({ initialConnection }: { initialConnection?: CpaConnection }) {
       .catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
   }, [attempt, initialConnection]);
-  const openConnection = () => setConnectionOpen(true);
-  const closeConnection = () => setConnectionOpen(false);
+  const openConnection = (endpoint = '') => setConnectionDraft(endpoint);
+  const closeConnection = () => setConnectionDraft(null);
 
   return (
     <WindowFrame>
@@ -188,26 +187,27 @@ function App({ initialConnection }: { initialConnection?: CpaConnection }) {
           <p role={failed ? 'alert' : 'status'}>{t(failed ? 'remote.error.unknown' : 'remote.loading')}</p>
           {failed ? <button type="button" className="secondary-button" onClick={() => { setFailed(false); setAttempt(value => value + 1); }}>{t('remote.retry')}</button> : null}
         </main>
-      ) : connection.remoteActive || cpaConnectionPending(connection) ? (
-        <RemoteCpaPage connection={connection} openConnection={openConnection} onChange={setConnection} />
       ) : (
-        <AppUpdateProvider>
-          <CoreRuntimeProvider>
-            <CoreUpdateProvider>
-              <AppContent openConnection={openConnection} />
+        <AppUpdateProvider enabled={!connection.remoteActive}>
+          <CoreRuntimeProvider targetRevision={connection.remoteActive ? connection.revision : undefined}>
+            <CoreUpdateProvider enabled={!connection.remoteActive}>
+              <CpaWorkspaceTarget connection={connection} openConnection={openConnection} onChange={setConnection}>
+                {switcher => <AppContent connection={connection} switcher={switcher} />}
+              </CpaWorkspaceTarget>
             </CoreUpdateProvider>
           </CoreRuntimeProvider>
         </AppUpdateProvider>
       )}
       {connection && !connection.remoteActive ? <LocalWindowClose /> : null}
-      {connection && connectionOpen ? (
-        <CpaConnectionDialog connection={connection} close={closeConnection} onChange={setConnection} />
+      {connection && connectionDraft !== null ? (
+        <CpaConnectionDialog initialEndpoint={connectionDraft} connection={connection} close={closeConnection} onChange={setConnection} />
       ) : null}
     </WindowFrame>
   );
 }
 
-function AppContent({ openConnection }: { openConnection: () => void }) {
+function AppContent({ connection, switcher }: { connection: CpaConnection; switcher: React.ReactNode }) {
+  const remote = connection.remoteActive;
   const { locale, setLocale, t } = useI18n();
   const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing } = useAppUpdate();
   const [appVersionDisplay, setAppVersionDisplay] = useState<AppVersionSeries>('stable');
@@ -226,9 +226,9 @@ function AppContent({ openConnection }: { openConnection: () => void }) {
   const languageMenuRef = useRef<HTMLDivElement>(null);
   const languageButtonRef = useRef<HTMLButtonElement>(null);
   const { status } = useCoreRuntime();
-  const coreReady = Boolean(status?.ready);
+  const coreReady = remote || Boolean(status?.ready);
   const [navElement, setNavElement] = useState<HTMLElement | null>(null);
-  const { entries: pluginEntries, plugins: installedPluginList, fetched: pluginEntriesFetched, pluginUpdates } = usePluginNavEntries(coreReady);
+  const { entries: pluginEntries, plugins: installedPluginList, fetched: pluginEntriesFetched, pluginUpdates } = usePluginNavEntries(coreReady, remote ? connection.revision : undefined);
   const pluginEntry = findPluginNavEntry(pluginEntries, active);
   const navPages = pages.filter((page) => page.id !== 'easy');
   const { layout: autoPluginLayout, compact: navCompact } = usePluginNavLayout(navElement, navPages.length, pluginEntries.length);
@@ -267,7 +267,7 @@ function AppContent({ openConnection }: { openConnection: () => void }) {
     if (!canOpenAppPage(active, coreReady)) {
       setActive('home');
     }
-  }, [active, coreReady]);
+  }, [active, coreReady, remote]);
 
   useEffect(() => {
     if (status !== null && !status.ready) void closePluginWebview().catch(() => undefined);
@@ -321,7 +321,7 @@ function AppContent({ openConnection }: { openConnection: () => void }) {
     }
     if (pageId !== active) requestAppNavigation(() => setActive(pageId));
     else if (isPluginRoute(pageId)) setPluginReload((value) => value + 1);
-  }, [active, coreReady]);
+  }, [active, coreReady, remote]);
 
   useEffect(() => {
     const handleNavigate = (event: Event) => {
@@ -360,7 +360,7 @@ function AppContent({ openConnection }: { openConnection: () => void }) {
               </div>
             </div>
 
-            <CpaTargetSwitcher onConnect={openConnection} />
+            {switcher}
 
             <nav
               ref={setNavElement}
@@ -548,8 +548,8 @@ function AppContent({ openConnection }: { openConnection: () => void }) {
         ) : null}
 
         <div className="workspace" ref={workspaceRef}>
-          <main className="content">
-            {!canOpenAppPage(active, coreReady) ? (
+          <main className="content" key={`${connection.remoteActive}:${connection.revision}`}>
+            {connection.needsRepair ? <p role="alert">{t('remote.error.profileInvalid')}</p> : !canOpenAppPage(active, coreReady) ? (
               <CoreLockedPage />
             ) : pluginEntry ? (
               <PluginResourcePage key={pluginEntry.route} entry={pluginEntry} reloadToken={pluginReload} />

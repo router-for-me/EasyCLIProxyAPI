@@ -1744,6 +1744,7 @@ export const zhCN: Record<string, string> = {
   "agents.backup.loading": "加载中…",
   "agents.backup.select": "选择备份以查看文件清单。",
   "agents.backup.unchanged": "配置已是最新，无需写入。",
+  "agents.backup.refreshFailed": "配置已保存，但未能刷新客户端状态：{error}",
   "agents.backup.updated": "配置已更新。",
   "agents.backup.restored": "备份已恢复，配置状态和表单已刷新。",
   "agents.backup.created": "已手动备份当前磁盘配置，未包含未保存的表单修改。",

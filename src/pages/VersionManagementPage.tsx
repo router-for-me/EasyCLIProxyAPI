@@ -36,6 +36,7 @@ import { useAppUpdate } from '../appUpdate';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { createVersionManagementVisitTracker } from '../services/versionManagementVisits';
 import { AppReleaseNotes } from '../components/AppReleaseNotes';
+import { selectedRemoteEndpoint } from '../services/remoteCpa';
 import { AutoUpdatePanel } from '../components/AutoUpdatePanel';
 import { Dialog } from '../components/Dialog';
 import { SelectMenu, type SelectMenuOption } from '../components/SelectMenu';
@@ -114,6 +115,7 @@ export function selectAppVersionComparison(
 }
 
 export function VersionManagementPage({ displaySeries = 'stable' }: { displaySeries?: AppVersionSeries }) {
+  const external = Boolean(selectedRemoteEndpoint());
   const { t } = useI18n();
   const {
     task: appUpdateTask,
@@ -414,7 +416,7 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
   }, [checkAppUpdate]);
 
   useEffect(() => {
-    if (recordVersionManagementVisit(pageVisitRef.current) && !checkingLatest) {
+    if (!external && recordVersionManagementVisit(pageVisitRef.current) && !checkingLatest) {
       void checkLatest();
     }
   }, [checkLatest, checkingLatest]);
@@ -424,7 +426,7 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
     let unlisten: (() => void) | null = null;
     let unlistenConfig: (() => void) | null = null;
 
-    onCoreInstallProgress((event) => {
+    if (!external) onCoreInstallProgress((event) => {
       const showTaskUi = manualInstallInProgressRef.current;
       applyInstallTask(event.payload, showTaskUi, showTaskUi);
       if (!event.payload.running) {
@@ -446,10 +448,9 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
       else unlistenConfig = stop;
     });
 
-    loadInstallTask();
-    void loadCoreVersions();
+    if (!external) { void loadInstallTask(); void loadCoreVersions(); }
     void loadVersionSourceSettings();
-    void detectBundledCore()
+    if (!external) void detectBundledCore()
       .then((info) => {
         if (!disposed) setBundledCore(info);
       })
@@ -486,7 +487,7 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
     : '';
 
   const appHasUpdate = Boolean(appUpdate?.updateAvailable);
-  const showInstallNow = Boolean(appUpdate?.installAvailable && appUpdate.autoUpdateSupported);
+  const showInstallNow = !external && Boolean(appUpdate?.installAvailable && appUpdate.autoUpdateSupported);
   const appActionCount = showInstallNow ? 3 : 2;
   const appDownloadLabel = t(appIsPreview ? 'appUpdate.downloadPreview' : 'appUpdate.downloadStable');
   const appDownloadTitle = latestPackageVersion
@@ -624,7 +625,7 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
               className="version-source-select"
               value={versionSource?.source ?? DEFAULT_VERSION_DOWNLOAD_SOURCE}
               disabled={
-                !versionSource
+                external || !versionSource
                 || versionSourceSaving
                 || appUpdateTask.running
                 || installing
@@ -636,7 +637,7 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
             <button
               type="button"
               className="primary-button version-source-add-button"
-              disabled={versionSourceSaving || appUpdateTask.running || installing}
+              disabled={external || versionSourceSaving || appUpdateTask.running || installing}
               onClick={() => {
                 setVersionSourceError('');
                 setCustomMirrorDialogOpen(true);
@@ -679,9 +680,9 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
 
             <div className="app-version-info-section">
               <MessageNotice message={appUpdateError} />
-              <AutoUpdatePanel
+              <AutoUpdatePanel hostOnly={external}
                 embedded
-                appUnavailableHint={appUpdate && !appUpdate.autoUpdateSupported ? (appUnsupportedReason ?? t('appUpdate.manualFallback')) : undefined}
+                appUnavailableHint={external ? t('remote.autoUpdateHost') : appUpdate && !appUpdate.autoUpdateSupported ? (appUnsupportedReason ?? t('appUpdate.manualFallback')) : undefined}
               />
             </div>
           </div>
@@ -725,7 +726,7 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
           <div className="version-item-content">
             <div className="version-card-top">
               <h2>{t('kernel.versions.coreCardTitle')}</h2>
-              {coreVersionStatusLabel ? (
+              {!external && coreVersionStatusLabel ? (
                 <span className={`version-row-status ${coreVersionStatusTone}`} title={coreVersionStatusLabel}>
                   {coreVersionStatusLabel}
                 </span>
@@ -735,8 +736,8 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
             <dl className="version-metrics-comparison">
               <div className="surface-section surface-muted version-metric-tile">
                 <dt className="version-metric-label">{t('kernel.versions.current')}</dt>
-                <dd className="version-metric-value" title={currentVersion || t('kernel.status.notInstalled')}>
-                  {currentVersion || t('kernel.status.notInstalled')}
+                <dd className="version-metric-value" title={currentVersion || t(external ? 'common.unavailable' : 'kernel.status.notInstalled')}>
+                  {currentVersion || t(external ? 'common.unavailable' : 'kernel.status.notInstalled')}
                 </dd>
               </div>
               <div className={`surface-section surface-muted version-metric-tile ${coreHasUpdate ? 'has-update' : ''}`}>
@@ -747,6 +748,7 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
               </div>
             </dl>
 
+            {external && <p>{t('remote.versionHost')}</p>}
             <div className="core-version-picker">
               {latestError ? <MessageNotice message={latestError} /> : null}
               <div className="core-version-picker-label">
@@ -785,7 +787,7 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
             <button
               type="button"
               className="secondary-button"
-              disabled={busy}
+              disabled={external || busy}
               onClick={() => {
                 void checkLatest(true);
                 void loadCoreVersions();
@@ -799,7 +801,7 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
               type="button"
               className={latestVersion && (!coreInstalled || coreHasUpdate) ? 'primary-button' : 'secondary-button'}
               title={latestVersion ? t('kernel.versions.stopAndUpdateVersion', { version: latestVersion }) : t('kernel.versions.installLatest')}
-              disabled={!latestVersion || busy}
+              disabled={external || !latestVersion || busy}
               onClick={() => {
                 setConfirmInstallVersion(latestVersion);
                 setConfirmUpdateOpen(true);

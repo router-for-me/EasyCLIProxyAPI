@@ -1,3 +1,4 @@
+import { remoteTargetRevision } from './remoteCpa';
 import { invoke } from '@tauri-apps/api/core';
 import { isRecord, managementApi } from './managementApi';
 
@@ -377,6 +378,7 @@ export const pluginStoreApi = {
     ]);
     // Native request has a separate query field: source identity survives even
     // when multiple registries expose the same plugin ID.
+    const targetRevision = remoteTargetRevision();
     const signal = options.signal;
     signal?.throwIfAborted();
     const requestId = signal ? await invoke<string>('prepare_management_request') : undefined;
@@ -387,7 +389,7 @@ export const pluginStoreApi = {
       if (signal?.aborted) { cancel(); signal.throwIfAborted(); }
       const value = responseObject(await invoke<unknown>('management_request', {
         request: {
-          requestId,
+          requestId, targetRevision,
           method: 'POST', path: `/plugins/store/${pluginPathID(id)}/install`, query,
           body: version ? { version } : undefined, timeoutMs: 120_000,
         },
@@ -407,7 +409,7 @@ export const pluginStoreApi = {
 };
 
 export const getPluginSupport = (): Promise<boolean> =>
-  invoke<boolean>('get_plugin_support');
+  invoke<boolean>('get_plugin_support', { targetRevision: remoteTargetRevision() });
 
 export const installLocalPlugin = (source: string): Promise<string> =>
   invoke<string>('install_local_plugin', { source });

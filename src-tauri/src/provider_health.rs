@@ -374,10 +374,14 @@ pub(crate) fn provider_health_content_type_is_streaming(content_type: &str) -> b
 
 #[tauri::command]
 pub(crate) async fn get_core_models(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
 ) -> Result<Vec<CoreHealthModel>, String> {
+    remote.agent_operation(target_revision, None, async move {
     let config = gui_config_state.snapshot()?;
     fetch_core_models(config.port, effective_agent_api_key(&config)).await
+    }).await
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -432,12 +436,16 @@ fn parse_core_models(payload: &serde_json::Value) -> Result<Vec<CoreHealthModel>
 
 #[tauri::command]
 pub(crate) async fn core_health_probe(
+    remote: tauri::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
     gui_config_state: tauri::State<'_, GuiConfigState>,
     model: String,
     timeout_ms: Option<u64>,
 ) -> Result<ProviderHealthProbeResponse, String> {
+    remote.agent_operation(target_revision, None, async move {
     let config = gui_config_state.snapshot()?;
     probe_core_model(&config, &model, timeout_ms).await
+    }).await
 }
 
 async fn probe_core_model(
@@ -449,7 +457,7 @@ async fn probe_core_model(
     if config.port == 0 {
         return Err("Invalid kernel port".to_string());
     }
-    let tls_enabled = managed_core_tls_enabled();
+    let tls_enabled = crate::remote_cpa::AGENT_ORIGIN.try_with(|_| ()).is_err() && managed_core_tls_enabled();
     let client = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())

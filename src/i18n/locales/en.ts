@@ -1758,6 +1758,7 @@ export const en: Record<MessageKey, string> = {
   "agents.backup.loading": "Loading…",
   "agents.backup.select": "Select a backup to inspect its files.",
   "agents.backup.unchanged": "Configuration is already up to date.",
+  "agents.backup.refreshFailed": "Configuration saved, but client status could not be refreshed: {error}",
   "agents.backup.updated": "Configuration updated.",
   "agents.backup.restored": "Backup restored. Configuration and form values have been refreshed.",
   "agents.backup.created": "Current files on disk saved as a manual backup. Unsaved form changes were not included.",
