@@ -892,8 +892,10 @@ fn validate_portable_update_asset_catalog(
     allow_windows_legacy: bool,
     repository: Option<&str>,
 ) -> Result<(), String> {
-    if assets.len() != 2 {
-        return Err(format!("The application update manifest must include both {display_platform} architectures"));
+    if assets.is_empty() {
+        return Err(format!(
+            "The application update manifest has no {display_platform} assets"
+        ));
     }
     let version = manifest.version.trim().trim_start_matches('v');
     let url_tag = manifest
@@ -908,11 +910,12 @@ fn validate_portable_update_asset_catalog(
     } else {
         url_tag
     };
-    for arch in ["amd64", "aarch64"] {
-        let key = format!("{platform}-{arch}");
-        let asset = assets
-            .get(&key)
-            .ok_or_else(|| format!("Application update manifest is missing {key}"))?;
+    for (key, asset) in assets {
+        let arch = key
+            .strip_prefix(platform)
+            .and_then(|suffix| suffix.strip_prefix('-'))
+            .filter(|arch| matches!(*arch, "amd64" | "aarch64"))
+            .ok_or_else(|| format!("Unexpected application update asset key: {key}"))?;
         validate_portable_update_asset(asset)?;
         let full_package_name =
             format!("EasyCLIProxyAPI-v{version}-{display_platform}-{arch}.{suffix}");

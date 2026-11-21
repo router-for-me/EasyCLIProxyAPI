@@ -14,6 +14,8 @@ test('app-owned ACP errors map to matching locale messages without swallowing up
     'Invalid ACP account registry',
     'An ACP operation is already running',
     'ACP API provider configuration sync failed: configuration directory is read-only',
+    'Antigravity CLI exited without providing an authorization link',
+    'Antigravity CLI did not provide an authorization link in time',
     'ACP request cancelled',
     'Account saved; connection not verified: ACP request cancelled',
     'Account saved; connection not verified: upstream-specific cause',

@@ -13,6 +13,8 @@ const CANCELLED: &str = "ACP request cancelled";
 
 const WAIT_EXPIRED: &str = "Antigravity authorization expired while waiting for a response";
 const WRITE_FAILED: &str = "Could not deliver the authorization response to Antigravity CLI";
+const NO_LINK_TIMEOUT: &str = "Antigravity CLI did not provide an authorization link in time";
+const NO_LINK_EXIT: &str = "Antigravity CLI exited without providing an authorization link";
 const EARLY_EXIT: &str = "Antigravity CLI exited before receiving the authorization response";
 const EXCHANGE_TIMEOUT: &str = "Antigravity CLI timed out completing authorization";
 const REJECTED: &str = "Google rejected the authorization response";
@@ -57,84 +59,94 @@ fn response_wait() -> Duration {
 
 pub(super) struct TerminalLogin;
 
+pub(super) enum LoginAdvertisement {
+    Supported(TerminalLogin),
+    Incompatible,
+    Absent,
+}
+
 impl TerminalLogin {
-    pub(super) fn advertised(initialize: &Value) -> Option<Self> {
-        initialize["authMethods"]
-            .as_array()?
+    pub(super) fn advertised(initialize: &Value) -> LoginAdvertisement {
+        let Some(methods) = initialize["authMethods"].as_array() else {
+            return LoginAdvertisement::Absent;
+        };
+        let mut result = LoginAdvertisement::Absent;
+        for method in methods
             .iter()
-            .find_map(|method| {
-                if method["id"] != "terminal-login" || method["type"] != "terminal" {
-                    return None;
-                }
-                // Only accept the documented login-only command. Arbitrary args or
-                // environment entries could redirect authentication or weaken the
-                // subprocess isolation. Never execute them; verify CLI help instead.
-                if !method.get("env").is_none_or(|env| {
+            .filter(|method| method["id"] == "terminal-login")
+        {
+            // Only accept the documented login-only command. Never forward
+            // arbitrary arguments or environment entries from the agent.
+            if method["type"] == "terminal"
+                && method.get("env").is_none_or(|env| {
                     env.is_null() || env.as_object().is_some_and(|env| env.is_empty())
-                }) {
-                    return None;
-                }
-                let args = method["args"].as_array()?;
-                if args.len() != 1 || args[0] != "--login" {
-                    return None;
-                }
-                Some(Self)
-            })
+                })
+                && method["args"]
+                    .as_array()
+                    .is_some_and(|args| args.len() == 1 && args[0] == "--login")
+            {
+                return LoginAdvertisement::Supported(Self);
+            }
+            result = LoginAdvertisement::Incompatible;
+        }
+        result
+    }
+
+    fn login_description(line: &str) -> Option<&str> {
+        let rest = line.trim_start().strip_prefix("--login")?;
+        (rest.is_empty() || rest.starts_with('=') || rest.starts_with(char::is_whitespace))
+            .then_some(rest.trim())
+    }
+
+    fn incompatible_description(description: &str) -> bool {
+        description.starts_with(['<', '[', '=', '{'])
+            || description
+                .split_whitespace()
+                .next()
+                .is_some_and(|word| matches!(word, "string" | "token" | "value" | "required"))
+            || [
+                "not support",
+                "unsupported",
+                "disabled",
+                "unavailable",
+                "bearer",
+                "access token",
+            ]
+            .iter()
+            .any(|marker| description.contains(marker))
     }
 
     fn documented(help: &str) -> bool {
-        help.lines().any(|line| {
-            let line = line.trim_start();
-            let Some(description) = line.strip_prefix("--login") else {
-                return false;
-            };
-            // A standalone flag can have an optional Boolean default, but
-            // must not declare a token or another required value.
-            if !description.starts_with(char::is_whitespace) {
-                return false;
-            }
-            let description = description.trim().to_ascii_lowercase();
-            if description.starts_with(['<', '[', '=', '{'])
-                || description
-                    .split_whitespace()
-                    .next()
-                    .is_some_and(|word| matches!(word, "string" | "token" | "value" | "required"))
-                || [
-                    "not support",
-                    "unsupported",
-                    "disabled",
-                    "unavailable",
-                    "bearer",
-                    "access token",
+        help.lines()
+            .filter_map(Self::login_description)
+            .any(|description| {
+                let description = description.to_ascii_lowercase();
+                if Self::incompatible_description(&description) {
+                    return false;
+                }
+                let words: Vec<_> = description
+                    .split(|ch: char| !ch.is_ascii_alphanumeric())
+                    .collect();
+                let google = words.contains(&"google") || description.contains("google");
+                let interactive = words
+                    .iter()
+                    .any(|word| matches!(*word, "interactive" | "interactively"))
+                    || (words.contains(&"terminal")
+                        && (words.contains(&"paste") || words.contains(&"code")))
+                    || description.contains("交互")
+                    || (description.contains("终端") && description.contains("授权码"));
+                let login = [
+                    "log in",
+                    "sign in",
+                    "login",
+                    "sign-in",
+                    "authenticat",
+                    "登录",
                 ]
                 .iter()
-                .any(|marker| description.contains(marker))
-            {
-                return false;
-            }
-            let words: Vec<_> = description
-                .split(|ch: char| !ch.is_ascii_alphanumeric())
-                .collect();
-            let google = words.contains(&"google") || description.contains("google");
-            let interactive = words
-                .iter()
-                .any(|word| matches!(*word, "interactive" | "interactively"))
-                || (words.contains(&"terminal")
-                    && (words.contains(&"paste") || words.contains(&"code")))
-                || description.contains("交互")
-                || (description.contains("终端") && description.contains("授权码"));
-            let login = [
-                "log in",
-                "sign in",
-                "login",
-                "sign-in",
-                "authenticat",
-                "登录",
-            ]
-            .iter()
-            .any(|marker| description.contains(marker));
-            google && interactive && login
-        })
+                .any(|marker| description.contains(marker));
+                google && interactive && login
+            })
     }
 
     pub(super) fn resolve(
@@ -142,6 +154,16 @@ impl TerminalLogin {
         profile: &Path,
         proxy: &str,
         cancel: &Arc<AtomicBool>,
+    ) -> Result<Self, String> {
+        Self::resolve_for_platform(executable, profile, proxy, cancel, cfg!(windows))
+    }
+
+    fn resolve_for_platform(
+        executable: &Path,
+        profile: &Path,
+        proxy: &str,
+        cancel: &Arc<AtomicBool>,
+        windows: bool,
     ) -> Result<Self, String> {
         if cancel.load(Ordering::Acquire) {
             return Err(CANCELLED.into());
@@ -153,14 +175,25 @@ impl TerminalLogin {
             return Ok(Self);
         }
         let mut probe = rpc::Client::spawn(executable, profile, proxy)?;
-        match probe.initialize_manual(cancel) {
-            Ok(Some(login)) => Ok(login),
-            Ok(None) if help_status == Some(false) => Err(UNSUPPORTED.into()),
-            Ok(None) => Err(
+        let advertised = probe.initialize_manual(cancel);
+        if cancel.load(Ordering::Acquire) {
+            return Err(CANCELLED.into());
+        }
+        match advertised {
+            Ok(LoginAdvertisement::Supported(login)) => Ok(login),
+            Ok(LoginAdvertisement::Incompatible) => Err(UNSUPPORTED.into()),
+            Ok(LoginAdvertisement::Absent) if help_status == Some(false) => Err(UNSUPPORTED.into()),
+            // An unrecognized help response and an ACP auth list without a
+            // terminal descriptor prove neither support nor its absence. On
+            // Windows, try only the fixed official login command in the pending
+            // isolated profile. The runner must still see an approved OAuth URL.
+            Ok(LoginAdvertisement::Absent) if windows && accounts::is_isolated_home(profile) => {
+                Ok(Self)
+            }
+            Ok(LoginAdvertisement::Absent) => Err(
                 "Could not verify Antigravity CLI terminal sign-in: command help unavailable"
                     .into(),
             ),
-            Err(error) if cancel.load(Ordering::Acquire) => Err(error),
             Err(_) => Err(
                 "Could not verify Antigravity CLI terminal sign-in: ACP initialization failed"
                     .into(),
@@ -178,12 +211,28 @@ impl TerminalLogin {
         command.stdin(Stdio::null()).stderr(Stdio::piped());
         let mut child = crate::spawn_core_child(command)
             .map_err(|_| "Could not start Antigravity CLI to check terminal sign-in")?;
-        fn read_pipe(reader: impl Read + Send + 'static) -> mpsc::Receiver<String> {
+        fn read_pipe(reader: impl Read + Send + 'static) -> mpsc::Receiver<(String, bool)> {
             let (send, receive) = mpsc::sync_channel(1);
             std::thread::spawn(move || {
+                let mut reader = reader;
                 let mut bytes = Vec::new();
-                let _ = reader.take(64 * 1024).read_to_end(&mut bytes);
-                let _ = send.send(String::from_utf8_lossy(&bytes).into_owned());
+                let mut chunk = [0; 4096];
+                let limit = 64 * 1024;
+                // Drain both pipes through exit, but only retain bounded help.
+                let mut truncated = false;
+                let complete = loop {
+                    match reader.read(&mut chunk) {
+                        Ok(0) => break !truncated,
+                        Ok(count) => {
+                            let retained = count.min(limit - bytes.len());
+                            bytes.extend_from_slice(&chunk[..retained]);
+                            truncated |= retained != count;
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(_) => break false,
+                    }
+                };
+                let _ = send.send((String::from_utf8_lossy(&bytes).into_owned(), complete));
             });
             receive
         }
@@ -211,27 +260,30 @@ impl TerminalLogin {
                 if !exit.success() {
                     return Ok(None);
                 }
-                let out = stdout
+                let (out, out_complete) = stdout
                     .recv_timeout(Duration::from_millis(150))
                     .unwrap_or_default();
-                let err = stderr
+                let (err, err_complete) = stderr
                     .recv_timeout(Duration::from_millis(150))
                     .unwrap_or_default();
                 if Self::documented(&out) || Self::documented(&err) {
                     return Ok(Some(true));
                 }
-                // A --login line with unclear semantics is not a negative
-                // capability report. Let ACP supply authoritative evidence.
+                // An ambiguous login line is not a negative capability report.
                 let text = format!("{out}\n{err}");
-                let ambiguous = text.lines().any(|line| {
-                    line.trim_start()
-                        .strip_prefix("--login")
-                        .is_some_and(|rest| rest.is_empty() || rest.starts_with(['=', ' ', '\t']))
+                let mut descriptions = text.lines().filter_map(Self::login_description).peekable();
+                let is_acp_help = text.lines().any(|line| {
+                    line.trim_start_matches('\u{feff}')
+                        .trim_start()
+                        .starts_with("Usage: agy acp")
                 });
-                let is_acp_help = text
-                    .lines()
-                    .any(|line| line.trim_start().starts_with("Usage: agy acp"));
-                return Ok((is_acp_help && !ambiguous).then_some(false));
+                return Ok((out_complete
+                    && err_complete
+                    && ((is_acp_help && descriptions.peek().is_none())
+                        || descriptions.any(|description| {
+                            Self::incompatible_description(&description.to_ascii_lowercase())
+                        })))
+                .then_some(false));
             }
             if Instant::now() >= deadline {
                 return Ok(None);
@@ -335,25 +387,40 @@ impl ManualAuth {
         ) {
             std::thread::spawn(move || {
                 let mut output = BufReader::new(reader);
+                let mut bytes = Vec::new();
+                let mut discarding = false;
                 loop {
-                    let mut line = String::new();
-                    match (&mut output).take(8192).read_line(&mut line) {
+                    bytes.clear();
+                    let limit = 8192;
+                    match (&mut output)
+                        .take(limit as u64)
+                        .read_until(b'\n', &mut bytes)
+                    {
                         Ok(0) | Err(_) => break,
-                        Ok(_) => {
-                            if let Some((_, category)) = exchange_diagnostic(&line) {
-                                diagnostic.fetch_max(category, Ordering::Relaxed);
-                            }
-                            if let Some(state) = official_state(line.trim()) {
-                                let _ = links.try_send((line.trim().to_string(), state));
-                            } else if let Some(email) = line
-                                .trim()
-                                .strip_prefix("Logged in as ")
-                                .and_then(|s| s.strip_suffix('.'))
-                                .and_then(rpc::valid_account_email)
-                            {
-                                let _ = identity.try_send(email.to_owned());
-                            }
-                        }
+                        Ok(_) => {}
+                    }
+                    let continued = bytes.len() == limit && !bytes.ends_with(b"\n");
+                    if discarding || continued {
+                        discarding = continued;
+                        continue;
+                    }
+                    // A localized line in a legacy code page must not stop
+                    // draining the pipe before the subsequent ASCII OAuth URL.
+                    let Ok(line) = std::str::from_utf8(&bytes) else {
+                        continue;
+                    };
+                    let line = line.trim_start_matches('\u{feff}').trim();
+                    if let Some((_, category)) = exchange_diagnostic(line) {
+                        diagnostic.fetch_max(category, Ordering::Relaxed);
+                    }
+                    if let Some(state) = official_state(line) {
+                        let _ = links.try_send((line.to_owned(), state));
+                    } else if let Some(email) = line
+                        .strip_prefix("Logged in as ")
+                        .and_then(|s| s.strip_suffix('.'))
+                        .and_then(rpc::valid_account_email)
+                    {
+                        let _ = identity.try_send(email.to_owned());
                     }
                 }
             });
@@ -405,7 +472,7 @@ impl ManualAuth {
                 } else if Instant::now() >= deadline {
                     slot.take();
                     return Err(if codes.is_some() {
-                        "Antigravity CLI did not provide an authorization link in time"
+                        NO_LINK_TIMEOUT
                     } else {
                         WAIT_EXPIRED
                     }
@@ -433,7 +500,12 @@ impl ManualAuth {
                     return Err(WRITE_FAILED.into());
                 }
                 if !submitted && !writing {
-                    return Err(EARLY_EXIT.into());
+                    return Err(if codes.is_some() {
+                        NO_LINK_EXIT
+                    } else {
+                        EARLY_EXIT
+                    }
+                    .into());
                 }
                 // Output readers can still drain the final pipe bytes after exit.
                 let identity = reported_identity
@@ -547,14 +619,20 @@ mod tests {
     fn terminal_method_accepts_only_supported_invocation() {
         for env in [Value::Null, json!({})] {
             let value = json!({"authMethods":[{"id":"terminal-login","type":"terminal","args":["--login"],"env":env}]});
-            assert!(TerminalLogin::advertised(&value).is_some());
+            assert!(matches!(
+                TerminalLogin::advertised(&value),
+                LoginAdvertisement::Supported(_)
+            ));
         }
         for method in [
             json!({"id":"terminal-login","args":["--login"]}),
             json!({"id":"terminal-login","type":"terminal","args":["--login","--gemini-dir","other"]}),
             json!({"id":"terminal-login","type":"terminal","args":["--login"],"env":{"PATH":"other"}}),
         ] {
-            assert!(TerminalLogin::advertised(&json!({"authMethods":[method]})).is_none());
+            assert!(matches!(
+                TerminalLogin::advertised(&json!({"authMethods":[method]})),
+                LoginAdvertisement::Incompatible
+            ));
         }
         assert!(TerminalLogin::documented("Usage: agy acp [flags]\r\n  --login    Log in with Google interactively, then exit (ACP terminal auth)\r\n"));
         assert!(!TerminalLogin::documented(
@@ -670,6 +748,151 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"authMeth
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    // This exercises the same decision as resolve() on Windows, even on
+    // Unix CI. Neither preflight step attests the login, so only the isolated
+    // fixed command can emit the validated prompt.
+    #[cfg(unix)]
+    #[test]
+    fn windows_fallback_requires_an_isolated_profile_and_a_valid_prompt() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = crate::unique_test_temp_path("acp-windows-fallback");
+        let home = root
+            .join("accounts")
+            .join("a".repeat(32))
+            .join(accounts::ISOLATED_HOME);
+        let legacy = root.join("legacy");
+        for directory in [&home, &legacy] {
+            prepare_profile(directory).unwrap();
+        }
+        let cli = root.join("agy");
+        std::fs::write(&cli, format!(r#"#!/bin/sh
+[ "$1" = acp ] || exit 2
+if [ "$2" = --help ]; then
+  exit 0
+fi
+if [ "$2" = --login ]; then
+  [ "$#" -eq 2 ] && [ "$HOME" = "$GEMINI_CLI_HOME" ] && [ "$PWD" = "$HOME/workspace" ] || exit 3
+  printf '\377localized preamble\r\n' >&2
+  printf '%s\r\n' 'https://example.invalid/oauth' '{LINK}' >&2
+  read -r input
+  exit 4
+fi
+read -r input
+printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"authMethods":[{{"id":"oauth-personal"}}]}}}}'
+"#)).unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        assert_eq!(
+            TerminalLogin::probe_help(&cli, &home, "", &cancel).unwrap(),
+            None
+        );
+        for (profile, windows) in [(&home, false), (&legacy, true)] {
+            assert_eq!(
+                TerminalLogin::resolve_for_platform(&cli, profile, "", &cancel, windows)
+                    .err()
+                    .as_deref(),
+                Some("Could not verify Antigravity CLI terminal sign-in: command help unavailable")
+            );
+        }
+        let login = TerminalLogin::resolve_for_platform(&cli, &home, "", &cancel, true).unwrap();
+        let auth = ManualAuth::default();
+        let mut shown = false;
+        let result = auth.run(
+            login.command(&cli, &home, "").unwrap(),
+            "fallback",
+            &cancel,
+            |link| {
+                assert_eq!(link.url, LINK);
+                shown = true;
+                cancel.store(true, Ordering::Release);
+                Ok(())
+            },
+        );
+        assert!(shown);
+        assert_eq!(result.unwrap_err(), CANCELLED);
+        assert_eq!(
+            auth.submit("fallback", "4/synthetic-code").unwrap_err(),
+            INACTIVE
+        );
+        assert!(!accounts::isolated_token(&home).exists());
+        assert_eq!(
+            TerminalLogin::resolve_for_platform(&cli, &home, "", &cancel, true)
+                .err()
+                .as_deref(),
+            Some(CANCELLED)
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn windows_fallback_does_not_override_negative_capability_or_failed_rpc() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = crate::unique_test_temp_path("acp-windows-negative");
+        let home = root
+            .join("accounts")
+            .join("a".repeat(32))
+            .join(accounts::ISOLATED_HOME);
+        prepare_profile(&home).unwrap();
+        let cli = root.join("agy");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let absent = r#"printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"authMethods":[]}}'"#;
+        for (help, reply, expected) in [
+            ("printf '%s\\n' 'Usage: agy acp [flags]' '  --socket  Serve on a socket' >&2", absent, UNSUPPORTED),
+            ("printf '%s\\n' 'Usage: agy acp [flags]' '  --login is not supported in this build' >&2", absent, UNSUPPORTED),
+            (":", r#"printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"authMethods":[{"id":"terminal-login","type":"terminal","args":["--login"],"env":{"HOME":"other"}}]}}'"#, UNSUPPORTED),
+            (":", "exit 17", "Could not verify Antigravity CLI terminal sign-in: ACP initialization failed"),
+        ] {
+            std::fs::write(&cli, format!("#!/bin/sh\nif [ \"$2\" = --help ]; then {help}; exit 0; fi\nread -r input\n{reply}\n")).unwrap();
+            std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
+            assert_eq!(TerminalLogin::resolve_for_platform(&cli, &home, "", &cancel, true).err().as_deref(), Some(expected));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_piped_launcher_reaches_fixed_login_after_inconclusive_preflight() {
+        let root = crate::unique_test_temp_path("acp Windows & fallback");
+        let home = root
+            .join("accounts")
+            .join("a".repeat(32))
+            .join(accounts::ISOLATED_HOME);
+        prepare_profile(&home).unwrap();
+        let cli = root.join("agy.ps1");
+        std::fs::write(&cli, format!(r#"
+if ($args[0] -ne 'acp') {{ exit 2 }}
+if ($args[1] -eq '--help') {{ exit 0 }}
+if ($args[1] -eq '--login') {{
+  if ($args.Count -ne 2 -or $env:HOME -ne $env:USERPROFILE -or $env:HOME -ne $env:GEMINI_CLI_HOME) {{ exit 3 }}
+  [Console]::Error.WriteLine('{LINK}')
+  [void][Console]::ReadLine()
+  exit 4
+}}
+[void][Console]::ReadLine()
+[Console]::WriteLine('{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"authMethods":[{{"id":"oauth-personal"}}]}}}}')
+"#)).unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let login = TerminalLogin::resolve(&cli, &home, "", &cancel).unwrap();
+        let auth = ManualAuth::default();
+        let mut shown = false;
+        let result = auth.run(
+            login.command(&cli, &home, "").unwrap(),
+            "win-launch",
+            &cancel,
+            |link| {
+                assert_eq!(link.url, LINK);
+                shown = true;
+                cancel.store(true, Ordering::Release);
+                Ok(())
+            },
+        );
+        assert!(shown);
+        assert_eq!(result.unwrap_err(), CANCELLED);
+        assert!(!accounts::isolated_token(&home).exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn terminal_child_fixture() {
         let Ok(mode) = std::env::var("ECPA_MANUAL_CHILD_FIXTURE") else {
@@ -746,7 +969,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"protocolVersion":1,"authMeth
         let auth = ManualAuth::default();
         let cancel = AtomicBool::new(false);
         for (mode, error) in [
-            ("early", EARLY_EXIT),
+            ("early", NO_LINK_EXIT),
             ("reject", REJECTED),
             ("network", NETWORK),
             ("unknown", FAILED),

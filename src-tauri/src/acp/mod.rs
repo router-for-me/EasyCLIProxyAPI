@@ -313,7 +313,7 @@ pub(crate) async fn add_acp_account(
         let state = app.state::<AcpState>();
         let result = (|| {
             // Terminal authentication is not an ACP authenticate RPC. Use the
-            // advertised official invocation, then reconnect to the same profile.
+            // fixed official invocation, then reconnect to the same profile.
             let login = manual_auth::TerminalLogin::resolve(&executable, &directory, &proxy, &guard.cancel)?;
             let command = login.command(&executable, &directory, &proxy)?;
             let identity = state.manual_auth.run(command, &pending.id, &guard.cancel, |link| {

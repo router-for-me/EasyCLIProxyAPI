@@ -399,7 +399,7 @@ impl Client {
     pub(super) fn initialize_manual(
         &mut self,
         cancel: &Arc<std::sync::atomic::AtomicBool>,
-    ) -> Result<Option<super::manual_auth::TerminalLogin>, String> {
+    ) -> Result<super::manual_auth::LoginAdvertisement, String> {
         let response = self.initialize_with_auth(cancel, true)?;
         Ok(super::manual_auth::TerminalLogin::advertised(&response))
     }

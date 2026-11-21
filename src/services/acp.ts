@@ -63,6 +63,8 @@ const accountErrorKeys: Record<string, string> = {
   'The installed Antigravity CLI does not offer supported terminal sign-in': 'acp.errorManualUnsupported',
   'Antigravity authorization expired while waiting for a response': 'acp.errorManualWaitExpired',
   'Could not deliver the authorization response to Antigravity CLI': 'acp.errorManualDelivery',
+  'Antigravity CLI exited without providing an authorization link': 'acp.errorManualNoLink',
+  'Antigravity CLI did not provide an authorization link in time': 'acp.errorManualNoLink',
   'Antigravity CLI exited before receiving the authorization response': 'acp.errorManualEarlyExit',
   'Antigravity CLI timed out completing authorization': 'acp.errorManualExchangeTimeout',
   'Google rejected the authorization response': 'acp.errorManualRejected',

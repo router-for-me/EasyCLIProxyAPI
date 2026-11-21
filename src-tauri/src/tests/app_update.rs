@@ -792,7 +792,7 @@ fn portable_update_manifest_uses_only_explicit_locale_release_notes() {
 }
 
 #[test]
-fn portable_update_manifest_requires_both_matching_github_assets() {
+fn portable_update_manifest_validates_every_present_github_asset() {
     let manifest = portable_update_test_manifest("1.2.3");
     assert!(validate_portable_update_manifest(&manifest).is_ok());
 
@@ -840,9 +840,19 @@ fn portable_update_manifest_requires_both_matching_github_assets() {
     }
 
     let (platform, _, _) = portable_update_asset_platform().unwrap();
-    let mut missing_arch = portable_update_test_manifest("1.2.3");
-    missing_arch.assets.remove(&format!("{platform}-aarch64"));
-    assert!(validate_portable_update_manifest(&missing_arch).is_err());
+    let mut empty = portable_update_test_manifest("1.2.3");
+    empty.assets.clear();
+    assert!(validate_portable_update_manifest(&empty).is_err());
+
+    let mut unknown_arch = portable_update_test_manifest("1.2.3");
+    let asset = unknown_arch
+        .assets
+        .remove(&format!("{platform}-aarch64"))
+        .unwrap();
+    unknown_arch
+        .assets
+        .insert(format!("{platform}-riscv64"), asset);
+    assert!(validate_portable_update_manifest(&unknown_arch).is_err());
 
     let mut invalid_timestamp = portable_update_test_manifest("1.2.3");
     invalid_timestamp.published_at = "not-a-timestamp".to_string();
@@ -879,7 +889,36 @@ fn portable_update_manifest_requires_both_matching_github_assets() {
             "{APP_RELEASE_DOWNLOAD_PREFIX}preview-20261104-1623/EasyCLIProxyAPI-v0.3.6-preview-{display}-{arch}.{suffix}"
         );
     }
-    assert!(validate_portable_update_manifest(&preview_manifest).is_ok());
+    for arch in ["amd64", "aarch64"] {
+        let mut single_arch = preview_manifest.clone();
+        let key = format!("{platform}-{arch}");
+        single_arch.assets.retain(|name, _| name == &key);
+        assert!(validate_portable_update_manifest(&single_arch).is_ok());
+        single_arch.full_assets = Some(single_arch.assets.clone());
+        assert!(validate_portable_update_manifest(&single_arch).is_ok());
+
+        let mut bad_checksum = single_arch.clone();
+        bad_checksum.assets.get_mut(&key).unwrap().sha256 = "invalid".to_string();
+        assert!(validate_portable_update_manifest(&bad_checksum).is_err());
+        let mut wrong_arch = single_arch.clone();
+        let other_arch = if arch == "amd64" { "aarch64" } else { "amd64" };
+        wrong_arch.full_assets.as_mut().unwrap().get_mut(&key).unwrap().url =
+            preview_manifest.assets[&format!("{platform}-{other_arch}")].url.clone();
+        assert!(validate_portable_update_manifest(&wrong_arch).is_err());
+
+        let mut bad_fallback = single_arch;
+        bad_fallback
+            .full_assets
+            .as_mut()
+            .unwrap()
+            .get_mut(&key)
+            .unwrap()
+            .fallback_urls = vec!["https://untrusted.example.com/package.zip".into()];
+        assert!(validate_portable_update_manifest_for_repository(
+            &bad_fallback,
+            Some("mirror-owner/EasyCLIProxyAPI"),
+        ).is_err());
+    }
 }
 
 #[test]
