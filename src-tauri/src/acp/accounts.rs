@@ -58,6 +58,11 @@ pub(super) fn safe_path(path: &Path) -> Result<(), String> {
             return Err("Invalid ACP profile path".into());
         }
         current.push(component);
+        // A Windows drive/UNC prefix on its own is not a complete filesystem
+        // path. Inspect the root only after its RootDir component is present.
+        if matches!(component, std::path::Component::Prefix(_)) {
+            continue;
+        }
         match std::fs::symlink_metadata(&current) {
             Ok(metadata) if unsafe_path_metadata(&metadata) => {
                 return Err("ACP account paths must not contain symbolic links".into());
@@ -308,6 +313,16 @@ pub(super) fn checked_isolated_home(path: &Path) -> Result<PathBuf, String> {
     let home = path
         .canonicalize()
         .map_err(|_| "Isolated ACP profile is unavailable")?;
+    #[cfg(windows)]
+    let home = {
+        // canonicalize supplies Win32 verbatim syntax even for ordinary drive
+        // paths. Keep the validated absolute spelling for CLI/Node shims.
+        if !path.is_absolute() {
+            return Err("Isolated ACP profile must be absolute".into());
+        }
+        safe_path(&home)?;
+        path.to_path_buf()
+    };
     let token = isolated_token(&home);
     safe_path(&token)?;
     match std::fs::symlink_metadata(&token) {

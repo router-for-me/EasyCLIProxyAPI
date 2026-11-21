@@ -104,7 +104,6 @@ export function AcpAccessPage() {
   const [editor, setEditor] = useState<{ account?: AcpAccount; reauthorize?: AcpAccount } | null>(null);
   const [accountLabel, setAccountLabel] = useState('');
   const [formError, setFormError] = useState('');
-  const [manualAvailable, setManualAvailable] = useState<boolean | null>(null);
   const [manualLink, setManualLink] = useState<AcpAuthorizationLink | null>(null);
   const [manualResponse, setManualResponse] = useState('');
   const [manualError, setManualError] = useState('');
@@ -196,16 +195,9 @@ export function AcpAccessPage() {
   const openEditor = (account?: AcpAccount) => {
     setAccountLabel(account?.label || ''); setFormError(''); setError(''); setEditor({ account });
   };
-  useEffect(() => {
-    setManualAvailable(null);
-    if (!editor || editor.account || !hasCli) return;
-    let active = true;
-    void acpApi.manualAuthAvailable().then(available => { if (active) setManualAvailable(available); }).catch(() => { if (active) setManualAvailable(false); });
-    return () => { active = false; };
-  }, [editor, hasCli]);
   const closeEditor = () => { if (!busy) { setEditor(null); setFormError(''); } };
   const saveAccount = async () => {
-    if (!editor || busy || (!editor.account && !manualAvailable)) return;
+    if (!editor || busy || (!editor.account && !hasCli)) return;
     const trimmed = accountLabel.trim();
     if (!trimmed || [...trimmed].length > 80 || /[\u0000-\u001f\u007f-\u009f]/u.test(accountLabel)) {
       setFormError(t('acp.labelInvalid')); labelInput.current?.focus(); return;
@@ -371,7 +363,7 @@ export function AcpAccessPage() {
     </Dialog> : null}
     {editor ? <Dialog as="form" size="sm" className="config-dialog acp-account-dialog acp-account-editor" title={t(editor.account ? 'acp.editNote' : editor.reauthorize ? 'acp.relogin' : 'acp.newAccount')} onClose={closeEditor} closeDisabled={busy} busy={busy} initialFocusRef={labelInput}
       onSubmit={event => { event.preventDefault(); if (manualLink) void submitManualResponse(); else void saveAccount(); }} actionsClassName="acp-dialog-actions"
-      actions={<><button type="button" className="secondary-button" disabled={busy} onClick={closeEditor}>{t('common.cancel')}</button><button type="submit" className="primary-button" disabled={manualLink ? manualSubmitting || !manualResponse.trim() : busy || (!editor.account && (!hasCli || manualAvailable !== true))}>{t(manualLink ? 'acp.submitManual' : editor.account ? 'common.save' : editor.reauthorize ? 'acp.relogin' : 'acp.addAccount')}</button></>}>
+      actions={<><button type="button" className="secondary-button" disabled={busy} onClick={closeEditor}>{t('common.cancel')}</button><button type="submit" className="primary-button" disabled={manualLink ? manualSubmitting || !manualResponse.trim() : busy || (!editor.account && !hasCli)}>{t(manualLink ? 'acp.submitManual' : editor.account ? 'common.save' : editor.reauthorize ? 'acp.relogin' : 'acp.addAccount')}</button></>}>
       <label className="acp-note-field"><span className="acp-note-label"><span>{t('acp.accountNote')}</span><span className="acp-note-count" aria-hidden="true">{[...accountLabel.trim()].length}/80</span></span><input ref={labelInput} type="text" value={accountLabel} disabled={busy || Boolean(editor.reauthorize)} aria-invalid={Boolean(formError)} aria-describedby={formError ? 'acp-note-error' : undefined} placeholder={t('acp.accountLabelPlaceholder')} onChange={event => { setAccountLabel(event.currentTarget.value); setFormError(''); }} /></label>
       {manualLink ? <div className="acp-note-field">
         <p>{t('acp.manualInstructions')}</p>
@@ -385,7 +377,6 @@ export function AcpAccessPage() {
       </div> : null}
       {formError ? <p id="acp-note-error" className="acp-form-error" role="alert">{formError}</p> : null}
       {!confirmationDialog ? actionNotice : null}
-      {!editor.account && !manualLink && manualAvailable === false ? <p className="acp-form-error" role="status">{t('acp.errorManualUnsupported')}</p> : null}
       {operationStatus}
     </Dialog> : null}
     {confirmationDialog}

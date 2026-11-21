@@ -36,6 +36,15 @@ enum SystemPromptSupport {
 }
 
 pub(super) fn command(executable: &Path, profile: &Path, proxy: &str) -> Result<Command, String> {
+    command_with_args(executable, profile, proxy, &[])
+}
+
+pub(super) fn command_with_args(
+    executable: &Path,
+    profile: &Path,
+    proxy: &str,
+    extra: &[&str],
+) -> Result<Command, String> {
     let isolated = super::accounts::is_isolated_home(profile);
     let canonical;
     let profile = if isolated {
@@ -44,16 +53,43 @@ pub(super) fn command(executable: &Path, profile: &Path, proxy: &str) -> Result<
     } else {
         profile
     };
-    let mut command = Command::new(executable);
+    let mut args = vec![std::ffi::OsString::from("acp")];
+    // Standalone help and sign-in use the documented bare subcommand. Their
+    // isolated HOME points to the same default storage as the runtime does.
+    if extra.is_empty() {
+        args.extend([
+            "--gemini-dir".into(),
+            profile.join(".gemini").into_os_string(),
+        ]);
+        args.extend(
+            [
+                "--app-data-dir",
+                "antigravity-cli",
+                "--disable-telemetry",
+                "--include-default-customizations=false",
+            ]
+            .map(std::ffi::OsString::from),
+        );
+    }
+    args.extend(extra.iter().map(std::ffi::OsString::from));
+    #[cfg(windows)]
+    let mut command = {
+        let arguments = args
+            .into_iter()
+            .map(|arg| {
+                arg.into_string()
+                    .map_err(|_| "ACP argument is not valid Unicode")
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        crate::windows_literal_cli_command(executable, &arguments)?
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut command = Command::new(executable);
+        command.args(args);
+        command
+    };
     command
-        .args(["acp", "--gemini-dir"])
-        .arg(profile.join(".gemini"))
-        .args([
-            "--app-data-dir",
-            "antigravity-cli",
-            "--disable-telemetry",
-            "--include-default-customizations=false",
-        ])
         .current_dir(profile.join("workspace"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -558,6 +594,74 @@ mod tests {
             let cleared = format!("{valid}\nI1117 server_oauth.go:224] applyAuthResult: email={email}, authMethod=consumer");
             assert!(email_from_auth_log(&cleared).is_none());
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_isolated_launch_handles_absolute_and_verbatim_profile_paths() {
+        use super::super::{accounts, prepare_profile};
+        let root = crate::unique_test_temp_path("acp Windows profile with spaces");
+        let home = root
+            .join("accounts")
+            .join("a".repeat(32))
+            .join(accounts::ISOLATED_HOME);
+        prepare_profile(&home).unwrap();
+        for path in [&home, &home.canonicalize().unwrap()] {
+            let command = command_with_args(Path::new("agy.exe"), path, "", &["--login"]).unwrap();
+            let args = command.get_args().collect::<Vec<_>>();
+            assert_eq!(args[0], "acp");
+            assert_eq!(args.len(), 2);
+            assert_eq!(args.last().copied(), Some(std::ffi::OsStr::new("--login")));
+            assert!(command
+                .get_envs()
+                .any(|(key, value)| key == "USERPROFILE" && value == Some(path.as_os_str())));
+            assert!(command
+                .get_envs()
+                .any(|(key, value)| key == "SSH_CONNECTION"
+                    && value == Some(std::ffi::OsStr::new("127.0.0.1 0 127.0.0.1 0"))));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Executes real child processes on Windows; cross-compilation alone does not run it.
+    #[cfg(windows)]
+    #[test]
+    fn windows_isolated_launch_runs_npm_shims() {
+        use super::super::{accounts, prepare_profile};
+        let root = crate::unique_test_temp_path("acp Windows & profile");
+        let home = root
+            .join("accounts")
+            .join("a".repeat(32))
+            .join(accounts::ISOLATED_HOME);
+        prepare_profile(&home).unwrap();
+        let script = root.join("probe.mjs");
+        std::fs::write(
+            script,
+            r#"
+import assert from 'node:assert/strict';
+const root = process.env.USERPROFILE;
+assert.equal(process.env.HOME, root);
+assert.equal(process.env.GEMINI_CLI_HOME, root);
+assert.equal(process.env.SSH_CONNECTION, '127.0.0.1 0 127.0.0.1 0');
+assert.deepEqual(process.argv.slice(2), ['acp', '--login']);
+console.log('ACP_WINDOWS_FIXTURE_OK');
+"#,
+        )
+        .unwrap();
+        for name in ["agy.cmd", "agy.bat"] {
+            let shim = root.join(name);
+            std::fs::write(&shim, "@echo off\r\nnode \"%dp0%\\probe.mjs\" %*\r\n").unwrap();
+            let output = command_with_args(&shim, &home, "", &["--login"])
+                .unwrap()
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap().trim(),
+                "ACP_WINDOWS_FIXTURE_OK"
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(target_os = "linux")]

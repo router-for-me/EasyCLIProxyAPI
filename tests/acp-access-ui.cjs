@@ -152,7 +152,7 @@ const path = require('node:path');
             });
           }
           if (command === 'submit_acp_account_authorization') {
-            if (!pending || args.attempt !== 'manual-fixture' || args.response !== '4/synthetic') {
+            if (!pending || args.attempt !== 'manual-fixture' || args.response !== '4/' + 'a'.repeat(3069) + 'z') {
               return Promise.reject(new Error('Enter the authorization code or the official Antigravity callback URL'));
             }
             const original = pending;
@@ -174,7 +174,9 @@ const path = require('node:path');
       await authResponse.fill('invalid');
       await submit.click();
       assert.match(await editor.locator('.acp-form-error').textContent(), text(/请粘贴本次授权码/, /Paste the code/));
-      await authResponse.fill('4/synthetic');
+      const fullResponse = '4/' + 'a'.repeat(3069) + 'z';
+      await authResponse.fill(fullResponse);
+      assert.equal(await authResponse.inputValue(), fullResponse);
       await submit.click();
       await editor.waitFor({ state: 'detached' });
       assert.equal(await dialog.locator('.acp-managed-account').count(), 2);
@@ -185,17 +187,26 @@ const path = require('node:path');
         await page.evaluate(() => {
           const tauri = window.__TAURI_INTERNALS__;
           const invoke = tauri.invoke;
+          let attempts = 0;
           tauri.invoke = (command, args, options) => {
-            if (command === 'acp_manual_auth_available') {
-              window.__acpUnsupportedChecked = true;
-              return Promise.resolve(false);
+            if (command === 'add_acp_account' && args?.label === 'Retry') {
+              window.__acpRetryCount = ++attempts;
+              return Promise.reject(new Error('Could not verify Antigravity CLI terminal sign-in: ACP initialization failed'));
             }
             return invoke(command, args, options);
           };
         });
         await button(text('新增账号', 'Add account')).click();
-        await page.waitForFunction(() => window.__acpUnsupportedChecked === true);
-        assert.equal(await editor.getByRole('button', { name: text('新增并登录', 'Add and sign in'), exact: true }).isEnabled(), false);
+        await label.fill('Retry');
+        const add = editor.getByRole('button', { name: text('新增并登录', 'Add and sign in'), exact: true });
+        for (const attempt of [1, 2]) {
+          await add.click();
+          await page.waitForFunction(attempt => window.__acpRetryCount === attempt, attempt);
+          await idle();
+          assert.match(await editor.locator('.acp-action-notice').textContent(), text(/无法验证 Antigravity CLI 的终端授权/, /Could not verify Antigravity CLI terminal sign-in/));
+          assert.equal(await add.isEnabled(), true);
+          assert.equal(await dialog.locator('.acp-managed-account').count(), 2);
+        }
       }
       if (process.env.ECPA_ACP_ADD_ONLY === '1') {
         console.log('PASS browser-mock ACP add regression:', locale);

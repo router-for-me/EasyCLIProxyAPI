@@ -25,7 +25,6 @@ export const acpApi = {
   status: () => invoke<AcpStatus>('get_acp_status'),
   connect: (login: boolean) => invoke<AcpStatus>('acp_connect', { login }),
   switchAccount: (accountId: string) => invoke<AcpStatus>('switch_acp_account', { accountId }),
-  manualAuthAvailable: () => invoke<boolean>('acp_manual_auth_available'),
   addAccount: (label: string, receive: (link: AcpAuthorizationLink) => void, replace?: string) => {
     const onLink = new Channel<AcpAuthorizationLink>();
     onLink.onmessage = receive;
@@ -62,6 +61,12 @@ const accountErrorKeys: Record<string, string> = {
   'An ACP operation is already running': 'acp.errorAccountBusy',
   'Wait for the current ACP operation to finish': 'acp.errorAccountBusy',
   'The installed Antigravity CLI does not offer supported terminal sign-in': 'acp.errorManualUnsupported',
+  'Antigravity authorization expired while waiting for a response': 'acp.errorManualWaitExpired',
+  'Could not deliver the authorization response to Antigravity CLI': 'acp.errorManualDelivery',
+  'Antigravity CLI exited before receiving the authorization response': 'acp.errorManualEarlyExit',
+  'Antigravity CLI timed out completing authorization': 'acp.errorManualExchangeTimeout',
+  'Google rejected the authorization response': 'acp.errorManualRejected',
+  'Antigravity CLI could not reach Google during authorization': 'acp.errorManualNetwork',
   'Antigravity terminal sign-in did not complete': 'acp.errorManualFailed',
   'Enter the authorization code or the official Antigravity callback URL': 'acp.errorManualInput',
   'This Antigravity authorization request is no longer waiting for a code': 'acp.errorManualInactive',
@@ -71,6 +76,7 @@ const accountErrorKeys: Record<string, string> = {
 export function acpErrorMessageKey(error: string): string | null {
   const exact = accountErrorKeys[error];
   if (exact) return exact;
+  if (error.startsWith('Could not verify Antigravity CLI terminal sign-in:') || error === 'Could not start Antigravity CLI to check terminal sign-in') return 'acp.errorManualProbeFailed';
   if (error.startsWith('This Google account is already saved.')) return 'acp.errorDuplicateIdentity';
   if (error.startsWith('Google identity could not be verified against saved accounts.')) return 'acp.errorIdentityUnknown';
   if (error.includes('ACP API provider configuration sync failed: ')) return 'acp.errorProviderSyncFailed';

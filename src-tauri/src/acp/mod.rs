@@ -290,31 +290,6 @@ pub(crate) async fn switch_acp_account(
 }
 
 #[tauri::command]
-pub(crate) async fn acp_manual_auth_available(app: tauri::AppHandle) -> Result<bool, String> {
-    let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    let Some(executable) = crate::find_antigravity_cli(&home) else { return Ok(false); };
-    let proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
-    tauri::async_runtime::spawn_blocking(move || {
-        let temp = std::env::temp_dir().canonicalize().map_err(|e| e.to_string())?
-            .join(format!("ecpa-acp-capability-{}", accounts::random_id()?));
-        let mut builder = std::fs::DirBuilder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        builder.create(&temp).map_err(|e| e.to_string())?;
-        let profile = temp.join("accounts").join(accounts::random_id()?).join(accounts::ISOLATED_HOME);
-        let supported = prepare_profile(&profile).and_then(|_| {
-            manual_auth::TerminalLogin::resolve(&executable, &profile, &proxy, &Arc::new(AtomicBool::new(false)))
-        }).is_ok();
-        // This directory belongs to the no-login probe only, not any account.
-        let _ = std::fs::remove_dir_all(&temp);
-        Ok(supported)
-    }).await.map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
 pub(crate) async fn add_acp_account(
     app: tauri::AppHandle,
     label: String,
@@ -340,8 +315,7 @@ pub(crate) async fn add_acp_account(
             // Terminal authentication is not an ACP authenticate RPC. Use the
             // advertised official invocation, then reconnect to the same profile.
             let login = manual_auth::TerminalLogin::resolve(&executable, &directory, &proxy, &guard.cancel)?;
-            let mut command = rpc::command(&executable, &directory, &proxy)?;
-            login.apply(&mut command);
+            let command = login.command(&executable, &directory, &proxy)?;
             let identity = state.manual_auth.run(command, &pending.id, &guard.cancel, |link| {
                 on_link.send(link).map_err(|_| String::from(manual_auth::FAILED))
             })?;
