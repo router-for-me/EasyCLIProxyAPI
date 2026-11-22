@@ -530,6 +530,9 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
           ? t('kernel.status.notInstalled')
           : null;
 
+  const showCoreUpdateAction = Boolean(!external && latestVersion && (!coreInstalled || coreHasUpdate));
+  const coreActionCount = showCoreUpdateAction ? 3 : 2;
+
   const computedPercent = progress?.percent ?? (progress?.total && progress.total > 0 ? (progress.downloaded / progress.total) * 100 : null);
   const progressKnown = computedPercent !== null;
   const progressPercent = clampPercent(computedPercent ?? 0);
@@ -783,7 +786,7 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
             </div>
           </div>
 
-          <div className="version-card-actions core-actions">
+          <div className={`version-card-actions core-actions actions-count-${coreActionCount}`}>
             <button
               type="button"
               className="secondary-button"
@@ -797,19 +800,21 @@ export function VersionManagementPage({ displaySeries = 'stable' }: { displaySer
               <span>{checkingLatest ? t('kernel.update.checking') : t('kernel.versions.check')}</span>
             </button>
 
-            <button
-              type="button"
-              className={latestVersion && (!coreInstalled || coreHasUpdate) ? 'primary-button' : 'secondary-button'}
-              title={latestVersion ? t('kernel.versions.stopAndUpdateVersion', { version: latestVersion }) : t('kernel.versions.installLatest')}
-              disabled={external || !latestVersion || busy}
-              onClick={() => {
-                setConfirmInstallVersion(latestVersion);
-                setConfirmUpdateOpen(true);
-              }}
-            >
-              <Download size={15} aria-hidden="true" />
-              <span>{!coreInstalled ? t('kernel.versions.installLatestMissing') : t('kernel.versions.installLatest')}</span>
-            </button>
+            {showCoreUpdateAction ? (
+              <button
+                type="button"
+                className="primary-button"
+                title={latestVersion ? t('kernel.versions.stopAndUpdateVersion', { version: latestVersion }) : t('kernel.versions.installLatest')}
+                disabled={external || !latestVersion || busy}
+                onClick={() => {
+                  setConfirmInstallVersion(latestVersion);
+                  setConfirmUpdateOpen(true);
+                }}
+              >
+                <Download size={15} aria-hidden="true" />
+                <span>{!coreInstalled ? t('kernel.versions.installLatestMissing') : t('kernel.versions.installLatest')}</span>
+              </button>
+            ) : null}
 
             <button
               type="button"
