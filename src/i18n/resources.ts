@@ -14,6 +14,8 @@ export type MessageVariables = Record<string, string | number>;
 
 export const zhTW: Record<MessageKey, string> = {
   ...createTraditionalMessages(zhCN),
+  'app.workspace.scrollVertical': '主要內容垂直捲動',
+  'app.workspace.scrollHorizontal': '主要內容水平捲動',
   'apiAccess.modelDialog.notReturnedByUpstream': '上游未傳回',
   'apiAccess.health.budgetExhausted': '探測預算耗盡',
   'apiAccess.health.budgetExhaustedDetail': '已收到回應，但生成預算已耗盡，無法測量首個正文 Token 的延遲。',

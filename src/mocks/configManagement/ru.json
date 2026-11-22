@@ -1,0 +1,548 @@
+{
+  "config_management": {
+    "title": "Панель конфигурации",
+    "meta_fields": "Настроек: {{count}}",
+    "meta_dirty": "Не сохранено: {{count}}",
+    "meta_dirty_source": "Несохранённые правки исходника",
+    "meta_errors": "Ошибок валидации: {{count}}",
+    "meta_synced": "Синхронизировано",
+    "actions": {
+      "discard": "Отменить изменения",
+      "save": "Сохранить изменения"
+    },
+    "discard_confirm_message": "Отменить все несохранённые изменения и восстановить последнюю версию с сервера?",
+    "mode": {
+      "label": "Режим редактора",
+      "visual": "Визуальный",
+      "source": "Исходный код"
+    },
+    "reload": "Перезагрузить",
+    "reload_confirm_message": "Перезагрузка отбросит ваши несохранённые изменения. Продолжить?",
+    "save": "Сохранить",
+    "status_loading": "Загрузка конфигурации...",
+    "status_loading_short": "Загрузка",
+    "status_loaded": "Конфигурация загружена",
+    "status_loaded_short": "Загружено",
+    "status_dirty": "Есть несохранённые изменения",
+    "status_dirty_short": "Несохранено",
+    "status_disconnected": "Подключитесь к серверу, чтобы загрузить конфигурацию",
+    "status_disconnected_short": "Нет связи",
+    "status_load_failed": "Не удалось загрузить",
+    "status_load_failed_short": "Ошибка",
+    "status_saving": "Сохранение конфигурации...",
+    "status_saving_short": "Сохранение",
+    "save_success": "Конфигурация успешно сохранена",
+    "visual_mode_unavailable": "Визуальный редактор недоступен, пока не исправлен синтаксис YAML",
+    "visual_mode_unavailable_short": "Ошибка YAML",
+    "validation_blocked_short": "Есть ошибки",
+    "visual_mode_unavailable_detail": "Визуальный редактор недоступен, потому что в конфигурации есть некорректный YAML: {{message}}",
+    "visual_mode_save_blocked": "Нельзя сохранять из визуального режима, пока не исправлен синтаксис YAML",
+    "source_changes_before_visual": "Сохраните или отмените изменения исходника перед переходом в визуальный режим.",
+    "precise_save_incomplete": "Точечное сохранение не завершено; часть изменений могла примениться. Черновик сохранён. Повторите сохранение, чтобы проверить оставшиеся отличия от серверной конфигурации.",
+    "concurrent_list_conflict": "Список {{path}} на сервере изменился после создания базы черновика. Сохранение заблокировано, чтобы не затереть эти изменения. Черновик сохранён; запишите свои правки, затем перезагрузите конфигурацию и согласуйте изменения.",
+    "precise_save_recovery_required": "Не удалось прочитать результат сохранения. Редактирование приостановлено. Повторите сохранение, чтобы обновить базу черновика, или перезагрузите конфигурацию.",
+    "visual_mode_latest_yaml_invalid": "Последняя конфигурация на сервере содержит некорректный YAML. Проверьте её в режиме исходника перед сохранением визуальных изменений: {{message}}",
+    "editor_placeholder": "key: value",
+    "search_placeholder": "Поиск по конфигурации...",
+    "search_button": "Поиск",
+    "search_no_results": "Нет результатов",
+    "search_prev": "Назад",
+    "search_next": "Вперёд",
+    "diff": {
+      "title": "Обзор изменений",
+      "confirm": "Подтвердить",
+      "no_changes": "Изменений не обнаружено"
+    },
+    "visual": {
+      "serverExtras": {
+        "trustedProxies": {
+          "label": "Доверенные прокси",
+          "hint": "IP-адреса или CIDR; пустой список отключает доверие к заголовкам пересылки. Доверие ко всем адресам создаёт риск подмены IP клиента. Нужен перезапуск бэкенда."
+        },
+        "discoveryEnabled": {
+          "label": "Включить обнаружение",
+          "hint": "Объявлять сервис через mDNS / DNS-SD в локальной сети. По умолчанию выключено; изменения применяются без перезапуска."
+        },
+        "discoveryServiceName": {
+          "label": "Префикс имени сервиса",
+          "hint": "Бэкенд добавляет короткий ID. Если пусто, используется CPA-<ShortID>."
+        },
+        "discoveryServiceType": {
+          "label": "Тип сервиса"
+        },
+        "discoverySubtypes": {
+          "label": "Подтипы протоколов",
+          "hint": "Если пусто, используются пять стандартных протоколов. Начальный _ добавляется автоматически; неверные записи игнорируются."
+        },
+        "discoveryInterfacesInclude": {
+          "label": "Включить интерфейсы",
+          "hint": "Если пусто, физические интерфейсы локальной сети выбираются автоматически. Укажите имена или префиксы с * в конце."
+        },
+        "discoveryInterfacesExclude": {
+          "label": "Исключить интерфейсы",
+          "hint": "Укажите имена или префиксы с * в конце. Исключения имеют приоритет над включениями."
+        },
+        "discoveryAuthRequired": {
+          "label": "Объявлять требование аутентификации",
+          "hint": "По умолчанию включено. Только метаданные объявления; реальная аутентификация API не меняется."
+        },
+        "discoveryAdvertiseManagement": {
+          "label": "Объявлять сервис управления",
+          "hint": "По умолчанию выключено. Объявляет лишь наличие сервиса управления; права удалённого доступа не меняются."
+        },
+        "discoveryTitle": "Обнаружение в локальной сети",
+        "discoveryHint": "Нужны физические интерфейсы с поддержкой multicast и прослушивание не на loopback. Docker обычно требует сеть host; доступность не гарантируется."
+      },
+      "additions": {
+        "oauthTitle": "Поведение OAuth-провайдеров",
+        "oauthHint": "Эти настройки провайдеров применяются только к OAuth и учётным данным из файлов, но не к API-ключам.",
+        "claudeTitle": "Claude",
+        "codexTitle": "Codex",
+        "antigravityTitle": "Antigravity",
+        "xaiTitle": "xAI",
+        "liveRelayTitle": "Медиаретранслятор Codex Live",
+        "iceAdd": "Добавить ICE-сервер",
+        "iceRemove": "Удалить ICE-сервер {{index}}",
+        "iceURLs": "URL STUN/TURN",
+        "iceUsername": "Имя пользователя TURN",
+        "iceCredential": "Пароль TURN",
+        "iceServer": "ICE-сервер {{index}}",
+        "routingSessionAffinitySubagents": {
+          "label": "Привязка сессий субагентов",
+          "hint": "Включена по умолчанию; действует только при включённой привязке сессий. Субагенты наследуют учётные данные родительской сессии для повторного использования кеша. Отключите для распределения субагентов по пулу учётных данных и повышения параллелизма."
+        },
+        "saveCooldownStatus": {
+          "label": "Сохранять состояние охлаждения",
+          "hint": "Сохранять состояние охлаждения учётных данных в файлах .cds рядом с файлами авторизации. По умолчанию отключено: состояние хранится только в памяти."
+        },
+        "transientErrorCooldownSeconds": {
+          "label": "Охлаждение при временных ошибках (секунды)",
+          "hint": "Для ошибок вышестоящего сервера 408/500/502/503/504/520–526. 0 означает стандартные 60 секунд; отрицательное значение отключает такое охлаждение."
+        },
+        "videoResultAuthCacheTTL": {
+          "label": "Срок кеширования привязки видео к учётным данным",
+          "hint": "Как долго ID видео остаются привязаны к учётным данным, с которыми они созданы. Укажите длительность, например 30m или 3h. По умолчанию: 3h."
+        },
+        "claudeHeaderTimezone": {
+          "label": "Резервный часовой пояс",
+          "hint": "Часовой пояс IANA для currentDate при маскировке запроса, например Asia/Singapore, или Local для часового пояса сервера. Поле timezone в JSON-файле учётных данных имеет приоритет."
+        },
+        "claudeModelLevelCooling": {
+          "label": "Охлаждение на уровне модели",
+          "hint": "Применять охлаждение при исчерпании квоты Claude только к запрошенной модели, а не ко всем моделям с теми же учётными данными. По умолчанию отключено."
+        },
+        "claudeDisableCloakMode": {
+          "label": "Отключить маскировку запросов",
+          "hint": "Отключить имитацию Claude Code CLI и замену системного промпта, передавая исходный промпт без изменений. Поле cloak_mode в файле учётных данных может переопределить настройку. По умолчанию false: автоматическая маскировка клиентов, отличных от Claude Code."
+        },
+        "claudeCodeDisableCloakingModelList": {
+          "label": "Отключить маскировку ID моделей",
+          "hint": "Возвращать исходные ID моделей в ответах списка моделей Anthropic вместо замаскированных. По умолчанию отключено."
+        },
+        "codexDisableCloaking": {
+          "label": "Отключить маскировку запросов",
+          "hint": "Не устанавливать принудительно официальные заголовки Codex User-Agent и Originator в запросах HTTP/SSE и WebSocket. По умолчанию отключено."
+        },
+        "codexModelLevelCooling": {
+          "label": "Охлаждение на уровне модели",
+          "hint": "Применять охлаждение при usage_limit_reached только к запрошенной модели, а не ко всем моделям с теми же учётными данными. По умолчанию отключено."
+        },
+        "codexStreamBootstrapBuffering": {
+          "label": "Буферизация начала потока",
+          "hint": "Задерживать начальные пустые события и сигналы поддержания соединения, чтобы сменить учётные данные при раннем отказе из-за перегрузки или ограничения частоты. По умолчанию отключено. Задерживает заголовки ответа и может вызвать тайм-аут клиента или обратного прокси; буфер ограничен числом кадров и байтов."
+        },
+        "codexStreamBootstrapTimeout": {
+          "label": "Тайм-аут буферизации начала потока",
+          "hint": "Необязательный предел времени буферизации, например 20s. По умолчанию 0: без ограничения времени, но с лимитами кадров и байтов. Проверяется при поступлении кадров; не является жёстким тайм-аутом для любого зависания сети. Заголовки могут ожидать вывода преобразованных данных."
+        },
+        "codexOptimizeMultiAgentV2": {
+          "label": "Оптимизация нескольких агентов v2",
+          "hint": "Оптимизировать официальные многоагентные запросы Codex: обновлять сведения о моделях spawn_agent, убирать шифрование параметров сообщений, нормализовать agent_message и преобразовывать их в пользовательские сообщения для протоколов, отличных от Codex. По умолчанию отключено."
+        },
+        "codexOrphanDelegationCompatibility": {
+          "label": "Совместимость результатов делегирования без вызова",
+          "hint": "Для запросов с X-Openai-Subagent: collab_spawn преобразовывать результаты codex_app/create_thread и codex_app/send_message_to_thread без корректного соответствующего вызова в пользовательские сообщения. По умолчанию отключено."
+        },
+        "codexResponseSteering": {
+          "label": "Управление ответом",
+          "hint": "Экспериментальный полнодуплексный режим Codex Responses WebSocket. Каждое соединение закреплено за одним аккаунтом и моделью вышестоящего сервера; принятые входные данные не воспроизводятся повторно. По умолчанию отключено."
+        },
+        "antigravityConnectionPoolEnabled": {
+          "label": "Включить пул соединений",
+          "hint": "Повторно использовать соединения HTTP/1.1 с вышестоящим сервером. По умолчанию false: короткоживущие соединения."
+        },
+        "antigravityConnectionPoolIdleTimeout": {
+          "label": "Тайм-аут простаивающего соединения",
+          "hint": "Срок хранения простаивающих соединений в пуле. По умолчанию 30s; максимум 210s. Нулевая или отрицательная длительность включает короткоживущие соединения."
+        },
+        "antigravityConnectionPoolMaxIdleConnsPerHost": {
+          "label": "Максимум простаивающих соединений на хост",
+          "hint": "Максимум простаивающих соединений на хост для каждого набора учётных данных. По умолчанию: 2; предел: 100. Ноль использует стандартное значение Go (2), отрицательное число включает короткоживущие соединения."
+        },
+        "xaiInjectXSearch": {
+          "label": "Добавлять x_search",
+          "hint": "Добавлять встроенный инструмент x_search от xAI, если он не объявлен в запросе, в том числе в tool_choice.allowed_tools, когда применимо. По умолчанию отключено."
+        },
+        "codexLiveMediaRelayEnabled": {
+          "label": "Включить медиаретранслятор",
+          "hint": "Принимать и ретранслировать медиа WebRTC Codex Live в этом процессе. Требуется доступность входящего UDP. По умолчанию отключено для сохранения прямых медиасоединений."
+        },
+        "codexLiveMediaRelayMaxSessions": {
+          "label": "Максимум одновременных медиасессий",
+          "hint": "Пустое поле или 0 означает стандартные 32 сессии. Пользовательский диапазон UDP должен выделять не менее двух портов на сессию."
+        },
+        "codexLiveMediaRelayDisablePrivateRemoteIPs": {
+          "label": "Блокировать кандидаты с частными удалёнными IP",
+          "hint": "По умолчанию false: частные кандидаты разрешены для локальных клиентов и доверенных сетей. Включите для отклонения SDP-кандидатов клиента с частными, loopback, link-local или неопределёнными IP, чтобы снизить риск доступа к внутренней сети; локальные подключения могут перестать работать."
+        },
+        "codexLiveMediaRelayPublicIP": {
+          "label": "Объявляемый публичный IP",
+          "hint": "Необязательный публичный IPv4 или IPv6, объявляемый при размещении прокси за NAT 1:1. Укажите IP-адрес, а не имя хоста."
+        },
+        "codexLiveMediaRelayUDPPortMin": {
+          "label": "Минимальный UDP-порт",
+          "hint": "Установите обе границы в 0 для системного выделения либо задайте непрерывный диапазон включительно, содержащий не менее двух портов на каждую разрешённую сессию."
+        },
+        "codexLiveMediaRelayUDPPortMax": {
+          "label": "Максимальный UDP-порт",
+          "hint": "Не может быть меньше минимального порта. Обе границы должны быть нулевыми или обе ненулевыми; нужно не менее двух портов на сессию (64 порта для стандартных 32 сессий)."
+        },
+        "codexLiveMediaRelayICEServers": {
+          "label": "ICE-серверы",
+          "hint": "Необязательные STUN/TURN-серверы с URL stun:, stuns:, turn: или turns:. JSON API конфигурации не возвращает учётные данные TURN. Вводите секрет в поле пароля; не допускайте его попадания в снимки экрана и журналы."
+        }
+      },
+      "search": {
+        "placeholder": "Поиск настроек (по названию или ключу YAML)",
+        "no_results": "Нет подходящих настроек"
+      },
+      "sections": {
+        "common": {
+          "title": "Основные"
+        },
+        "connectivity": {
+          "title": "Доступ и аутентификация"
+        },
+        "logging": {
+          "title": "Логи и диагностика"
+        },
+        "advanced": {
+          "antigravity_credits": "Использовать Antigravity Credits",
+          "title": "Дополнительно и эксперименты",
+          "plugins_title": "Плагины",
+          "antigravity_title": "Antigravity",
+          "devin_title": "Devin",
+          "signature_title": "Проверка подписей"
+        },
+        "server": {
+          "github_token": "Глобальный токен GitHub",
+          "github_token_hint": "Используется для серверных запросов к GitHub, например обновлений панели и загрузки плагинов. Имеет приоритет над GITHUB_TOKEN; пустое значение использует учётные данные из окружения, а при их отсутствии — анонимные запросы. Совпадающие правила авторизации магазина плагинов имеют приоритет.",
+          "host": "Адрес хоста",
+          "port": "Порт"
+        },
+        "tls": {
+          "title": "Настройка TLS/SSL",
+          "enable": "Включить TLS",
+          "cert": "Путь к сертификату",
+          "key": "Путь к закрытому ключу"
+        },
+        "remote": {
+          "title": "Удалённое управление",
+          "allow_remote": "Разрешить удалённый доступ",
+          "allow_remote_desc": "Разрешить управление с других хостов",
+          "disable_panel": "Отключить панель",
+          "disable_auto_update_panel": "Отключить автообновление панели",
+          "disable_auto_update_panel_desc": "Скачивать панель при первом отсутствии, но не обновлять её автоматически с GitHub",
+          "secret_key": "Ключ управления",
+          "secret_key_placeholder": "Задайте ключ управления",
+          "panel_repo": "Репозиторий панели"
+        },
+        "auth": {
+          "auth_dir": "Каталог OAuth (oauth.auth-dir)"
+        },
+        "system": {
+          "debug": "Режим отладки",
+          "commercial_mode": "Коммерческий режим",
+          "commercial_mode_desc": "Отключить тяжёлое промежуточное ПО для поддержки высокой нагрузки",
+          "logging_to_file": "Журналировать в файл",
+          "plugins_enabled": "Включить систему плагинов",
+          "plugins_enabled_desc": "Включает загрузку стандартных dynamic-library плагинов; отдельные экземпляры управляются на странице плагинов",
+          "plugin_store_sources": "Сторонние источники плагинов",
+          "plugin_store_sources_desc": "Добавляет registry-источники магазина плагинов; встроенный официальный источник всегда сохраняется",
+          "plugin_store_sources_label": "URL registry источника плагинов (plugins.store-sources)",
+          "plugin_store_sources_placeholder": "https://example.com/cliproxy-plugins/registry.json",
+          "plugin_store_auth": "Правила авторизации магазина плагинов",
+          "plugin_store_auth_hint": "Указывайте только имена переменных окружения, не реальные token. Backend читает значения из своей среды выполнения.",
+          "store_auth_empty": "Правила авторизации не настроены. Публичным источникам плагинов они не нужны.",
+          "store_auth_rule": "Правило авторизации",
+          "store_auth_add": "Добавить правило",
+          "store_auth_match": "Совпадающий URL-префикс",
+          "store_auth_type": "Тип авторизации",
+          "store_auth_apply_to": "Применять к",
+          "store_auth_apply_to_hint": "Если ничего не выбрано, правило применяется ко всем типам запросов.",
+          "store_auth_apply_registry": "Registry",
+          "store_auth_apply_metadata": "Metadata",
+          "store_auth_apply_artifact": "Artifact",
+          "store_auth_type_none": "Нет",
+          "store_auth_type_bearer": "Bearer",
+          "store_auth_type_basic": "Basic",
+          "store_auth_type_header": "Свой Header",
+          "store_auth_type_github_token": "GitHub token",
+          "store_auth_token_env": "Переменная token",
+          "store_auth_username_env": "Переменная username",
+          "store_auth_password_env": "Переменная password",
+          "store_auth_header_name": "Имя Header",
+          "store_auth_header_value_env": "Переменная значения Header",
+          "store_auth_allow_insecure": "Разрешить небезопасные HTTP URL",
+          "logs_max_size": "Максимальный размер файла журнала (МБ)",
+          "error_logs_max_files": "Файлов журнала ошибок",
+          "usage_statistics_enabled": "Включить статистику использования в памяти",
+          "redis_usage_retention": "Хранение очереди Redis usage (сек)",
+          "redis_usage_retention_hint": "Время хранения вывода RESP LPOP/RPOP в памяти, максимум 3600 секунд",
+          "antigravity_sensitive_words": "Обфускация стоп-слов",
+          "antigravity_sensitive_words_desc": "Вставляет символы нулевой ширины в совпадающие слова системных инструкций Antigravity, затрудняя точное распознавание ключевых слов на стороне сервиса",
+          "antigravity_sensitive_words_label": "Стоп-слова OAuth (oauth.providers.antigravity.sensitive-words)",
+          "antigravity_sensitive_words_placeholder": "proxy",
+          "antigravity_sensitive_words_hint": "Одно слово или фраза в строке. Регистр не учитывается; пустые значения удаляются, а значения короче 2 символов игнорируются backend",
+          "devin_sensitive_words": "Стоп-слова системного промпта Devin",
+          "devin_sensitive_words_desc": "Обрабатываются только системные промпты Devin: строка с настроенным словом удаляется целиком, затем оставшийся промпт обфусцируется. Обычные сообщения и аргументы инструментов не изменяются",
+          "devin_sensitive_words_label": "Стоп-слова OAuth (oauth.providers.devin.sensitive-words)",
+          "devin_sensitive_words_placeholder": "чувствительная фраза",
+          "devin_sensitive_words_hint": "Одно слово или фраза в строке. Настраивайте осторожно: при совпадении вся строка системного промпта удаляется; пустые значения удаляются при сохранении",
+          "antigravity_signature_cache": "Включить кэш подписей Antigravity",
+          "antigravity_signature_cache_desc": "Предпочитать и проверять кэшированные подписи thinking-блоков",
+          "antigravity_signature_strict": "Строгая проверка bypass-подписи",
+          "antigravity_signature_strict_desc": "Применяется только при отключённом кэше подписей; проверяет полное дерево Claude protobuf"
+        },
+        "headers": {
+          "title": "Заголовки по умолчанию",
+          "claude_title": "Заголовки Claude OAuth по умолчанию",
+          "codex_title": "Заголовки Codex OAuth по умолчанию",
+          "user_agent": "User-Agent",
+          "package_version": "Package Version",
+          "runtime_version": "Runtime Version",
+          "os": "OS",
+          "arch": "Arch",
+          "timeout": "Timeout",
+          "stabilize_device": "Стабилизировать профиль устройства",
+          "stabilize_device_desc": "Фиксировать OS/Arch и стабилизировать программный отпечаток для учётных данных/API-ключа",
+          "beta_features": "Beta Features"
+        },
+        "network": {
+          "title": "Сетевые настройки",
+          "proxy_url": "URL прокси",
+          "proxy_url_sponsor_hint": "Нет подходящего прокси?",
+          "request_retry": "Количество повторов запросов",
+          "max_retry_credentials": "Максимум учётных данных для повторов",
+          "max_retry_credentials_hint": "Оставьте пустым, чтобы не задавать поле. Значение 0 или отрицательное целое число позволяет перебрать все доступные учётные данные.",
+          "max_retry_interval": "Максимальный интервал повтора (сек)",
+          "max_retry_interval_hint": "Значение 0 или отрицательное целое число отключает ожидание завершения охлаждения между раундами повторов.",
+          "auth_auto_refresh_workers": "Workers автообновления auth",
+          "auth_auto_refresh_workers_hint": "Положительное целое число задаёт число workers; 0, отрицательное целое число или пустое поле использует значение по умолчанию (16)",
+          "disable_image_generation": "Отключить генерацию изображений",
+          "disable_image_generation_false": "false (включено)",
+          "disable_image_generation_true": "true (отключено везде)",
+          "disable_image_generation_chat": "chat (только отключить chat-инъекцию)",
+          "disable_image_generation_passthrough": "passthrough (сохранить список инструментов клиента)",
+          "gpt_image_2_base_model": "Базовая модель GPT Image 2",
+          "gpt_image_2_base_model_hint": "Основная модель для проксирования gpt-image-2 image-запросов; если пусто или неверно, backend использует значение по умолчанию",
+          "routing_strategy": "Стратегия маршрутизации",
+          "strategy_round_robin": "По кругу",
+          "strategy_weighted_round_robin": "Взвешенный круговой алгоритм",
+          "strategy_fill_first": "Сначала заполнить",
+          "session_affinity_ttl": "TTL привязки сессии",
+          "force_model_prefix": "Принудительный префикс модели",
+          "force_model_prefix_desc": "Запросы к моделям без префикса используют только учётные данные без префикса",
+          "passthrough_headers": "Передавать upstream-заголовки",
+          "disable_cooling": "Отключить cooldown",
+          "disable_cooling_desc": "Глобально отключить окна охлаждения auth/model после ошибок",
+          "session_affinity": "Маршрутизация с привязкой к сессии",
+          "ws_auth": "Аутентификация WebSocket",
+          "ws_auth_desc": "Аутентификация WebSocket AI Studio (oauth.providers.aistudio.ws-auth)"
+        },
+        "streaming": {
+          "title": "Настройки стриминга",
+          "keepalive_seconds": "Период keepalive (сек)",
+          "bootstrap_retries": "Повторы запуска",
+          "bootstrap_hint": "Повторы до первого байта; 0, отрицательное целое число или пустое поле отключает повторы при запуске стрима",
+          "nonstream_keepalive": "Интервал keepalive для нестиминговых ответов (сек)",
+          "nonstream_keepalive_hint": "Отправлять пустые строки каждые N секунд для непотоковых ответов; 0, отрицательное целое число или пустое поле отключает keepalive",
+          "disabled": "Отключено"
+        },
+        "payload": {
+          "title": "Настройки полезной нагрузки",
+          "default_rules": "Правила по умолчанию",
+          "default_raw_rules": "Raw-правила по умолчанию",
+          "override_rules": "Правила переопределения",
+          "override_raw_rules": "Raw-правила переопределения",
+          "filter_rules": "Правила фильтрации"
+        }
+      },
+      "api_keys": {
+        "label": "Клиентские API-ключи (access.api-keys)",
+        "add": "Добавить API-ключ",
+        "generate": "Сгенерировать",
+        "empty": "API-ключи отсутствуют",
+        "edit_title": "Редактирование API-ключа",
+        "add_title": "Добавление API-ключа",
+        "input_label": "API-ключ",
+        "input_placeholder": "Вставьте API-ключ",
+        "name_label": "Имя / описание",
+        "name_placeholder": "Например: ноутбук Анны",
+        "name_hint": "Имя сразу сохраняется только в этом браузере, отдельно для каждого сервера, и не включается в конфигурацию сервера. Очистите поле, чтобы удалить имя.",
+        "name_save_error": "Не удалось сохранить имя в хранилище браузера. Проверьте настройки хранилища.",
+        "input_hint": "Изменения вступают в силу после сохранения конфигурации. Ключи провайдеров управляются отдельно.",
+        "error_empty": "Введите API-ключ",
+        "error_invalid": "API-ключ содержит недопустимые символы",
+        "strength": {
+          "label": "Надёжность API-ключа",
+          "empty": "Не введено",
+          "weak": "Слабый",
+          "fair": "Средний",
+          "good": "Хороший",
+          "strong": "Надёжный"
+        }
+      },
+      "payload_rules": {
+        "rule": "Правило",
+        "models": "Применимые модели",
+        "model_name": "Название модели",
+        "provider_type": "Тип провайдера",
+        "add_model": "Добавить модель",
+        "params": "Настройки параметров",
+        "remove_params": "Удалить параметры",
+        "json_path": "JSON Path (например, temperature)",
+        "json_path_filter": "JSON Path (gjson/sjson), например generationConfig.thinkingConfig.thinkingBudget",
+        "param_type": "Тип параметра",
+        "param_value": "Значение параметра",
+        "add_param": "Добавить параметр",
+        "no_rules": "Правил нет",
+        "add_rule": "Добавить правило",
+        "provider_default": "По умолчанию",
+        "provider_openai": "OpenAI",
+        "provider_openai_response": "OpenAI Response",
+        "provider_responses": "Responses",
+        "provider_gemini": "Gemini",
+        "provider_claude": "Claude",
+        "provider_codex": "Codex",
+        "provider_antigravity": "Antigravity",
+        "advanced": "Дополнительно",
+        "hide_advanced": "Скрыть дополнительно",
+        "from_protocol": "Исходный протокол (from-protocol)",
+        "headers": "Совпадения заголовков запроса",
+        "header_name": "Имя заголовка",
+        "header_value": "Значение заголовка",
+        "add_header": "Добавить заголовок",
+        "match": "Обязательные совпадения (match)",
+        "notMatch": "Запрещённые совпадения (not-match)",
+        "exist": "Обязательные пути (exist)",
+        "notExist": "Запрещённые пути (not-exist)",
+        "condition_path": "Путь условия",
+        "condition_value": "Значение условия",
+        "add_condition": "Добавить условие",
+        "value_type_string": "Строка",
+        "value_type_number": "Число",
+        "value_type_boolean": "Булево",
+        "value_type_json": "JSON",
+        "value_string": "Строковое значение",
+        "value_number": "Числовое значение (например, 0.7)",
+        "value_boolean": "true или false",
+        "value_json": "Значение JSON",
+        "value_raw_json": "Raw JSON-фрагмент, например true, 123, \"high\" или {\"type\":\"object\"}",
+        "value_default": "Значение",
+        "boolean_true": "true",
+        "boolean_false": "false"
+      },
+      "validation": {
+        "invalid_trusted_proxies": "Каждый доверенный прокси должен быть корректным IP-адресом или CIDR.",
+        "invalid_discovery_service_type": "Используйте _имя._tcp: имя — 1–15 латинских букв, цифр или дефисов, без дефиса в начале и конце.",
+        "validation_blocked": "Исправьте ошибки валидации перед сохранением",
+        "invalid_duration": "Введите корректную длительность, например 30s или 3h",
+        "positive_duration": "Введите длительность больше нуля",
+        "invalid_timezone": "Введите корректный часовой пояс IANA, например Asia/Singapore",
+        "invalid_ip": "Введите корректный адрес IPv4 или IPv6",
+        "udp_port_pair": "Установите оба UDP-порта в 0 либо задайте оба так, чтобы минимум не превышал максимум",
+        "udp_port_capacity": "Число UDP-портов должно быть не меньше удвоенного эффективного лимита сессий (0 сессий означает 32)",
+        "invalid_ice_servers": "Каждый ICE-сервер должен содержать хотя бы один корректный URL stun:, stuns:, turn: или turns:",
+        "integer_range_0_65535": "Введите целое число от 0 до 65535",
+        "port_range": "Введите корректный порт от 1 до 65535",
+        "integer": "Введите целое число",
+        "non_negative_integer": "Введите неотрицательное целое число",
+        "integer_range_1_3600": "Введите целое число от 1 до 3600",
+        "payload_invalid_number": "Введите корректное число",
+        "payload_invalid_boolean": "Выберите true или false",
+        "payload_invalid_json": "Введите корректный JSON",
+        "payload_replace_invalid_target": "Роль цели должна быть user, system или developer.",
+        "payload_replace_invalid_positions": "Выберите все сообщения роли или задайте непустой список положительных номеров позиций, но не оба варианта.",
+        "payload_replace_invalid_paths": "Укажите хотя бы один непустой путь JSON. Пути несовместимы с ролью, all и positions.",
+        "payload_replace_invalid_models": "Добавьте хотя бы одну модель с непустым именем и корректными условиями.",
+        "payload_replace_invalid_replacements": "Добавьте хотя бы одну допустимую замену. Исходный текст не может быть пустым; регулярные выражения используют Go RE2. Пустая замена удаляет совпадение."
+      },
+      "common": {
+        "edit": "Изменить",
+        "delete": "Удалить",
+        "cancel": "Отменить",
+        "update": "Обновить",
+        "add": "Добавить"
+      },
+      "payload_replace": {
+        "title": "Замены текста в payload",
+        "description": "Замены выполняются по порядку в существующих строках после переопределений и до фильтров.",
+        "target": "Область действия",
+        "replacements": "Замены",
+        "target_all": "Все сообщения этой роли",
+        "target_positions": "Позиции сообщений",
+        "target_hint": "Позиции считаются с 1 среди сообщений выбранной роли в итоговом теле запроса, включая сообщения без редактируемого текста. Разделяйте позиции запятыми.",
+        "from": "Исходный текст",
+        "to": "Текст замены (пустой — удалить)",
+        "add_replacement": "Добавить замену",
+        "move_up": "Переместить вверх",
+        "move_down": "Переместить вниз",
+        "reset_invalid": "Сбросить некорректное правило",
+        "invalid_hint": "Это правило содержит неподдерживаемые или некорректные значения. Исправьте его в YAML или сбросьте перед редактированием.",
+        "target_selector": "Тип цели",
+        "target_paths": "Пути JSON",
+        "paths_hint": "Пути задаются относительно корня тела запроса к провайдеру. Отсутствующие и нестроковые значения пропускаются.",
+        "from_or_pattern": "Исходный текст или шаблон",
+        "replacement_type": "Тип замены",
+        "literal": "Текст",
+        "regex": "Регулярное выражение (RE2)",
+        "pattern": "Шаблон RE2"
+      }
+    }
+  },
+  "sensitive_replacements": {
+    "literal_title": "Замена буквального текста",
+    "pattern_title": "Замена по регулярным выражениям",
+    "group_title": "Замена чувствительного текста",
+    "literal_hint": "Строки без буквального текста остаются в черновике и не сохраняются.",
+    "pattern_hint": "Правила выполняются по порядку с синтаксисом Go RE2; проверки окружения и обратные ссылки в шаблонах не поддерживаются. Сервер отбрасывает неверные и пустые шаблоны.",
+    "literal_key": "Буквальный текст",
+    "replacement": "Замена",
+    "replacement_placeholder": "Оставьте пустым, чтобы удалить совпадение",
+    "pattern": "Шаблон",
+    "duplicate_key": "Повторяющийся ключ. Изменения буквальных замен не применяются до устранения повторов.",
+    "add_literal": "Добавить буквальную замену",
+    "add_pattern": "Добавить правило regex",
+    "empty_literal": "Буквальных замен пока нет.",
+    "empty_pattern": "Правил regex пока нет.",
+    "literal_key_row": "Буквальный текст, строка {{row}}",
+    "literal_value_row": "Буквальная замена, строка {{row}}",
+    "pattern_row": "Шаблон regex, строка {{row}}",
+    "pattern_value_row": "Замена regex, строка {{row}}",
+    "remove_literal": "Удалить буквальную замену {{row}}",
+    "remove_pattern": "Удалить правило regex {{row}}",
+    "move_up": "Переместить правило regex {{row}} вверх",
+    "move_down": "Переместить правило regex {{row}} вниз"
+  },
+  "common": {
+    "collapse": "Свернуть",
+    "copy": "Копировать",
+    "expand": "Развернуть"
+  },
+  "notification": {
+    "copy_failed": "Не удалось скопировать",
+    "link_copied": "Ссылка скопирована в буфер обмена"
+  },
+  "routing": {}
+}

@@ -32,7 +32,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       };
       const offset = () => page.locator('.workspace').evaluate(element => element.scrollTop);
       const scrollAdvanced = async () => {
-        await nav('Advanced Features');
+        await nav('Quick Configuration');
         await page.locator('.config-key-row:not(.skeleton)').first().waitFor();
         await page.locator('.workspace').evaluate(element => { element.scrollTop = 500; });
         await settle();
@@ -40,7 +40,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       };
 
       await scrollAdvanced();
-      await nav('Advanced Features');
+      await nav('Quick Configuration');
       assert.equal(await offset(), 500, 'selecting the current page preserves scrolling');
       await page.locator('.sidebar-privacy-toggle').click();
       await settle();

@@ -10,7 +10,7 @@ import { closePluginWebview } from './services/pluginWebview';
 import { WindowFrame } from './components/WindowFrame';
 import { MessageNotice } from './appNotice';
 import { ThemeSelector } from './components/ThemeSelector';
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   Bot,
   Check,
@@ -18,6 +18,7 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  FileSliders,
   Gauge,
   GitBranch,
   History,
@@ -69,12 +70,16 @@ import { canOpenAppPage, requestAppNavigation } from './navigation';
 import { useThemePreference } from './theme';
 import { usePrivacyMode } from './privacy';
 import { Dialog } from './components/Dialog';
+import { WorkspaceScrollbars } from './components/WorkspaceScrollbars';
 import { EmptyState } from './components/EmptyState';
 import { CpaConnectionDialog, CpaWorkspaceTarget } from './pages/RemoteCpaPage';
 import { getCpaConnection, type CpaConnection } from './services/remoteCpa';
 
 const QQ_CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
 const DISCORD_SERVER_URL = 'https://discord.gg/PxvX4D9kgs';
+const MockConfigManagementPage = import.meta.env.DEV
+  ? lazy(() => import('./mocks/configManagement/ConfigManagementPage'))
+  : null;
 
 const pages = [
   {
@@ -126,6 +131,12 @@ const pages = [
     component: ConfigPanelPage,
   },
   {
+    id: 'config-management',
+    labelKey: 'app.nav.configManagement',
+    icon: FileSliders,
+    component: MockConfigManagementPage,
+  },
+  {
     id: 'routing',
     labelKey: 'app.nav.routing',
     icon: GitBranch,
@@ -164,7 +175,7 @@ function HomePage() {
   return <KernelPage view="home" />;
 }
 
-function App({ initialConnection }: { initialConnection?: CpaConnection }) {
+function App({ initialConnection, browserMockEnabled = false }: { initialConnection?: CpaConnection; browserMockEnabled?: boolean }) {
   const { t } = useI18n();
   const [connection, setConnection] = useState(initialConnection);
   const [connectionDraft, setConnectionDraft] = useState<string | null>(null);
@@ -192,7 +203,7 @@ function App({ initialConnection }: { initialConnection?: CpaConnection }) {
           <CoreRuntimeProvider targetRevision={connection.remoteActive ? connection.revision : undefined}>
             <CoreUpdateProvider enabled={!connection.remoteActive}>
               <CpaWorkspaceTarget connection={connection} openConnection={openConnection} onChange={setConnection}>
-                {switcher => <AppContent connection={connection} switcher={switcher} />}
+                {switcher => <AppContent connection={connection} switcher={switcher} browserMockEnabled={browserMockEnabled} />}
               </CpaWorkspaceTarget>
             </CoreUpdateProvider>
           </CoreRuntimeProvider>
@@ -206,7 +217,7 @@ function App({ initialConnection }: { initialConnection?: CpaConnection }) {
   );
 }
 
-function AppContent({ connection, switcher }: { connection: CpaConnection; switcher: React.ReactNode }) {
+function AppContent({ connection, switcher, browserMockEnabled }: { connection: CpaConnection; switcher: React.ReactNode; browserMockEnabled: boolean }) {
   const remote = connection.remoteActive;
   const { locale, setLocale, t } = useI18n();
   const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing } = useAppUpdate();
@@ -230,7 +241,7 @@ function AppContent({ connection, switcher }: { connection: CpaConnection; switc
   const [navElement, setNavElement] = useState<HTMLElement | null>(null);
   const { entries: pluginEntries, plugins: installedPluginList, fetched: pluginEntriesFetched, pluginUpdates } = usePluginNavEntries(coreReady, remote ? connection.revision : undefined);
   const pluginEntry = findPluginNavEntry(pluginEntries, active);
-  const navPages = pages.filter((page) => page.id !== 'easy');
+  const navPages = pages.filter((page) => page.id !== 'easy' && (page.id !== 'config-management' || browserMockEnabled));
   const { layout: autoPluginLayout, compact: navCompact } = usePluginNavLayout(navElement, navPages.length, pluginEntries.length);
   const [pluginReload, setPluginReload] = useState(0);
   const [pluginNavOverride, setPluginNavOverride] = useState<PluginNavOverride | null>(null);
@@ -316,12 +327,12 @@ function AppContent({ connection, switcher }: { connection: CpaConnection; switc
   };
 
   const select = useCallback((pageId: AppPageId) => {
-    if (!canOpenAppPage(pageId, coreReady)) {
+    if ((pageId === 'config-management' && !browserMockEnabled) || !canOpenAppPage(pageId, coreReady)) {
       return;
     }
     if (pageId !== active) requestAppNavigation(() => setActive(pageId));
     else if (isPluginRoute(pageId)) setPluginReload((value) => value + 1);
-  }, [active, coreReady, remote]);
+  }, [active, coreReady, browserMockEnabled]);
 
   useEffect(() => {
     const handleNavigate = (event: Event) => {
@@ -547,7 +558,7 @@ function AppContent({ connection, switcher }: { connection: CpaConnection; switc
           </aside>
         ) : null}
 
-        <div className="workspace" ref={workspaceRef}>
+        <div id="app-workspace" className="workspace" ref={workspaceRef} data-overlay-scrollbars>
           <main className="content" key={`${connection.remoteActive}:${connection.revision}`}>
             {connection.needsRepair ? <p role="alert">{t('remote.error.profileInvalid')}</p> : !canOpenAppPage(active, coreReady) ? (
               <CoreLockedPage />
@@ -564,6 +575,8 @@ function AppContent({ connection, switcher }: { connection: CpaConnection; switc
                 />
               ) : active === 'versions' ? (
                 <VersionManagementPage displaySeries={appVersionDisplay} />
+              ) : active === 'config-management' && browserMockEnabled && MockConfigManagementPage ? (
+                <Suspense fallback={<p role="status">{t('common.loading')}</p>}><MockConfigManagementPage /></Suspense>
               ) : ActivePage === PluginsPage ? (
                 <PluginsPage
                   discoveredPlugins={installedPluginList}
@@ -578,6 +591,7 @@ function AppContent({ connection, switcher }: { connection: CpaConnection; switc
         </div>
       </div>
 
+      <WorkspaceScrollbars viewportRef={workspaceRef} viewportId="app-workspace" />
       <AppUpdateDialog />
     </>
   );

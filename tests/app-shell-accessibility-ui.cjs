@@ -59,7 +59,7 @@ const path = require('node:path');
     await page.getByRole('tab', { name: /数据管理/ }).click();
     assert.equal(await page.locator('.usage-filter-panel').count(), 0);
 
-    await page.locator('.nav-section').getByRole('button', { name: '高级功能' }).click();
+    await page.locator('.nav-section').getByRole('button', { name: '快捷配置' }).click();
     assert.equal(await page.locator('.config-page').getAttribute('aria-label'), '高级设置');
     const configTabs = page.locator('.config-subpage-tabs').getByRole('tab');
     assert.equal(await page.locator('.config-subpage-tabs').getAttribute('aria-orientation'), 'horizontal');

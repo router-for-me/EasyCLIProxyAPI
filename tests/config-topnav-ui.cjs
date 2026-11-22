@@ -71,7 +71,7 @@ const shotDir = process.env.CONFIG_TOPNAV_SHOTS || '';
 
         const openAdvanced = async () => {
           await page.locator('.nav-section').getByRole('button', {
-            name: locale === 'en' ? 'Advanced Features' : '高级功能', exact: true,
+            name: locale === 'en' ? 'Quick Configuration' : '快捷配置', exact: true,
           }).click();
           await page.locator('#config-subpage-panel').waitFor();
         };

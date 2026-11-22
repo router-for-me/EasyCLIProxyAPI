@@ -1,0 +1,548 @@
+{
+  "config_management": {
+    "title": "配置面板",
+    "meta_fields": "{{count}} 项配置",
+    "meta_dirty": "{{count}} 项待保存",
+    "meta_dirty_source": "源码有未保存修改",
+    "meta_errors": "{{count}} 项校验错误",
+    "meta_synced": "已同步",
+    "actions": {
+      "discard": "放弃更改",
+      "save": "保存更改"
+    },
+    "discard_confirm_message": "确定放弃所有未保存的更改并恢复上次保存的模拟配置吗？",
+    "mode": {
+      "label": "编辑模式",
+      "visual": "可视化",
+      "source": "源码"
+    },
+    "reload": "重新加载",
+    "reload_confirm_message": "重新加载将丢弃你当前未保存的修改，确定继续吗？",
+    "save": "保存",
+    "status_loading": "加载配置中...",
+    "status_loading_short": "加载中",
+    "status_loaded": "配置已加载",
+    "status_loaded_short": "已加载",
+    "status_dirty": "有未保存的更改",
+    "status_dirty_short": "未保存",
+    "status_disconnected": "请先连接服务器以加载配置",
+    "status_disconnected_short": "未连接",
+    "status_load_failed": "加载失败",
+    "status_load_failed_short": "失败",
+    "status_saving": "正在保存配置...",
+    "status_saving_short": "保存中",
+    "save_success": "配置已保存",
+    "visual_mode_unavailable": "YAML 语法修复前无法使用可视化编辑",
+    "visual_mode_unavailable_short": "YAML错误",
+    "validation_blocked_short": "待修复",
+    "visual_mode_unavailable_detail": "当前配置存在无效 YAML，暂时无法使用可视化编辑：{{message}}",
+    "visual_mode_save_blocked": "请先修复 YAML 语法错误，再从可视化模式保存",
+    "source_changes_before_visual": "源码有未保存的修改，请先保存或放弃修改，再切换到可视化模式。",
+    "precise_save_incomplete": "精准保存未完成，部分修改可能已生效。草稿已保留，请再次保存以重新核对服务端差异。",
+    "concurrent_list_conflict": "服务端列表 {{path}} 已在草稿基线之后发生变更。为避免覆盖这些修改，已阻止保存。草稿仍保留；请记下本地修改，再重新加载配置并核对合并。",
+    "precise_save_recovery_required": "无法回读保存结果，已暂停编辑。请再次保存以恢复草稿基线，或重新加载配置。",
+    "visual_mode_latest_yaml_invalid": "服务端最新配置包含无效 YAML，请先切回源码模式检查后再保存可视化修改：{{message}}",
+    "editor_placeholder": "key: value",
+    "search_placeholder": "搜索配置内容...",
+    "search_button": "搜索",
+    "search_no_results": "无结果",
+    "search_prev": "上一个",
+    "search_next": "下一个",
+    "diff": {
+      "title": "确认变更",
+      "confirm": "确认保存",
+      "no_changes": "未检测到变更"
+    },
+    "visual": {
+      "serverExtras": {
+        "trustedProxies": {
+          "label": "可信代理",
+          "hint": "填写 IP 地址或 CIDR；留空不信任转发头。信任覆盖所有地址的网段有客户端 IP 伪造风险。重启后端后生效。"
+        },
+        "discoveryEnabled": {
+          "label": "启用服务发现",
+          "hint": "通过 mDNS / DNS-SD 在局域网广播。默认关闭，支持热更新。"
+        },
+        "discoveryServiceName": {
+          "label": "服务名称前缀",
+          "hint": "后端自动追加短 ID，留空使用 CPA-<ShortID>。"
+        },
+        "discoveryServiceType": {
+          "label": "服务类型"
+        },
+        "discoverySubtypes": {
+          "label": "协议子类型",
+          "hint": "留空使用默认的五种协议。缺少前导 _ 时自动补齐，非法项会被忽略。"
+        },
+        "discoveryInterfacesInclude": {
+          "label": "包含网卡",
+          "hint": "留空自动选择物理局域网网卡。支持网卡名称或以 * 结尾的前缀匹配。"
+        },
+        "discoveryInterfacesExclude": {
+          "label": "排除网卡",
+          "hint": "支持网卡名称或以 * 结尾的前缀匹配。排除规则优先于包含规则。"
+        },
+        "discoveryAuthRequired": {
+          "label": "广播鉴权要求",
+          "hint": "默认开启。仅广播元数据，不改变实际 API 鉴权。"
+        },
+        "discoveryAdvertiseManagement": {
+          "label": "广播管理服务",
+          "hint": "默认关闭。仅广播管理服务存在，不修改远程访问权限。"
+        },
+        "discoveryTitle": "局域网发现",
+        "discoveryHint": "需要支持组播的物理网卡及非回环监听地址。Docker 通常需使用 host 网络；不保证服务可达。"
+      },
+      "additions": {
+        "oauthTitle": "OAuth 提供商行为",
+        "oauthHint": "本组提供商设置仅适用于 OAuth/认证文件凭据，不影响 API Key 凭据。",
+        "claudeTitle": "Claude",
+        "codexTitle": "Codex",
+        "antigravityTitle": "Antigravity",
+        "xaiTitle": "xAI",
+        "liveRelayTitle": "Codex Live 媒体中继",
+        "iceAdd": "添加 ICE 服务器",
+        "iceRemove": "移除 ICE 服务器 {{index}}",
+        "iceURLs": "STUN/TURN URL",
+        "iceUsername": "TURN 用户名",
+        "iceCredential": "TURN 密码",
+        "iceServer": "ICE 服务器 {{index}}",
+        "routingSessionAffinitySubagents": {
+          "label": "子代理会话亲和性",
+          "hint": "默认开启，仅在启用会话亲和性时生效。子代理继承父会话的凭据以复用缓存；关闭后通过凭据池分散子代理请求，提高并发能力。"
+        },
+        "saveCooldownStatus": {
+          "label": "持久化冷却状态",
+          "hint": "将各凭据的冷却状态保存到认证文件旁的 .cds 文件。默认关闭，关闭时仅在内存中保存状态。"
+        },
+        "transientErrorCooldownSeconds": {
+          "label": "瞬时错误冷却时间（秒）",
+          "hint": "适用于上游 408/500/502/503/504/520–526 错误。0 使用默认的 60 秒冷却时间，负数禁用此类冷却。"
+        },
+        "videoResultAuthCacheTTL": {
+          "label": "视频结果凭据缓存有效期",
+          "hint": "视频 ID 与创建它的凭据保持绑定的时长。使用 30m、3h 等时长格式，默认 3h。"
+        },
+        "claudeHeaderTimezone": {
+          "label": "后备时区",
+          "hint": "用于伪装请求中 currentDate 的 IANA 时区，例如 Asia/Singapore；Local 表示后端主机时区。凭据 JSON 中的 timezone 优先。"
+        },
+        "claudeModelLevelCooling": {
+          "label": "按模型冷却",
+          "hint": "仅对请求的模型应用 Claude 配额冷却，而非冷却该凭据下的所有模型。默认关闭。"
+        },
+        "claudeDisableCloakMode": {
+          "label": "禁用请求伪装",
+          "hint": "禁用 Claude Code CLI 身份伪装和系统提示词替换，原样传递系统提示词。凭据文件可通过 cloak_mode 覆盖。默认 false，即仅对非 Claude Code 客户端自动伪装。"
+        },
+        "claudeCodeDisableCloakingModelList": {
+          "label": "禁用模型 ID 伪装",
+          "hint": "在 Anthropic 模型列表响应中返回原始模型 ID，而非伪装后的 ID。默认关闭。"
+        },
+        "codexDisableCloaking": {
+          "label": "禁用请求伪装",
+          "hint": "不再为 HTTP/SSE 和 WebSocket 请求强制设置官方 Codex User-Agent 与 Originator 请求头。默认关闭。"
+        },
+        "codexModelLevelCooling": {
+          "label": "按模型冷却",
+          "hint": "仅对请求的模型应用 usage_limit_reached 配额冷却，而非冷却该凭据下的所有模型。默认关闭。"
+        },
+        "codexStreamBootstrapBuffering": {
+          "label": "流启动缓冲",
+          "hint": "暂存初始空事件和心跳，以便在早期过载或限流拒绝时切换凭据重试。默认关闭。会延迟响应头，可能触发客户端或反向代理超时；缓冲受帧数和字节数预算限制。"
+        },
+        "codexStreamBootstrapTimeout": {
+          "label": "流启动缓冲超时",
+          "hint": "可选的缓冲时间上限，例如 20s。默认 0，表示不限制时间，但仍受帧数和字节数预算限制。仅在收到上游帧时检查，并非所有网络卡死场景的硬截止时间；响应头仍可能等待转换后的输出。"
+        },
+        "codexOptimizeMultiAgentV2": {
+          "label": "多代理 v2 优化",
+          "hint": "优化官方 Codex 多代理请求：更新 spawn_agent 模型信息、移除消息参数加密、规范化 agent_message 内容，并为非 Codex 协议转换为用户消息。默认关闭。"
+        },
+        "codexOrphanDelegationCompatibility": {
+          "label": "孤立委派输出兼容",
+          "hint": "对带有 X-Openai-Subagent: collab_spawn 的请求，将缺少有效匹配调用的 codex_app/create_thread 和 codex_app/send_message_to_thread 孤立输出转换为用户消息。默认关闭。"
+        },
+        "codexResponseSteering": {
+          "label": "响应引导",
+          "hint": "实验性全双工 Codex Responses WebSocket。每条连接始终绑定同一上游账号和模型，已接受的输入不会重放。默认关闭。"
+        },
+        "antigravityConnectionPoolEnabled": {
+          "label": "启用连接池",
+          "hint": "复用上游 HTTP/1.1 连接。默认 false，使用短连接。"
+        },
+        "antigravityConnectionPoolIdleTimeout": {
+          "label": "空闲连接超时",
+          "hint": "空闲连接在池中保留的时长，默认 30s，上限 210s。设为 0 或负时长时切换为短连接。"
+        },
+        "antigravityConnectionPoolMaxIdleConnsPerHost": {
+          "label": "每主机最大空闲连接数",
+          "hint": "每个凭据为每个上游主机保留的最大空闲连接数，默认 2，上限 100。0 使用 Go 默认值 2，负数切换为短连接。"
+        },
+        "xaiInjectXSearch": {
+          "label": "注入 x_search",
+          "hint": "请求未声明 xAI 原生 x_search 工具时自动添加，并在适用时加入 tool_choice.allowed_tools。默认关闭。"
+        },
+        "codexLiveMediaRelayEnabled": {
+          "label": "启用媒体中继",
+          "hint": "在当前进程内终止并中继 Codex Live WebRTC 媒体连接，需要入站 UDP 可达。默认关闭，以保持媒体直连。"
+        },
+        "codexLiveMediaRelayMaxSessions": {
+          "label": "最大并发媒体会话数",
+          "hint": "留空或设为 0 使用默认的 32 个会话。自定义 UDP 端口范围必须为每个会话提供至少两个端口。"
+        },
+        "codexLiveMediaRelayDisablePrivateRemoteIPs": {
+          "label": "阻止私有远端 IP 候选",
+          "hint": "默认 false，允许私有地址候选，适合本地或可信网络客户端。开启后拒绝指向私有、回环、链路本地或未指定 IP 的下游 SDP 候选，减少内网暴露风险，但可能导致本地连接失败。"
+        },
+        "codexLiveMediaRelayPublicIP": {
+          "label": "通告的公网 IP",
+          "hint": "代理位于 1:1 NAT 后时，可填写向对端通告的公网 IPv4 或 IPv6 地址。请填写 IP 地址而非主机名。"
+        },
+        "codexLiveMediaRelayUDPPortMin": {
+          "label": "UDP 端口下限",
+          "hint": "上下限均为 0 时由系统分配；否则须提供包含两端的连续端口范围，端口数量至少为实际会话上限的两倍。"
+        },
+        "codexLiveMediaRelayUDPPortMax": {
+          "label": "UDP 端口上限",
+          "hint": "不得小于下限。上下限须同时为 0 或同时非零；自定义范围每个会话至少需要两个端口，默认 32 个会话需要至少 64 个端口。"
+        },
+        "codexLiveMediaRelayICEServers": {
+          "label": "ICE 服务器",
+          "hint": "可选的 STUN/TURN 服务器，URL 支持 stun:、stuns:、turn: 或 turns:。JSON 配置 API 不返回 TURN 凭据。请通过密码字段填写凭据，勿将秘密暴露在截图或日志中。"
+        }
+      },
+      "search": {
+        "placeholder": "搜索配置项（标签或 YAML 键名）",
+        "no_results": "没有匹配的配置项"
+      },
+      "sections": {
+        "common": {
+          "title": "常用"
+        },
+        "connectivity": {
+          "title": "接入与认证"
+        },
+        "logging": {
+          "title": "日志与诊断"
+        },
+        "advanced": {
+          "antigravity_credits": "使用Antigravity Credits",
+          "title": "高级与实验",
+          "plugins_title": "插件",
+          "antigravity_title": "Antigravity",
+          "devin_title": "Devin",
+          "signature_title": "签名校验"
+        },
+        "server": {
+          "github_token": "全局 GitHub 令牌",
+          "github_token_hint": "用于面板更新、插件下载等服务端 GitHub 请求。优先于 GITHUB_TOKEN；留空时使用环境变量凭据，未设置凭据则匿名请求。插件商店匹配的认证规则优先。",
+          "host": "主机地址",
+          "port": "端口"
+        },
+        "tls": {
+          "title": "TLS/SSL 配置",
+          "enable": "启用 TLS",
+          "cert": "证书文件路径",
+          "key": "私钥文件路径"
+        },
+        "remote": {
+          "title": "远程管理",
+          "allow_remote": "允许远程访问",
+          "allow_remote_desc": "允许从其他主机访问管理接口",
+          "disable_panel": "禁用控制面板",
+          "disable_auto_update_panel": "禁用面板自动更新",
+          "disable_auto_update_panel_desc": "首次缺失时仍可下载，但不再从 GitHub 后台自动更新",
+          "secret_key": "管理密钥",
+          "secret_key_placeholder": "设置管理密钥",
+          "panel_repo": "面板仓库"
+        },
+        "auth": {
+          "auth_dir": "OAuth 认证文件目录 (oauth.auth-dir)"
+        },
+        "system": {
+          "debug": "调试模式",
+          "commercial_mode": "商业模式",
+          "commercial_mode_desc": "禁用高开销中间件以支持高并发",
+          "logging_to_file": "写入日志文件",
+          "plugins_enabled": "启用插件系统",
+          "plugins_enabled_desc": "启用标准动态库插件加载；具体插件实例仍在插件管理页启停",
+          "plugin_store_sources": "第三方插件源",
+          "plugin_store_sources_desc": "追加插件商店 registry 源；内置官方源始终保留",
+          "plugin_store_sources_label": "插件源 registry URL (plugins.store-sources)",
+          "plugin_store_sources_placeholder": "https://example.com/cliproxy-plugins/registry.json",
+          "plugin_store_auth": "插件商店认证规则",
+          "plugin_store_auth_hint": "这里只填写环境变量名，不填写真实 token；后端会从运行环境读取值。",
+          "store_auth_empty": "暂未配置认证规则。公开插件源不需要配置。",
+          "store_auth_rule": "认证规则",
+          "store_auth_add": "添加认证规则",
+          "store_auth_match": "匹配 URL 前缀",
+          "store_auth_type": "认证类型",
+          "store_auth_apply_to": "应用到",
+          "store_auth_apply_to_hint": "不选择时应用到所有请求类型。",
+          "store_auth_apply_registry": "Registry",
+          "store_auth_apply_metadata": "Metadata",
+          "store_auth_apply_artifact": "Artifact",
+          "store_auth_type_none": "无认证",
+          "store_auth_type_bearer": "Bearer",
+          "store_auth_type_basic": "Basic",
+          "store_auth_type_header": "自定义 Header",
+          "store_auth_type_github_token": "GitHub Token",
+          "store_auth_token_env": "Token 环境变量名",
+          "store_auth_username_env": "用户名环境变量名",
+          "store_auth_password_env": "密码环境变量名",
+          "store_auth_header_name": "Header 名称",
+          "store_auth_header_value_env": "Header 值环境变量名",
+          "store_auth_allow_insecure": "允许 HTTP 非安全地址",
+          "logs_max_size": "日志文件大小限制 (MB)",
+          "error_logs_max_files": "错误日志保留文件数",
+          "usage_statistics_enabled": "启用内存用量统计",
+          "redis_usage_retention": "Redis 用量队列保留秒数",
+          "redis_usage_retention_hint": "RESP 接口 LPOP/RPOP 用量队列的内存保留时间，最大 3600 秒",
+          "antigravity_sensitive_words": "敏感词混淆",
+          "antigravity_sensitive_words_desc": "在 Antigravity 系统提示词匹配项中插入零宽字符，降低上游精确关键词匹配",
+          "antigravity_sensitive_words_label": "OAuth 敏感词（oauth.providers.antigravity.sensitive-words）",
+          "antigravity_sensitive_words_placeholder": "proxy",
+          "antigravity_sensitive_words_hint": "每项填写一个词或短语；匹配不区分大小写，保存时移除空项，少于 2 个字符的项会被后端忽略",
+          "devin_sensitive_words": "Devin 系统提示词敏感词",
+          "devin_sensitive_words_desc": "仅处理 Devin 系统提示词：含配置词的整行会被删除，剩余系统提示词再进行混淆；普通消息和工具参数不会被修改",
+          "devin_sensitive_words_label": "OAuth 敏感词（oauth.providers.devin.sensitive-words）",
+          "devin_sensitive_words_placeholder": "敏感短语",
+          "devin_sensitive_words_hint": "每项填写一个词或短语。请谨慎配置：命中内容会导致整行系统提示词被删除；保存时移除空项",
+          "antigravity_signature_cache": "启用 Antigravity 签名缓存",
+          "antigravity_signature_cache_desc": "优先使用并校验缓存的 thinking block 签名",
+          "antigravity_signature_strict": "严格校验旁路签名",
+          "antigravity_signature_strict_desc": "仅在关闭签名缓存时生效，按完整 Claude protobuf 树校验"
+        },
+        "headers": {
+          "title": "Header 默认值",
+          "claude_title": "Claude OAuth 默认请求头",
+          "codex_title": "Codex OAuth 默认请求头",
+          "user_agent": "User-Agent",
+          "package_version": "Package Version",
+          "runtime_version": "Runtime Version",
+          "os": "OS",
+          "arch": "Arch",
+          "timeout": "Timeout",
+          "stabilize_device": "稳定设备指纹",
+          "stabilize_device_desc": "固定 OS/Arch，并按凭据/API Key 稳定软件指纹",
+          "beta_features": "Beta Features"
+        },
+        "network": {
+          "title": "网络配置",
+          "proxy_url": "代理 URL",
+          "proxy_url_sponsor_hint": "没有合适的代理？",
+          "request_retry": "请求重试次数",
+          "max_retry_credentials": "最大重试凭据数",
+          "max_retry_credentials_hint": "留空表示不设置；设为 0 或负整数表示尝试所有可用凭据。",
+          "max_retry_interval": "最大重试间隔 (秒)",
+          "max_retry_interval_hint": "设为 0 或负整数表示重试轮次之间不等待凭据冷却。",
+          "auth_auto_refresh_workers": "认证自动刷新 Worker 数",
+          "auth_auto_refresh_workers_hint": "正整数覆盖 Worker 数；设为 0、负整数或留空时使用默认值（16）",
+          "disable_image_generation": "禁用图像生成",
+          "disable_image_generation_false": "false（启用）",
+          "disable_image_generation_true": "true（全部禁用）",
+          "disable_image_generation_chat": "chat（仅禁用聊天注入）",
+          "disable_image_generation_passthrough": "passthrough（保留客户端工具列表）",
+          "gpt_image_2_base_model": "GPT Image 2 基础模型",
+          "gpt_image_2_base_model_hint": "代理 gpt-image-2 图片请求时使用的主线模型；留空或非法时后端使用默认值",
+          "routing_strategy": "路由策略",
+          "strategy_round_robin": "轮询 (Round Robin)",
+          "strategy_weighted_round_robin": "加权轮询 (Weighted Round Robin)",
+          "strategy_fill_first": "填充优先 (Fill First)",
+          "session_affinity_ttl": "会话亲和性 TTL",
+          "force_model_prefix": "强制模型前缀",
+          "force_model_prefix_desc": "未带前缀的模型请求只使用无前缀凭据",
+          "passthrough_headers": "透传上游响应 Header",
+          "disable_cooling": "禁用冷却调度",
+          "disable_cooling_desc": "全局禁用认证/模型失败后的冷却窗口",
+          "session_affinity": "会话亲和性路由",
+          "ws_auth": "WebSocket 认证",
+          "ws_auth_desc": "启用 AI Studio WebSocket 连接认证（oauth.providers.aistudio.ws-auth）"
+        },
+        "streaming": {
+          "title": "流式传输配置",
+          "keepalive_seconds": "Keepalive 秒数",
+          "bootstrap_retries": "Bootstrap 重试次数",
+          "bootstrap_hint": "流式传输首包前的重试次数；设为 0、负整数或留空表示禁用启动重试",
+          "nonstream_keepalive": "非流式 Keepalive 间隔 (秒)",
+          "nonstream_keepalive_hint": "非流式响应时每隔 N 秒发送空行；设置为 0、负整数或留空表示禁用保活",
+          "disabled": "已禁用"
+        },
+        "payload": {
+          "title": "Payload 配置",
+          "default_rules": "默认规则",
+          "default_raw_rules": "默认 Raw 规则",
+          "override_rules": "覆盖规则",
+          "override_raw_rules": "覆盖 Raw 规则",
+          "filter_rules": "过滤规则"
+        }
+      },
+      "api_keys": {
+        "label": "客户端 API 密钥 (access.api-keys)",
+        "add": "添加 API 密钥",
+        "generate": "生成",
+        "empty": "暂无 API 密钥",
+        "edit_title": "编辑 API 密钥",
+        "add_title": "添加 API 密钥",
+        "input_label": "API 密钥",
+        "input_placeholder": "粘贴你的 API 密钥",
+        "name_label": "名称 / 说明",
+        "name_placeholder": "例如：小明的笔记本",
+        "name_hint": "名称立即保存在当前浏览器中，按服务器隔离，不写入服务器配置。清空此字段可移除名称。",
+        "name_save_error": "无法将名称保存到浏览器存储，请检查浏览器存储设置。",
+        "input_hint": "保存配置后生效。上游提供商密钥独立管理，不受此处修改影响。",
+        "error_empty": "请输入 API 密钥",
+        "error_invalid": "API 密钥包含无效字符",
+        "strength": {
+          "label": "API 密钥强度",
+          "empty": "待输入",
+          "weak": "弱",
+          "fair": "一般",
+          "good": "良好",
+          "strong": "很强"
+        }
+      },
+      "payload_rules": {
+        "rule": "规则",
+        "models": "适用模型",
+        "model_name": "模型名称",
+        "provider_type": "供应商类型",
+        "add_model": "添加模型",
+        "params": "参数设置",
+        "remove_params": "移除参数",
+        "json_path": "JSON 路径 (如 temperature)",
+        "json_path_filter": "JSON 路径 (gjson/sjson)，如 generationConfig.thinkingConfig.thinkingBudget",
+        "param_type": "参数类型",
+        "param_value": "参数值",
+        "add_param": "添加参数",
+        "no_rules": "暂无规则",
+        "add_rule": "添加规则",
+        "provider_default": "默认",
+        "provider_openai": "OpenAI",
+        "provider_openai_response": "OpenAI Response",
+        "provider_responses": "Responses",
+        "provider_gemini": "Gemini",
+        "provider_claude": "Claude",
+        "provider_codex": "Codex",
+        "provider_antigravity": "Antigravity",
+        "advanced": "高级",
+        "hide_advanced": "收起高级",
+        "from_protocol": "来源协议 (from-protocol)",
+        "headers": "请求 Header 匹配",
+        "header_name": "Header 名称",
+        "header_value": "Header 值",
+        "add_header": "添加 Header",
+        "match": "必须匹配 (match)",
+        "notMatch": "不得匹配 (not-match)",
+        "exist": "必须存在 (exist)",
+        "notExist": "不得存在 (not-exist)",
+        "condition_path": "匹配路径",
+        "condition_value": "匹配值",
+        "add_condition": "添加条件",
+        "value_type_string": "字符串",
+        "value_type_number": "数字",
+        "value_type_boolean": "布尔",
+        "value_type_json": "JSON",
+        "value_string": "字符串值",
+        "value_number": "数字值 (如 0.7)",
+        "value_boolean": "true 或 false",
+        "value_json": "JSON 值",
+        "value_raw_json": "原始 JSON 片段，如 true、123、\"high\" 或 {\"type\":\"object\"}",
+        "value_default": "值",
+        "boolean_true": "true",
+        "boolean_false": "false"
+      },
+      "validation": {
+        "invalid_trusted_proxies": "每个可信代理必须是有效的 IP 地址或 CIDR。",
+        "invalid_discovery_service_type": "请使用 _名称._tcp 格式：名称为 1–15 位英文字母、数字或连字符，首尾不能是连字符。",
+        "validation_blocked": "请先修复表单校验错误再保存",
+        "invalid_duration": "请输入有效时长，例如 30s 或 3h",
+        "positive_duration": "请输入大于零的时长",
+        "invalid_timezone": "请输入有效的 IANA 时区，例如 Asia/Singapore",
+        "invalid_ip": "请输入有效的 IPv4 或 IPv6 地址",
+        "udp_port_pair": "UDP 端口上下限须同时为 0，或同时设置且下限不大于上限",
+        "udp_port_capacity": "UDP 端口数量须至少为实际最大会话数的两倍（会话数为 0 时按 32 计算）",
+        "invalid_ice_servers": "每个 ICE 服务器须至少包含一个有效的 stun:、stuns:、turn: 或 turns: URL",
+        "integer_range_0_65535": "请输入 0 到 65535 之间的整数",
+        "port_range": "请输入 1 到 65535 之间的有效端口",
+        "integer": "请输入整数",
+        "non_negative_integer": "请输入非负整数",
+        "integer_range_1_3600": "请输入 1 到 3600 之间的整数",
+        "payload_invalid_number": "请输入有效数字",
+        "payload_invalid_boolean": "请选择 true 或 false",
+        "payload_invalid_json": "请输入有效的 JSON",
+        "payload_replace_invalid_target": "目标角色必须为 user、system 或 developer。",
+        "payload_replace_invalid_positions": "请选择该角色的所有消息，或输入非空的正整数位置列表，两者不能同时指定。",
+        "payload_replace_invalid_paths": "请至少输入一个非空 JSON 路径。路径不能与角色、all 或 positions 同时指定。",
+        "payload_replace_invalid_models": "请至少添加一个模型，模型名称不能为空，且条件必须有效。",
+        "payload_replace_invalid_replacements": "请至少添加一项有效替换。字面量源文本不能为空；正则使用 Go RE2。替换文本为空时会删除匹配文本。"
+      },
+      "common": {
+        "edit": "编辑",
+        "delete": "删除",
+        "cancel": "取消",
+        "update": "更新",
+        "add": "添加"
+      },
+      "payload_replace": {
+        "title": "Payload 文本替换",
+        "description": "在覆盖之后、过滤之前执行，按列表顺序替换已有字符串。",
+        "target": "作用范围",
+        "replacements": "替换项",
+        "target_all": "该角色的所有消息",
+        "target_positions": "消息位置",
+        "target_hint": "按所选角色在最终上游 Payload 中的消息排序，从 1 开始；没有可编辑文本的消息也计数。多个位置用逗号分隔。",
+        "from": "源文本",
+        "to": "替换文本（留空则删除）",
+        "add_replacement": "添加替换",
+        "move_up": "上移",
+        "move_down": "下移",
+        "reset_invalid": "重置无效规则",
+        "invalid_hint": "此规则包含不支持或格式错误的值。请先在 YAML 中修复或重置规则，再进行编辑。",
+        "target_selector": "目标类型",
+        "target_paths": "JSON 路径",
+        "paths_hint": "路径相对于上游 Payload 根节点。不存在或非字符串的值会被跳过。",
+        "from_or_pattern": "源文本或正则",
+        "replacement_type": "替换类型",
+        "literal": "字面量",
+        "regex": "正则 (RE2)",
+        "pattern": "RE2 正则表达式"
+      }
+    }
+  },
+  "sensitive_replacements": {
+    "literal_title": "字面文本替换",
+    "pattern_title": "正则表达式替换",
+    "group_title": "敏感内容替换",
+    "literal_hint": "未填写字面文本的行只保留在草稿中，不会保存。",
+    "pattern_hint": "规则按顺序执行，使用 Go RE2 语法，不支持环视和模式内的反向引用。后端会丢弃无效或空白模式。",
+    "literal_key": "字面文本",
+    "replacement": "替换内容",
+    "replacement_placeholder": "留空则删除匹配内容",
+    "pattern": "正则模式",
+    "duplicate_key": "键重复。解决重复键之前，字面替换的修改不会生效。",
+    "add_literal": "添加字面替换",
+    "add_pattern": "添加正则规则",
+    "empty_literal": "尚未添加字面替换。",
+    "empty_pattern": "尚未添加正则规则。",
+    "literal_key_row": "第 {{row}} 行字面文本",
+    "literal_value_row": "第 {{row}} 行字面替换内容",
+    "pattern_row": "第 {{row}} 行正则模式",
+    "pattern_value_row": "第 {{row}} 行正则替换内容",
+    "remove_literal": "删除第 {{row}} 行字面替换",
+    "remove_pattern": "删除第 {{row}} 行正则规则",
+    "move_up": "上移第 {{row}} 行正则规则",
+    "move_down": "下移第 {{row}} 行正则规则"
+  },
+  "common": {
+    "collapse": "收起",
+    "copy": "复制",
+    "expand": "展开"
+  },
+  "notification": {
+    "copy_failed": "复制失败",
+    "link_copied": "已复制"
+  },
+  "routing": {}
+}

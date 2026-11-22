@@ -233,7 +233,7 @@ const capturedPaint = {
     fs.writeFileSync(path.join(shots, 'after-computed.json'), JSON.stringify(paint, null, 2));
     await page.evaluate(() => localStorage.setItem('easy-cli-proxy-api.locale', 'zh-CN'));
     await page.goto(`${base}/?mock=running`);
-    await page.getByRole('button', { name: '高级功能', exact: true }).click();
+    await page.getByRole('button', { name: '快捷配置', exact: true }).click();
     await page.locator('.switch-control').first().waitFor();
     for (const id of ['light', 'dark', 'sakura-light']) {
       await page.evaluate(async id => {

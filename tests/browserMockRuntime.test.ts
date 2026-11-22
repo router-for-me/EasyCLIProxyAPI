@@ -194,10 +194,9 @@ describe('browser mock runtime', () => {
 
   test('uses normalized ratios for percentage-based usage metrics', async () => {
     const runtime = createBrowserMockRuntime('running');
-    expect(await runtime.invoke('get_usage_overview')).toMatchObject({
-      successRate: 96.47,
-      cacheHitRate: 0.386,
-    });
+    const overview = await runtime.invoke('get_usage_overview') as { successRate: number; cacheHitRate: number };
+    expect(overview.successRate).toBeCloseTo(15 / 17 * 100);
+    expect(overview.cacheHitRate).toBeCloseTo(3840 / 42561);
   });
 
   test('provides an explicit error scenario', async () => {

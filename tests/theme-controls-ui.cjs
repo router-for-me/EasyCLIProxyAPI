@@ -89,7 +89,7 @@ const settlePaint = locator => locator.evaluate(async element => {
     await page.waitForFunction(() => document.querySelector('.select-menu-theme-scope').style.getPropertyValue('--theme-primary-button-text') === '');
     await page.keyboard.press('Escape');
 
-    await page.getByRole('button', { name: '高级功能', exact: true }).click();
+    await page.getByRole('button', { name: '快捷配置', exact: true }).click();
     const remote = page.getByRole('switch', { name: '允许远程管理', exact: true });
     await remote.waitFor();
     for (const activeThumb of [null, '#6A3554']) {

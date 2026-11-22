@@ -8,6 +8,8 @@ import { createQuotaMock, createQuotaMockFiles } from './quotaMock';
 import { normalizeAuthFileTags } from '../services/authFiles';
 import { hasDeepSeekArgumentConflict, parseAgentLaunchArguments } from '../services/agentLaunchArguments';
 import type { AcpStatus } from '../services/acp';
+import type { UsageQuery } from '../services/usage';
+import { filterMockUsage, mockUsageAnalysis, mockUsageOverview, mockUsagePricing } from './usageMock';
 
 
 
@@ -107,13 +109,6 @@ function groupProviderRecords(section: ProviderSection, records: JsonObject[]): 
 }
 
 const isoHoursAgo = (hours: number) => new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-const localHourKey = (date: Date) => [
-  date.getFullYear(),
-  String(date.getMonth() + 1).padStart(2, '0'),
-  String(date.getDate()).padStart(2, '0'),
-  String(date.getHours()).padStart(2, '0'),
-].join('-');
-
 export function resolveBrowserMockOptions(
   search: string,
   storedScenario?: string | null,
@@ -153,30 +148,6 @@ function createCoreStatus(scenario: BrowserMockScenario) {
   };
 }
 
-function createTimeline() {
-  return Array.from({ length: 24 }, (_, index) => {
-    const date = new Date(Date.now() - (23 - index) * 60 * 60 * 1000);
-    const requests = 6 + (index % 5) * 3;
-    const failure = index % 7 === 0 ? 1 : 0;
-    const canceled = index % 11 === 0 ? 1 : 0;
-    const success = Math.max(0, requests - failure - canceled);
-    const codexTokens = 18_000 + index * 1_350;
-    const claudeTokens = 9_000 + (index % 6) * 2_100;
-    return {
-      hour: localHourKey(date),
-      requests,
-      success,
-      failure,
-      canceled,
-      tokens: codexTokens + claudeTokens,
-      models: [
-        { key: 'gpt-5.2-codex', label: 'GPT-5.2 Codex', tokens: codexTokens, requests: Math.ceil(requests * 0.65) },
-        { key: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', tokens: claudeTokens, requests: Math.floor(requests * 0.35) },
-      ],
-    };
-  });
-}
-
 function createUsageEvents() {
   const models = ['gpt-5.2-codex', 'claude-sonnet-4-6', 'gemini-3-pro'];
   const longError = 'Mock upstream rate limit exceeded: this preview account reached its per-minute request allowance while several parallel jobs were active. The proxy retried the request three times, but every attempt received HTTP 429. Retry after 45 seconds or reduce the number of concurrent requests. If this keeps happening, check the provider quota and the client retry policy. Diagnostic context: route=/v1/responses, attempt=3/3, window=60s, trace=preview_long_error_0123456789abcdefghijklmnopqrstuvwxyz_0123456789abcdefghijklmnopqrstuvwxyz.';
@@ -189,7 +160,7 @@ function createUsageEvents() {
     return {
       id: `mock-event-${index + 1}`,
       row_id: String(index + 1),
-      timestamp: isoHoursAgo(index / 2),
+      timestamp: isoHoursAgo(index < 5 ? (index + 1) / 120 : index / 2),
       latency_ms: 620 + index * 47,
       ttft_ms: failed ? null : 180 + index * 9,
       source: index % 2 === 0 ? 'codex' : 'claude-code',
@@ -198,13 +169,18 @@ function createUsageEvents() {
       canceled: index === 9,
       failure_status: failed ? 429 : 0,
       failure_body: index === 5 ? longError : failed ? 'Mock rate limit exceeded' : '',
-      provider: index % 2 === 0 ? 'openai-oauth' : 'claude-oauth',
+      provider: ['openai-oauth', 'claude-oauth', 'gemini-api'][index % 3],
+      auth_index: ['mock-codex-1', 'mock-claude-1', 'mock-gemini-runtime'][index % 3],
+      auth_type: index % 3 === 2 ? 'api-key' : 'oauth',
+      client_agent: ['codex', 'claude-code', 'gemini-cli'][index % 3],
+      request_id: `mock-request-${index + 1}`,
+      response_model: models[index % models.length],
       model: models[index % models.length],
       alias: '',
       reasoning_effort: index < 3 ? 'medium' : index % 2 === 0 ? 'high' : 'medium',
       service_tier: index === 0 ? 'priority' : index === 1 ? 'fast' : index === 2 ? 'default' : 'auto',
       response_service_tier: index === 0 ? 'priority' : index === 1 ? 'fast' : 'default',
-      endpoint: '/v1/responses',
+      endpoint: ['/v1/responses', '/v1/messages', '/v1/chat/completions'][index % 3],
       api_key_hash: 'mock-key-hash',
       api_key_display: 'sk-mock••••••••2026',
       api_key_remark: 'Browser Mock key',
@@ -214,7 +190,7 @@ function createUsageEvents() {
         reasoning_tokens: reasoning,
         cache_read_tokens: cacheRead,
         cache_creation_tokens: 0,
-        total_tokens: input + output + reasoning + cacheRead,
+        total_tokens: input + output,
       },
     };
   });
@@ -304,7 +280,6 @@ function createAgentStatuses() {
 }
 
 function createState(scenario: BrowserMockScenario) {
-  const timeline = createTimeline();
   const events = createUsageEvents();
   const authFiles: JsonObject[] = [
     {
@@ -415,26 +390,6 @@ function createState(scenario: BrowserMockScenario) {
       priority: 30,
       disabled: false,
     }],
-  };
-  const analysis = {
-    models: [
-      { key: 'gpt-5.2-codex', label: 'GPT-5.2 Codex', requests: 182, failures: 4, tokens: 1_284_600 },
-      { key: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', requests: 96, failures: 2, tokens: 684_200 },
-      { key: 'gemini-3-pro', label: 'Gemini 3 Pro', requests: 34, failures: 1, tokens: 218_500 },
-    ],
-    providers: [
-      { key: 'openai-oauth', label: 'OpenAI OAuth', requests: 182, failures: 4, tokens: 1_284_600 },
-      { key: 'claude-oauth', label: 'Claude OAuth', requests: 96, failures: 2, tokens: 684_200 },
-      { key: 'gemini-api', label: 'Gemini API', requests: 34, failures: 1, tokens: 218_500 },
-    ],
-    sources: [
-      { key: 'codex', label: 'Codex', requests: 164, failures: 4, tokens: 1_102_000 },
-      { key: 'claude-code', label: 'Claude Code', requests: 114, failures: 2, tokens: 752_000 },
-      { key: 'other', label: 'Other', requests: 34, failures: 1, tokens: 333_300 },
-    ],
-    apiKeys: [
-      { key: 'mock-key-hash', label: 'Browser Mock key', requests: 312, failures: 7, tokens: 2_187_300 },
-    ],
   };
   return {
     scenario,
@@ -570,29 +525,6 @@ function createState(scenario: BrowserMockScenario) {
     quotaApiCall: createQuotaMock(),
     oauthExcludedModels: { codex: [], claude: ['claude-legacy-*'], gemini: [] } as Record<string, string[]>,
     oauthSessions: new Map<string, string>(),
-    analysis,
-    usageOverview: {
-      totalRequests: 312,
-      successCount: 301,
-      failureCount: 7,
-      canceledCount: 4,
-      successRate: 96.47,
-      inputTokens: 1_264_000,
-      outputTokens: 486_500,
-      reasoningTokens: 286_800,
-      cacheReadTokens: 132_000,
-      cacheCreationTokens: 18_000,
-      totalTokens: 2_187_300,
-      rpm: 4.8,
-      tpm: 31_450,
-      tps: 58.4,
-      tpsSampleCount: 284,
-      averageLatencyMs: 1_284,
-      cacheHitRate: 0.386,
-      estimatedCost: 3.8421,
-      pricedRequests: 296,
-      timeline,
-    },
     usageEvents: events,
     usagePrices: [
       {
@@ -606,7 +538,7 @@ function createState(scenario: BrowserMockScenario) {
         source: 'mock', sourceModelId: 'claude-sonnet-4-6', updatedAtMs: Date.now(),
       },
     ],
-    usageStorage: { maxDatabaseSizeMb: 512, databaseSizeBytes: 84 * 1024 * 1024, totalRecords: 312, deletedRecords: 0 },
+    usageStorage: { maxDatabaseSizeMb: 512, databaseSizeBytes: 84 * 1024 * 1024, totalRecords: events.length, deletedRecords: 0 },
     agentStatuses: createAgentStatuses(),
     deepSeekStatus: {
       running: false,
@@ -1337,10 +1269,6 @@ export function createBrowserMockRuntime(
   if (scenario === 'empty') {
     state.usageEvents = [];
     state.usagePrices = [];
-    Object.assign(state.usageOverview, Object.fromEntries(Object.entries(state.usageOverview)
-      .filter(([, value]) => typeof value === 'number').map(([key]) => [key, 0])));
-    state.usageOverview.timeline = [];
-    state.analysis = { models: [], providers: [], sources: [], apiKeys: [] };
     state.usageStorage.databaseSizeBytes = 0;
     state.usageStorage.totalRecords = 0;
     state.coreConfig.apiKeys = [];
@@ -1840,25 +1768,19 @@ export function createBrowserMockRuntime(
         state: state.coreStatus.ready ? 'collecting' : 'waiting-core',
         message: state.coreStatus.ready ? 'Browser Mock is collecting usage records' : 'Waiting for the core to start',
         lastCollectedAt: new Date().toISOString(),
-        totalRecords: state.usageOverview.totalRequests,
+        totalRecords: state.usageEvents.length,
       };
-      case 'get_usage_overview': return clone(state.usageOverview);
-      case 'get_usage_analysis': return clone(state.analysis);
+      case 'get_usage_overview': return mockUsageOverview(filterMockUsage(state.usageEvents, asObject(payload.query) as UsageQuery), state.usagePrices, asObject(payload.query).speed_mode);
+      case 'get_usage_analysis': {
+        const analysis = mockUsageAnalysis(filterMockUsage(state.usageEvents, asObject(payload.query) as UsageQuery));
+        if (scenario === 'empty') delete analysis.upstreams;
+        return analysis;
+      }
       case 'get_usage_events': {
         const query = asObject(payload.query);
         const page = Math.max(1, readNumber(query.page, 1));
         const pageSize = Math.max(1, readNumber(query.page_size, 50));
-        const events = state.usageEvents.filter(event => {
-          for (const key of ['model', 'provider', 'source', 'api_key_hash'] as const) {
-            if (query[key] && event[key] !== query[key]) return false;
-          }
-          for (const key of ['failed', 'canceled'] as const) {
-            if (typeof query[key] === 'boolean' && event[key] !== query[key]) return false;
-          }
-          const timestamp = Date.parse(event.timestamp);
-          return (!query.start || timestamp >= Date.parse(String(query.start)))
-            && (!query.end || timestamp <= Date.parse(String(query.end)));
-        });
+        const events = filterMockUsage(state.usageEvents, query as UsageQuery);
         const start = (page - 1) * pageSize;
         return {
           items: clone(events.slice(start, start + pageSize)),
@@ -1869,18 +1791,7 @@ export function createBrowserMockRuntime(
         };
       }
       case 'get_usage_pricing': {
-        const rows = state.usagePrices.map((price, index) => ({
-          model: price.model,
-          requests: index === 0 ? 182 : 96,
-          inputTokens: index === 0 ? 820_000 : 386_000,
-          outputTokens: index === 0 ? 312_000 : 142_000,
-          cacheReadTokens: index === 0 ? 82_000 : 44_000,
-          cacheCreationTokens: index === 0 ? 0 : 18_000,
-          totalTokens: index === 0 ? 1_214_000 : 590_000,
-          estimatedCost: index === 0 ? 1.92 : 1.71,
-          price: clone(price),
-        }));
-        return { rows, totalCost: rows.length ? 3.63 : 0, totalRequests: rows.length ? 278 : 0, pricedRequests: rows.length ? 278 : 0, savedPrices: state.usagePrices.length };
+        return clone(mockUsagePricing(filterMockUsage(state.usageEvents, asObject(payload.query) as UsageQuery), state.usagePrices));
       }
       case 'get_usage_storage_settings': return clone(state.usageStorage);
       case 'save_usage_storage_settings': {
@@ -1927,7 +1838,11 @@ export function createBrowserMockRuntime(
         matches: clone(state.usagePrices),
         unmatched: ['mock-unknown-model'],
       };
-      case 'apply_usage_model_prices': return { imported: asArray(payload.prices).length };
+      case 'apply_usage_model_prices': {
+        const prices = asArray(payload.prices);
+        for (const price of prices) await invoke('save_usage_model_price', { price });
+        return { imported: prices.length };
+      }
 
       case 'get_agent_environment_options': return { supported: false, defaultDirectory: '/home/user/.config', distributions: [] };
       case 'get_agent_config_statuses':

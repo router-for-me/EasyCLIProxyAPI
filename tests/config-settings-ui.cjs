@@ -43,7 +43,7 @@ const scalarFields = '.template-config-field:is([data-field-type="string"], [dat
         await page.locator('.app-shell').waitFor();
         await page.addStyleTag({ content: '#browser-mock-toolbar { display: none; }' });
         await page.locator('.nav-section').getByRole('button', {
-          name: locale === 'en' ? 'Advanced Features' : '高级功能', exact: true,
+          name: locale === 'en' ? 'Quick Configuration' : '快捷配置', exact: true,
         }).click();
         await page.locator('#config-subpage-panel').waitFor();
 

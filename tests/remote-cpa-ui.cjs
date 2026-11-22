@@ -175,7 +175,7 @@ async function assertMenuBounds(page, menu) {
     await page.evaluate(() => { window.remoteTestControls.failRefresh = true; });
     await page.getByRole('button', { name: 'Update Configuration', exact: true }).click();
     await page.getByText(/Configuration saved, but client status could not be refreshed:.*Fixture refresh failure/).waitFor();
-    await nav.getByRole('button', { name: 'Advanced Features', exact: true }).click();
+    await nav.getByRole('button', { name: 'Quick Configuration', exact: true }).click();
     await page.locator('#config-subpage-tab-proxy').click();
     await page.locator('#config-native-reverse-proxy').getByText('This feature is not supported for external CPA instances.').waitFor();
     assert.equal(await page.locator('#config-native-reverse-proxy button').count(), 0);

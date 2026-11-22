@@ -224,7 +224,7 @@ const viewports = [
         if (id === 'pricing' && viewport.width === 800) await assertExpandedPricing();
       }
 
-      await open('高级功能', '#config-subpage-panel');
+      await open('快捷配置', '#config-subpage-panel');
       for (const id of ['general', 'routing', 'requests', 'oauth', 'diagnostics', 'extensions', 'software']) {
         await tab(`config-subpage-tab-${id}`, `#config-subpage-panel[aria-labelledby="config-subpage-tab-${id}"]`);
         await assertNoPageOverflow(`${label} settings ${id}`);
@@ -249,7 +249,7 @@ const viewports = [
     await page.goto(`${base}?mock=running`, { waitUntil: 'domcontentloaded' });
     await page.locator('.home-page').waitFor();
     await page.addStyleTag({ content: '#browser-mock-toolbar { display: none; }' });
-    await open('Advanced Features', '.config-subpage-tabs');
+    await open('Quick Configuration', '.config-subpage-tabs');
     for (const id of ['general', 'routing', 'requests', 'oauth', 'diagnostics', 'extensions', 'software']) {
       await tab(`config-subpage-tab-${id}`, `#config-subpage-panel[aria-labelledby="config-subpage-tab-${id}"]`);
       await assertNoPageOverflow(`640x600 English settings ${id}`);

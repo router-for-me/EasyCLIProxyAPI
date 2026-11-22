@@ -24,6 +24,15 @@ bounds (hidden while the webview is hidden or closed). It never loads the page; 
 
 The selected scenario is remembered locally; an explicit `mock` query overrides it.
 
+## Configuration management preview
+
+In the browser mock, open **Configuration Management** beside **Quick Configuration**.
+The visual form and YAML editor share a draft. Save reviews the YAML diff and updates
+the mock document for the current browser page lifetime. Refresh restores the sample;
+the editor does not touch the Quick Configuration settings or a CPA instance.
+The preview adapts the visual configuration editor from the sibling
+Cli-Proxy-API-Management-Center repository (`f7aae752`).
+
 ## Credential and quota coverage
 
 The running dataset includes more than ten OAuth files, plus a runtime credential
@@ -43,6 +52,12 @@ Codex and Claude reset
 credits are tracked per account: consuming one decreases its balance and refreshes
 its usage windows. Credential edits, enable/disable, cooldown reset, deletion,
 JSON import/replacement and OAuth cancellation update the same in-memory state.
+Usage overview, category analysis, hourly trends and pricing are derived from the
+same request records and share date, model, provider, source, upstream, API key and
+outcome filters. Records include credential identities, client agents and recent
+activity for the live routing preview. Price edits, deletions and batch imports
+recalculate costs; models without saved prices remain visible as unpriced usage.
+Token totals count input and output once, including cached input and reasoning output.
 Malformed imports and missing credentials fail explicitly. Usage event filters
 (time, model, provider, source, API key, failure/cancellation) run before pagination.
 
@@ -59,8 +74,9 @@ launch real apps, write credentials to disk or make upstream API requests.
 ## Verification
 
 ```sh
-bun test tests/browserMockRuntime.test.ts tests/browserMockQuota.test.ts
+bun test tests/browserMockRuntime.test.ts tests/browserMockQuota.test.ts tests/browserMockUsage.test.ts
 node tests/browser-mock-ui.cjs
+bun run test:ui:mock-config
 ```
 
 The browser test uses Playwright (and Microsoft Edge on Windows), opens the real

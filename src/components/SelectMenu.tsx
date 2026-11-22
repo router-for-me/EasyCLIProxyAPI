@@ -6,6 +6,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type AriaAttributes,
   type KeyboardEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -63,15 +64,23 @@ export function SelectMenu({
   value,
   options,
   onChange,
+  id,
   ariaLabel,
+  ariaLabelledBy,
+  ariaDescribedBy,
+  ariaInvalid,
   disabled = false,
   className,
   maxDropdownHeight = 280,
 }: {
   value: string;
-  options: SelectMenuOption[];
+  options: readonly SelectMenuOption[];
   onChange: (value: string) => void;
-  ariaLabel: string;
+  id?: string;
+  ariaLabel?: string;
+  ariaLabelledBy?: string;
+  ariaDescribedBy?: string;
+  ariaInvalid?: AriaAttributes['aria-invalid'];
   disabled?: boolean;
   className?: string;
   maxDropdownHeight?: number;
@@ -216,10 +225,14 @@ export function SelectMenu({
   return (
     <div className={`select-menu ${open ? 'open' : ''}${className ? ` ${className}` : ''}`} ref={rootRef}>
       <button
+        id={id}
         type="button"
         className="select-menu-trigger"
         role="combobox"
         aria-label={ariaLabel}
+        aria-labelledby={ariaLabelledBy}
+        aria-describedby={ariaDescribedBy}
+        aria-invalid={ariaInvalid}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listboxId}
@@ -241,7 +254,7 @@ export function SelectMenu({
               ? { top: layout.top, left: layout.left, width: layout.width, height: layout.height }
               : { top: 0, left: 0, width: 0, height: 0, visibility: 'hidden' }}
           >
-            <div className="select-menu-list" id={listboxId} role="listbox" aria-label={ariaLabel}>
+            <div className="select-menu-list" id={listboxId} role="listbox" aria-label={ariaLabel} aria-labelledby={ariaLabelledBy}>
               {options.map((option, index) => {
                 const isSelected = option.value === value;
                 return (

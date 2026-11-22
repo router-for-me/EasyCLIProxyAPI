@@ -40,7 +40,7 @@ const path = require('node:path');
         await page.addStyleTag({ content: '#browser-mock-toolbar { display: none; }' });
         await page
           .locator('.nav-section')
-          .getByRole('button', { name: locale === 'en' ? 'Advanced Features' : '高级功能', exact: true })
+          .getByRole('button', { name: locale === 'en' ? 'Quick Configuration' : '快捷配置', exact: true })
           .click();
         await page.locator('#config-subpage-tab-requests').click();
         assert.equal(await page.locator('#config-native-sensitive-words').isVisible(), false);

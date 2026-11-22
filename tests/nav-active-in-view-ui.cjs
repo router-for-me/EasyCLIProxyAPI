@@ -8,7 +8,7 @@ const path = require('node:path');
 // Home page buttons that open another page, per browser-mock scenario: [scenario, button text, page that opens].
 const routes = [
   ['empty', 'Install core', 'Version Management'],
-  ['running', 'Manage Keys', 'Advanced Features'],
+  ['running', 'Manage Keys', 'Quick Configuration'],
 ];
 
 (async () => {

@@ -110,7 +110,7 @@ const path = require('node:path');
 
     const cases = [
       { name: 'confirmation', open: async (page) => { await nav(page, 'API Access'); return button(page.locator('main'), 'Delete'); } },
-      { name: 'api key', open: async (page) => { await nav(page, 'Advanced Features'); return button(page, 'Add Authentication Key'); } },
+      { name: 'api key', open: async (page) => { await nav(page, 'Quick Configuration'); return button(page, 'Add Authentication Key'); } },
       { name: 'provider editor', open: async (page) => { await nav(page, 'API Access'); return button(page.locator('main'), 'Edit'); } },
       { name: 'model transfer', open: async (page) => {
         await nav(page, 'API Access');
@@ -143,7 +143,7 @@ const path = require('node:path');
       { name: 'model health', open: async (page) => { await nav(page, 'Home'); return button(page, 'Model Health'); } },
       { name: 'vertex import', open: async (page) => { await nav(page, 'OAuth'); return button(page, 'Import Vertex Credential'); } },
       { name: 'model alias', escapes: 2, open: async (page) => {
-        await nav(page, 'Advanced Features');
+        await nav(page, 'Quick Configuration');
         await page.getByRole('tab', { name: 'Model aliases' }).click();
         return button(page, 'Create Alias');
       } },
@@ -163,7 +163,7 @@ const path = require('node:path');
         await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some((node) => node.textContent === '恢复此版本' && !node.disabled));
         return restore;
       } },
-      { name: 'api key deletion', open: async (page) => { await nav(page, 'Advanced Features'); return button(page, 'Delete authentication key 1'); } },
+      { name: 'api key deletion', open: async (page) => { await nav(page, 'Quick Configuration'); return button(page, 'Delete authentication key 1'); } },
       { name: 'plugin configuration', plugins: true, open: async (page) => button(page, 'Configure') },
       { name: 'plugin sign-in', plugins: true, open: async (page) => button(page, 'Sign in') },
       { name: 'plugin install', plugins: true, open: async (page) => {

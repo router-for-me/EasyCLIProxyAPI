@@ -1,0 +1,7 @@
+$font-mono: ui-monospace, Consolas, monospace;
+$radius-md: var(--radius-md);
+$radius-full: 999px;
+$transition-fast: 140ms ease-out;
+
+@mixin mobile { @media (max-width: 640px) { @content; } }
+@mixin button-reset { appearance: none; background: none; border: 0; color: inherit; font: inherit; padding: 0; }

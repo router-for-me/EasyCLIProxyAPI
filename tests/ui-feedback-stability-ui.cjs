@@ -27,7 +27,7 @@ const { chromium, webkit } = require(process.env.PLAYWRIGHT_MODULE || 'playwrigh
         const errors = [];
         page.on('pageerror', error => errors.push(String(error)));
         await page.goto(`${base}?mock=running`);
-        await page.locator('.nav-section').getByRole('button', { name: 'Advanced Features', exact: true }).click();
+        await page.locator('.nav-section').getByRole('button', { name: 'Quick Configuration', exact: true }).click();
         await page.locator('.config-key-row:not(.skeleton)').first().waitFor();
         await page.addStyleTag({ content: '#browser-mock-toolbar { display: none; }' });
         await page.evaluate(() => {

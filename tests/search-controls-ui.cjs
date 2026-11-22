@@ -87,7 +87,7 @@ const { createServer: createPortProbe } = require('node:net');
           await browserSelect.selectOption(originalBrowser);
           await page.getByRole('tab', { name: '凭证文件', exact: true }).click();
           await checkSearch('.auth-files-search', 32);
-          await navigate('高级功能');
+          await navigate('快捷配置');
           await checkSearch('.config-settings-search');
           await navigate('插件');
           await checkSearch('.plugin-search');

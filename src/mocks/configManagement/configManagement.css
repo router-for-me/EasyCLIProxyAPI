@@ -1,0 +1,81 @@
+.mock-config-page { display: grid; gap: 16px; min-width: 0; max-width: 1200px; width: 100%; margin: 0 auto; }
+.mock-config-header, .mock-config-toolbar, .mock-config-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.mock-config-header h1 { margin: 0 0 4px; }
+.mock-config-header p, .mock-config-footer > [role='status'] { color: var(--text-secondary); margin: 0; }
+.mock-config-header button { display: inline-flex; align-items: center; gap: 7px; }
+.mock-config-toolbar { justify-content: flex-end; }
+.mock-config-toolbar > :first-child:not(.mock-config-modes) { margin-right: auto; }
+.mock-config-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.mock-config-modes { display: flex; flex: none; gap: 2px; padding: 2px; border: 1px solid var(--border-color); border-radius: 999px; background: var(--bg-tertiary); }
+.mock-config-modes button { min-height: 28px; border: 1px solid transparent; border-radius: inherit; padding: 0 13px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; cursor: pointer; }
+.mock-config-modes [aria-pressed='true'] { color: var(--text-primary); border-color: var(--border-color); background: var(--bg-primary); font-weight: 600; }
+.mock-config-modes button:disabled { opacity: .55; cursor: not-allowed; }
+.mock-config-tabs { min-width: 0; }
+.mock-config-page .mock-config-tabs > button { padding-inline: 9px; font-size: 12px; }
+.mock-config-tab-error, .mock-config-tab-dirty { margin-inline-start: 5px; font-weight: 700; }
+.mock-config-tab-error, .mock-config-error { color: var(--error-color); }
+.mock-config-tab-dirty { color: var(--ui-accent); }
+.mock-config-error { overflow-wrap: anywhere; white-space: pre-wrap; margin: 0; }
+.mock-config-footer { position: sticky; z-index: 2; bottom: 0; padding: 10px 0; background: var(--bg-primary); }
+.mock-config-footer:has(.mock-config-actions) { border-top: 1px solid var(--border-color); }
+.mock-config-footer > [role='status']:empty + .mock-config-actions { margin-inline-start: auto; }
+.mock-config-footer:not(:has(.mock-config-actions)) { position: static; padding: 0; }
+.mock-config-collapsible { border: 1px solid var(--border-color); border-radius: var(--radius-md); }
+.mock-config-collapsible > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; min-height: 36px; border-radius: inherit; cursor: pointer; font-weight: 600; list-style: none; }
+.mock-config-collapsible > summary::-webkit-details-marker { display: none; }
+.mock-config-collapsible > summary:hover { background: var(--color-surface-hover); }
+.mock-config-collapsible > summary svg { flex: none; color: var(--text-tertiary); }
+.mock-config-collapsible[open] > summary svg { transform: rotate(180deg); }
+.mock-config-collapsible[open] > div { padding: 0 12px 12px; }
+.mock-config-field-highlight { outline: 2px solid var(--ui-accent); outline-offset: -2px; border-radius: var(--radius-md); }
+:where(.mock-config-page, .mock-config-form-dialog) :is(input, textarea).input { box-sizing: border-box; min-width: 0; min-height: 36px; padding: 7px 11px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-primary); color: var(--text-primary); font: inherit; font-size: 13px; }
+:where(.mock-config-page, .mock-config-form-dialog) :is(input, textarea).input:focus { border-color: var(--color-border-focus); outline: 0; box-shadow: 0 0 0 2px var(--color-focus-ring); }
+:where(.mock-config-page, .mock-config-form-dialog) :is(input, textarea).input[aria-invalid='true'] { border-color: var(--error-color); }
+.app-dialog.mock-config-form-dialog { display: flex; flex-direction: column; gap: 0; width: min(520px, 100%); height: auto; max-height: calc(100dvh - 40px); padding: 0; border-radius: 12px; overflow: hidden; }
+.mock-config-form-dialog > .config-dialog-heading { margin: 0; padding: 14px 22px; border-bottom: 1px solid var(--border-color); }
+.mock-config-form-body { display: grid; gap: 16px; min-width: 0; min-height: 0; padding: 22px; overflow: auto; }
+.mock-config-form-dialog .form-group { display: grid; gap: 7px; min-width: 0; margin: 0; }
+.mock-config-form-dialog input.input { min-height: 42px; }
+.mock-config-form-dialog > .config-dialog-actions { display: flex; flex: none; justify-content: flex-end; margin: 0; padding: 14px 22px; border-top: 1px solid var(--border-color); }
+.mock-config-form-dialog > .config-dialog-actions > button { flex: 0 1 auto; width: auto; min-height: 40px; padding-inline: 14px; }
+.mock-config-input-wrap { position: relative; min-width: 0; }
+.mock-config-input-wrap > input { width: 100%; }
+.mock-config-input-addon { position: absolute; inset-inline-end: 12px; top: 50%; transform: translateY(-50%); display: flex; }
+.mock-config-small-button { min-height: 30px; padding: 4px 9px; }
+.mock-config-select { min-width: 0; max-width: 100%; }
+.mock-config-select-wide, .mock-config-select-wide .select-menu-trigger { width: 100%; }
+.mock-config-select .select-menu-trigger { grid-template-columns: minmax(0, 1fr) 16px; min-height: 36px; border-radius: 8px; }
+.mock-config-select-small .select-menu-trigger { min-height: 30px; }
+.mock-config-select .select-menu-trigger[aria-invalid='true'] { border-color: var(--error-color); }
+.mock-config-source-search { display: flex; flex: 1 1 240px; align-items: center; gap: 8px; min-width: 0; max-width: 560px; }
+.mock-config-source-query { position: relative; flex: 1; min-width: 0; }
+.mock-config-source-query > input.input { width: 100%; height: 38px; padding-inline-end: 40px; }
+.mock-config-source-query:has([role='status']:not(:empty)) > input.input { padding-inline-end: 132px; }
+.mock-config-source-query-actions { position: absolute; inset-inline-end: 5px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 6px; }
+.mock-config-source-query-actions button { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 50%; background: var(--ui-accent); color: var(--color-text-on-accent); cursor: pointer; }
+.mock-config-source-query-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.mock-config-source-query-actions [role='status'] { color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
+.mock-config-source-search > button { flex: none; display: grid; place-items: center; width: 38px; height: 38px; padding: 0; }
+.mock-config-code, .mock-config-diff { font-family: ui-monospace, Consolas, monospace; font-size: 13px; line-height: 1.6; tab-size: 2; }
+.mock-config-code { min-width: 0; height: clamp(360px, 66dvh, 1040px); border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-primary); overflow: hidden; }
+.mock-config-code .cm-editor { color: var(--text-primary); background: transparent; }
+.mock-config-code .cm-scroller { font: inherit; overscroll-behavior: contain; }
+.mock-config-code .cm-gutters { color: var(--text-tertiary); background: var(--bg-secondary); border-right: 1px solid var(--border-color); }
+.mock-config-code .cm-lineNumbers .cm-gutterElement { min-width: 34px; padding-inline: 8px; }
+.mock-config-code .cm-activeLine, .mock-config-code .cm-activeLineGutter { background: color-mix(in srgb, var(--text-primary) 7%, transparent); }
+.app-dialog.mock-config-diff-dialog { display: flex; flex-direction: column; gap: 12px; width: min(800px, calc(100dvw - 40px)); min-width: 0; height: auto; max-height: calc(100dvh - 40px); overflow: hidden; }
+.mock-config-diff-dialog > .config-dialog-actions { display: flex; justify-content: flex-end; }
+.mock-config-diff { min-height: 0; margin: 0; padding: 8px 0; overflow: auto; max-height: 55dvh; border: 1px solid var(--border-color); border-radius: var(--radius-md); }
+.mock-config-diff > span { display: block; box-sizing: border-box; width: max-content; min-width: 100%; padding: 0 8px; }
+.mock-config-diff > [data-change='added'] { background: color-mix(in srgb, var(--success-color, #20834d) 15%, transparent); }
+.mock-config-diff > [data-change='removed'] { background: color-mix(in srgb, var(--error-color, #ba2b35) 15%, transparent); }
+.mock-config-page .visually-hidden-focusable:not(:focus), .app-dialog .visually-hidden-focusable:not(:focus) { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@media (max-width: 640px) {
+  .mock-config-page { gap: 12px; }
+  .mock-config-header { align-items: flex-start; }
+  .mock-config-toolbar { justify-content: flex-start; }
+  .mock-config-source-search { flex-basis: 100%; max-width: none; }
+  .mock-config-code { height: clamp(280px, 55dvh, 560px); }
+  .mock-config-footer { gap: 6px; }
+}

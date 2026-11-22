@@ -1,0 +1,58 @@
+.workspace[data-overlay-scrollbars] {
+  scrollbar-width: none;
+}
+
+.workspace[data-overlay-scrollbars]::-webkit-scrollbar {
+  display: none;
+}
+
+.workspace-scrollbar-layer {
+  position: fixed;
+  z-index: 8;
+  pointer-events: none;
+}
+
+.workspace-scrollbar {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  border-radius: var(--radius-full);
+}
+
+.workspace-scrollbar-vertical { top: 0; right: 0; }
+.workspace-scrollbar-horizontal { bottom: 0; left: 0; }
+
+.workspace-scrollbar-thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.workspace-scrollbar-vertical .workspace-scrollbar-thumb { width: 100%; }
+.workspace-scrollbar-horizontal .workspace-scrollbar-thumb { height: 100%; }
+
+.workspace-scrollbar-thumb::before {
+  position: absolute;
+  inset: 3px;
+  content: '';
+  border-radius: var(--radius-full);
+  background: var(--theme-scrollbar-thumb);
+}
+
+.workspace-scrollbar:is(:hover, :focus-visible, [data-dragging]) .workspace-scrollbar-thumb::before {
+  background: var(--theme-scrollbar-hover);
+}
+
+.workspace-scrollbar:focus-visible {
+  outline: 2px solid var(--ui-focus-ring);
+  outline-offset: -2px;
+}
+
+@media (forced-colors: active) {
+  .workspace-scrollbar-thumb::before {
+    forced-color-adjust: none;
+    background: ButtonText;
+  }
+}

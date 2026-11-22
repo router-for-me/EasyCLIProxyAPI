@@ -16,9 +16,10 @@ async function bootstrap() {
   const connection = await getCpaConnection().catch(() => undefined);
   await initializeWindowActivity();
   await Promise.all([initializeUsagePreferences(), initializeThemePreferences().then(() => initializeTheme()), initializePrivacyMode()]);
+  let browserMockEnabled = false;
   if (import.meta.env.DEV && !isTauri()) {
     const { installBrowserMock } = await import('./mocks/browserMock');
-    installBrowserMock();
+    browserMockEnabled = installBrowserMock() !== null;
     void reloadCustomThemes();
   }
 
@@ -28,7 +29,7 @@ async function bootstrap() {
     <StrictMode>
       <I18nProvider syncNativeLocale={connection?.remoteActive === false}>
         <AppErrorBoundary>
-          <App initialConnection={connection} />
+          <App initialConnection={connection} browserMockEnabled={browserMockEnabled} />
         </AppErrorBoundary>
       </I18nProvider>
     </StrictMode>,
