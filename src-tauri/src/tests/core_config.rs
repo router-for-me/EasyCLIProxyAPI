@@ -2246,6 +2246,7 @@ fn startup_preserves_all_user_owned_yaml_and_only_applies_gui_managed_values() {
         ],
         api_access_remarks: Vec::new(),
         management_secret_key: String::new(),
+        management_secret_key_unmanaged: false,
         debug: true,
         update_channel: "stable".to_string(),
         commercial_mode: true,

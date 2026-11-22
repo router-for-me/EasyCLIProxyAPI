@@ -6578,6 +6578,7 @@ mod tests {
             api_keys: Vec::new(),
             api_access_remarks: Vec::new(),
             management_secret_key: "123456".to_string(),
+            management_secret_key_unmanaged: false,
             debug: false,
             update_channel: "stable".to_string(),
             commercial_mode: false,

@@ -55,6 +55,8 @@ automatically download or install updates.
 
 [Connect to a running CPA instance](docs/remote-cpa.md) on this computer, on a private network, or in the cloud. Manage provider access, credentials, routing and client keys directly in ECPA through the v8 management API.
 
+**Configuration Management** edits the selected v8 instance in a visual form or as raw YAML. Review the diff before saving. If the configuration changed on the server, read the current version and review the retained draft again. Listener or TLS changes to the built-in core require a separate restart; API key remarks stay in the desktop app, outside YAML.
+
 ### OAuth account authorization
 
 ![OAuth account authorization](docs/screenshots/en/2.png)

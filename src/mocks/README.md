@@ -30,7 +30,7 @@ In the browser mock, open **Configuration Management** beside **Quick Configurat
 The visual form and YAML editor share a draft. Save reviews the YAML diff and updates
 the mock document for the current browser page lifetime. Refresh restores the sample;
 the editor does not touch the Quick Configuration settings or a CPA instance.
-The preview adapts the visual configuration editor from the sibling
+The mock handles the same document IPC commands as the desktop app. The visual configuration editor comes from the sibling
 Cli-Proxy-API-Management-Center repository (`f7aae752`).
 
 ## Credential and quota coverage

@@ -10,6 +10,8 @@ import { hasDeepSeekArgumentConflict, parseAgentLaunchArguments } from '../servi
 import type { AcpStatus } from '../services/acp';
 import type { UsageQuery } from '../services/usage';
 import { filterMockUsage, mockUsageAnalysis, mockUsageOverview, mockUsagePricing } from './usageMock';
+import { initialMockConfigYaml } from './configDocumentFixture';
+import type { ConfigDocument, KeyRemark } from '../services/configDocument';
 
 
 
@@ -1275,6 +1277,8 @@ export function createBrowserMockRuntime(
   }
   const pluginMock = createPluginMock(state, pluginPages, onPluginWebview);
   const emit = (event: string, payload: unknown) => emitEvent(event, clone(payload));
+  let configVersion = 1;
+  const configDocument: ConfigDocument = { yaml: initialMockConfigYaml, etag: `"${'1'.padStart(64, '0')}"`, remarks: [], remarksUnavailable: false };
 
   const invoke = async (command: string, rawPayload?: unknown): Promise<unknown> => {
     await sleep(delayMs);
@@ -1347,6 +1351,24 @@ export function createBrowserMockRuntime(
       }
 
       case 'get_cpa_connection': return { remoteActive: false, remoteSelected: false, endpoint: null, needsRepair: false, revision: 0 };
+      case 'read_cpa_config_document':
+      case 'save_cpa_config_document': {
+        if (payload.revision !== 0) throw 'targetChanged';
+        if (scenario === 'error') throw 'unavailable';
+        if (!state.coreStatus.ready) throw 'startCore';
+        if (command === 'read_cpa_config_document') return clone(configDocument);
+        if (payload.etag !== configDocument.etag) throw 'conflict';
+        if (typeof payload.yaml !== 'string') throw 'rejected';
+        if (payload.yaml !== configDocument.yaml) {
+          configDocument.yaml = payload.yaml;
+          configDocument.etag = `"${(++configVersion).toString(16).padStart(64, '0')}"`;
+        }
+        for (const { key, remark } of (payload.remarks ?? []) as KeyRemark[]) {
+          configDocument.remarks = configDocument.remarks.filter(entry => entry.key !== key);
+          if (remark) configDocument.remarks.push({ key, remark });
+        }
+        return { document: clone(configDocument), restartRequired: false, syncFailed: false, remarksFailed: false, readbackChanged: false };
+      }
       case 'test_remote_cpa':
       case 'select_cpa_connection':
       case 'get_remote_cpa_keys':

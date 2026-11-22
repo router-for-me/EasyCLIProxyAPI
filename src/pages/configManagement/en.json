@@ -389,7 +389,7 @@
         "input_placeholder": "Paste your API key",
         "name_label": "Name / description",
         "name_placeholder": "For example: Alice's laptop",
-        "name_hint": "Display names are stored in this preview only and are not included in YAML. Clear the field to remove the name.",
+        "name_hint": "Names are saved separately for the selected instance and are not included in YAML. Clear the field to remove the name.",
         "name_save_error": "Could not save the name in browser storage. Check your browser storage settings.",
         "input_hint": "Changes take effect after saving the configuration. Upstream provider keys are managed separately.",
         "error_empty": "Please enter an API key",

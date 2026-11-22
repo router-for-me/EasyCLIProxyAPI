@@ -9,11 +9,12 @@ import { useTranslation } from '../translation';
 const extensions = [yaml(), EditorView.contentAttributes.of({ 'aria-label': 'YAML', spellcheck: 'false' })];
 const basicSetup = { autocompletion: false, completionKeymap: false };
 
-export function ConfigSourceEditor({ value, onChange, modeSwitch, validationNotice }: {
+export function ConfigSourceEditor({ value, onChange, modeSwitch, validationNotice, readOnly }: {
   value: string;
   onChange: (value: string) => void;
   modeSwitch: ReactNode;
   validationNotice: ReactNode;
+  readOnly: boolean;
 }) {
   const { t } = useTranslation();
   const registry = useThemeRegistry();
@@ -63,7 +64,7 @@ export function ConfigSourceEditor({ value, onChange, modeSwitch, validationNoti
     {validationNotice}
     <div className="mock-config-code">
       <CodeMirror ref={editor} value={value} height="100%" style={{ height: '100%' }} theme={theme}
-        placeholder={t('config_management.editor_placeholder')} extensions={extensions} basicSetup={basicSetup}
+        placeholder={t('config_management.editor_placeholder')} extensions={extensions} basicSetup={basicSetup} readOnly={readOnly} editable={!readOnly}
         onChange={(text) => { setActiveMatch(-1); onChange(text); }} />
     </div>
   </>;

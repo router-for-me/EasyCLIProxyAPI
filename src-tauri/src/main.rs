@@ -698,6 +698,7 @@ struct GuiConfigFile {
     api_keys: Vec<GuiApiKeyEntry>,
     api_access_remarks: Vec<GuiApiAccessRemark>,
     management_secret_key: String,
+    management_secret_key_unmanaged: bool,
     debug: bool,
     #[serde(default = "default_update_channel")]
     update_channel: String,
@@ -1006,6 +1007,7 @@ impl Default for GuiConfigFile {
             api_keys: vec![default_api_key_entry()],
             api_access_remarks: Vec::new(),
             management_secret_key: LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string(),
+            management_secret_key_unmanaged: false,
             debug: false,
             update_channel: default_update_channel(),
             auto_update: auto_update::AutoUpdateSettings::default(),
@@ -2384,23 +2386,24 @@ impl GuiConfigState {
     fn set_management_secret_key(&self, secret_key: String) -> Result<GuiConfigFile, String> {
         self.update(|config| {
             config.management_secret_key = secret_key;
+            config.management_secret_key_unmanaged = false;
             Ok(())
         })
     }
 
     fn sync_core_settings(&self, settings: &CoreConfigSettings) -> Result<GuiConfigFile, String> {
-        self.sync_core_settings_internal(settings, None, false, false)
+        self.sync_core_settings_internal(settings, None, false, false, None)
     }
 
     fn sync_core_logging_settings(&self, settings: &CoreConfigSettings) -> Result<GuiConfigFile, String> {
-        self.sync_core_settings_internal(settings, None, false, true)
+        self.sync_core_settings_internal(settings, None, false, true, None)
     }
 
     fn sync_core_settings_external(
         &self,
         settings: &CoreConfigSettings,
     ) -> Result<GuiConfigFile, String> {
-        self.sync_core_settings_internal(settings, None, true, false)
+        self.sync_core_settings_internal(settings, None, true, false, None)
     }
 
     fn sync_core_settings_with_api_key(
@@ -2408,7 +2411,7 @@ impl GuiConfigState {
         settings: &CoreConfigSettings,
         added_api_key: Option<GuiApiKeyEntry>,
     ) -> Result<GuiConfigFile, String> {
-        self.sync_core_settings_internal(settings, added_api_key, false, false)
+        self.sync_core_settings_internal(settings, added_api_key, false, false, None)
     }
 
     fn sync_core_settings_internal(
@@ -2417,6 +2420,7 @@ impl GuiConfigState {
         added_api_key: Option<GuiApiKeyEntry>,
         apply_external_proxy: bool,
         save_usage_preference: bool,
+        management_key_override: Option<&str>,
     ) -> Result<GuiConfigFile, String> {
         self.update(|config| {
             config.api_keys = merge_core_api_keys_with_gui_metadata(
@@ -2440,12 +2444,12 @@ impl GuiConfigState {
             config.redis_usage_queue_retention_seconds =
                 settings.redis_usage_queue_retention_seconds;
             config.request_log = settings.request_log;
-            if let Some(secret_key) = settings
-                .management_secret_key
-                .as_deref()
-                .filter(|secret_key| !is_hashed_management_secret_key(secret_key))
-            {
+            if let Some(secret_key) = management_key_override.or_else(|| {
+                settings.management_secret_key.as_deref()
+                    .filter(|secret_key| !is_hashed_management_secret_key(secret_key))
+            }) {
                 config.management_secret_key = secret_key.to_string();
+                config.management_secret_key_unmanaged = management_key_override == Some("");
             }
             config.plugins_enabled = settings.plugins_enabled;
             config.routing_strategy = settings.routing_strategy.clone();
@@ -3057,6 +3061,8 @@ fn main() {
             usage::apply_usage_model_prices,
             agent_usage::get_agent_usage, agent_usage::sync_agent_usage, agent_usage::get_agent_usage_storage, agent_usage::clear_agent_usage_history,
             remote_cpa::get_cpa_connection,
+            remote_cpa::config_document::read_cpa_config_document,
+            remote_cpa::config_document::save_cpa_config_document,
             remote_cpa::test_remote_cpa,
             remote_cpa::select_cpa_connection,
             remote_cpa::forget_cpa_instance,
@@ -3108,6 +3114,8 @@ fn main() {
         ];
     let local_handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
             remote_cpa::get_cpa_connection,
+            remote_cpa::config_document::read_cpa_config_document,
+            remote_cpa::config_document::save_cpa_config_document,
             remote_cpa::test_remote_cpa,
             remote_cpa::select_cpa_connection,
             remote_cpa::forget_cpa_instance,

@@ -74,12 +74,11 @@ import { WorkspaceScrollbars } from './components/WorkspaceScrollbars';
 import { EmptyState } from './components/EmptyState';
 import { CpaConnectionDialog, CpaWorkspaceTarget } from './pages/RemoteCpaPage';
 import { getCpaConnection, type CpaConnection } from './services/remoteCpa';
+import { isTauri } from './services/platform';
 
 const QQ_CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
 const DISCORD_SERVER_URL = 'https://discord.gg/PxvX4D9kgs';
-const MockConfigManagementPage = import.meta.env.DEV
-  ? lazy(() => import('./mocks/configManagement/ConfigManagementPage'))
-  : null;
+const ConfigManagementPage = lazy(() => import('./pages/configManagement/ConfigManagementPage'));
 
 const pages = [
   {
@@ -134,7 +133,7 @@ const pages = [
     id: 'config-management',
     labelKey: 'app.nav.configManagement',
     icon: FileSliders,
-    component: MockConfigManagementPage,
+    component: null,
   },
   {
     id: 'routing',
@@ -203,7 +202,7 @@ function App({ initialConnection, browserMockEnabled = false }: { initialConnect
           <CoreRuntimeProvider targetRevision={connection.remoteActive ? connection.revision : undefined}>
             <CoreUpdateProvider enabled={!connection.remoteActive}>
               <CpaWorkspaceTarget connection={connection} openConnection={openConnection} onChange={setConnection}>
-                {switcher => <AppContent connection={connection} switcher={switcher} browserMockEnabled={browserMockEnabled} />}
+                {switcher => <AppContent connection={connection} switcher={switcher} browserMockEnabled={browserMockEnabled} openConnection={openConnection} />}
               </CpaWorkspaceTarget>
             </CoreUpdateProvider>
           </CoreRuntimeProvider>
@@ -217,7 +216,7 @@ function App({ initialConnection, browserMockEnabled = false }: { initialConnect
   );
 }
 
-function AppContent({ connection, switcher, browserMockEnabled }: { connection: CpaConnection; switcher: React.ReactNode; browserMockEnabled: boolean }) {
+function AppContent({ connection, switcher, browserMockEnabled, openConnection }: { connection: CpaConnection; switcher: React.ReactNode; browserMockEnabled: boolean; openConnection: (endpoint?: string) => void }) {
   const remote = connection.remoteActive;
   const { locale, setLocale, t } = useI18n();
   const { info: appUpdateInfo, hasUpdate, processing: appUpdateProcessing } = useAppUpdate();
@@ -241,7 +240,8 @@ function AppContent({ connection, switcher, browserMockEnabled }: { connection: 
   const [navElement, setNavElement] = useState<HTMLElement | null>(null);
   const { entries: pluginEntries, plugins: installedPluginList, fetched: pluginEntriesFetched, pluginUpdates } = usePluginNavEntries(coreReady, remote ? connection.revision : undefined);
   const pluginEntry = findPluginNavEntry(pluginEntries, active);
-  const navPages = pages.filter((page) => page.id !== 'easy' && (page.id !== 'config-management' || browserMockEnabled));
+  const configManagementAvailable = isTauri() || browserMockEnabled;
+  const navPages = pages.filter((page) => page.id !== 'easy' && (page.id !== 'config-management' || configManagementAvailable));
   const { layout: autoPluginLayout, compact: navCompact } = usePluginNavLayout(navElement, navPages.length, pluginEntries.length);
   const [pluginReload, setPluginReload] = useState(0);
   const [pluginNavOverride, setPluginNavOverride] = useState<PluginNavOverride | null>(null);
@@ -327,12 +327,12 @@ function AppContent({ connection, switcher, browserMockEnabled }: { connection: 
   };
 
   const select = useCallback((pageId: AppPageId) => {
-    if ((pageId === 'config-management' && !browserMockEnabled) || !canOpenAppPage(pageId, coreReady)) {
+    if ((pageId === 'config-management' && !configManagementAvailable) || !canOpenAppPage(pageId, coreReady)) {
       return;
     }
     if (pageId !== active) requestAppNavigation(() => setActive(pageId));
     else if (isPluginRoute(pageId)) setPluginReload((value) => value + 1);
-  }, [active, coreReady, browserMockEnabled]);
+  }, [active, coreReady, configManagementAvailable]);
 
   useEffect(() => {
     const handleNavigate = (event: Event) => {
@@ -560,7 +560,12 @@ function AppContent({ connection, switcher, browserMockEnabled }: { connection: 
 
         <div id="app-workspace" className="workspace" ref={workspaceRef} data-overlay-scrollbars>
           <main className="content" key={`${connection.remoteActive}:${connection.revision}`}>
-            {connection.needsRepair ? <p role="alert">{t('remote.error.profileInvalid')}</p> : !canOpenAppPage(active, coreReady) ? (
+            {active === 'config-management' && configManagementAvailable ? (
+              <Suspense fallback={<p role="status">{t('common.loading')}</p>}>
+                <ConfigManagementPage revision={connection.revision} remote={remote || connection.remoteSelected || connection.needsRepair} preview={browserMockEnabled}
+                  reconnect={() => openConnection(connection.endpoint ?? '')} />
+              </Suspense>
+            ) : connection.needsRepair ? <p role="alert">{t('remote.error.profileInvalid')}</p> : !canOpenAppPage(active, coreReady) ? (
               <CoreLockedPage />
             ) : pluginEntry ? (
               <PluginResourcePage key={pluginEntry.route} entry={pluginEntry} reloadToken={pluginReload} />
@@ -575,8 +580,6 @@ function AppContent({ connection, switcher, browserMockEnabled }: { connection: 
                 />
               ) : active === 'versions' ? (
                 <VersionManagementPage displaySeries={appVersionDisplay} />
-              ) : active === 'config-management' && browserMockEnabled && MockConfigManagementPage ? (
-                <Suspense fallback={<p role="status">{t('common.loading')}</p>}><MockConfigManagementPage /></Suspense>
               ) : ActivePage === PluginsPage ? (
                 <PluginsPage
                   discoveredPlugins={installedPluginList}

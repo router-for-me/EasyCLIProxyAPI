@@ -11,6 +11,9 @@ use std::{
 };
 use tokio::sync::Mutex;
 
+#[path = "config_document.rs"]
+pub(crate) mod config_document;
+
 const PROFILE_FILE: &str = "remote-cpa.json";
 const VERSION_PATH: &str = "config/config-version";
 const KEYS_PATH: &str = "config/access/api-keys";
@@ -86,6 +89,8 @@ struct Selection {
     revision: u32,
     keys_etag: Option<(u32, header::HeaderValue)>,
     next_snapshot: u32,
+    config_verification_revision: Option<u32>,
+    config_listener_restart_pid: Option<u32>,
 }
 
 pub(crate) struct RemoteCpaState {
@@ -132,6 +137,8 @@ impl RemoteCpaState {
                 revision: 0,
                 keys_etag: None,
                 next_snapshot: 0,
+                config_verification_revision: None,
+                config_listener_restart_pid: None,
             }),
         }
     }

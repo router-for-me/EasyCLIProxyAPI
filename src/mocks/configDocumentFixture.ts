@@ -21,12 +21,3 @@ preview-extension:
   keep-this: true # Not represented in the visual editor
 `;
 
-let savedYaml = initialMockConfigYaml;
-
-export function readMockConfig() {
-  return savedYaml;
-}
-
-export function saveMockConfig(yaml: string) {
-  savedYaml = yaml;
-}

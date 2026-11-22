@@ -1,4 +1,4 @@
-import { memo, useId, useMemo, useState } from 'react';
+import { memo, useContext, useId, useMemo, useState } from 'react';
 import { useTranslation } from '../../translation';
 import { Button } from '../../primitives';
 import { Input } from '../../primitives';
@@ -10,6 +10,7 @@ import { generateSecureApiKey } from '../../apiKey';
 import { maskApiKey } from '../../utilities';
 import { isValidApiKeyCharset } from '../../utilities';
 import { ApiKeyStrengthMeter } from './ApiKeyStrengthMeter';
+import { KeyRemarksContext } from '../../keyRemarks';
 import styles from './Blocks.module.scss';
 
 interface ApiKeysCardEditorProps {
@@ -18,13 +19,12 @@ interface ApiKeysCardEditorProps {
   onChange: (nextValue: string) => void;
 }
 
-const mockKeyNames = new Map<string, string>();
-
 export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
   value,
   disabled,
   onChange,
 }: ApiKeysCardEditorProps) {
+  const remarks = useContext(KeyRemarksContext);
   const [nameValue, setNameValue] = useState('');
   const { t } = useTranslation();
   const [copyStatus, setCopyStatus] = useState('');
@@ -64,7 +64,7 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
 
   const openEditModal = (apiKeyId: string) => {
     const editingIndex = renderApiKeyIds.findIndex((id) => id === apiKeyId);
-    setNameValue(mockKeyNames.get(apiKeys[editingIndex]) ?? '');
+    setNameValue(remarks?.get(apiKeys[editingIndex]) ?? '');
     setEditingApiKeyId(apiKeyId);
     setInputValue(apiKeys[editingIndex] ?? '');
     setFormError('');
@@ -107,7 +107,7 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
       editingApiKeyId === null
         ? [...apiKeys, trimmed]
         : apiKeys.map((key, idx) => (idx === editingIndex ? trimmed : key));
-    mockKeyNames.set(trimmed, nameValue.trim());
+    if (nameValue.trim() !== (remarks?.get(trimmed) ?? '')) remarks?.set(trimmed, nameValue.trim());
     if (editingApiKeyId === null) {
       setApiKeyIds([...renderApiKeyIds, makeClientId()]);
     }
@@ -144,7 +144,7 @@ export const ApiKeysCardEditor = memo(function ApiKeysCardEditor({
               <span className={styles.apiKeyIndex}>#{index + 1}</span>
               <span className={styles.apiKeyMeta}>
                 <span className={styles.apiKeyName}>
-                  {mockKeyNames.get(key) ||
+                  {remarks?.get(key) ||
                     t('config_management.visual.api_keys.input_label')}
                 </span>
                 <span className={styles.apiKeyValue}>{maskApiKey(String(key || ''))}</span>

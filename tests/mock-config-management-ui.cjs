@@ -125,6 +125,7 @@ const { createServer: createPortProbe } = require('node:net');
 
     await save.click();
     await diff.waitFor();
+    assert.match(await diff.getByRole('alert').innerText(), /server\.port/);
     assert.match(await diff.locator('[data-change="removed"]').allTextContents().then(lines => lines.join('')), /8317/);
     assert.match(await diff.locator('[data-change="added"]').allTextContents().then(lines => lines.join('')), /9245/);
     assert.match(await diff.locator('[data-change="added"]').allTextContents().then(lines => lines.join('')), /preview-model/);
@@ -169,12 +170,82 @@ const { createServer: createPortProbe } = require('node:net');
     assert.equal(await config.evaluate(element => element.scrollWidth <= element.clientWidth), true);
     assert.deepEqual(errors, []);
 
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await mode('Visual').click();
+    await tab('common').click();
+    await port.fill('9420');
+    await save.click();
+    await page.evaluate(async () => {
+      const invoke = window.__TAURI_INTERNALS__.invoke;
+      const current = await invoke('read_cpa_config_document', { revision: 0 });
+      await invoke('save_cpa_config_document', { revision: 0, etag: current.etag, yaml: `${current.yaml}\n# concurrent edit\n`, remarks: [] });
+    });
+    await diff.getByRole('button', { name: 'Confirm Save', exact: true }).click();
+    await config.getByText(/configuration changed on CPA/).waitFor();
+    assert.equal(await port.inputValue(), '9420');
+    assert.equal(await save.isDisabled(), true);
+    await button('Read current version').click();
+    await yaml.waitFor();
+    assert.match(await yamlText(), /9420/);
+    await save.click();
+    assert.match(await diff.locator('[data-change="removed"]').allTextContents().then(lines => lines.join('')), /concurrent edit/);
+    await page.evaluate(() => {
+      const internals = window.__TAURI_INTERNALS__;
+      const invoke = internals.invoke;
+      internals.invoke = async (command, payload, options) => {
+        const result = await invoke(command, payload, options);
+        return command === 'save_cpa_config_document' ? { ...result, document: null } : result;
+      };
+    });
+    await diff.getByRole('button', { name: 'Confirm Save', exact: true }).click();
+    await config.getByText(/Configuration saved, but CPA could not be reached/).waitFor();
+    assert.equal(await save.count(), 0);
+    await button('Reload').click();
+    await config.getByText('Configuration loaded', { exact: true }).waitFor();
+    assert.match(await yamlText(), /9420/);
+
+    await page.goto(`${base}/?mock=stopped`);
+    await management.click();
+    await config.getByText(/Start the built-in CPA core/).waitFor();
+    await button('Start core').click();
+    await port.waitFor();
+    assert.equal(await port.inputValue(), '8317');
+
+    const fileBeforeRemark = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('read_cpa_config_document', { revision: 0 }));
+    await config.locator('#cfg-field-apiKeys').getByRole('button', { name: 'Edit', exact: true }).click();
+    const editKey = page.getByRole('dialog', { name: 'Edit API Key' });
+    await editKey.getByRole('textbox', { name: 'Name / description' }).fill('Desktop-only remark');
+    await editKey.getByRole('button', { name: 'Update', exact: true }).click();
+    await save.click();
+    assert.equal(await diff.getByLabel('YAML diff').count(), 0);
+    await diff.getByRole('button', { name: 'Confirm Save', exact: true }).click();
+    await save.waitFor({ state: 'hidden' });
+    const fileAfterRemark = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('read_cpa_config_document', { revision: 0 }));
+    assert.equal(fileAfterRemark.etag, fileBeforeRemark.etag);
+    assert.equal(fileAfterRemark.yaml, fileBeforeRemark.yaml);
+    assert.deepEqual(fileAfterRemark.remarks, [{ key: 'preview-client', remark: 'Desktop-only remark' }]);
+
+    await page.evaluate(() => {
+      const internals = window.__TAURI_INTERNALS__;
+      const invoke = internals.invoke;
+      internals.invoke = async (command, payload, options) => {
+        const result = await invoke(command, payload, options);
+        return command === 'read_cpa_config_document' ? { ...result, etag: null } : result;
+      };
+    });
+    await button('Reload').click();
+    await config.getByText(/Editing is read-only/).waitFor();
+    assert.equal(await port.isDisabled(), true);
+    await mode('Source').click();
+    await yaml.waitFor();
+    assert.equal(await yaml.getAttribute('contenteditable'), 'false');
+
     await page.goto(`${base}/?mock=off`);
     await page.waitForFunction(() => document.querySelector('#root')?.childElementCount > 0);
     assert.equal(await management.count(), 0);
     assert.equal(await config.count(), 0);
     assert.deepEqual(external, []);
-    console.log('PASS: mock-only configuration entry, form and YAML bridge, search, validation, diff and save lifecycle.');
+    console.log('PASS: configuration form/YAML, connection warning, conflict review, saved-but-offline recovery, and stopped core.');
   } finally {
     await browser?.close();
     await server.close();

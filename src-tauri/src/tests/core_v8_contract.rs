@@ -514,6 +514,36 @@ async fn v8_accepts_gui_settings_and_reloads_client_keys() {
 
 #[tokio::test]
 #[ignore = "requires CPA_V8_TEST_CORE pointing to a v8 executable"]
+async fn v8_config_document_conditional_raw_yaml_and_readback() {
+    use remote_cpa::config_document::{put_yaml, read_yaml, DocumentError};
+    let executable = fs::canonicalize(env::var_os("CPA_V8_TEST_CORE").unwrap()).unwrap();
+    let directory = agent_test_home("v8-contract-config-document");
+    let bind = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = bind.local_addr().unwrap().port();
+    let mut core = TestCore {
+        config: directory.join("config.yaml"), directory, child: None, executable,
+        origin: format!("http://127.0.0.1:{port}"),
+        client: reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(3)).build().unwrap(),
+    };
+    fs::create_dir_all(core.directory.join("auth")).unwrap();
+    fs::write(&core.config, format!("config-version: 8\nserver: {{host: 127.0.0.1, port: {port}}}\nmanagement: {{secret-key: isolated-test-secret, disable-control-panel: true}}\noauth: {{auth-dir: ./auth}}\nrouting:\n  strategy: round-robin\n")).unwrap();
+    drop(bind);
+    core.start().await;
+    let target = remote_cpa::Target::new(&core.origin, "isolated-test-secret").unwrap();
+    let baseline = read_yaml(&target).await.unwrap();
+    let etag = baseline.etag.unwrap();
+    let draft = baseline.yaml.replace("strategy: round-robin", "strategy: fill-first");
+    assert_ne!(draft, baseline.yaml);
+    let saved_etag = put_yaml(&target, &etag, draft).await.unwrap().unwrap();
+    assert_eq!(put_yaml(&target, &etag, baseline.yaml).await, Err(DocumentError::Conflict));
+    let saved = read_yaml(&target).await.unwrap();
+    assert_eq!(saved.etag.as_deref(), saved_etag.to_str().ok());
+    assert_eq!(saved.yaml, fs::read_to_string(&core.config).unwrap());
+    assert!(saved.yaml.contains("strategy: fill-first"));
+}
+
+#[tokio::test]
+#[ignore = "requires CPA_V8_TEST_CORE pointing to a v8 executable"]
 async fn three_v8_instances_keep_selected_queue_and_database_isolated() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let executable = fs::canonicalize(std::env::var_os("CPA_V8_TEST_CORE").unwrap()).unwrap();

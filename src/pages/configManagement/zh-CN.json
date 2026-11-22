@@ -389,7 +389,7 @@
         "input_placeholder": "粘贴你的 API 密钥",
         "name_label": "名称 / 说明",
         "name_placeholder": "例如：小明的笔记本",
-        "name_hint": "名称立即保存在当前浏览器中，按服务器隔离，不写入服务器配置。清空此字段可移除名称。",
+        "name_hint": "名称按所选实例单独保存，不写入 YAML。清空此字段可移除名称。",
         "name_save_error": "无法将名称保存到浏览器存储，请检查浏览器存储设置。",
         "input_hint": "保存配置后生效。上游提供商密钥独立管理，不受此处修改影响。",
         "error_empty": "请输入 API 密钥",
