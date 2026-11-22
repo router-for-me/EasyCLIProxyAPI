@@ -81,6 +81,9 @@ export const getSoftwareSettings = (): Promise<SoftwareSettings> =>
 export const getCoreTlsSettings = (): Promise<CoreTlsSettings> =>
   invokeCoreSetting<CoreTlsSettings>('get_core_tls_settings');
 
+export const followSystemCoreProxy = (): Promise<CoreConfigSettings> =>
+  invokeCoreSetting<CoreConfigSettings>('set_core_proxy_url', { proxyUrl: '' });
+
 export const setCoreManagementSecretKey = (args: { secretKey: string; }): Promise<CoreConfigSettings> =>
   invokeCoreSetting<CoreConfigSettings>('set_core_management_secret_key', args);
 

@@ -1509,7 +1509,8 @@ export function createBrowserMockRuntime(
         return config;
       }
       case 'set_core_proxy_url': {
-        return updateCoreConfig(state, { settings: { proxyUrl: readString(payload.proxyUrl) } });
+        const proxyUrl = readString(payload.proxyUrl);
+        return updateCoreConfig(state, { settings: { proxyUrl, proxyOverride: Boolean(proxyUrl) } });
       }
       case 'set_core_session_affinity': {
         return updateCoreConfig(state, { settings: { routingSessionAffinity: Boolean(payload.enabled) } });

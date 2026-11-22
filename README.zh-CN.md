@@ -51,6 +51,8 @@ EasyCLIProxyAPI 是基于 [CLIProxyAPI](https://github.com/router-for-me/CLIProx
 
 **配置管理**支持通过表单或原始 YAML 编辑当前选中的 v8 实例。保存前可审查差异；如果服务器配置已变化，草稿会保留，需读取当前版本并重新审查。内置内核的监听地址、端口或 TLS 变更需单独重启。API 密钥备注按实例保存在桌面端，不写入 YAML。
 
+**快捷配置**保留反向代理、应用偏好、日志查看、跟随系统代理，以及完整表单未覆盖的设置。监听、TLS、API 密钥、敏感词等已由「配置管理」覆盖的项目统一在那里编辑。
+
 ### OAuth 账号授权
 
 ![OAuth 账号授权](docs/screenshots/zh-CN/2.png)

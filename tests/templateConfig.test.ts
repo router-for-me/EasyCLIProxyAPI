@@ -8,6 +8,7 @@ import { generalTemplateGroups, requestTemplateGroups, routingTemplateGroups } f
 import { templateMessages } from '../src/i18n/templateConfig';
 import { oauthTemplateGroups } from '../src/services/oauthTemplateFields';
 import { settingsCategories, settingsTemplateGroups } from '../src/services/settingsNavigation';
+import { CONFIG_FIELD_SEARCH_INDEX } from '../src/pages/configManagement/searchIndex';
 
 const field: TemplateConfigField = { path: ['oauth', 'providers', 'codex', 'response-steering'], type: 'boolean', label: 'Steering', defaultValue: false };
 const change = (path: string[], value: unknown, expected: unknown = null, expectedExists = false, remove = false) => ({ path, value, expected, expectedExists, remove });
@@ -131,7 +132,7 @@ describe('template configuration drafts', () => {
     expect(claudeOauthPaths).toContain('upstream.claude.disable-cloaking-model-list');
 
     // 6. Check categories mapping
-    expect(settingsCategories.map(c => c.id)).toEqual(['general', 'proxy', 'aliases', 'routing', 'requests', 'sensitiveWords', 'oauth', 'diagnostics', 'software']);
+    expect(settingsCategories.map(c => c.id)).toEqual(['general', 'proxy', 'aliases', 'routing', 'requests', 'oauth', 'diagnostics', 'software']);
     expect(settingsTemplateGroups.general.map(g => g.id)).toContain('server');
     expect(settingsTemplateGroups.general.map(g => g.id)).toContain('management');
     expect(settingsTemplateGroups.routing.map(g => g.id)).toContain('routing-advanced');
@@ -151,6 +152,16 @@ describe('template configuration drafts', () => {
         }
       }
     }
+  });
+
+  test('does not expose full-editor fields again in quick settings', () => {
+    const fullPaths = new Set(CONFIG_FIELD_SEARCH_INDEX.map(entry => entry.yamlKeys?.join('.')));
+    const quickPaths = Object.values(settingsTemplateGroups).flatMap(groups => groups.flatMap(group => group.fields.map(field => field.path.join('.'))));
+    const normalizedPaths = quickPaths.map(path => path.replace(/^oauth\.providers\.(claude|codex|xai)\./, 'upstream.$1.'));
+    expect(normalizedPaths.filter(path => fullPaths.has(path))).toEqual([]);
+    expect(quickPaths).toContain('management.base-url');
+    expect(quickPaths).toContain('routing.session-affinity-rebind-on');
+    expect(quickPaths).toContain('observability.logs.request-log');
   });
 
   test('exposes the Antigravity protective pause and sensitive-pattern replacements', () => {

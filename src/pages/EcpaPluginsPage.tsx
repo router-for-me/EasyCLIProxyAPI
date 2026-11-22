@@ -20,7 +20,7 @@ import {
 import { safePluginWebURL } from '../services/pluginResources';
 import { refreshPluginReleaseVersions } from '../services/pluginReleaseVersions';
 import { getPluginSupport, pluginsApi, pluginStoreApi, type PluginStoreEntry, type PluginStoreInstallResult, type PluginStoreResponse } from '../services/plugins';
-import { openSettingField } from '../services/settingsNavigation';
+import { openConfigManagementField } from '../services/configManagementNavigation';
 import { GitHubTokenHint, isGitHubRateLimit } from './PluginRateLimitHint';
 import { PluginInstallDialog } from './PluginInstallDialog';
 import { pluginText } from '../i18n/plugins';
@@ -553,7 +553,7 @@ export function EcpaPluginsPage() {
   };
   const [plugins, setPlugins] = useState<EcpaPluginEntry[]>([]);
   // A token previously entered here still applies; new tokens are configured in
-  // Settings > Server > GitHub Token (see openSettingField below).
+  // Configuration Management > Connection & Access > GitHub Token.
   const token = useMemo(() => readEcpaGitHubToken(), []);
   const [tokenInvalid, setTokenInvalid] = useState(false);
   const [search, setSearch] = useState('');
@@ -674,7 +674,7 @@ export function EcpaPluginsPage() {
   const hasActiveFilter = Boolean(search.trim()) || selectedTags.length > 0;
 
   const tokenSettingsLink = (muted = false) => (
-    <button type="button" className={`link-button ecpa-token-settings-link${muted ? ' muted' : ''}`} onClick={() => openSettingField(['server', 'github-token'])}>
+    <button type="button" className={`link-button ecpa-token-settings-link${muted ? ' muted' : ''}`} onClick={() => openConfigManagementField('githubToken')}>
       <KeyRound size={13} aria-hidden="true" />
       {t('ecpaPlugins.tokenSettings')}
     </button>

@@ -11,6 +11,10 @@ import { useCoreRuntime } from '../../coreRuntime';
 import { readConfigDocument, saveConfigDocument, type ConfigDocument } from '../../services/configDocument';
 import { restartCoreProcess, startCoreProcess } from '../../services/coreLifecycle';
 import { selectedTargetRevision } from '../../services/remoteCpa';
+import { takeConfigManagementField } from '../../services/configManagementNavigation';
+import { addCloudRules, fetchLatestSensitiveWordRules, type WordEntry } from '../../services/sensitiveWords';
+import { sensitiveWordsMessages } from '../../i18n/sensitiveWords';
+import { templateText } from '../../i18n/templateConfig';
 import { ConfigSearch } from './components/ConfigSearch';
 import { ConfigSourceEditor } from './components/ConfigSourceEditor';
 import { SectionAdvanced } from './components/sections/SectionAdvanced';
@@ -57,7 +61,7 @@ const connectionFields = [
   ['management.secret-key', 'remote-management.secret-key'], ['management.allow-remote', 'remote-management.allow-remote'],
 ] as const;
 
-function changedConnectionFields(baseline: string, draft: string) {
+function reviewConfigChanges(baseline: string, draft: string) {
   const before = parseDocument(baseline, { merge: true });
   const after = parseDocument(draft, { merge: true });
   if (after.errors.length || !isMap(after.contents)) throw new Error('Invalid YAML');
@@ -69,8 +73,13 @@ function changedConnectionFields(baseline: string, draft: string) {
     const value = readPath(values, path);
     return value === undefined ? readPath(values, legacy) : value;
   };
-  return connectionFields.filter(([path, legacy]) =>
+  const fields = connectionFields.filter(([path, legacy]) =>
     !Object.is(readField(beforeValues, path, legacy), readField(afterValues, path, legacy))).map(([path]) => path);
+  const hasKeys = (values: unknown) => {
+    const keys = readField(values, 'access.api-keys', 'api-keys');
+    return Array.isArray(keys) && keys.some(key => typeof key === 'string' && key.trim());
+  };
+  return { fields, removesAllKeys: hasKeys(beforeValues) && !hasKeys(afterValues) };
 }
 
 export default function ConfigManagementPage({ revision, remote, preview, reconnect }: {
@@ -87,7 +96,8 @@ export default function ConfigManagementPage({ revision, remote, preview, reconn
   const [mode, setMode] = useState<ConfigEditorMode>('visual');
   const [section, setSection] = useState<ConfigTabId>('common');
   const [jump, setJump] = useState<{ fieldId: string } | null>(null);
-  const [pending, setPending] = useState<{ yaml: string; fields: string[] } | null>(null);
+  const [requestedField, setRequestedField] = useState<string>();
+  const [pending, setPending] = useState<({ yaml: string } & ReturnType<typeof reviewConfigChanges>) | null>(null);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [requestError, setRequestError] = useState<keyof typeof messages | null>(null);
@@ -109,6 +119,21 @@ export default function ConfigManagementPage({ revision, remote, preview, reconn
   const invalidSections = CONFIG_TAB_IDS.filter((id) => id === 'payload' ? visualHasPayloadValidationErrors
     : id === 'common' ? Boolean(visualValidationErrors.port)
       : SECTION_VALIDATION_FIELDS[id].some((field) => Boolean(visualValidationErrors[field])));
+
+  useEffect(() => {
+    const field = takeConfigManagementField(revision);
+    if (field) setRequestedField(field);
+  }, [revision]);
+
+  useEffect(() => {
+    if (!requestedField || !document || visualParseError || busy) return;
+    const entry = CONFIG_FIELD_SEARCH_INDEX.find(item => item.fieldId === requestedField);
+    setRequestedField(undefined);
+    if (!entry) return;
+    setMode('visual');
+    setSection(entry.sectionId);
+    setJump({ fieldId: entry.fieldId });
+  }, [busy, document, requestedField, visualParseError]);
 
   useEffect(() => {
     alive.current = true;
@@ -180,6 +205,40 @@ export default function ConfigManagementPage({ revision, remote, preview, reconn
   }
 
   const isCurrent = () => alive.current && selectedTargetRevision() === revision;
+  const importCloudRules = async () => {
+    if (readOnly || verify) return;
+    setBusy(true);
+    setNotice('');
+    setError('');
+    try {
+      const catalog = await fetchLatestSensitiveWordRules();
+      if (!isCurrent()) return;
+      const providers = ['antigravity', 'devin'] as const;
+      const entries = providers.flatMap(provider => {
+        const words = visualValues[`${provider}SensitiveWords`].map((target, index): WordEntry =>
+          ({ id: `${provider}-word-${index}`, provider, kind: 'obfuscate', target, replacement: '' }));
+        const replacements = Object.entries(visualValues[`${provider}SensitiveWordsReplace`]).map(([target, replacement], index): WordEntry =>
+          ({ id: `${provider}-replace-${index}`, provider, kind: 'replace', target, replacement }));
+        return [...words, ...replacements];
+      });
+      const added = addCloudRules(entries, catalog.rules).slice(entries.length);
+      if (added.length) {
+        const wordsFor = (provider: typeof providers[number]) => added.filter(rule => rule.provider === provider && rule.kind === 'obfuscate').map(rule => rule.target);
+        const replacementsFor = (provider: typeof providers[number]) => Object.fromEntries(added.filter(rule => rule.provider === provider && rule.kind === 'replace').map(rule => [rule.target, rule.replacement]));
+        setVisualValues({
+          antigravitySensitiveWords: [...visualValues.antigravitySensitiveWords, ...wordsFor('antigravity')],
+          devinSensitiveWords: [...visualValues.devinSensitiveWords, ...wordsFor('devin')],
+          antigravitySensitiveWordsReplace: { ...visualValues.antigravitySensitiveWordsReplace, ...replacementsFor('antigravity') },
+          devinSensitiveWordsReplace: { ...visualValues.devinSensitiveWordsReplace, ...replacementsFor('devin') },
+        });
+      }
+      setNotice(added.length ? messages.cloudRulesAdded : messages.noNewCloudRules);
+    } catch {
+      if (isCurrent()) setError(messages.cloudRulesFailed);
+    } finally {
+      if (isCurrent()) setBusy(false);
+    }
+  };
   const acceptDocument = (next: ConfigDocument, draft = next.yaml) => {
     setDocument(next);
     setOffline(false);
@@ -276,7 +335,7 @@ export default function ConfigManagementPage({ revision, remote, preview, reconn
     const yaml = materialize();
     if (yaml === null || (yaml === saved && !remarkDraft.size)) return;
     try {
-      setPending({ yaml, fields: changedConnectionFields(saved, yaml) });
+      setPending({ yaml, ...reviewConfigChanges(saved, yaml) });
     } catch {
       setError(messages.rejected);
     }
@@ -343,6 +402,9 @@ export default function ConfigManagementPage({ revision, remote, preview, reconn
             : CONFIG_FIELD_SEARCH_INDEX.some((entry) => (entry.sectionId === id || (id === 'common' && commonFields.has(entry.fieldId))) && FIELD_VALUE_KEYS[entry.fieldId]?.some((field) => visualDirtyFields.has(field))) && <span className="mock-config-tab-dirty" aria-label={t('config_management.status_dirty_short')}>•</span>}
         </> }))} />
       <div id={panelId} role="tabpanel" aria-labelledby={tabId(section)}>
+        {section === 'advanced' && <button type="button" className="secondary-button compact-button" disabled={readOnly || verify} onClick={() => void importCloudRules()}>
+          {templateText(sensitiveWordsMessages.addLatest, locale)}
+        </button>}
         <KeyRemarksContext.Provider value={{
           get: (key) => remarkDraft.get(key) ?? notes.get(key),
           set: (key, remark) => setRemarkDraft(previous => {
@@ -369,6 +431,7 @@ export default function ConfigManagementPage({ revision, remote, preview, reconn
       <button type="button" className="primary-button" disabled={busy} onClick={() => void confirmSave()}>{t('config_management.diff.confirm')}</button>
     </>}>
       {pending.fields.length > 0 && <p role="alert">{messages.connectionWarning} {pending.fields.join(', ')}</p>}
+      {pending.removesAllKeys && <p role="alert">{appText('config.keys.deleteAllWarning')}</p>}
       {remarkDraft.size > 0 && <p>{messages.remarksChange}</p>}
       {pending.yaml !== saved && <pre className="mock-config-diff" aria-label="YAML diff">{diffLines(saved, pending.yaml).flatMap((part, partIndex) =>
         part.value.replace(/\n$/, '').split('\n').map((line, lineIndex) => <span key={`${partIndex}-${lineIndex}`} data-change={part.added ? 'added' : part.removed ? 'removed' : 'unchanged'}>{part.added ? '+ ' : part.removed ? '− ' : '  '}{line}</span>))}</pre>}

@@ -1,10 +1,10 @@
-import type { TemplateText } from './templateConfig';
+import type { TemplateConfigGroup, TemplateText } from './templateConfig';
 import { invoke } from './platform';
 import type { ReverseProxyConfig } from './reverseProxy';
 import { generalTemplateGroups, requestTemplateGroups, routingTemplateGroups } from './generalTemplateFields';
 import { oauthTemplateGroups } from './oauthTemplateFields';
 import { extensionTemplateGroups } from './extensionTemplateFields';
-import { payloadTemplateGroups } from './payloadTemplateFields';
+import { CONFIG_FIELD_SEARCH_INDEX } from '../pages/configManagement/searchIndex';
 
 const text = (zh: string, en: string, ja: string): TemplateText => ({ zh, en, ja });
 export const settingsCategories = [
@@ -13,22 +13,30 @@ export const settingsCategories = [
   { id: 'aliases', title: text('模型别名', 'Model aliases', 'モデル別名') },
   { id: 'routing', title: text('路由与稳定性', 'Routing & reliability', 'ルーティングと安定性') },
   { id: 'requests', title: text('模型与请求', 'Models & requests', 'モデルとリクエスト') },
-  { id: 'sensitiveWords', title: text('敏感词设置', 'Sensitive words', '機密語の設定') },
   { id: 'oauth', title: text('上游与凭据', 'Upstreams & credentials', '上流と認証情報') },
   { id: 'diagnostics', title: text('日志与诊断', 'Logs & diagnostics', 'ログと診断') },
   { id: 'software', title: text('应用偏好', 'App preferences', 'アプリの設定') },
 ] as const;
 export type SettingsCategory = typeof settingsCategories[number]['id'];
-export const settingsTemplateGroups = {
-  general: generalTemplateGroups.filter(group => group.id === 'management' || group.id === 'server'),
+const visualConfigPaths = new Set(CONFIG_FIELD_SEARCH_INDEX.flatMap(entry => entry.yamlKeys ? [entry.yamlKeys.join('.')] : []));
+const quickOnly = (groups: readonly TemplateConfigGroup[]) => groups.flatMap(group => {
+  const fields = group.fields.filter(field => {
+    const path = field.path.join('.');
+    const canonical = path.replace(/^oauth\.providers\.(claude|codex|xai)\./, 'upstream.$1.');
+    return !visualConfigPaths.has(path) && !visualConfigPaths.has(canonical);
+  });
+  return fields.length ? [{ ...group, fields }] : [];
+});
+
+export const settingsTemplateGroups: Record<SettingsCategory, readonly TemplateConfigGroup[]> = {
+  general: quickOnly(generalTemplateGroups.filter(group => group.id === 'management' || group.id === 'server')),
   proxy: [],
   aliases: [],
-  routing: [...routingTemplateGroups, ...extensionTemplateGroups.filter(group => group.id === 'extensions-concurrency')],
-  requests: [...requestTemplateGroups, ...payloadTemplateGroups],
-  sensitiveWords: [],
-  oauth: ['oauth-common', 'oauth-codex', 'oauth-others', 'oauth-filters', 'oauth-claude', 'oauth-claude-headers', 'oauth-models', 'oauth-media']
-    .map(id => oauthTemplateGroups.find(group => group.id === id)!),
-  diagnostics: [...generalTemplateGroups.filter(group => group.id === 'diagnostics'), ...extensionTemplateGroups.filter(group => group.id === 'extensions-inflight')],
+  routing: quickOnly([...routingTemplateGroups, ...extensionTemplateGroups.filter(group => group.id === 'extensions-concurrency')]),
+  requests: quickOnly(requestTemplateGroups),
+  oauth: quickOnly(['oauth-codex', 'oauth-others', 'oauth-claude', 'oauth-models']
+    .map(id => oauthTemplateGroups.find(group => group.id === id)!)),
+  diagnostics: quickOnly([...generalTemplateGroups.filter(group => group.id === 'diagnostics'), ...extensionTemplateGroups.filter(group => group.id === 'extensions-inflight')]),
   software: [],
 };
 export const allSettingsTemplateGroups = Object.values(settingsTemplateGroups).flat();
@@ -37,6 +45,8 @@ export const settingsMessages = {
   search: text('搜索设置', 'Search settings', '設定を検索'),
   searchHint: text('搜索设置…', 'Search settings…', '設定を検索…'),
   clearSearch: text('清空搜索', 'Clear search', '検索をクリア'),
+  restoreManagement: text('恢复管理访问', 'Restore management access', '管理アクセスを復旧'),
+  followingSystemProxy: text('已跟随系统代理', 'Following system proxy', 'システムプロキシを使用中'),
   results: text('搜索结果', 'Search results', '検索結果'),
   noResults: text('没有找到匹配的设置，试试其他关键词。', 'No matching settings. Try another keyword.', '一致する設定がありません。別のキーワードをお試しください。'),
   externalUnsupported: text('非内置 CPA 不支持该功能。', 'This feature is not supported for external CPA instances.', 'この機能は外部 CPA では利用できません。'),
@@ -157,21 +167,4 @@ export const resolveReverseProxySaveConfig = (
   const wasActive = saved?.enabled === true || running === true;
   const portsValid = isReverseProxyPort(draft.listenPort) && isReverseProxyPort(draft.targetPort);
   return !portsValid && wasActive && saved ? { ...draft, ...saved, enabled: false } : draft;
-};
-
-// The settings page is mounted only while active, so another page hands over the
-// field to open once instead of dispatching an event nobody is listening to yet.
-let requestedSettingPath: string | null = null;
-export const openSettingField = (path: readonly string[]) => {
-  requestedSettingPath = path.join('.');
-  window.dispatchEvent(new CustomEvent('app:navigate', { detail: 'config' }));
-};
-export const takeRequestedSettingField = () => {
-  const path = requestedSettingPath;
-  requestedSettingPath = null;
-  for (const category of settingsCategories) for (const group of settingsTemplateGroups[category.id]) {
-    const index = group.fields.findIndex(field => field.path.join('.') === path);
-    if (index >= 0) return { category: category.id, target: `config-group-${group.id}`, field: `template-field-${group.id}-${index}` };
-  }
-  return null;
 };

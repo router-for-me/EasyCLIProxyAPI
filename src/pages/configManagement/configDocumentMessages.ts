@@ -1,8 +1,11 @@
 const en = {
+  cloudRulesAdded: 'Cloud rules added to the draft. Review the changes before saving.',
+  noNewCloudRules: 'No new cloud rules to add.',
+  cloudRulesFailed: 'Could not load cloud rules. The draft is unchanged.',
   startCore: 'Start the built-in CPA core before opening its configuration.',
   start: 'Start core',
   restart: 'Restart core',
-  restartRequired: 'Restart the built-in core separately to apply listener or TLS changes.',
+  restartRequired: 'Restart the built-in core separately to apply changes to the listener, TLS, or commercial mode.',
   lifecycleFailed: 'The core did not become ready. Check its status before trying again.',
   unavailable: 'Cannot access the selected CPA configuration. Check the instance connection.',
   unsupported: 'This instance does not support the v8 YAML configuration endpoint.',
@@ -24,10 +27,13 @@ const en = {
 };
 
 const zhCN: typeof en = {
+  cloudRulesAdded: '云端规则已加入草稿，请审查差异后保存。',
+  noNewCloudRules: '没有可添加的新云端规则。',
+  cloudRulesFailed: '未能读取云端规则，草稿未变更。',
   startCore: '请先启动内置 CPA 内核，再打开配置。',
   start: '启动内核',
   restart: '重启内核',
-  restartRequired: '请单独重启内置内核，使监听地址、端口或 TLS 变更生效。',
+  restartRequired: '请单独重启内置内核，使监听地址、端口、TLS 或商业模式变更生效。',
   lifecycleFailed: '内核未就绪，请检查运行状态后重试。',
   unavailable: '无法访问所选 CPA 实例的配置，请检查实例连接。',
   unsupported: '此实例不支持 v8 YAML 配置接口。',
@@ -49,10 +55,13 @@ const zhCN: typeof en = {
 };
 
 const zhTW: typeof en = {
+  cloudRulesAdded: '雲端規則已加入草稿，請審查差異後儲存。',
+  noNewCloudRules: '沒有可加入的新雲端規則。',
+  cloudRulesFailed: '無法讀取雲端規則，草稿未變更。',
   startCore: '請先啟動內建 CPA 核心，再開啟設定。',
   start: '啟動核心',
   restart: '重新啟動核心',
-  restartRequired: '請另外重新啟動內建核心，以套用監聽位址、連接埠或 TLS 變更。',
+  restartRequired: '請另外重新啟動內建核心，以套用監聽位址、連接埠、TLS 或商業模式變更。',
   lifecycleFailed: '核心尚未就緒，請檢查執行狀態後重試。',
   unavailable: '無法存取所選 CPA 執行個體的設定，請檢查連線。',
   unsupported: '此執行個體不支援 v8 YAML 設定介面。',

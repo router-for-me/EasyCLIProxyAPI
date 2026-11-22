@@ -75,10 +75,10 @@ describe('控件自身反馈', () => {
     }
   });
 
-  it('复制密钥仅保留原按钮勾选和失败提示', () => {
-    const { calls } = actionCalls('ConfigPanel.tsx', 'copyApiKey', 'keyFeedback.showNotice');
+  it('配置管理复制密钥只更新页面内状态', () => {
+    const { calls } = actionCalls('configManagement/components/blocks/ApiKeysCardEditor.tsx', 'handleCopy', 'setCopyStatus');
     expect(calls).toHaveLength(1);
-    expect(calls[0].arguments[1].getText()).toBe("'error'");
+    expect(calls[0].arguments[0].getText()).toContain('notification.copy_failed');
   });
 
   it('首页启动和停止不重复报成功，只有重启需要额外结果', () => {

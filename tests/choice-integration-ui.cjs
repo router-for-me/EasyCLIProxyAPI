@@ -40,7 +40,7 @@ const base = process.env.CHOICE_TEST_URL || 'http://127.0.0.1:1437';
  await page.locator('.config-settings-search input').fill('retry');
  await page.locator('#config-subpage-tab-requests').click();
  assert.equal(await page.locator('.config-settings-search input').inputValue(),'');
- await page.locator('#config-native-sensitive-words > *').first().waitFor();scenarios++;
+ await page.locator('#config-group-request-behavior').waitFor();scenarios++;
  await page.locator('.config-settings-search input').fill('retry');
  await page.locator('#config-subpage-tab-requests').focus();await page.keyboard.press('Home');
  await page.waitForFunction(()=>document.activeElement?.id==='config-subpage-tab-general');

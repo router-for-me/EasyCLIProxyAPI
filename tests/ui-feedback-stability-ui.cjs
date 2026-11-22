@@ -28,13 +28,13 @@ const { chromium, webkit } = require(process.env.PLAYWRIGHT_MODULE || 'playwrigh
         page.on('pageerror', error => errors.push(String(error)));
         await page.goto(`${base}?mock=running`);
         await page.locator('.nav-section').getByRole('button', { name: 'Quick Configuration', exact: true }).click();
-        await page.locator('.config-key-row:not(.skeleton)').first().waitFor();
+        await page.locator('#config-system-proxy').waitFor();
         await page.addStyleTag({ content: '#browser-mock-toolbar { display: none; }' });
         await page.evaluate(() => {
           const invoke = window.__TAURI_INTERNALS__.invoke;
           window.refreshTest = { pending: 0, completed: 0 };
           window.__TAURI_INTERNALS__.invoke = async (command, ...args) => {
-            if (['get_core_config_settings', 'get_software_settings', 'get_core_tls_settings'].includes(command)) {
+            if (['get_core_config_settings', 'get_software_settings'].includes(command)) {
               window.refreshTest.pending++;
               await new Promise(resolve => setTimeout(resolve, 800));
               const result = await invoke(command, ...args);
@@ -50,16 +50,8 @@ const { chromium, webkit } = require(process.env.PLAYWRIGHT_MODULE || 'playwrigh
             const { emit } = await import('/node_modules/@tauri-apps/api/event.js');
             await emit('config-files-changed', { paths: [], errors: [] });
           });
-          await page.waitForFunction(() => window.refreshTest.pending === 3);
+          await page.waitForFunction(() => window.refreshTest.pending === 2);
         };
-        await page.locator('#config-input-config-network-port').fill('18473');
-        await refresh();
-        assert.equal(await page.locator('.config-key-row.skeleton').count(), 0, `${engine.name()}: background refresh must retain keys`);
-        assert.equal(await page.locator('#config-input-config-network-port').isEnabled(), true, 'Background refresh must keep fields usable');
-        assert.equal(await page.locator('#config-input-config-network-port').inputValue(), '18473', 'Background refresh must retain drafts');
-        assert.equal(await page.locator('#config-native-tls input').first().isEnabled(), true, 'TLS controls must remain usable');
-        await page.waitForFunction(() => window.refreshTest.completed === 3);
-        assert.equal(await page.locator('#config-input-config-network-port').inputValue(), '18473', 'Completed refresh must retain drafts');
         await page.locator('#config-subpage-tab-software').click();
         const softwareSwitch = page.locator('#config-native-software input[type="checkbox"]').first();
         await softwareSwitch.setChecked(!(await softwareSwitch.isChecked()));
@@ -67,7 +59,7 @@ const { chromium, webkit } = require(process.env.PLAYWRIGHT_MODULE || 'playwrigh
         await refresh();
         assert.equal(await softwareSwitch.isEnabled(), true, 'App preferences must remain usable during refresh');
         assert.equal(await page.locator('.config-card-status').filter({ hasText: 'Loading' }).count(), 0, 'No loading label on background refresh');
-        await page.waitForFunction(() => window.refreshTest.completed === 3);
+        await page.waitForFunction(() => window.refreshTest.completed === 2);
         assert.equal(await softwareSwitch.isChecked(), checked, 'App preferences draft must survive refresh');
         cases++;
 

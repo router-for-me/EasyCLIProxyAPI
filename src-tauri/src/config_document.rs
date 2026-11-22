@@ -258,7 +258,8 @@ fn local_changes(before: &str, after: &str) -> Result<(bool, Option<String>), Do
     };
     let restart = field_changed(&["server", "host"], &["host"])
         || field_changed(&["server", "port"], &["port"])
-        || field_changed(&["server", "tls"], &["tls"]);
+        || field_changed(&["server", "tls"], &["tls"])
+        || field_changed(&["server", "commercial-mode"], &["commercial-mode"]);
     let before_key =
         crate::extract_core_management_secret_key(before).map_err(|_| DocumentError::Rejected)?;
     let after_key =
