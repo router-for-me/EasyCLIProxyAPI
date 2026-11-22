@@ -144,7 +144,7 @@ export function PluginOAuthDialog({ plugin, targetProvider, browser = 'default',
   const activeSession = () => Boolean(session && phaseRef.current === 'waiting' && Date.now() < session.expires);
   const copy = async (value: string) => {
     const current = generation.current;
-    try { await navigator.clipboard.writeText(value); if (generation.current === current) setNotice(text('copied')); }
+    try { await navigator.clipboard.writeText(value); }
     catch (reason) { if (generation.current === current) setError(message(reason)); }
   };
   const open = async () => {

@@ -32,6 +32,7 @@ const path = require('node:path');
     assert.deepEqual((await calls('open_oauth_url'))[0].args, { url: 'https://login.example.test/authorize?state=plugin-1', browser: 'default' });
     await page.getByRole('button', { name: 'Copy link', exact: true }).click();
     assert.deepEqual(await page.evaluate(() => window.pluginOAuthFixture.copied), ['https://login.example.test/authorize?state=plugin-1']);
+    assert.equal(await page.getByText('Copied.', { exact: true }).count(), 0);
     const callback = page.getByLabel('Callback URL', { exact: true });
     await callback.fill('http://localhost/callback?code=secret&state=wrong');
     await page.getByRole('button', { name: 'Submit callback', exact: true }).click();
@@ -53,6 +54,7 @@ const path = require('node:path');
     await page.getByText('ABCD-EFGH', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Copy code', exact: true }).click();
     assert.deepEqual(await page.evaluate(() => window.pluginOAuthFixture.copied), ['ABCD-EFGH']);
+    assert.equal(await page.getByText('Copied.', { exact: true }).count(), 0);
     for (let index = 0; index < 10; index += 1) {
       await page.keyboard.press('Tab');
       assert.equal(await page.evaluate(() => Boolean(document.activeElement?.closest('[role="dialog"]'))), true);
