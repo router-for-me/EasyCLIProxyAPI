@@ -771,6 +771,7 @@ fn portable_update_manifest_uses_only_explicit_locale_release_notes() {
     value["releaseNotes"] = serde_json::json!({
         "zh-CN": "## 新增\n\n- 更新说明。\n",
         "en": "## Added\n\n- Release notes.\n",
+        "pt-BR": "## Novidades\n\n- Notas da versão.\n",
         "ja": null,
         "zh-TW": "  ",
         "fr": "Unsupported locale"
@@ -780,8 +781,12 @@ fn portable_update_manifest_uses_only_explicit_locale_release_notes() {
         with_notes.release_notes.get("zh-CN").map(String::as_str),
         Some("## 新增\n\n- 更新说明。\n")
     );
-    assert_eq!(with_notes.release_notes.len(), 2);
+    assert_eq!(with_notes.release_notes.len(), 3);
     assert!(with_notes.release_notes.contains_key("en"));
+    assert_eq!(
+        with_notes.release_notes.get("pt-BR").map(String::as_str),
+        Some("## Novidades\n\n- Notas da versão.\n")
+    );
     assert!(!with_notes.release_notes.contains_key("ja"));
     assert!(!with_notes.release_notes.contains_key("zh-TW"));
     for unlocalized in [serde_json::Value::Null, serde_json::json!("Legacy notes")] {

@@ -23,25 +23,25 @@ export function StructuredConfigEditor({ shape, value, onChange, disabled = fals
   const tx = useConfigText();
   const [newKey, setNewKey] = useState('');
   const [keyError, setKeyError] = useState('');
-  const addText = tx({ zh: '添加', en: 'Add', ja: '追加' });
-  const removeText = tx({ zh: '删除', en: 'Remove', ja: '削除' });
-  const inheritText = tx({ zh: '继承 / 未设置', en: 'Inherit / not set', ja: '継承 / 未設定' });
-  const emptyListText = tx({ zh: '暂无规则项', en: 'No rules added yet', ja: 'ルールはまだありません' });
-  const emptyMapText = tx({ zh: '暂无映射项，输入名称后按回车或点击添加', en: 'No entries yet — enter a name and press Enter or Add', ja: '項目はまだありません。名前を入力して追加してください' });
+  const addText = tx({ zh: '添加', en: 'Add', ptBR: "Adicionar", ja: '追加' });
+  const removeText = tx({ zh: '删除', en: 'Remove', ptBR: "Remover", ja: '削除' });
+  const inheritText = tx({ zh: '继承 / 未设置', en: 'Inherit / not set', ptBR: "Herdar / não definido", ja: '継承 / 未設定' });
+  const emptyListText = tx({ zh: '暂无规则项', en: 'No rules added yet', ptBR: "Nenhuma regra adicionada", ja: 'ルールはまだありません' });
+  const emptyMapText = tx({ zh: '暂无映射项，输入名称后按回车或点击添加', en: 'No entries yet — enter a name and press Enter or Add', ptBR: "Nenhum item ainda — digite um nome e pressione Enter ou Adicionar", ja: '項目はまだありません。名前を入力して追加してください' });
   const label = tx(shape.label) || id;
 
   if (shape.type === 'any') {
     const current = Array.isArray(value) ? 'array' : configRecord(value) ? 'map' : value === null ? 'null' : typeof value;
     const types = {
-      string: { zh: '文本', en: 'Text', ja: 'テキスト' },
-      number: { zh: '数值', en: 'Number', ja: '数値' },
-      boolean: { zh: '布尔值', en: 'Boolean', ja: '真偽値' },
-      null: { zh: '空值', en: 'Null', ja: '空値' },
-      array: { zh: '列表', en: 'List', ja: 'リスト' },
-      map: { zh: '对象', en: 'Object', ja: 'オブジェクト' },
+      string: { zh: '文本', en: 'Text', ptBR: "Texto", ja: 'テキスト' },
+      number: { zh: '数值', en: 'Number', ptBR: "Número", ja: '数値' },
+      boolean: { zh: '布尔值', en: 'Boolean', ptBR: "Booleano", ja: '真偽値' },
+      null: { zh: '空值', en: 'Null', ptBR: "Nulo", ja: '空値' },
+      array: { zh: '列表', en: 'List', ptBR: "Lista", ja: 'リスト' },
+      map: { zh: '对象', en: 'Object', ptBR: "Objeto", ja: 'オブジェクト' },
     };
     return <div className="structured-any">
-      <Select className="select-input" aria-label={`${label} ${tx({ zh: '类型', en: 'type', ja: 'の型' })}`} value={current} disabled={disabled}
+      <Select className="select-input" aria-label={`${label} ${tx({ zh: '类型', en: 'type', ptBR: "tipo", ja: 'の型' })}`} value={current} disabled={disabled}
         onChange={event => onChange(({ string: '', number: 0, boolean: false, null: null, array: [], map: {} } as Record<string, unknown>)[event.currentTarget.value])}>
         {Object.entries(types).map(([type, text]) => <option key={type} value={type}>{tx(text)}</option>)}
       </Select>
@@ -60,8 +60,8 @@ export function StructuredConfigEditor({ shape, value, onChange, disabled = fals
     return <div className="structured-list">
       {rows.map((row, index) => <div className="surface-card structured-list-item" key={index}>
         <div className="structured-list-toolbar"><span>{index + 1}</span><div>
-          <button type="button" className="icon-button quiet" disabled={disabled || index === 0} onClick={() => move(index, -1)} aria-label={tx({ zh: '上移', en: 'Move up', ja: '上へ' })}><ArrowUp size={14} /></button>
-          <button type="button" className="icon-button quiet" disabled={disabled || index === rows.length - 1} onClick={() => move(index, 1)} aria-label={tx({ zh: '下移', en: 'Move down', ja: '下へ' })}><ArrowDown size={14} /></button>
+          <button type="button" className="icon-button quiet" disabled={disabled || index === 0} onClick={() => move(index, -1)} aria-label={tx({ zh: '上移', en: 'Move up', ptBR: "Mover para cima", ja: '上へ' })}><ArrowUp size={14} /></button>
+          <button type="button" className="icon-button quiet" disabled={disabled || index === rows.length - 1} onClick={() => move(index, 1)} aria-label={tx({ zh: '下移', en: 'Move down', ptBR: "Mover para baixo", ja: '下へ' })}><ArrowDown size={14} /></button>
           <button type="button" className="icon-button quiet" disabled={disabled} onClick={() => onChange(rows.filter((_, i) => i !== index))} aria-label={`${removeText} ${index + 1}`}><Trash2 size={14} /></button>
         </div></div>
         <StructuredConfigEditor shape={{ ...item, label: item.label ?? `${label} ${index + 1}` }} value={row} onChange={next => update(index, next)} disabled={disabled} id={`${id}-${index}`} />
@@ -89,7 +89,7 @@ export function StructuredConfigEditor({ shape, value, onChange, disabled = fals
           {field.hint && <SettingsHelp label={tx(field.label) || key}>{tx(field.hint)}</SettingsHelp>}
           {field.optional && record[key] !== undefined && <button type="button" className="icon-button quiet" disabled={disabled} onClick={() => update(key, undefined)} title={inheritText} aria-label={`${inheritText}: ${tx(field.label) || key}`}><Undo2 size={13} /></button>}
         </div>
-        {field.optional && record[key] == null ? <button type="button" className="secondary-button structured-unset" disabled={disabled} aria-label={`${tx(field.label) || key}: ${inheritText}`} onClick={() => update(key, defaultStructuredValue(field))}>{inheritText} · {tx({ zh: '设置', en: 'Set', ja: '設定' })}</button>
+        {field.optional && record[key] == null ? <button type="button" className="secondary-button structured-unset" disabled={disabled} aria-label={`${tx(field.label) || key}: ${inheritText}`} onClick={() => update(key, defaultStructuredValue(field))}>{inheritText} · {tx({ zh: '设置', en: 'Set', ptBR: "Definir", ja: '設定' })}</button>
           : <StructuredConfigEditor shape={field} value={record[key]} onChange={next => update(key, next)} disabled={disabled} id={`${id}-${key}`} />}
       </div>)}
     </div>;
@@ -102,7 +102,7 @@ export function StructuredConfigEditor({ shape, value, onChange, disabled = fals
       const key = newKey.trim();
       if (!key) return;
       if (Object.prototype.hasOwnProperty.call(record, key) || ['__proto__', 'prototype', 'constructor'].includes(key)) {
-        setKeyError(tx({ zh: '名称已存在或不可使用', en: 'Name already exists or is not allowed', ja: 'この名前は使用できません' }));
+        setKeyError(tx({ zh: '名称已存在或不可使用', en: 'Name already exists or is not allowed', ptBR: "O nome já existe ou não é permitido", ja: 'この名前は使用できません' }));
         return;
       }
       onChange({ ...record, [key]: defaultStructuredValue(item) });
@@ -116,7 +116,7 @@ export function StructuredConfigEditor({ shape, value, onChange, disabled = fals
         <StructuredConfigEditor shape={{ ...item, label: item.label ?? key }} value={entry} onChange={next => onChange({ ...record, [key]: next })} disabled={disabled} id={`${id}-${key}`} />
       </div>)}
       {entries.length === 0 ? <p className="structured-empty-hint">{emptyMapText}</p> : null}
-      <div className="structured-map-add"><input className="text-input" aria-label={tx({ zh: '新字段名称', en: 'New field name', ja: '新しいフィールド名' })} value={newKey} disabled={disabled} placeholder={tx({ zh: '字段 / 通道名称', en: 'Field / channel name', ja: 'フィールド / チャンネル名' })}
+      <div className="structured-map-add"><input className="text-input" aria-label={tx({ zh: '新字段名称', en: 'New field name', ptBR: "Novo nome do campo", ja: '新しいフィールド名' })} value={newKey} disabled={disabled} placeholder={tx({ zh: '字段 / 通道名称', en: 'Field / channel name', ptBR: "Nome do campo / canal", ja: 'フィールド / チャンネル名' })}
         onChange={event => { setNewKey(event.currentTarget.value); setKeyError(''); }}
         onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addMapEntry(); } }} />
         <button type="button" className="secondary-button compact-button" disabled={disabled || !newKey.trim()} onClick={addMapEntry}><Plus size={14} />{addText}</button></div>
@@ -127,7 +127,7 @@ export function StructuredConfigEditor({ shape, value, onChange, disabled = fals
     const options = shape.type === 'boolean' ? [true, false] : shape.options ?? [];
     return <Select id={id} className="select-input" aria-label={label} disabled={disabled} value={String(value)} onChange={event => onChange(options.find(option => String(option) === event.currentTarget.value))}>
       {!options.some(option => option === value) && <option value={String(value)}>{String(value ?? '')}</option>}
-      {options.map(option => <option value={String(option)} key={String(option)}>{option === true ? tx({ zh: '启用', en: 'Enabled', ja: '有効' }) : option === false ? tx({ zh: '禁用', en: 'Disabled', ja: '無効' }) : String(option)}</option>)}
+      {options.map(option => <option value={String(option)} key={String(option)}>{option === true ? tx({ zh: '启用', en: 'Enabled', ptBR: "Ativado", ja: '有効' }) : option === false ? tx({ zh: '禁用', en: 'Disabled', ptBR: "Desativado", ja: '無効' }) : String(option)}</option>)}
     </Select>;
   }
   return <input id={id} aria-label={label} className="text-input" type={shape.secret ? 'password' : shape.type === 'number' ? 'number' : 'text'} autoComplete="off" spellCheck={false} disabled={disabled}

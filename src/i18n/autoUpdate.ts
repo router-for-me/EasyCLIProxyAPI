@@ -1,4 +1,4 @@
-const messages: Record<string, readonly [string, string, string, string]> = {
+const messages = {
   title: ['自动更新', 'Automatic updates', '自動更新', 'Автоматические обновления'],
   enabled: ['启用自动更新', 'Enable automatic updates', '自動更新を有効にする', 'Включить автоматические обновления'],
   hint: ['开启后，新版本将在后台自动下载，并在下次启动时安装。', 'When on, new versions download in the background and install on the next launch.', '有効にすると、新しいバージョンをバックグラウンドでダウンロードし、次回起動時にインストールします。', 'Когда включено, новые версии загружаются в фоне и устанавливаются при следующем запуске.'],
@@ -15,9 +15,29 @@ const messages: Record<string, readonly [string, string, string, string]> = {
   'phase.waiting-update': ['等待新版本', 'Waiting for a newer version', '新しいバージョンを待機中', 'Ожидание новой версии'],
   'phase.failed': ['更新失败', 'Update failed', '更新に失敗しました', 'Ошибка обновления'],
   'phase.completed': ['更新完成', 'Update completed', '更新完了', 'Обновление завершено'],
-};
+} as const satisfies Record<string, readonly [string, string, string, string]>;
 const dictionary = (index: number) => Object.fromEntries(Object.entries(messages).map(([key, values]) => [`autoUpdate.${key}`, values[index]]));
 export const autoUpdateZhCN = dictionary(0);
 export const autoUpdateEn = dictionary(1);
 export const autoUpdateJa = dictionary(2);
 export const autoUpdateRu = dictionary(3);
+
+export const autoUpdatePtBR: Record<`autoUpdate.${keyof typeof messages}`, string> = {
+  'autoUpdate.title': 'Atualizações automáticas',
+  'autoUpdate.enabled': 'Ativar atualizações automáticas',
+  'autoUpdate.hint': 'Quando ativadas, as novas versões são baixadas em segundo plano e instaladas na próxima inicialização.',
+  'autoUpdate.settings': 'Itens e condições de atualização',
+  'autoUpdate.targets': 'Atualizar',
+  'autoUpdate.app': 'Aplicativo',
+  'autoUpdate.core': 'Núcleo',
+  'autoUpdate.unsaved': 'Alterações não salvas',
+  'autoUpdate.retry': 'Limpar falhas e tentar novamente',
+  'autoUpdate.selectTarget': 'Selecione o aplicativo ou o núcleo.',
+  'autoUpdate.phase.disabled': 'As atualizações automáticas estão desativadas',
+  'autoUpdate.phase.downloading': 'Baixando e verificando a atualização',
+  'autoUpdate.phase.installing': 'Instalando a atualização',
+  'autoUpdate.phase.waiting-startup': 'Atualização baixada; aguardando a próxima inicialização',
+  'autoUpdate.phase.waiting-update': 'Aguardando uma versão mais recente',
+  'autoUpdate.phase.failed': 'Falha na atualização',
+  'autoUpdate.phase.completed': 'Atualização concluída',
+};

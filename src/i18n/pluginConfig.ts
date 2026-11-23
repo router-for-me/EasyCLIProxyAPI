@@ -29,6 +29,34 @@ const messages = {
   retry: ['重试', 'Retry', '再試行'],
 } as const;
 
+export const pluginConfigPtBR: Record<keyof typeof messages, string> = {
+  title: "Configuração do plugin",
+  enabled: "Ativar este plugin",
+  enabledHint: "A opção global de plugins também precisa estar ativada para que este plugin funcione.",
+  priority: "Prioridade",
+  priorityHint: "Use um número inteiro. O padrão é 0.",
+  fields: "Parâmetros do plugin",
+  fieldsHint: "Somente os parâmetros editados serão salvos. Limpar um campo de texto remove sua configuração e restaura o padrão do plugin.",
+  inherit: "Não definido / padrão",
+  raw: "Configuração personalizada (JSON)",
+  rawHint: "Este plugin não declara campos de configuração. Edite um objeto JSON aqui; use os controles acima para a ativação e a prioridade. Remover uma chave exclui sua configuração; null é salvo como valor JSON.",
+  invalid_priority: "Insira um número inteiro seguro.",
+  invalid_integer: "Insira um número inteiro seguro.",
+  invalid_number: "Insira um número finito.",
+  invalid_enum: "Selecione uma das opções declaradas pelo plugin.",
+  invalid_json: "JSON inválido.",
+  expected_array: "Insira um array JSON.",
+  expected_object: "Insira um objeto JSON.",
+  reserved: "Use os controles acima para editar a ativação e a prioridade.",
+  invalid: "Corrija os campos de configuração destacados.",
+  unsaved: "Há alterações não salvas.",
+  keepEditing: "Continuar editando",
+  discard: "Descartar alterações",
+  loadFailed: "Não foi possível carregar a configuração do plugin",
+  saveFailed: "Não foi possível salvar a configuração do plugin",
+  retry: "Tentar novamente",
+};
+
 const ruMessages: Record<keyof typeof messages, string> = {
   title: 'Настройка плагина',
   enabled: 'Включить этот плагин',
@@ -60,6 +88,6 @@ const ruMessages: Record<keyof typeof messages, string> = {
 export type PluginConfigMessage = keyof typeof messages;
 
 export function pluginConfigText(key: PluginConfigMessage, locale: AppLocale = getCurrentLocale()): string {
-  const value = locale === 'ru' ? ruMessages[key] : messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
+  const value = locale === 'pt-BR' ? pluginConfigPtBR[key] : locale === 'ru' ? ruMessages[key] : messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
   return locale === 'zh-TW' ? createTraditionalMessages({ text: value }).text : value;
 }

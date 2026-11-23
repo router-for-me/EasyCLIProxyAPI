@@ -10,6 +10,7 @@ import { useI18n } from '../i18n';
 import { usePrivacyMask } from '../privacy';
 import { acpApi, acpErrorMessageKey, type AcpAccount, type AcpAuthorizationLink, type AcpStatus } from '../services/acp';
 import { openExternalUrl } from '../services/appSettings';
+import { localizedOwnError } from '../services/localizedOwnError';
 import './AcpAccessPage.css';
 
 // Same anchored button/dropdown pattern used by MCP management. Keep it in
@@ -94,7 +95,7 @@ function AccountMoreActions({ current, busy, hasCli, onAction }: {
 }
 
 export function AcpAccessPage() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const privacy = usePrivacyMask();
   const [status, setStatus] = useState<AcpStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -187,8 +188,9 @@ export function AcpAccessPage() {
   // neutral presentation; authorization/network/cleanup errors stay errors.
   const cancelled = /^(?:Account saved; connection not verified: )?ACP request cancelled$/.test(shownError || '');
   const errorMessageKey = shownError ? acpErrorMessageKey(shownError) : null;
+  const localizedError = shownError ? localizedOwnError('acp', shownError, locale) : '';
   const actionNotice = shownError ? <Notice className="acp-action-notice" tone={cancelled ? 'info' : 'error'} title={t(cancelled ? 'acp.operationCancelled' : 'acp.operationFailed')}>
-    {errorMessageKey ? <>{errorMessageKey !== 'acp.errorCancelled' ? <p>{t(errorMessageKey)}</p> : null}<details className="acp-error-detail"><summary>{t('acp.errorDetails')}</summary><p>{privacy.text(shownError)}</p></details></> : privacy.text(shownError)}
+    {errorMessageKey || localizedError !== shownError ? <>{errorMessageKey !== 'acp.errorCancelled' ? <p>{errorMessageKey ? t(errorMessageKey) : localizedError}</p> : null}<details className="acp-error-detail"><summary>{t('acp.errorDetails')}</summary><p>{privacy.text(shownError)}</p></details></> : privacy.text(shownError)}
   </Notice> : null;
   const example = JSON.stringify({ model: `acp/${status?.selectedModel || 'MODEL_ID'}`, messages: [{ role: 'user', content: 'Hello' }], stream: true }, null, 2);
   useEffect(() => { setCopied(false); }, [example]);

@@ -109,18 +109,20 @@ describe('localized release notes publication', () => {
       ja: '## 追加\n\n- 日本語の説明。\n',
       en: '## Added\n\n- English notes.\n',
       ru: '## Добавлено\n\n- Русские примечания.\n',
+      'pt-BR': '## Novidades\n\n- Notas da versão.\n',
     };
     for (const [locale, body] of Object.entries(translations)) {
       await writeFile(join(directory, locale + '.md'), body);
     }
     expect(Object.keys(await resolveReleaseNotes({ root, tag: '1.2.3' })).sort())
-      .toEqual(['en', 'ja', 'ru', 'zh-CN', 'zh-TW']);
+      .toEqual(['en', 'ja', 'pt-BR', 'ru', 'zh-CN', 'zh-TW']);
     const body = releaseNotesBody(translations);
     expect(body).toContain(translations.en.trim());
     expect(body).toContain(translations['zh-CN'].trim());
     expect(body).not.toContain(translations['zh-TW'].trim());
     expect(body).not.toContain(translations.ja.trim());
     expect(body).not.toContain(translations.ru.trim());
+    expect(body).not.toContain(translations['pt-BR'].trim());
   }));
 
   test('CLI preserves all translations in JSON and publishes only English then Chinese in the Release body', () => withNotesRoot(async (root, directory) => {
@@ -128,6 +130,7 @@ describe('localized release notes publication', () => {
       'zh-CN': '## 新增\n\n- 更新说明。\n',
       en: '## Added\n\n- Release notes.\n',
       ru: '## Добавлено\n\n- Примечания к выпуску.\n',
+      'pt-BR': '## Novidades\n\n- Notas da versão.\n',
     };
     for (const [locale, body] of Object.entries(translations)) {
       await writeFile(join(directory, locale + '.md'), body);

@@ -139,7 +139,7 @@ where
     // Treat them as unavailable instead of failing the entire version check.
     let mut notes = HashMap::new();
     if let Some(translations) = value.as_object() {
-        for locale in ["zh-CN", "zh-TW", "en", "ja", "ru"] {
+        for locale in ["zh-CN", "zh-TW", "en", "ja", "ru", "pt-BR"] {
             if let Some(text) = translations.get(locale).and_then(|value| value.as_str()) {
                 if !text.trim().is_empty() {
                     notes.insert(locale.to_string(), text.to_string());

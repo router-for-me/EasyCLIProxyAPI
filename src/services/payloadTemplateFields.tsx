@@ -11,37 +11,37 @@ export function structuredField(path: string[], label: ConfigText, shape: Config
 }
 
 const modelMatch: ConfigShape = { type: 'object', fields: {
-  name: { ...nonemptyText, initial: '*', label: { zh: '模型名称或通配符', en: 'Model name or wildcard', ja: 'モデル名 / ワイルドカード' } },
-  protocol: { type: 'select', optional: true, options: ['openai', 'gemini', 'claude', 'codex', 'antigravity'], label: { zh: '目标协议', en: 'Target protocol', ja: '送信先プロトコル' } },
-  'from-protocol': { type: 'select', optional: true, options: ['openai', 'responses', 'gemini', 'claude'], label: { zh: '来源协议', en: 'Source protocol', ja: '送信元プロトコル' } },
-  headers: { type: 'map', optional: true, item: { type: 'string' }, label: { zh: '请求头匹配（支持 *）', en: 'Header patterns (* supported)', ja: 'ヘッダーパターン（* 対応）' } },
-  match: { type: 'array', optional: true, item: { type: 'map', item: { type: 'any' } }, label: { zh: 'JSON 路径值等于', en: 'JSON path values equal', ja: 'JSON パスが一致' } },
-  'not-match': { type: 'array', optional: true, item: { type: 'map', item: { type: 'any' } }, label: { zh: 'JSON 路径值不等于', en: 'JSON path values do not equal', ja: 'JSON パスが不一致' } },
-  exist: stringsShape({ zh: '必须存在的 JSON 路径', en: 'JSON paths that must exist', ja: '存在する JSON パス' }),
-  'not-exist': stringsShape({ zh: '必须缺失的 JSON 路径', en: 'JSON paths that must be absent', ja: '存在しない JSON パス' }),
+  name: { ...nonemptyText, initial: '*', label: { zh: '模型名称或通配符', en: 'Model name or wildcard', ptBR: "Nome do modelo ou curinga", ja: 'モデル名 / ワイルドカード' } },
+  protocol: { type: 'select', optional: true, options: ['openai', 'gemini', 'claude', 'codex', 'antigravity'], label: { zh: '目标协议', en: 'Target protocol', ptBR: "Protocolo de destino", ja: '送信先プロトコル' } },
+  'from-protocol': { type: 'select', optional: true, options: ['openai', 'responses', 'gemini', 'claude'], label: { zh: '来源协议', en: 'Source protocol', ptBR: "Protocolo de origem", ja: '送信元プロトコル' } },
+  headers: { type: 'map', optional: true, item: { type: 'string' }, label: { zh: '请求头匹配（支持 *）', en: 'Header patterns (* supported)', ptBR: "Padrões de cabeçalho (aceita *)", ja: 'ヘッダーパターン（* 対応）' } },
+  match: { type: 'array', optional: true, item: { type: 'map', item: { type: 'any' } }, label: { zh: 'JSON 路径值等于', en: 'JSON path values equal', ptBR: "Caminhos JSON com valores iguais", ja: 'JSON パスが一致' } },
+  'not-match': { type: 'array', optional: true, item: { type: 'map', item: { type: 'any' } }, label: { zh: 'JSON 路径值不等于', en: 'JSON path values do not equal', ptBR: "Caminhos JSON com valores diferentes", ja: 'JSON パスが不一致' } },
+  exist: stringsShape({ zh: '必须存在的 JSON 路径', en: 'JSON paths that must exist', ptBR: "Caminhos JSON que devem existir", ja: '存在する JSON パス' }),
+  'not-exist': stringsShape({ zh: '必须缺失的 JSON 路径', en: 'JSON paths that must be absent', ptBR: "Caminhos JSON que não devem existir", ja: '存在しない JSON パス' }),
 } };
 
 export const payloadShape = (mode: string): ConfigShape => ({
   type: 'array', item: { type: 'object', fields: {
-    models: { type: 'array', label: { zh: '匹配条件', en: 'Matching models', ja: '適用条件' }, item: modelMatch,
-      initial: [{ name: '*' }], validate: value => Array.isArray(value) && value.length ? null : { zh: '请至少添加一个模型匹配条件', en: 'At least one model pattern is required', ja: 'モデルの適用条件を 1 件以上追加してください' } },
+    models: { type: 'array', label: { zh: '匹配条件', en: 'Matching models', ptBR: "Modelos correspondentes", ja: '適用条件' }, item: modelMatch,
+      initial: [{ name: '*' }], validate: value => Array.isArray(value) && value.length ? null : { zh: '请至少添加一个模型匹配条件', en: 'At least one model pattern is required', ptBR: "É necessário informar pelo menos um padrão de modelo", ja: 'モデルの適用条件を 1 件以上追加してください' } },
     params: mode === 'filter'
-      ? { type: 'array', item: nonemptyText, label: { zh: '要删除的 JSON 路径', en: 'JSON paths to remove', ja: '削除する JSON パス' } }
-      : { type: 'map', label: { zh: 'JSON 路径与参数值', en: 'JSON paths and values', ja: 'JSON パスと値' }, item: mode.endsWith('-raw')
-        ? { type: 'any', validate: value => { if (typeof value !== 'string') return null; try { JSON.parse(value); return null; } catch { return { zh: '每个原始字符串都必须是有效 JSON（文本字面量需加双引号）', en: 'Each raw string must be valid JSON (quote string literals)', ja: '各 raw 文字列には有効な JSON を指定してください（文字列リテラルは引用符で囲みます）' }; } } }
+      ? { type: 'array', item: nonemptyText, label: { zh: '要删除的 JSON 路径', en: 'JSON paths to remove', ptBR: "Caminhos JSON a remover", ja: '削除する JSON パス' } }
+      : { type: 'map', label: { zh: 'JSON 路径与参数值', en: 'JSON paths and values', ptBR: "Caminhos e valores JSON", ja: 'JSON パスと値' }, item: mode.endsWith('-raw')
+        ? { type: 'any', validate: value => { if (typeof value !== 'string') return null; try { JSON.parse(value); return null; } catch { return { zh: '每个原始字符串都必须是有效 JSON（文本字面量需加双引号）', en: 'Each raw string must be valid JSON (quote string literals)', ptBR: "Cada texto bruto deve ser um JSON válido (coloque os textos entre aspas)", ja: '各 raw 文字列には有効な JSON を指定してください（文字列リテラルは引用符で囲みます）' }; } } }
         : { type: 'any' } },
   } },
 });
 
 export const payloadTemplateGroups: TemplateConfigGroup[] = [{
-  id: 'request-payload', title: { zh: '请求参数规则', en: 'Request payload rules', ja: 'リクエストパラメータルール' },
-  description: { zh: '按顺序设置默认值、覆盖或移除参数。模型名和请求头支持通配符；JSON 路径支持 gjson/sjson 语法。只修改需要调整的规则，其余规则（包括模型别名生成的规则）会保留。', en: 'Apply defaults, overrides and filters in order. Model and header patterns support wildcards; paths use gjson/sjson syntax. Existing rules, including rules generated by aliases, are retained until edited.', ja: '既定値・上書き・削除を順番に適用します。ワイルドカードと gjson/sjson パスに対応。別名から生成された既存ルールも維持します。' },
+  id: 'request-payload', title: { zh: '请求参数规则', en: 'Request payload rules', ptBR: "Regras de corpo das requisições", ja: 'リクエストパラメータルール' },
+  description: { zh: '按顺序设置默认值、覆盖或移除参数。模型名和请求头支持通配符；JSON 路径支持 gjson/sjson 语法。只修改需要调整的规则，其余规则（包括模型别名生成的规则）会保留。', en: 'Apply defaults, overrides and filters in order. Model and header patterns support wildcards; paths use gjson/sjson syntax. Existing rules, including rules generated by aliases, are retained until edited.', ptBR: "Aplique valores padrão, substituições e filtros em ordem. Padrões de modelo e cabeçalho aceitam curingas; os caminhos usam a sintaxe gjson/sjson. As regras atuais, inclusive as geradas por aliases, são mantidas até que sejam editadas.", ja: '既定値・上書き・削除を順番に適用します。ワイルドカードと gjson/sjson パスに対応。別名から生成された既存ルールも維持します。' },
   fields: [
-    ['default', { zh: '补充缺失参数', en: 'Default values', ja: '既定値' }],
-    ['default-raw', { zh: '补充原始 JSON', en: 'Default raw JSON', ja: '既定の raw JSON' }],
-    ['override', { zh: '覆盖参数', en: 'Override values', ja: '上書き' }],
-    ['override-raw', { zh: '覆盖原始 JSON', en: 'Override raw JSON', ja: 'raw JSON の上書き' }],
-    ['filter', { zh: '移除参数', en: 'Remove parameters', ja: 'パラメータの削除' }],
+    ['default', { zh: '补充缺失参数', en: 'Default values', ptBR: "Valores padrão", ja: '既定値' }],
+    ['default-raw', { zh: '补充原始 JSON', en: 'Default raw JSON', ptBR: "JSON bruto padrão", ja: '既定の raw JSON' }],
+    ['override', { zh: '覆盖参数', en: 'Override values', ptBR: "Substituir valores", ja: '上書き' }],
+    ['override-raw', { zh: '覆盖原始 JSON', en: 'Override raw JSON', ptBR: "Substituir JSON bruto", ja: 'raw JSON の上書き' }],
+    ['filter', { zh: '移除参数', en: 'Remove parameters', ptBR: "Remover parâmetros", ja: 'パラメータの削除' }],
   ].map(([mode, label]) => structuredField(['requests', 'payload', mode as string], label as ConfigText, payloadShape(mode as string))),
 }];
 
