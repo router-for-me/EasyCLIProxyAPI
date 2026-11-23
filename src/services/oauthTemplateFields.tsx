@@ -171,10 +171,10 @@ export const oauthTemplateGroups: TemplateConfigGroup[] = [
     structuredField(providerPath('antigravity', 'sensitive-patterns-replace'), T('敏感词正则替换', 'Sensitive-pattern replacements', '敏感語の正規表現置換', 'Substituição de padrões sensíveis'), sensitivePatternsShape,
       T('按顺序执行的 Go RE2 正则替换，用于改写系统提示中的可识别内容；替换文本留空即删除匹配内容。', 'Ordered Go RE2 replacement rules applied to system prompts; an empty replacement deletes the matched text.', 'システムプロンプトに順番に適用する Go RE2 置換ルールです。置換テキストが空の場合は一致部分を削除します。', 'Regras de substituição Go RE2 aplicadas em ordem aos prompts de sistema. Deixe a substituição em branco para excluir o texto encontrado.')),
   ] },
-  { id: 'oauth-filters', title: T('上游敏感词过滤', 'Provider sensitive-word filters', 'プロバイダーの敏感語フィルター', 'Filtros de palavras sensíveis por provedor'), fields: [
-    { path: providerPath('antigravity', 'sensitive-words'), type: 'string-list', label: T('Antigravity 敏感词', 'Antigravity sensitive words', 'Antigravity の敏感語', 'Palavras sensíveis do Antigravity'),
-      description: T('每行一个短语；按上游通道过滤，与凭据级伪装的敏感词相互独立。', 'One phrase per line. This is a per-provider filter, separate from per-credential cloaking sensitive words.', '1 行に 1 フレーズ。プロバイダー単位のフィルターで、認証情報ごとの偽装用敏感語とは別です。', 'Uma expressão por linha. Este filtro é por provedor, separado das palavras sensíveis do mascaramento por credencial.') },
-    { path: providerPath('devin', 'sensitive-words'), type: 'string-list', label: T('Devin 敏感词', 'Devin sensitive words', 'Devin の敏感語', 'Palavras sensíveis do Devin'),
-      description: T('每行一个短语；按上游通道过滤，与凭据级伪装的敏感词相互独立。', 'One phrase per line. This is a per-provider filter, separate from per-credential cloaking sensitive words.', '1 行に 1 フレーズ。プロバイダー単位のフィルターで、認証情報ごとの偽装用敏感語とは別です。', 'Uma expressão por linha. Este filtro é por provedor, separado das palavras sensíveis do mascaramento por credencial.') },
+  { id: 'oauth-filters', title: T('上游敏感词过滤', 'Provider sensitive-word filters', 'プロバイダーの敏感語フィルター', 'Filtros de termos sensíveis por provedor'), fields: [
+    { path: providerPath('antigravity', 'sensitive-words'), type: 'string-list', label: T('Antigravity 敏感词', 'Antigravity sensitive words', 'Antigravity の敏感語', 'Termos sensíveis do Antigravity'),
+      description: T('每行一个短语；按上游通道过滤，与凭据级伪装的敏感词相互独立。', 'One phrase per line. This is a per-provider filter, separate from per-credential cloaking sensitive words.', '1 行に 1 フレーズ。プロバイダー単位のフィルターで、認証情報ごとの偽装用敏感語とは別です。', 'Uma expressão por linha. Este filtro é por provedor, separado dos termos sensíveis do mascaramento por credencial.') },
+    { path: providerPath('devin', 'sensitive-words'), type: 'string-list', label: T('Devin 敏感词', 'Devin sensitive words', 'Devin の敏感語', 'Termos sensíveis do Devin'),
+      description: T('每行一个短语；按上游通道过滤，与凭据级伪装的敏感词相互独立。', 'One phrase per line. This is a per-provider filter, separate from per-credential cloaking sensitive words.', '1 行に 1 フレーズ。プロバイダー単位のフィルターで、認証情報ごとの偽装用敏感語とは別です。', 'Uma expressão por linha. Este filtro é por provedor, separado dos termos sensíveis do mascaramento por credencial.') },
   ] },
 ];
