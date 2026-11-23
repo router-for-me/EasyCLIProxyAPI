@@ -1758,6 +1758,7 @@ export const ptBR: Record<MessageKey, string> = {
   "agents.backup.loading": "Carregando…",
   "agents.backup.select": "Selecione um backup para examinar os arquivos.",
   "agents.backup.unchanged": "A configuração já está atualizada.",
+  "agents.backup.refreshFailed": "Configuração salva, mas não foi possível atualizar o status do cliente: {error}",
   "agents.backup.updated": "Configuração atualizada.",
   "agents.backup.restored": "Backup restaurado. A configuração e os valores do formulário foram atualizados.",
   "agents.backup.created": "Os arquivos atuais do disco foram salvos em um backup manual. Alterações não salvas no formulário não foram incluídas.",
