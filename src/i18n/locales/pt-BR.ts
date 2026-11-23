@@ -2450,7 +2450,7 @@ export const ptBR: Record<MessageKey, string> = {
   'kernel.versions.source.ghFast': "Espelho do GitHub · ghfast.top",
   'kernel.versions.source.custom': "Espelho personalizado",
   'kernel.versions.customMirrorPlaceholder': "Prefixo do espelho, ex.: https://mirror.example.com/",
-  'kernel.versions.customMirrorAdd': "Adicionar fonte personalizada",
+  'kernel.versions.customMirrorAdd': "Adicionar outra fonte",
   'kernel.versions.customMirrorDialogTitle': "Adicionar fonte de download personalizada",
   'kernel.versions.customMirrorDialogDescription': "Informe o prefixo HTTPS do espelho do GitHub. A URL original do GitHub é acrescentada durante o download.",
   'kernel.versions.customMirrorConfirm': "Adicionar e selecionar",
