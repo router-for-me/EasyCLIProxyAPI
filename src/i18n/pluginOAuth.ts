@@ -48,7 +48,6 @@ export const pluginOAuthPtBR: Record<keyof typeof messages, string> = {
   link: "URL de login",
   open: "Abrir no navegador",
   copy: "Copiar link",
-  copied: "Copiado.",
   code: "Código do dispositivo",
   copyCode: "Copiar código",
   deviceHint: "Abra a URL de login e insira este código para autorizar.",

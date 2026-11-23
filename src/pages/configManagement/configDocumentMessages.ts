@@ -82,4 +82,32 @@ const zhTW: typeof en = {
   remarksChange: 'API 金鑰備註將另外儲存在桌面端，不寫入 YAML。',
 };
 
-export const configDocumentMessages = (locale: string) => locale === 'zh-CN' ? zhCN : locale === 'zh-TW' ? zhTW : en;
+const ptBR: typeof en = {
+  cloudRulesAdded: 'Regras da nuvem adicionadas ao rascunho. Revise as alterações antes de salvar.',
+  noNewCloudRules: 'Não há regras novas da nuvem para adicionar.',
+  cloudRulesFailed: 'Não foi possível carregar as regras da nuvem. O rascunho não mudou.',
+  startCore: 'Inicie o núcleo do CPA integrado antes de abrir a configuração dele.',
+  start: 'Iniciar núcleo',
+  restart: 'Reiniciar núcleo',
+  restartRequired: 'Reinicie o núcleo integrado separadamente para aplicar as alterações de escuta, TLS ou modo comercial.',
+  lifecycleFailed: 'O núcleo não ficou pronto. Verifique o status dele antes de tentar de novo.',
+  unavailable: 'Não é possível acessar a configuração do CPA selecionado. Verifique a conexão com a instância.',
+  unsupported: 'Esta instância não oferece o endpoint de configuração YAML do v8.',
+  reconnect: 'Reconectar',
+  readOnly: 'Esta instância não informou uma versão forte da configuração. A edição está em modo somente leitura.',
+  targetChanged: 'A instância CPA selecionada mudou. Recarregue a configuração dela antes de editar.',
+  rejected: 'O CPA recusou esta configuração. Verifique o YAML e os valores.',
+  conflict: 'A configuração mudou no CPA. Leia a versão atual e revise as diferenças de novo. Seu rascunho foi mantido.',
+  verifyRequired: 'Não foi possível confirmar o salvamento. Leia a configuração atual do CPA antes de tentar de novo. Seu rascunho foi mantido.',
+  verify: 'Ler versão atual',
+  reviewedAgain: 'Versão atual carregada. Revise as diferenças de novo antes de salvar.',
+  savedOffline: 'Configuração salva, mas não foi possível alcançar o CPA para conferir.',
+  syncFailed: 'Configuração salva, mas não foi possível sincronizar as configurações do aplicativo.',
+  remarksFailed: 'Não foi possível salvar as observações das chaves de API.',
+  remarksUnavailable: 'Não foi possível carregar as observações das chaves de API do aplicativo.',
+  readbackChanged: 'Configuração salva, mas o CPA mudou de novo antes da leitura de conferência. A versão atual é exibida.',
+  connectionWarning: 'Estas configurações podem desconectar o aplicativo ou alterar o acesso de gerenciamento:',
+  remarksChange: 'As observações das chaves de API do aplicativo serão atualizadas à parte do YAML.',
+};
+
+export const configDocumentMessages = (locale: string) => locale === 'zh-CN' ? zhCN : locale === 'zh-TW' ? zhTW : locale === 'pt-BR' ? ptBR : en;
