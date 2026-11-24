@@ -3,7 +3,7 @@ import { Pause, Play } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { usePrivacyMask } from '../../privacy';
 import { SelectMenu } from '../SelectMenu';
-import { routingDestinationId, routingRecordId, type buildLiveRouting } from '../../services/usageRouting';
+import { routingDestinationId, routingModelLabel, routingRecordId, type buildLiveRouting } from '../../services/usageRouting';
 import { changeRoutingDisplay, LATEST_ROUTING_FOCUS, orderedRoutingRecords, resolveRoutingFocus, type RoutingDisplay, type RoutingFocus } from '../../services/usageRoutingView';
 import type { UsageRecord } from '../../services/usage';
 import { usageClientAgent } from '../../services/clientAgent';
@@ -34,7 +34,7 @@ export function RoutingSnapshot({ view, packets, now, paused = false, onTogglePa
   const recordLabel = (item: UsageRecord) => {
     const target = view.targets.find(row => row.id === routingDestinationId(item));
     const label = target?.name || item.source_display || item.provider;
-    return `${formatDate(item.timestamp, { hour: '2-digit', minute: '2-digit', second: '2-digit' })} · ${clientName(item)} · ${privacy.text(item.alias || item.model)} · ${privacy.text(label)}`;
+    return `${formatDate(item.timestamp, { hour: '2-digit', minute: '2-digit', second: '2-digit' })} · ${clientName(item)} · ${privacy.text(routingModelLabel(item))} · ${privacy.text(label)}`;
   };
   const options = [...records];
   if (record && !options.some(item => routingRecordId(item) === routingRecordId(record))) options.push(record);
