@@ -110,17 +110,16 @@ const viewports = [
       assert.equal(scrolled.scrolled, true, `${label}: request columns remain reachable by horizontal scrolling`);
     };
     const assertExpandedPricing = async () => {
-      await page.getByRole('combobox', { name: '时间范围', exact: true }).selectOption('custom');
+      await page.getByRole('combobox', { name: '时间范围', exact: true }).click();
+      await page.getByRole('option', { name: /自定义/ }).click();
       await page.locator('.usage-custom-range').waitFor();
-      await page.getByRole('button', { name: '手动添加', exact: true }).click();
-      const editor = page.locator('.usage-price-editor');
+      await page.locator('.usage-pricing-add').click();
+      const editor = page.locator('.usage-price-drawer-dialog');
       await editor.waitFor();
       await settle();
-      // A clipped ancestor can be scrolled programmatically by scrollIntoView,
-      // while still preventing the user from reaching the overflowing content.
-      const clipped = await page.locator('.usage-pricing-table-wrap').evaluate(table => {
+      const clipped = await page.locator('.usage-pricing-list').evaluate(list => {
         const ancestors = [];
-        for (let parent = table.parentElement; parent; parent = parent.parentElement) {
+        for (let parent = list.parentElement; parent; parent = parent.parentElement) {
           if (['hidden', 'clip'].includes(getComputedStyle(parent).overflowY)
             && parent.scrollHeight > parent.clientHeight + 1) ancestors.push(parent.className);
         }
@@ -129,26 +128,9 @@ const viewports = [
       assert.deepEqual(clipped, [], 'Expanded pricing content must remain reachable through user scrolling');
       await assertReachable(editor.getByRole('button', { name: '保存', exact: true }), '800x600 price editor save');
       await assertReachable(editor.getByRole('button', { name: '取消', exact: true }), '800x600 price editor cancel');
-      const table = page.locator('.usage-pricing-table-wrap');
-      await assertReachable(table, '800x600 price table');
-      const scrollbarReachable = await table.evaluate(element => {
-        const rect = element.getBoundingClientRect();
-        const y = rect.bottom - 2;
-        if (y < 0 || y >= innerHeight) return false;
-        const hit = document.elementFromPoint(rect.left + rect.width / 2, y);
-        if (!hit || !element.contains(hit)) return false;
-        for (let parent = element.parentElement; parent; parent = parent.parentElement) {
-          if (getComputedStyle(parent).overflowY !== 'visible') {
-            const bounds = parent.getBoundingClientRect();
-            if (y < bounds.top || y > bounds.bottom) return false;
-          }
-        }
-        element.scrollLeft = element.scrollWidth;
-        return element.scrollLeft > 0;
-      });
-      assert.equal(scrollbarReachable, true, 'Expanded pricing table scrollbar must remain visible and usable');
       await editor.getByRole('button', { name: '取消', exact: true }).click();
       await editor.waitFor({ state: 'detached' });
+      await assertReachable(page.locator('.usage-pricing-card').first(), '800x600 price card');
     };
 
     for (const viewport of viewports) {
@@ -193,7 +175,7 @@ const viewports = [
       await assertNoPageOverflow(`${label} OAuth credentials`);
       await open('额度查询', '.quota-page .real-quota-card');
       assert.equal(await page.locator('.nav-section button.active').innerText(), '额度查询', `${label}: quota activates its sidebar entry`);
-      assert.equal(await page.locator('.quota-page h1').innerText(), '额度查询', `${label}: standalone quota page has its own heading`);
+      assert.equal(await page.locator('.quota-page').getAttribute('aria-label'), '额度查询', `${label}: standalone quota page has its own accessible label`);
       assert.equal(await page.locator('.oauth-subpage-tabs').count(), 0, `${label}: standalone quota page does not contain OAuth navigation`);
       await assertNoPageOverflow(`${label} quota`);
 
@@ -215,7 +197,7 @@ const viewports = [
       for (const [id, ready] of [
         ['analysis', '.usage-analysis-grid'],
         ['events', '.usage-events-table tbody tr'],
-        ['pricing', '.usage-pricing-table-wrap tbody tr'],
+        ['pricing', '.usage-pricing-card'],
         ['data-management', '.usage-data-management-panel'],
       ]) {
         await tab(`usage-tab-${id}`, ready);
@@ -225,7 +207,7 @@ const viewports = [
       }
 
       await open('快捷配置', '#config-subpage-panel');
-      for (const id of ['general', 'routing', 'requests', 'oauth', 'diagnostics', 'extensions', 'software']) {
+      for (const id of ['general', 'proxy', 'aliases', 'routing', 'requests', 'sensitiveWords', 'oauth', 'diagnostics', 'software']) {
         await tab(`config-subpage-tab-${id}`, `#config-subpage-panel[aria-labelledby="config-subpage-tab-${id}"]`);
         await assertNoPageOverflow(`${label} settings ${id}`);
       }
@@ -250,7 +232,7 @@ const viewports = [
     await page.locator('.home-page').waitFor();
     await page.addStyleTag({ content: '#browser-mock-toolbar { display: none; }' });
     await open('Quick Configuration', '.config-subpage-tabs');
-    for (const id of ['general', 'routing', 'requests', 'oauth', 'diagnostics', 'extensions', 'software']) {
+    for (const id of ['general', 'proxy', 'aliases', 'routing', 'requests', 'sensitiveWords', 'oauth', 'diagnostics', 'software']) {
       await tab(`config-subpage-tab-${id}`, `#config-subpage-panel[aria-labelledby="config-subpage-tab-${id}"]`);
       await assertNoPageOverflow(`640x600 English settings ${id}`);
       const button = page.locator(`#config-subpage-tab-${id}`);

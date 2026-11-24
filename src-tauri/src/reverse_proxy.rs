@@ -630,9 +630,41 @@ pub fn build_target_url(target_port: u16, original_uri: &hyper::Uri) -> Result<S
     Ok(uri.to_string())
 }
 
+pub fn normalize_proxy_config(mut config: ReverseProxyConfig) -> ReverseProxyConfig {
+    let trimmed_host = config
+        .listen_host
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    config.listen_host = if trimmed_host.is_empty() {
+        "0.0.0.0".to_string()
+    } else {
+        trimmed_host.to_string()
+    };
+    config.cert_path = config.cert_path.trim().to_string();
+    config.key_path = config.key_path.trim().to_string();
+    config
+}
+
+fn format_bind_addr(host: &str, port: u16) -> String {
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 pub fn validate_config(config: &ReverseProxyConfig) -> Result<(), String> {
-    if config.listen_host.trim().is_empty() {
+    let raw_host = config
+        .listen_host
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    if raw_host.is_empty() {
         return Err("Listen host cannot be empty".to_string());
+    }
+    if !raw_host.eq_ignore_ascii_case("localhost") && raw_host.parse::<std::net::IpAddr>().is_err() {
+        return Err("Listen host must be localhost or a valid IPv4/IPv6 address".to_string());
     }
     // target_port 0 is the "follow the kernel port" sentinel; it is resolved to
     // the effective kernel port when the forwarding client is built.
@@ -926,13 +958,14 @@ impl ReverseProxyManagerState {
 
     async fn start_candidate_inner(
         &self,
-        config: ReverseProxyConfig,
+        mut config: ReverseProxyConfig,
         app: Option<tauri::AppHandle>,
         persist: bool,
     ) -> Result<ReverseProxyState, String> {
         if let Err(err) = validate_config(&config) {
             return self.fail_start(err);
         }
+        config = normalize_proxy_config(config);
 
         let tls_config = match load_tls_config(&config) {
             Ok(c) => c,
@@ -941,7 +974,7 @@ impl ReverseProxyManagerState {
             }
         };
 
-        let bind_addr = format!("{}:{}", config.listen_host, config.listen_port);
+        let bind_addr = format_bind_addr(&config.listen_host, config.listen_port);
         let retained_listener = {
             let guard = self
                 .inner
@@ -1000,6 +1033,17 @@ impl ReverseProxyManagerState {
                 ReverseProxyHardening::default()
             }
         };
+        if hardening.loopback_bind {
+            if let Some(app_handle) = app.as_ref() {
+                if let Err(error) = gui_state_of(app_handle).update(|gui_config| {
+                    gui_config.host = "127.0.0.1".to_string();
+                    gui_config.allow_lan = false;
+                    Ok(())
+                }) {
+                    eprintln!("Failed to sync hardened host into GUI configuration: {error}");
+                }
+            }
+        }
 
         if hardening.restart_required {
             if let Some(app_handle) = app.as_ref() {
@@ -1274,7 +1318,7 @@ pub async fn reverse_proxy_apply(
     config: ReverseProxyConfig,
     state: tauri::State<'_, ReverseProxyManagerState>,
 ) -> Result<ReverseProxyState, String> {
-    state.save_and_apply(config, Some(app)).await
+    state.save_and_apply(normalize_proxy_config(config), Some(app)).await
 }
 
 #[tauri::command]
@@ -1284,7 +1328,7 @@ pub async fn reverse_proxy_start(
     state: tauri::State<'_, ReverseProxyManagerState>,
 ) -> Result<ReverseProxyState, String> {
     config.enabled = true;
-    state.save_and_apply(config, Some(app)).await
+    state.save_and_apply(normalize_proxy_config(config), Some(app)).await
 }
 
 #[tauri::command]
@@ -2116,14 +2160,13 @@ mod tests {
         );
         let regenerated =
             crate::core_config::merge_core_config_yaml(template, Some(&current), &loaded).unwrap();
-        let mut document: serde_norway::Value = serde_norway::from_str(&regenerated).unwrap();
         // The section is dropped when it is still present, and never written.
         let stripped = match crate::core_config::remove_core_yaml_section(&regenerated, "reverse-proxy") {
             Ok(Some(stripped)) => stripped,
             other => panic!("{other:?}\n{regenerated}"),
         };
         assert!(!stripped.contains("reverse-proxy"), "{stripped}");
-        document = serde_norway::from_str(&stripped).unwrap();
+        let document: serde_norway::Value = serde_norway::from_str(&stripped).unwrap();
         assert!(read_proxy_config_document(&document).unwrap().is_none(), "{stripped}");
         // The start-up preparation still hardens the kernel while the proxy runs.
         let mut hardened = document;
@@ -2192,6 +2235,7 @@ mod tests {
         std::fs::remove_dir_all(home).unwrap();
     }
 
+    #[test]
     fn test_proxy_config_legacy_section_reads_paths_and_removal_keeps_other_fields() {
         let config = ReverseProxyConfig {
             enabled: true,
@@ -2550,6 +2594,44 @@ mod tests {
         assert!(validate_config(&cfg).is_err());
         cfg.key_path = "  ".to_string();
         assert!(validate_config(&cfg).is_err());
+    }
+
+    #[test]
+    fn test_normalize_and_validate_custom_listen_host() {
+        let base = ReverseProxyConfig {
+            enabled: true,
+            listen_host: "  ".to_string(),
+            listen_port: 8443,
+            target_port: 8317,
+            cert_path: " /tmp/cert.pem ".to_string(),
+            key_path: " /tmp/key.pem ".to_string(),
+        };
+        let normalized = normalize_proxy_config(base.clone());
+        assert_eq!(normalized.listen_host, "0.0.0.0");
+        assert_eq!(normalized.cert_path, "/tmp/cert.pem");
+        assert_eq!(normalized.key_path, "/tmp/key.pem");
+        assert!(validate_config(&normalized).is_ok());
+
+        let ipv6 = normalize_proxy_config(ReverseProxyConfig {
+            listen_host: " [::1] ".to_string(),
+            ..normalized.clone()
+        });
+        assert_eq!(ipv6.listen_host, "::1");
+        assert!(validate_config(&ipv6).is_ok());
+        assert_eq!(format_bind_addr(&ipv6.listen_host, 8443), "[::1]:8443");
+
+        let lan = normalize_proxy_config(ReverseProxyConfig {
+            listen_host: "192.168.100.100".to_string(),
+            ..normalized.clone()
+        });
+        assert_eq!(lan.listen_host, "192.168.100.100");
+        assert!(validate_config(&lan).is_ok());
+
+        let invalid = ReverseProxyConfig {
+            listen_host: "192.168.1.2:443".to_string(),
+            ..normalized
+        };
+        assert!(validate_config(&invalid).is_err());
     }
 
     #[test]

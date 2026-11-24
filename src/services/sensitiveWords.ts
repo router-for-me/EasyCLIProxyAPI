@@ -9,6 +9,11 @@ export type SensitiveRule = {
 export type CloudRule = Omit<SensitiveRule, 'id'>;
 export type RuleCatalog = { rules: CloudRule[] };
 export type WordEntry = SensitiveRule;
+let fallbackRuleCounter = 0;
+export function createWordEntryId(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
+  return `sw-${Date.now().toString(36)}-${(++fallbackRuleCounter).toString(36)}`;
+}
 export const fetchLatestSensitiveWordRules = () => invoke<RuleCatalog>('fetch_latest_sensitive_word_rules');
 export const ruleIdentity = (rule: Pick<SensitiveRule, 'provider' | 'target'>) => `${rule.provider}:${rule.target.trim().toLowerCase()}`;
 export type DuplicateWordGroup = {
@@ -46,7 +51,7 @@ export function addCloudRules(current: WordEntry[], cloud: CloudRule[]): WordEnt
     const identity = ruleIdentity(rule);
     if (!seen.has(identity)) {
       seen.add(identity);
-      added.push({ ...rule, id: crypto.randomUUID() });
+      added.push({ ...rule, id: createWordEntryId() });
     }
   }
   return [...current, ...added];

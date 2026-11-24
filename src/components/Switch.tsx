@@ -12,7 +12,7 @@ export function Switch({ checked, onChange, label, size = 'md', invalid, classNa
   const generatedId = useId();
   const inputId = id ?? generatedId;
   const control = <span className={['switch-control', size === 'sm' ? 'switch-control-sm' : '', className].filter(Boolean).join(' ')} title={title}>
-    <input {...props} id={inputId} type="checkbox" role="switch" aria-label={props['aria-label'] ?? (label == null ? title : undefined)} checked={checked}
+    <input {...props} id={inputId} type="checkbox" role="switch" aria-checked={checked} aria-label={props['aria-label'] ?? (label == null ? title : undefined)} checked={checked}
       aria-invalid={invalid || props['aria-invalid']} onChange={onChange} />
     <span className="switch-track" aria-hidden="true" />
   </span>;

@@ -546,7 +546,7 @@ export const zhCN: Record<string, string> = {
   'app.nav.versions': '版本管理',
   'app.nav.kernel': '内核',
   'app.nav.config': '快捷配置',
-  'app.nav.configManagement': '配置管理',
+  'app.nav.configManagement': '配置面板',
   'app.nav.thinkingAliases': '模型别名',
   'app.nav.oauth': 'OAuth',
   'app.nav.api': 'API 接入',

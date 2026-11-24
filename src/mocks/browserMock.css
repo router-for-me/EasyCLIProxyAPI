@@ -7,17 +7,31 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  min-height: 30px;
-  padding: 4px 7px;
+  min-height: 28px;
+  padding: 3px 6px;
   border: 1px solid color-mix(in srgb, #f59e0b 55%, transparent);
   border-radius: 8px;
   background: color-mix(in srgb, var(--panel-bg, #17191f) 92%, transparent);
   box-shadow: 0 7px 24px rgb(0 0 0 / 22%);
   color: var(--text-primary, #f3f4f6);
   font: 12px/1.2 system-ui, sans-serif;
-  opacity: 0.82;
+  opacity: 0.78;
   backdrop-filter: blur(10px);
-  transition: opacity 160ms ease, box-shadow 160ms ease;
+  transition: opacity 160ms ease, box-shadow 160ms ease, bottom 160ms ease;
+}
+
+body:has(.config-sticky-save-bar) #browser-mock-toolbar {
+  bottom: 72px;
+}
+
+#browser-mock-toolbar[data-collapsed='true'] {
+  padding: 3px;
+  gap: 0;
+  opacity: 0.65;
+}
+
+#browser-mock-toolbar[data-collapsed='true'] > :not(.browser-mock-badge) {
+  display: none;
 }
 
 #browser-mock-toolbar:hover,
@@ -26,13 +40,20 @@
   box-shadow: 0 9px 28px rgb(0 0 0 / 28%);
 }
 
-#browser-mock-toolbar strong {
+#browser-mock-toolbar .browser-mock-badge {
+  min-height: 0;
+  height: auto;
+  margin: 0;
   padding: 3px 6px;
+  border: 0;
   border-radius: 5px;
   background: #f59e0b;
   color: #17120a;
+  font: inherit;
   font-size: 10px;
+  font-weight: 700;
   letter-spacing: 0.08em;
+  cursor: pointer;
 }
 
 #browser-mock-toolbar select {

@@ -562,25 +562,26 @@ pub(crate) fn refresh(state: &GuiConfigState) -> Result<(), String> {
     apply(state).map(|_| ())
 }
 
-pub(crate) fn set_manual(state: &GuiConfigState, proxy_url: String) -> Result<(), String> {
-    let proxy_url = normalize_optional_proxy_url(&proxy_url)?;
-    let detected = if proxy_url.is_empty() {
-        Some(detect())
+pub(crate) fn set_proxy(
+    state: &GuiConfigState,
+    proxy_url: String,
+    proxy_override: Option<bool>,
+) -> Result<GuiConfigFile, String> {
+    let proxy_override = proxy_override.unwrap_or_else(|| !proxy_url.trim().is_empty());
+    let proxy_url = if proxy_override {
+        normalize_optional_proxy_url(&proxy_url)?
     } else {
-        None
+        detect()
     };
     let mut current = state
         .inner
         .lock()
         .map_err(|_| "Proxy configuration lock is poisoned".to_string())?;
     let mut next = current.clone();
-    next.proxy_override = !proxy_url.is_empty();
-    next.proxy_url = if next.proxy_override {
-        proxy_url
-    } else {
-        detected.unwrap_or_else(detect)
-    };
-    commit(&mut current, next, patch_core_proxy_url, write_gui_config)
+    next.proxy_override = proxy_override;
+    next.proxy_url = proxy_url;
+    commit(&mut current, next, patch_core_proxy_url, write_gui_config)?;
+    Ok(current.clone())
 }
 
 pub(crate) async fn verify_core_proxy(config: &GuiConfigFile) -> Result<(), String> {
@@ -1035,5 +1036,41 @@ mod tests {
         .unwrap();
         assert!(persisted);
         assert!(current.proxy_override);
+    }
+
+    #[test]
+    fn set_proxy_normalizes_manual_direct_and_system_modes() {
+        assert_eq!(
+            normalize_optional_proxy_url(" socks5://127.0.0.1:9180/ ").unwrap(),
+            "socks5://127.0.0.1:9180"
+        );
+        assert_eq!(normalize_optional_proxy_url("   ").unwrap(), "");
+        assert!(normalize_optional_proxy_url("127.0.0.1:9180").is_err());
+
+        // Explicit direct mode (proxy_override = true, proxy_url = "") must persist
+        // proxy_override = true so periodic system-proxy sync does not overwrite it.
+        let mut current = GuiConfigFile {
+            proxy_url: "http://127.0.0.1:7890".into(),
+            proxy_override: false,
+            ..GuiConfigFile::default()
+        };
+        let mut direct = current.clone();
+        direct.proxy_override = true;
+        direct.proxy_url = String::new();
+        let mut patched = None;
+        commit(
+            &mut current,
+            direct,
+            |url| {
+                patched = Some(url.to_string());
+                Ok(())
+            },
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert!(current.proxy_override);
+        assert_eq!(current.proxy_url, "");
+        assert_eq!(patched.as_deref(), Some(""));
+        assert_eq!(resolve(&current), "");
     }
 }

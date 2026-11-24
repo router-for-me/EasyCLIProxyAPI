@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, Plus, RefreshCw, ShieldAlert } from 'lucide-react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { Check, Download, Plus, RefreshCw, ShieldAlert } from 'lucide-react';
 import { Dialog } from '../components/Dialog';
 import { SettingsHelp } from '../components/SettingsHelp';
 import { useConfirmation } from '../components/ConfirmationDialog';
@@ -12,6 +12,7 @@ import {
   type SensitiveWordsSettings,
 } from '../services/coreSettings';
 import {
+  createWordEntryId,
   fetchLatestSensitiveWordRules,
   addCloudRules,
   validateWordEntries,
@@ -24,14 +25,14 @@ const providers = ['antigravity', 'devin'] as const;
 const toEntries = (settings: SensitiveWordsSettings): WordEntry[] =>
   providers.flatMap((provider) => [
     ...settings[`${provider}SensitiveWords`].map((target) => ({
-      id: crypto.randomUUID(),
+      id: createWordEntryId(),
       provider,
       kind: 'obfuscate' as const,
       target,
       replacement: '',
     })),
     ...Object.entries(settings[`${provider}SensitiveWordsReplace`]).map(([target, replacement]) => ({
-      id: crypto.randomUUID(),
+      id: createWordEntryId(),
       provider,
       kind: 'replace' as const,
       target,
@@ -58,7 +59,15 @@ const toSettings = (rows: WordEntry[]): SensitiveWordsSettings => {
   }
   return settings;
 };
-export function SensitiveWordsPage({ active = true, onDirtyChange }: { active?: boolean; onDirtyChange?: (dirty: boolean) => void } = {}) {
+export type SensitiveWordsPageHandle = {
+  save: () => Promise<boolean>;
+  discardImmediate: () => Promise<void>;
+};
+
+export const SensitiveWordsPage = forwardRef<SensitiveWordsPageHandle, { active?: boolean; onDirtyChange?: (dirty: boolean) => void }>(function SensitiveWordsPage(
+  { active = true, onDirtyChange } = {},
+  ref,
+) {
   const { t, locale } = useI18n();
   const st = (key: keyof typeof sensitiveWordsMessages) => templateText(sensitiveWordsMessages[key], locale);
   const { askConfirmation, confirmationDialog } = useConfirmation();
@@ -116,7 +125,7 @@ export function SensitiveWordsPage({ active = true, onDirtyChange }: { active?: 
     changed();
   };
   const add = (provider: SensitiveRule['provider'], kind: SensitiveRule['kind']) => {
-    const rule = { id: crypto.randomUUID(), provider, kind, target: '', replacement: '' };
+    const rule = { id: createWordEntryId(), provider, kind, target: '', replacement: '' };
     setRows((current) => [...current, rule]);
     changed();
     requestAnimationFrame(() =>
@@ -131,8 +140,9 @@ export function SensitiveWordsPage({ active = true, onDirtyChange }: { active?: 
     setRows((current) => current.filter((entry) => entry.id !== row.id));
     changed();
   };
-  const save = async () => {
-    if (!dirty || invalid || busy !== null) return;
+  const save = useCallback(async (): Promise<boolean> => {
+    if (!dirty) return true;
+    if (invalid || busy !== null) return false;
     const token = session.current;
     setBusy('save');
     setError('');
@@ -144,12 +154,19 @@ export function SensitiveWordsPage({ active = true, onDirtyChange }: { active?: 
         setUndo(null);
         setSavedNotice(true);
       }
+      return true;
     } catch (cause) {
       if (token === session.current) setError(String(cause));
+      return false;
     } finally {
       if (token === session.current) setBusy(null);
     }
-  };
+  }, [busy, dirty, invalid, saved, settings]);
+
+  useImperativeHandle(ref, () => ({
+    save,
+    discardImmediate: load,
+  }), [load, save]);
   const addLatest = async () => {
     if (busy !== null) return;
     const token = session.current;
@@ -200,8 +217,11 @@ export function SensitiveWordsPage({ active = true, onDirtyChange }: { active?: 
       ) : null}
       <div className="config-panel-heading">
         <div className="config-heading-title">
-          <ShieldAlert size={18} aria-hidden="true" />
-          <h2>{st('title')}</h2>
+          <ShieldAlert size={16} aria-hidden="true" />
+          <h2 className="sr-only">{st('title')}</h2>
+          <span className="sw-summary-count">
+            {`${st('title')} · ${rows.filter((row) => row.target.trim()).length}`}
+          </span>
         </div>
         <div className="config-heading-actions">
           {undo ? (
@@ -217,9 +237,7 @@ export function SensitiveWordsPage({ active = true, onDirtyChange }: { active?: 
               {st('undo')}
             </button>
           ) : null}
-          {dirty ? (
-            <span className="state-pill">{t('config.network.unsaved')}</span>
-          ) : savedNotice ? (
+          {!dirty && savedNotice ? (
             <span className="state-pill success">{t('config.network.saved')}</span>
           ) : null}
           <button
@@ -238,17 +256,20 @@ export function SensitiveWordsPage({ active = true, onDirtyChange }: { active?: 
             <RefreshCw size={15} />
             {t('common.refresh')}
           </button>
-          <button
-            className="primary-button compact-button sw-save"
-            disabled={busy !== null || !dirty || invalid !== null}
-            onClick={() => void save()}
-          >
-            {busy === 'save' ? t('common.saving') : t('common.save')}
-          </button>
+          {dirty ? (
+            <button
+              className="primary-button compact-button sw-save"
+              disabled={busy !== null || invalid !== null}
+              onClick={() => void save()}
+            >
+              <Check size={15} aria-hidden="true" />
+              {busy === 'save' ? t('common.saving') : t('common.save')}
+            </button>
+          ) : null}
         </div>
       </div>
       {saved !== null ? (
-        <>
+        <div className="sw-provider-grid">
           {providers.map((provider) => (
             <details className="sw-provider-section" key={provider} open>
               <summary>
@@ -368,22 +389,29 @@ export function SensitiveWordsPage({ active = true, onDirtyChange }: { active?: 
                           ))}
                         </div>
                       ) : null}
-                      <button
-                        className="secondary-button compact-button sw-add"
-                        disabled={busy !== null}
-                        onClick={() => add(provider, kind)}
-                      >
-                        <Plus size={14} />
-                        {t('common.add')}
-                      </button>
+                      <div className="sw-group-footer">
+                        {group.length === 0 ? (
+                          <span className="sw-empty-hint">
+                            {locale === 'en' ? 'No rules added yet' : locale === 'ja' ? 'ルール未設定' : '暂未配置规则'}
+                          </span>
+                        ) : null}
+                        <button
+                          className="secondary-button compact-button sw-add"
+                          disabled={busy !== null}
+                          onClick={() => add(provider, kind)}
+                        >
+                          <Plus size={14} />
+                          {t('common.add')}
+                        </button>
+                      </div>
                     </section>
                   );
                 })}
               </div>
             </details>
           ))}
-        </>
+        </div>
       ) : null}
     </section>
   );
-}
+});

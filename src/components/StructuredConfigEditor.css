@@ -12,8 +12,11 @@
 .structured-label label { overflow-wrap: anywhere; }
 .structured-field small { font-size: 12px; color: var(--text-tertiary); line-height: 1.5; }
 .structured-field .text-input, .structured-field .select-input, .structured-map-add .text-input, .structured-any .select-input, .structured-list-item > .text-input { width: 100%; min-width: 0; }
-.structured-unset { justify-content: flex-start; white-space: normal; text-align: start; }
+.structured-unset { justify-content: flex-start; white-space: normal; text-align: start; min-height: 30px; padding: 4px 10px; font-size: 12px; }
+.structured-field:not(.structured-field-wide):has(> .structured-unset) { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding-bottom: 6px; border-bottom: 1px dashed var(--border-color); }
 .structured-add { justify-self: start; }
+.structured-empty-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.structured-empty-hint { margin: 0; color: var(--text-tertiary); font-size: 12px; line-height: 1.5; }
 .structured-map-add { display: flex; gap: 8px; flex-wrap: wrap; }
 .structured-map-add .text-input { flex: 1 1 180px; width: auto; }
 .structured-map-add .secondary-button { flex: 0 0 auto; }

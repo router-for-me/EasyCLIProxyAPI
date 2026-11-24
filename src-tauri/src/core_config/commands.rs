@@ -483,9 +483,10 @@ pub(crate) fn set_core_routing_strategy(
 pub(crate) fn set_core_proxy_url(
     gui_config_state: tauri::State<'_, GuiConfigState>,
     proxy_url: String,
+    proxy_override: Option<bool>,
 ) -> Result<CoreConfigView, String> {
-    network_proxy::set_manual(gui_config_state.inner(), proxy_url)?;
-    Ok(CoreConfigView::from(&gui_config_state.snapshot()?))
+    let config = network_proxy::set_proxy(gui_config_state.inner(), proxy_url, proxy_override)?;
+    Ok(CoreConfigView::from(&config))
 }
 
 #[tauri::command]

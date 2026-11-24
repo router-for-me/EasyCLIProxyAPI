@@ -533,12 +533,19 @@ export function ThinkingAliasesPage({ embedded = false }: { embedded?: boolean }
 
       <header className="management-header">
         <div>
-          {embedded
-            ? <h2>{t('app.nav.thinkingAliases')}</h2>
-            : <h1>{t('app.nav.thinkingAliases')}</h1>}
+          {embedded ? (
+            <>
+              <h2 className="sr-only">{t('app.nav.thinkingAliases')}</h2>
+              <span className="thinking-alias-embedded-summary">
+                {`${t('app.nav.thinkingAliases')} · ${entries.length}`}
+              </span>
+            </>
+          ) : (
+            <h1>{t('app.nav.thinkingAliases')}</h1>
+          )}
         </div>
         <div className="management-heading-actions">
-          <span className="muted-summary">{entries.length}</span>
+          {!embedded ? <span className="muted-summary">{entries.length}</span> : null}
           <button
             type="button"
             className="primary-button compact-button"
@@ -547,7 +554,8 @@ export function ThinkingAliasesPage({ embedded = false }: { embedded?: boolean }
             title={t('aliases.create')}
             aria-label={t('aliases.create')}
           >
-            <Plus size={18} aria-hidden="true" />
+            <Plus size={16} aria-hidden="true" />
+            {embedded ? <span>{t('aliases.create')}</span> : null}
           </button>
         </div>
       </header>

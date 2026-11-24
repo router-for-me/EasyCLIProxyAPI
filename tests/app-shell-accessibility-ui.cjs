@@ -29,7 +29,7 @@ const path = require('node:path');
 
     await page.locator('.nav-section').getByRole('button', { name: '使用记录' }).click();
     const tabs = page.getByRole('tab');
-    assert.equal(await tabs.count(), 5);
+    assert.equal(await tabs.count(), 7);
     assert.deepEqual(await tabs.evaluateAll((elements) => elements
       .map((element) => element.getAttribute('aria-controls'))
       .filter((id) => !id || !document.getElementById(id))), []);
@@ -67,7 +67,7 @@ const path = require('node:path');
     assert.equal(await page.locator('.config-settings-header p, .config-nav-save-hint, .config-category-heading, .config-section-index').count(), 0);
     assert.deepEqual(await configTabs.evaluateAll(elements => elements.map(element => element.id)), [
       'config-subpage-tab-general', 'config-subpage-tab-proxy', 'config-subpage-tab-aliases', 'config-subpage-tab-routing', 'config-subpage-tab-requests',
-      'config-subpage-tab-oauth', 'config-subpage-tab-diagnostics',
+      'config-subpage-tab-sensitiveWords', 'config-subpage-tab-oauth', 'config-subpage-tab-diagnostics',
       'config-subpage-tab-software',
     ]);
     assert.equal(await page.locator('.config-page [role="tabpanel"]').count(), 1);
@@ -78,8 +78,8 @@ const path = require('node:path');
       element.getAttribute('aria-controls') === 'config-subpage-panel')), true);
     await configTabs.first().focus();
     await page.keyboard.press('ArrowRight');
-    assert.equal(await page.locator('#config-subpage-tab-aliases').getAttribute('aria-selected'), 'true');
-    await page.waitForFunction(() => document.activeElement?.id === 'config-subpage-tab-aliases');
+    assert.equal(await page.locator('#config-subpage-tab-proxy').getAttribute('aria-selected'), 'true');
+    await page.waitForFunction(() => document.activeElement?.id === 'config-subpage-tab-proxy');
     await page.keyboard.press('ArrowLeft');
     assert.equal(await configTabs.first().getAttribute('aria-selected'), 'true');
     await page.keyboard.press('End');
@@ -98,7 +98,7 @@ const path = require('node:path');
     }
     assert.equal(await page.getByLabel('搜索设置', { exact: true }).count(), 1);
     assert.equal(await page.locator('.config-settings-views').count(), 0);
-    const fieldHelp = page.locator('#template-field-management-0 .settings-help-trigger').first();
+    const fieldHelp = page.locator('#config-native-management .settings-help-trigger').first();
     assert.equal(await fieldHelp.getAttribute('aria-expanded'), 'false');
     assert.ok(await fieldHelp.getAttribute('aria-controls'));
     assert.ok(await fieldHelp.getAttribute('aria-label'), 'Help icons need a meaningful accessible name');
@@ -107,19 +107,23 @@ const path = require('node:path');
     assert.equal(await fieldHelp.getAttribute('aria-expanded'), 'true');
     await page.keyboard.press('Escape');
     assert.equal(await fieldHelp.getAttribute('aria-expanded'), 'false');
-    const addKey = page.getByRole('button', { name: /新增鉴权密钥/ }).first();
-    await addKey.focus();
-    await addKey.click();
+    await page.locator('#config-subpage-tab-aliases').click();
+    const createAlias = page.getByRole('button', { name: '创建别名' }).first();
+    await createAlias.waitFor();
+    await page.waitForFunction(() => !document.querySelector('[aria-label="创建别名"]')?.disabled);
+    await createAlias.focus();
+    await createAlias.click();
     const dialog = page.getByRole('dialog');
     await dialog.waitFor();
     for (let index = 0; index < 8; index += 1) {
       await page.keyboard.press('Tab');
       assert.equal(await page.evaluate(() => Boolean(document.activeElement?.closest('[role="dialog"]'))), true);
     }
+    if (await dialog.locator('[role="listbox"]').count()) await page.keyboard.press('Escape');
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'detached' });
-    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '新增鉴权密钥');
-    assert.equal(await addKey.evaluate((element) => document.activeElement === element), true);
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '创建别名');
+    assert.equal(await createAlias.evaluate((element) => document.activeElement === element), true);
 
     await page.setViewportSize({ width: 640, height: 600 });
     await page.locator('.nav-section').getByRole('button', { name: '首页' }).click();

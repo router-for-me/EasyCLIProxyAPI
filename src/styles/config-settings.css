@@ -1,19 +1,18 @@
-.config-page { gap: 20px; min-width: 0; }
-.config-settings-search { display: flex; align-items: center; gap: 8px; flex: 0 1 260px; box-sizing: border-box; min-width: 200px; height: 34px; padding: 0 10px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-card); color: var(--text-tertiary); }
+.config-page { gap: 16px; min-width: 0; }
+.config-settings-search,
+.config-page .config-settings-search.search-control[data-size] { display: flex; align-items: center; gap: 6px; flex: 0 1 196px; box-sizing: border-box; min-width: 136px; height: 32px; min-height: 32px; padding: 0 9px; }
+.config-settings-search { border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-card); color: var(--text-tertiary); }
 .config-settings-search:focus-within { border-color: var(--primary-color); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 12%, transparent); }
 .config-settings-search > svg { flex: none; }
 .config-settings-search input { width: 100%; min-width: 0; min-height: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 13px; }
 .config-settings-search input::-webkit-search-cancel-button { display: none; }
 .config-settings-search button { flex: none; }
-.config-settings-search > kbd { flex: none; padding: 1px 6px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-secondary); color: var(--text-tertiary); font-size: 11px; line-height: 1.4; }
-.config-settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-items: start; min-width: 0; }
-.config-settings-topnav { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; flex-wrap: wrap; background: var(--bg-primary); }
-.config-page .config-subpage-tabs button { display: flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 5px; min-width: 0; }
-.config-nav-dirty { flex: none; width: 8px; height: 8px; margin-left: auto; border-radius: var(--radius-full); background: var(--primary-color); }
-.config-nav-dirty-text { display: none; color: var(--text-tertiary); font-size: var(--font-size-caption); white-space: nowrap; }
-@media (min-width: 1160px) {
-  .config-nav-dirty-text { display: inline; }
-}
+.config-settings-search > kbd { flex: none; padding: 1px 5px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-secondary); color: var(--text-tertiary); font-size: 11px; line-height: 1.4; }
+.config-page > .config-settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; min-width: 0; }
+.config-page > .config-settings-layout > .config-settings-topnav { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; flex-wrap: wrap; background: var(--bg-primary); }
+.config-page .tabs-control.config-subpage-tabs { gap: 2px; }
+.config-page .tabs-control.config-subpage-tabs > button { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 5px; height: 34px; min-height: 34px; min-width: 0; padding-inline: 9px; font-size: 13px; }
+.config-nav-dirty { flex: none; width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--primary-color); }
 .config-settings-content { min-width: 0; }
 /* Only flatten page sections. Dialogs may be rendered inside these sections. */
 .config-page .config-settings-cards > section,
@@ -333,12 +332,14 @@
 .config-page .config-settings-content .config-proxy-heading { max-width: 420px; }
 .config-page .config-settings-content :is(.config-settings-save-row, .template-config-actions) { margin-top: 4px; }
 
-/* Each functional group is a card; complex groups span the available workspace. */
+/* Each functional group is a card; paired cards always form complete 2-card rows. */
+.config-page { gap: 10px; }
+.config-page > .config-settings-layout { gap: 10px; }
 .config-page .config-settings-content {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  align-items: stretch;
-  gap: 20px;
+  align-items: start;
+  gap: 10px;
   max-width: none;
 }
 .config-page .config-settings-content > .config-settings-cards,
@@ -352,7 +353,7 @@
   box-sizing: border-box;
   min-width: 0;
   margin: 0;
-  padding: 20px;
+  padding: 12px 16px;
 }
 .config-page #config-template-panel > .template-config-section > .template-config-card:not([hidden]) {
   border: 1px solid var(--border-color);
@@ -360,35 +361,656 @@
   background: var(--bg-card);
   box-shadow: none;
 }
-.config-page #config-native-aliases > .thinking-alias-page { padding-top: 0; }
+.config-page .config-settings-cards > section > :is(.config-panel-heading, .config-network-section-heading),
+.config-page #config-template-panel > .template-config-section > .template-config-card > .template-config-heading,
+.config-page #config-native-aliases > .thinking-alias-page > .management-header,
+.config-page #config-native-sensitive-words > .config-sensitive-words-panel > .config-panel-heading {
+  min-height: 26px;
+  margin: 0 0 8px;
+  padding: 0 0 6px;
+}
+.config-page .config-settings-cards > section > :is(.config-panel-heading, .config-network-section-heading) { margin-bottom: 0; }
+.config-page #config-native-aliases > .thinking-alias-page { gap: 8px; padding-top: 0; }
 .config-page #config-native-aliases > .thinking-alias-page > .thinking-alias-list-panel,
 .config-page #config-native-sensitive-words > .config-sensitive-words-panel { padding: 0; }
-.config-page .config-settings-content .config-keys-panel { max-height: none; }
-.config-page .config-settings-content .config-key-list { max-height: 300px; overflow-y: auto; border-top: 0; }
+input::-ms-reveal,
+input::-ms-clear {
+  display: none;
+}
+
+.config-secret-input:has(> .config-secret-toggle) {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+.config-secret-input:has(> .config-secret-toggle) > input {
+  width: 100%;
+  padding-right: 38px;
+}
+.config-secret-input > .icon-button.config-secret-toggle {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  box-shadow: none;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+.config-secret-input > .icon-button.config-secret-toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-tertiary) 12%, transparent);
+  color: var(--text-primary);
+}
+.config-secret-input > .icon-button.config-secret-toggle.is-revealed {
+  color: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+}
+
+.config-page [hidden] {
+  display: none !important;
+}
+
+.config-page .config-settings-content .config-keys-panel:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  max-height: none;
+  gap: 6px;
+}
+.config-page .config-settings-content .config-key-list {
+  max-height: 224px;
+  overflow-y: auto;
+  border-top: 0;
+  border-bottom: 0;
+  scrollbar-gutter: auto;
+}
+.config-page .config-settings-content .config-key-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  min-height: 44px;
+  padding: 5px 0;
+}
+.config-page .config-settings-content .config-key-details { gap: 2px; }
+.config-page .config-settings-content .config-key-details code {
+  justify-self: start;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-tertiary) 8%, var(--bg-card));
+  font-variant-numeric: tabular-nums;
+}
+.config-page .config-settings-content .config-key-details code.is-revealed {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--primary-color) 9%, var(--bg-card));
+}
+@container settings-card (min-width: 560px) {
+  .config-page .config-settings-content .config-key-details {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+  }
+}
+.config-page .config-settings-content .config-key-index { width: 28px; height: 26px; }
+.config-page .config-settings-content .config-key-actions {
+  grid-template-columns: repeat(4, 30px);
+  gap: 6px;
+}
+.config-page .config-settings-content .config-key-actions .icon-button.is-revealed {
+  border-color: color-mix(in srgb, var(--primary-color) 42%, var(--border-color));
+  background: color-mix(in srgb, var(--primary-color) 10%, var(--bg-card));
+  color: var(--primary-color);
+}
+.config-page .config-settings-content .config-key-actions .icon-button,
+.config-page .config-settings-content .config-heading-actions > .icon-button,
+.config-page .config-settings-content .config-count {
+  width: 30px;
+  height: 30px;
+}
+.config-page .config-settings-cards :is(.config-panel-heading h2, .config-network-section-heading h3) {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+}
 .config-page .config-settings-content > .config-search-results,
 .config-page #config-template-panel .template-config-notice { grid-column: 1 / -1; }
 .config-page .config-settings-content .config-sensitive-words-grid { max-width: none; }
-@media (min-width: 1240px) {
+.config-page .config-field-error:empty { display: none; }
+.config-page .config-settings-content .config-network-field { min-height: 0; gap: 5px; }
+
+@media (min-width: 880px) {
   .config-page .config-settings-content { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  /* Plan complete rows rather than sizing cards by their number of fields. */
+  /* Default every card to full width (using internal multi-column grids), then pair exact 2-card native peers. */
   .config-page .config-settings-content :is(.config-settings-cards > section, .template-config-card, #config-native-aliases, #config-native-sensitive-words) { grid-column: 1 / -1; }
-  .config-page .config-settings-content :is(#config-native-network, #config-native-tls, #config-group-codex-client, #config-group-multimedia, #config-group-oauth-codex, #config-group-oauth-others) { grid-column: auto; }
+  .config-page .config-settings-content :is(
+    #config-native-network:has(+ #config-system-proxy),
+    #config-system-proxy,
+    #config-native-routing,
+    #config-native-retry
+  ) {
+    grid-column: auto;
+    align-self: stretch;
+  }
 }
+
+/* Fix <Select className="config-network-input"> so unlayered background shorthand never resets --select-arrow or shows double arrows. */
+.config-page select.select-control.config-network-input {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 32px;
+  background-color: var(--bg-card);
+  background-image: var(--select-arrow);
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 14px;
+}
+
+.config-page #config-system-proxy .config-proxy-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 12px;
+}
+.config-page .config-outbound-proxy-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-tertiary);
+}
+
 /* Equal-height peers keep their content at the top and actions on one baseline. */
 .config-page .config-settings-cards > section:not([hidden]):not(#config-native-keys),
 .config-page #config-template-panel > .template-config-section > .template-config-card:not([hidden]) {
   display: flex;
   flex-direction: column;
-  align-self: stretch;
+  gap: 8px;
 }
+.config-page #config-template-panel > .template-config-section > .template-config-card:not([hidden]) { gap: 0; }
 .config-page .config-settings-cards > section > .config-settings-save-row,
 .config-page #config-template-panel > .template-config-section > .template-config-card > .template-config-actions {
   margin-top: auto;
-  padding-top: 16px;
+  padding-top: 8px;
 }
-@container settings-card (max-width: 620px) {
-  .config-page .config-settings-content :is(.config-network-grid, .config-management-form, .template-config-fields, .config-diagnostics-fields, .config-diagnostics-toggle-grid, .config-software-settings-list) { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-  .config-page .config-settings-content .config-management-form-footer { grid-column: 1; }
+
+/* Outbound proxy & WebUI management key cards. */
+.config-page .config-outbound-proxy-form,
+.config-page .config-settings-content .config-management-content,
+.config-page .config-settings-content .config-management-form {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+}
+@container settings-card (min-width: 640px) {
+  .config-page .config-settings-content #config-native-management .config-management-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 24px;
+    align-items: center;
+  }
+  .config-page .config-settings-content #config-native-management .config-management-form-footer {
+    grid-column: 1 / -1;
+    margin-top: 0;
+  }
+}
+.config-page .config-settings-cards .config-network-input,
+.config-page .config-settings-content #config-native-management :is(.config-secret-input input, .config-dialog-text-input) {
+  height: 36px;
+}
+.config-page .config-outbound-proxy-form > .config-settings-save-row,
+.config-page .config-settings-content .config-management-form-footer {
+  margin-top: auto;
+  padding-top: 2px;
+  padding-left: 0;
+}
+.config-page .config-settings-content .config-management-form-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px 10px;
+}
+.config-page .config-settings-content .config-management-error:not(.visible) {
+  display: none;
+}
+.config-page .config-settings-content .config-management-error.visible {
+  flex: 1 1 100%;
+}
+.config-page .config-settings-content #config-native-management .config-management-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  width: 100%;
+  margin: 0;
+  gap: 8px;
+}
+.config-page .config-settings-content .config-proxy-system-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  width: auto;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+@container settings-card (min-width: 360px) {
+  .config-page .config-settings-content #config-native-management .config-management-field {
+    grid-template-columns: 82px minmax(0, 1fr);
+    align-items: center;
+    gap: 6px 12px;
+    min-height: 36px;
+  }
+  .config-page .config-settings-content #config-native-management .config-management-field > :is(input, .config-secret-input) {
+    max-width: none;
+    width: 100%;
+  }
+}
+
+.config-page :is(.config-network-input, .config-secret-input input, .config-dialog-text-input):focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--ui-focus-ring);
+  outline: none;
+}
+
+.config-page .config-inline-dirty-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.config-page .config-card-dirty-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 12px;
+  margin-top: auto;
+  padding-top: 2px;
+}
+.config-page .config-card-dirty-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: auto;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.config-page .config-card-dirty-hint > svg {
+  flex: none;
+  color: var(--warning-color, #d97706);
+}
+
+.config-page #config-system-proxy .config-proxy-field > input {
+  max-width: none;
+  width: 100%;
+}
+
+/* Single-line toggle bar when TLS is disabled; 2-column path inputs when enabled. */
+.config-page #config-native-tls:not(:has(.config-tls-content)):not(:has(.notice)) > .config-network-section-heading {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.config-page .config-tls-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+@container settings-card (min-width: 680px) {
+  .config-page #config-native-tls .config-tls-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 20px;
+  }
+}
+.config-page :is(#config-native-tls, #config-native-reverse-proxy) .config-tls-path-control {
+  max-width: none;
+  width: 100%;
+}
+
+/* External access (reverse proxy) compact rhythm, status bar & interactive advanced disclosure. */
+.config-page .config-tls-content { display: grid; gap: 10px; min-width: 0; }
+.config-page .config-diagnostics-intro { margin: 0; font-size: 12px; line-height: 1.5; }
+.config-page .config-settings-content .config-tls-toggle-row {
+  min-height: 36px;
+  padding: 2px 0 6px;
+  border-bottom: 1px solid var(--border-color);
+  border-radius: var(--radius-none);
+}
+
+/* Forwarding topology: External HTTPS Listener -> Local Core Target */
+.config-page .config-rp-topology {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  transition: opacity 150ms ease;
+}
+.config-page .config-rp-topology.is-muted,
+.config-page .config-rp-route-bar.is-muted { opacity: 0.62; }
+.config-page .config-rp-node {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+.config-page .config-rp-node-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.config-page .config-rp-proto-badge {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+}
+.config-page .config-rp-proto-badge.is-https {
+  border-color: color-mix(in srgb, var(--primary-color) 32%, var(--border-color));
+  background: color-mix(in srgb, var(--primary-color) 10%, var(--bg-card));
+  color: var(--primary-color);
+}
+.config-page .config-rp-split-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) auto minmax(92px, 0.9fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.config-page .config-rp-split-inputs > input.config-network-input {
+  width: 100%;
+  max-width: none;
+  height: 36px;
+  background-color: var(--bg-card);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.config-page .config-rp-colon {
+  color: var(--text-tertiary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  user-select: none;
+}
+.config-page .config-rp-locked-host {
+  display: inline-flex;
+  align-items: center;
+  height: 36px;
+  margin: 0;
+  padding: 0 11px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text-tertiary) 9%, var(--bg-card));
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+}
+.config-page .config-rp-locked-host > code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+}
+.config-page .config-rp-connector {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 10px;
+  margin-inline: auto;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 28%, var(--border-color));
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--primary-color) 8%, var(--bg-card));
+  color: var(--primary-color);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  user-select: none;
+}
+.config-page .config-rp-connector-arrow {
+  flex: none;
+  transform: rotate(90deg);
+}
+@container settings-card (min-width: 640px) {
+  .config-page .config-rp-topology {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: 10px;
+  }
+  .config-page .config-rp-connector-arrow {
+    transform: none;
+  }
+}
+.config-page .config-rp-route-forward {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* Route preview / live client URL pill bar */
+.config-page .config-rp-route-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 7px 12px;
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.config-page .config-rp-route-bar.is-live {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--success-color) 35%, var(--border-color));
+  background: color-mix(in srgb, var(--success-color) 7%, transparent);
+}
+.config-page .config-rp-route-item {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.config-page .config-rp-route-label {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+.config-page .config-reverse-proxy-route-code {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.config-page .config-rp-route-bar > .settings-help {
+  margin-left: auto;
+}
+
+/* Status metric strip (pinned at top of External Access card) */
+.config-page .config-tls-content > [aria-live='polite']:empty {
+  display: none;
+}
+.config-page .config-settings-content .config-reverse-proxy-status-bar {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px 16px;
+  padding: 10px 14px;
+}
+.config-page .config-settings-content .config-reverse-proxy-status-bar.is-running {
+  border-color: color-mix(in srgb, var(--success-color) 32%, var(--border-color));
+  background: color-mix(in srgb, var(--success-color) 6%, var(--bg-card));
+}
+.config-page .config-rp-status-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.config-page .config-rp-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--text-tertiary);
+  opacity: 0.65;
+  flex: none;
+}
+.config-page .config-rp-status-dot.is-running {
+  background: var(--success-color);
+  opacity: 1;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success-color) 18%, transparent);
+}
+.config-page .config-settings-content .config-reverse-proxy-status-bar .config-network-field {
+  gap: 3px;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.config-page .config-settings-content .config-reverse-proxy-status-bar .config-field-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+@container settings-card (min-width: 681px) {
+  .config-page .config-settings-content .config-reverse-proxy-status-bar > .config-network-field + .config-network-field {
+    padding-left: 14px;
+    border-left: 1px solid var(--border-color);
+  }
+}
+@container settings-card (max-width: 680px) {
+  .config-page .config-settings-content .config-reverse-proxy-status-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container settings-card (max-width: 380px) {
+  .config-page .config-settings-content .config-reverse-proxy-status-bar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Internal form layout follows the card width, independently of the page grid. */
+.config-page .config-settings-content :is(.template-config-fields, .config-network-grid) {
+  gap: 6px 22px;
+}
+.config-page .config-settings-content .config-network-grid.is-muted { opacity: .55; }
+
+/* Right-aligned scalar controls line up flush with Switch toggles on the right edge of every column. */
+.config-page .config-settings-content .template-config-field:not(.template-config-field-wide) {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  align-content: center;
+  min-height: 34px;
+  gap: 4px 12px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border-color);
+}
+/* Single-field cards span the full row with no redundant bottom underline. */
+.config-page .config-settings-content .template-config-fields > .template-config-field:only-child {
+  grid-column: 1 / -1;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.config-page .config-settings-content .template-config-field:not(.template-config-field-wide):not(.template-config-toggle) > .template-config-control {
+  justify-self: end;
+  width: 186px;
+  max-width: 100%;
+}
+.config-page .config-settings-content .template-config-field[data-field-type='number']:not(.template-config-field-wide) > .template-config-control {
+  width: 120px;
+}
+.config-page .config-settings-content .template-config-field.template-config-toggle {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto;
+  align-self: stretch;
+}
+.config-page .config-settings-content .template-config-toggle > .template-config-control {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+}
+.config-page .config-settings-content .template-config-field-wide > .template-config-control { max-width: none; }
+
+/* Structured <details> fields: full-row clickable disclosure cards in 2 columns when closed, full width when open. */
+.config-page .config-settings-content .template-config-field[data-field-type='custom'] {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.config-page .config-settings-content .template-config-field[data-field-type='custom'] > details.template-config-custom {
+  width: 100%;
+  padding: 0;
+}
+.config-page .config-settings-content .template-config-field[data-field-type='custom']:has(> details[open]) {
+  grid-column: 1 / -1;
+}
+@container settings-card (min-width: 600px) {
+  .config-page .config-settings-content .template-config-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 24px;
+  }
+  .config-page .config-settings-content .template-config-fields > .template-config-field:is(:last-child, :nth-last-child(2):nth-child(odd)) {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+  .config-page .config-settings-content .template-config-field[data-field-type='custom']:not(:has(> details[open])) {
+    grid-column: auto;
+  }
+}
+
+/* Homogeneous 3/6-field cards form exact 1x3 and 2x3 horizontal grids on wide workspaces. */
+@container settings-card (min-width: 820px) {
+  .config-page :is(#config-group-request-behavior, #config-group-oauth-codex) .template-config-fields {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px 22px;
+  }
+  .config-page :is(#config-group-request-behavior, #config-group-oauth-codex) .template-config-fields > .template-config-field:nth-last-child(-n+3) {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+  .config-page :is(#config-group-request-behavior, #config-group-oauth-codex) .template-config-field:not(.template-config-field-wide):not(.template-config-toggle) > .template-config-control {
+    width: 118px;
+  }
+}
+@container settings-card (min-width: 600px) {
+  .config-page :is(#config-group-request-payload, #config-group-oauth-media) .template-config-field[data-field-type='custom']:not(:has(> details[open])):last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Narrow cards (< 600px) use a clean single-column label-to-control list instead of cramped subcolumns. */
+@container settings-card (max-width: 599px) {
+  .config-page .config-settings-content .template-config-fields { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .config-page .config-settings-content .template-config-fields > .template-config-field:last-child {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+}
+@container settings-card (max-width: 580px) {
+  .config-page .config-settings-content :is(.config-network-grid, .config-diagnostics-fields, .config-diagnostics-toggle-grid, .config-software-settings-list) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
   .config-page .config-settings-content :is(.config-network-toggle, .template-config-field.template-config-toggle) {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-rows: auto;
@@ -402,121 +1024,339 @@
   .config-page .config-settings-content .config-proxy-system-toggle { flex-wrap: wrap; }
 }
 
-/* Related cards form complete pairs when each has room to breathe. */
-@media (min-width: 1560px) {
-  .config-page .config-settings-content { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-  .config-page .config-settings-content :is(#config-native-network, #config-native-tls, #config-group-oauth-codex, #config-group-oauth-others) { grid-column: span 3; }
-  .config-page .config-settings-content :is(#config-native-routing, #config-group-routing-advanced, #config-native-retry, #config-group-request-behavior) { grid-column: span 3; }
-  .config-page .config-settings-content :is(#config-group-codex-client, #config-group-multimedia) { grid-column: span 3; }
-}
-/* A single-purpose page has one centered workspace instead of an empty grid cell. */
-.config-page .config-settings-content #config-native-software { width: min(100%, 1000px); justify-self: center; }
-@container settings-card (min-width: 1040px) {
-  .config-page :is(#config-group-extensions-concurrency, #config-group-extensions-inflight, #config-group-diagnostics, #config-group-request-behavior) .template-config-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .config-page :is(#config-group-extensions-concurrency, #config-group-extensions-inflight, #config-group-diagnostics, #config-group-request-behavior) .template-config-field:not(.template-config-toggle) {
-    grid-template-columns: minmax(0, 1fr);
-    align-content: start;
-  }
-  .config-page :is(#config-group-extensions-concurrency, #config-group-extensions-inflight, #config-group-diagnostics, #config-group-request-behavior) .template-config-field:not(.template-config-toggle) > .template-config-control { justify-self: start; }
-}
-
-/* Internal form layout follows the card width, independently of the page grid. */
-.config-page .config-settings-content :is(.template-config-fields, .config-network-grid) {
-  gap: 16px 28px;
-}
-.config-page .config-settings-content .config-network-grid.is-muted { opacity: .55; }
-.config-page .config-settings-content .config-network-route { grid-template-columns: minmax(0, 1fr); }
-.config-page .config-settings-content .template-config-field:not(.template-config-field-wide) {
-  /* A card can contain multiple fields per row. Size from the field itself so
-     the control cannot consume the label column in a wide, multi-column card. */
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
-  align-items: center;
-  align-content: center;
-  min-height: 48px;
-  gap: 8px 16px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--border-color);
-}
-.config-page .config-settings-content .template-config-field:not(.template-config-field-wide):not(.template-config-toggle) > .template-config-control {
-  justify-self: start;
-  width: min(100%, 200px);
-}
-.config-page .config-settings-content .template-config-field.template-config-toggle {
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto;
-  align-self: stretch;
-}
-.config-page .config-settings-content .template-config-toggle > .template-config-control {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: center;
-}
-.config-page .config-settings-content .template-config-field-wide > .template-config-control { max-width: none; }
 .config-page .config-settings-content .config-network-toggle {
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-rows: auto;
-  padding-bottom: 10px;
+  min-height: 38px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--border-color);
   border-radius: var(--radius-none);
 }
 .config-page .config-settings-content .config-diagnostics-setting {
-  min-height: 48px;
-  padding-bottom: 10px;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  justify-content: stretch;
+  min-height: 40px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--border-color);
   border-radius: var(--radius-none);
 }
 .config-page .config-settings-content .config-diagnostics-field {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 160px);
+  grid-template-columns: minmax(0, 1fr) 128px;
   align-items: center;
-  min-height: 48px;
-  padding-bottom: 10px;
+  min-height: 40px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--border-color);
   border-radius: var(--radius-none);
 }
-.config-page .config-settings-content .config-proxy-heading { max-width: none; }
-.config-page .config-settings-content :is(.config-settings-save-row, .template-config-actions) { margin-top: 16px; }
-
-@container settings-card (min-width: 460px) {
-  .config-page #config-native-network .config-network-grid { grid-template-columns: minmax(0, 160px) minmax(0, 1fr); }
-  .config-page #config-native-network .config-network-field > input { max-width: none; }
+@container settings-card (min-width: 920px) {
+  .config-page #config-native-logging .config-diagnostics-toggle-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px 24px;
+  }
+  .config-page #config-native-logging .config-diagnostics-fields {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px 24px;
+  }
+  .config-page #config-native-logging .config-diagnostics-field {
+    grid-template-columns: minmax(0, 1fr) 108px;
+    border-bottom: 0;
+    padding-bottom: 0;
+  }
 }
-/* Short numeric values share a row with their label, even in paired cards. */
-.config-page #config-native-retry .config-network-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+
+.config-page .config-settings-content .config-proxy-heading { max-width: none; }
+
+@container settings-card (min-width: 260px) {
+  .config-page #config-native-network .config-network-grid {
+    grid-template-columns: minmax(0, 1.65fr) minmax(96px, 0.85fr);
+    gap: 8px 14px;
+  }
+  .config-page #config-native-network .config-network-field > input {
+    width: 100%;
+    max-width: none;
+  }
+}
+
+/* Session routing and retry cards share matching single-column compact rows when paired. */
+.config-page :is(#config-native-routing, #config-native-retry) .config-network-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.config-page #config-native-retry .config-network-field:not(:last-child) {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
 @container settings-card (min-width: 360px) {
   .config-page .config-settings-content #config-native-retry .config-network-field:not(.config-network-toggle),
   .config-page .config-settings-content #config-native-routing .config-network-field:has(#config-input-config-network-sessionTtl) {
-    grid-template-columns: minmax(0, 1fr) 120px;
+    grid-template-columns: minmax(0, 1fr) 124px;
     align-items: center;
-    min-height: 40px;
-    gap: 12px;
+    min-height: 38px;
+    gap: 4px 12px;
+  }
+  .config-page .config-settings-content #config-native-routing .config-network-field:has(#config-input-config-network-sessionTtl) {
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-color);
+  }
+  .config-page .config-settings-content #config-native-routing .config-network-field:has(#config-input-config-network-sessionTtl) > :is(small, .config-field-error) {
+    grid-column: 1 / -1;
+  }
+  .config-page .config-settings-content #config-native-routing #config-network-sessionTtl-error:empty {
+    display: none;
   }
 }
-@container settings-card (max-width: 420px) {
+
+@container settings-card (max-width: 400px) {
   .config-page .config-settings-content .config-diagnostics-field { grid-template-columns: minmax(0, 1fr); }
   .config-page .config-settings-content .template-config-field:not(.template-config-field-wide):not(.template-config-toggle) {
     grid-template-columns: minmax(0, 1fr);
-    gap: 7px;
+    gap: 6px;
   }
-  .config-page .config-settings-content .template-config-field:not(.template-config-field-wide):not(.template-config-toggle) > .template-config-control { justify-self: start; }
-}
-/* Paths and repository URLs need more room than short scalar settings. */
-.config-page #config-group-management .template-config-field:not(.template-config-toggle),
-.config-page #config-group-oauth-common .template-config-field:has(.template-config-directory) {
-  grid-column: 1 / -1;
-  grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr);
-}
-.config-page #config-group-management .template-config-field:not(.template-config-toggle) > .template-config-control,
-.config-page #config-group-oauth-common .template-config-field:has(.template-config-directory) > .template-config-control { max-width: none; width: 100%; }
-@container settings-card (max-width: 620px) {
-  .config-page #config-group-management .template-config-field:not(.template-config-toggle),
-  .config-page #config-group-oauth-common .template-config-field:has(.template-config-directory) { grid-template-columns: minmax(0, 1fr); }
+  .config-page .config-settings-content .template-config-field:not(.template-config-field-wide):not(.template-config-toggle) > .template-config-control {
+    justify-self: stretch;
+    width: 100%;
+  }
 }
 
-@media (min-width: 721px) {
-  .config-page .config-settings-topnav { flex-wrap: nowrap; align-items: center; }
+/* Management API & panel: 3 switches fill row 1; URL & token rows align on a fixed label column. */
+@container settings-card (min-width: 860px) {
+  .config-page #config-group-management .template-config-fields {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 10px 24px;
+  }
+  .config-page #config-group-management .template-config-field.template-config-toggle {
+    grid-column: span 2;
+  }
+}
+.config-page #config-group-management .template-config-field:not(.template-config-toggle) {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(140px, 188px) minmax(0, 1fr);
+  gap: 6px 16px;
+}
+.config-page #config-group-management .template-config-field:not(.template-config-toggle) > .template-config-control {
+  max-width: none;
+  width: 100%;
+  justify-self: stretch;
+}
+.config-page #config-group-management .template-config-field:not(.template-config-toggle) > small {
+  grid-column: 2;
+}
+@container settings-card (max-width: 620px) {
+  .config-page #config-group-management .template-config-field:not(.template-config-toggle) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .config-page #config-group-management .template-config-field:not(.template-config-toggle) > small {
+    grid-column: 1 / -1;
+  }
+}
+
+/* OAuth common settings (2 fields) & provider sensitive-word filters (2 textareas) share 1 balanced row. */
+@container settings-card (min-width: 680px) {
+  .config-page #config-group-oauth-common .template-config-fields {
+    grid-template-columns: minmax(0, 1.45fr) minmax(240px, 1fr);
+    gap: 10px 28px;
+  }
+  .config-page #config-group-oauth-common .template-config-field:has(.template-config-directory) {
+    grid-column: auto;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 6px 14px;
+  }
+  .config-page #config-group-oauth-common .template-config-field:has(.template-config-directory) > .template-config-control {
+    max-width: none;
+    width: 100%;
+    justify-self: stretch;
+  }
+  .config-page #config-group-oauth-filters .template-config-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 24px;
+  }
+  .config-page #config-group-oauth-filters .template-config-field[data-field-type='string-list'] {
+    grid-column: auto;
+  }
+}
+@container settings-card (max-width: 679px) {
+  .config-page #config-group-oauth-common .template-config-field:has(.template-config-directory) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .config-page #config-group-oauth-common .template-config-field:has(.template-config-directory) > .template-config-control {
+    max-width: none;
+    width: 100%;
+    justify-self: stretch;
+  }
+}
+
+/* App preferences: flush workspace width; 3 switches on row 1, 2 selects on row 2, tight rows. */
+.config-page .config-settings-content #config-native-software { width: 100%; justify-self: stretch; }
+.config-page .config-settings-content #config-native-software .config-software-setting-row {
+  min-height: 40px;
+  padding-block: 6px;
+}
+.config-page .config-settings-content .config-software-select {
+  width: min(100%, 200px);
+  justify-self: end;
+}
+@container settings-card (min-width: 760px) {
+  .config-page #config-native-software .config-software-settings-list {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    column-gap: 24px;
+  }
+  .config-page #config-native-software .config-software-setting-row:not(.config-software-close-row) {
+    grid-column: span 2;
+  }
+  .config-page #config-native-software .config-software-setting-row.config-software-close-row {
+    grid-column: span 3;
+    border-bottom: 0;
+    padding-bottom: 0;
+  }
+}
+
+/* Sensitive words & embedded aliases: streamlined headers, 2-column provider cards, and empty hints. */
+.thinking-alias-embedded-summary,
+.sw-summary-count {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.config-page #config-native-aliases .thinking-alias-page > .management-header .management-heading-actions button {
+  width: auto;
+  flex: 0 0 auto;
+  padding-inline: 12px;
+  gap: 6px;
+}
+.config-page #config-native-aliases .thinking-alias-page > .management-header .management-heading-actions button > span {
+  color: inherit;
+  font-size: 13px;
+}
+.sw-provider-grid {
+  display: grid;
+  gap: 14px;
+  align-items: start;
+  min-width: 0;
+}
+@media (min-width: 1180px) {
+  .config-page .sw-provider-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.config-page .sw-provider-section > summary { padding: 12px 16px; }
+.config-page .sw-provider-body { gap: 16px; padding: 0 16px 16px; }
+.config-page .sw-field-group + .sw-field-group { padding-top: 14px; }
+.config-page .sw-inline-row textarea { resize: none; }
+.config-page .sw-group-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.config-page .sw-empty-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* Global sticky unsaved-changes bar: unifies saving across multiple cards & tabs. */
+.config-page .config-sticky-save-bar {
+  position: sticky;
+  bottom: 12px;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 10px 16px;
+}
+.config-sticky-save-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-width: 0;
+  flex: 1 1 260px;
+  font-size: 13px;
+}
+.config-sticky-save-summary > .config-nav-dirty { margin-left: 0; }
+.config-sticky-save-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.config-sticky-save-chip {
+  min-height: 24px;
+  height: auto;
+  margin: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.config-sticky-save-chip:hover {
+  color: var(--primary-color);
+  border-color: var(--primary-color);
+}
+.config-sticky-save-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.config-save-shortcut {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: rgb(255 255 255 / 16%);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+@media (min-width: 861px) {
+  .config-page > .config-settings-layout > .config-settings-topnav { flex-wrap: nowrap; align-items: center; }
+}
+
+@media (max-width: 860px) {
+  .config-page > .config-settings-layout > .config-settings-topnav {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .config-page > .config-settings-layout > .config-settings-topnav .config-subpage-tabs {
+    flex: 1 1 100%;
+    max-width: 100%;
+  }
+  .config-page .config-settings-topnav .config-settings-search.search-control[data-size],
+  .config-settings-topnav .config-settings-search {
+    flex: 1 1 100%;
+  }
 }
 
 @media (max-width: 720px) {
-  .config-settings-topnav .config-subpage-tabs { flex-basis: 100%; }
-  .config-settings-topnav .config-settings-search { flex: 1 1 100%; }
+  .config-page .config-settings-cards > section:not([hidden]),
+  .config-page #config-template-panel > .template-config-section > .template-config-card:not([hidden]),
+  .config-page #config-native-aliases:not([hidden]),
+  .config-page #config-native-sensitive-words:not([hidden]) {
+    padding: 14px 16px;
+  }
+  .config-save-shortcut { display: none; }
+  /* Prevent secondary toolbar buttons from turning into giant 100%-width vertical stacks on phones. */
+  .config-page :is(.config-management-actions, .config-heading-actions, .config-inline-dirty-actions, .config-sticky-save-actions) {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: auto;
+    gap: 8px;
+  }
+  .config-page :is(.config-management-actions, .config-heading-actions, .config-inline-dirty-actions, .config-sticky-save-actions) > button {
+    width: auto;
+    flex: 0 1 auto;
+  }
+  .config-page .config-sticky-save-actions {
+    width: 100%;
+  }
+  .config-page .config-sticky-save-actions > button {
+    flex: 1 1 auto;
+  }
 }

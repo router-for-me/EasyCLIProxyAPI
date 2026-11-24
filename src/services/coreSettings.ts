@@ -82,7 +82,10 @@ export const getCoreTlsSettings = (): Promise<CoreTlsSettings> =>
   invokeCoreSetting<CoreTlsSettings>('get_core_tls_settings');
 
 export const followSystemCoreProxy = (): Promise<CoreConfigSettings> =>
-  invokeCoreSetting<CoreConfigSettings>('set_core_proxy_url', { proxyUrl: '' });
+  invokeCoreSetting<CoreConfigSettings>('set_core_proxy_url', { proxyUrl: '', proxyOverride: false });
+
+export const saveCoreProxySettings = (proxyUrl: string, proxyOverride: boolean): Promise<CoreConfigSettings> =>
+  invokeCoreSetting<CoreConfigSettings>('set_core_proxy_url', { proxyUrl, proxyOverride });
 
 export const setCoreManagementSecretKey = (args: { secretKey: string; }): Promise<CoreConfigSettings> =>
   invokeCoreSetting<CoreConfigSettings>('set_core_management_secret_key', args);

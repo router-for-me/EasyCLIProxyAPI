@@ -856,6 +856,50 @@ function managementResponse(state: BrowserMockState, payload: JsonObject) {
   if (method === 'POST' && path === '/models/refresh') {
     return { ok: true, status: 'ok', changed_providers: [], catalog: [], codex_catalog: [], devin_catalog: [], sources: [], catalogs: [] };
   }
+  if (method === 'GET' && path === '/config/routing') {
+    const routing = asObject(state.extendedConfig.routing);
+    const cooldown = asObject(routing.cooldown);
+    return {
+      strategy: state.coreConfig.routingStrategy,
+      'session-affinity': state.coreConfig.routingSessionAffinity,
+      'session-affinity-ttl': state.coreConfig.routingSessionAffinityTtl,
+      retry: {
+        'request-retry': state.coreConfig.requestRetry,
+        'max-retry-credentials': state.coreConfig.maxRetryCredentials,
+        'max-retry-interval': state.coreConfig.maxRetryInterval,
+      },
+      cooldown: {
+        'disable-cooling': state.coreConfig.disableCooling,
+        'transient-error-cooldown-seconds': typeof cooldown['transient-error-cooldown-seconds'] === 'number'
+          ? cooldown['transient-error-cooldown-seconds']
+          : -1,
+      },
+    };
+  }
+  if (method === 'PUT' && path.startsWith('/config/routing/')) {
+    const subPath = path.slice('/config/routing/'.length);
+    const routingMap: Record<string, string> = {
+      strategy: 'routingStrategy',
+      'session-affinity': 'routingSessionAffinity',
+      'session-affinity-ttl': 'routingSessionAffinityTtl',
+      'retry/request-retry': 'requestRetry',
+      'retry/max-retry-credentials': 'maxRetryCredentials',
+      'retry/max-retry-interval': 'maxRetryInterval',
+      'cooldown/disable-cooling': 'disableCooling',
+    };
+    if (routingMap[subPath]) {
+      updateCoreConfig(state, { settings: { [routingMap[subPath]]: body } });
+    } else {
+      state.extendedConfig = applyTemplateChanges(state.extendedConfig, [{
+        path: ['routing', ...subPath.split('/')],
+        value: body,
+        remove: false,
+        expected: null,
+        expectedExists: false,
+      }]);
+    }
+    return { status: 'ok', 'config-version': 8 };
+  }
   if (method === 'GET' && path.startsWith('/routing/model-definitions/')) return mockModelDefinitions();
   if (method === 'GET' && path === '/config/oauth/excluded-models') {
     return clone(state.oauthExcludedModels);
@@ -914,6 +958,8 @@ function updateCoreConfig(state: BrowserMockState, payload: JsonObject) {
   state.extendedConfig = applyTemplateChanges(state.extendedConfig, changes);
   state.guiSettings.host = state.coreConfig.host;
   state.guiSettings.port = state.coreConfig.port;
+  const normalizedHost = state.coreConfig.host.trim().replace(/^\[|\]$/g, '').toLowerCase();
+  state.coreConfig.allowLan = Boolean(normalizedHost) && !['127.0.0.1', 'localhost', '::1'].includes(normalizedHost);
   return clone(state.coreConfig);
 }
 
@@ -1279,6 +1325,78 @@ export function createBrowserMockRuntime(
   const emit = (event: string, payload: unknown) => emitEvent(event, clone(payload));
   let configVersion = 1;
   const configDocument: ConfigDocument = { yaml: initialMockConfigYaml, etag: `"${'1'.padStart(64, '0')}"`, remarks: [], remarksUnavailable: false };
+  let reverseProxyConfig = {
+    enabled: false,
+    listenHost: '0.0.0.0',
+    listenPort: 443,
+    targetPort: state.coreConfig.port,
+    certPath: '',
+    keyPath: '',
+  };
+  let reverseProxyRunning = false;
+  const reverseProxyState = () => ({
+    running: reverseProxyRunning,
+    listening: reverseProxyRunning ? `${reverseProxyConfig.listenHost}:${reverseProxyConfig.listenPort}` : null,
+    target: reverseProxyRunning ? `127.0.0.1:${reverseProxyConfig.targetPort || state.coreConfig.port}` : null,
+    requestsTotal: reverseProxyRunning ? 18 : 0,
+    error: null,
+    hardening: {
+      loopbackBind: state.coreConfig.host === '127.0.0.1',
+      trustedProxies: reverseProxyRunning,
+      restartRequired: false,
+    },
+    config: clone(reverseProxyConfig),
+  });
+  let mcpServers: Array<{
+    id: string;
+    name: string;
+    transport: string;
+    command: string | null;
+    args: string[];
+    env: Record<string, string>;
+    url: string | null;
+    headers: Record<string, string>;
+    enabled: boolean;
+    description: string | null;
+  }> = scenario === 'empty' ? [] : [
+    {
+      id: 'mcp-filesystem',
+      name: 'filesystem',
+      transport: 'stdio',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-filesystem', './workspace'],
+      env: {},
+      url: null,
+      headers: {},
+      enabled: true,
+      description: 'Browser Mock local workspace file access server',
+    },
+    {
+      id: 'mcp-docs-http',
+      name: 'docs-search',
+      transport: 'http',
+      command: null,
+      args: [],
+      env: {},
+      url: 'http://127.0.0.1:8788/mcp',
+      headers: {},
+      enabled: false,
+      description: 'Browser Mock HTTP documentation search endpoint',
+    },
+  ];
+  const mockSkills = scenario === 'empty' ? [] : [
+    {
+      id: 'skill-code-review',
+      name: 'code-review',
+      description: 'Structured pull request and diff review checklist for coding agents.',
+      path: 'C:\\Users\\Mock\\.agents\\skills\\code-review\\SKILL.md',
+      root: 'C:\\Users\\Mock\\.agents\\skills',
+      source: 'project',
+      enabled: true,
+      fileCount: 2,
+      body: '---\nname: code-review\ndescription: Structured pull request and diff review checklist for coding agents.\n---\n\n# Code Review Skill\n\n- Check correctness, edge cases, and security boundaries.\n- Verify tests cover new behavior.\n',
+    },
+  ];
 
   const invoke = async (command: string, rawPayload?: unknown): Promise<unknown> => {
     await sleep(delayMs);
@@ -1509,8 +1627,11 @@ export function createBrowserMockRuntime(
         return config;
       }
       case 'set_core_proxy_url': {
-        const proxyUrl = readString(payload.proxyUrl);
-        return updateCoreConfig(state, { settings: { proxyUrl, proxyOverride: Boolean(proxyUrl) } });
+        const proxyUrl = readString(payload.proxyUrl).trim();
+        const proxyOverride = typeof payload.proxyOverride === 'boolean' ? payload.proxyOverride : Boolean(proxyUrl);
+        const config = updateCoreConfig(state, { settings: { proxyUrl: proxyOverride ? proxyUrl : '', proxyOverride } });
+        emit('config-files-changed', { paths: ['cpa-core/config.yaml'], errors: [] });
+        return config;
       }
       case 'set_core_session_affinity': {
         return updateCoreConfig(state, { settings: { routingSessionAffinity: Boolean(payload.enabled) } });
@@ -2184,6 +2305,119 @@ export function createBrowserMockRuntime(
 
       case 'get_codex_cli_daemon_running': return true;
       case 'get_lan_ipv4': return ['192.168.100.100'];
+      case 'reverse_proxy_get_state': return reverseProxyState();
+      case 'reverse_proxy_apply':
+      case 'reverse_proxy_start': {
+        const next = asObject(payload.config);
+        reverseProxyConfig = {
+          enabled: command === 'reverse_proxy_start' ? true : Boolean(next.enabled),
+          listenHost: readString(next.listenHost) || '0.0.0.0',
+          listenPort: readNumber(next.listenPort, 443),
+          targetPort: readNumber(next.targetPort, state.coreConfig.port),
+          certPath: readString(next.certPath),
+          keyPath: readString(next.keyPath),
+        };
+        reverseProxyRunning = reverseProxyConfig.enabled;
+        if (reverseProxyRunning) {
+          updateCoreConfig(state, { settings: { host: '127.0.0.1' } });
+        }
+        return reverseProxyState();
+      }
+      case 'reverse_proxy_stop': {
+        reverseProxyConfig.enabled = false;
+        reverseProxyRunning = false;
+        return reverseProxyState();
+      }
+      case 'list_mcp_servers': return clone(mcpServers);
+      case 'save_mcp_server': {
+        const incoming = asObject(payload.server);
+        const name = readString(incoming.name).trim();
+        if (!name) throw new Error('Server name cannot be empty');
+        const id = readString(incoming.id).trim() || `mcp-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'server'}`;
+        const saved = {
+          id,
+          name,
+          transport: readString(incoming.transport) || 'stdio',
+          command: incoming.command == null ? null : readString(incoming.command),
+          args: asArray(incoming.args).map(String),
+          env: clone(asObject(incoming.env)) as Record<string, string>,
+          url: incoming.url == null ? null : readString(incoming.url),
+          headers: clone(asObject(incoming.headers)) as Record<string, string>,
+          enabled: incoming.enabled !== false,
+          description: incoming.description == null ? null : readString(incoming.description),
+        };
+        const existingIndex = mcpServers.findIndex(item => item.id === id);
+        if (existingIndex >= 0) mcpServers[existingIndex] = saved;
+        else mcpServers.push(saved);
+        return clone(saved);
+      }
+      case 'delete_mcp_server': {
+        mcpServers = mcpServers.filter(item => item.id !== readString(payload.id));
+        return null;
+      }
+      case 'set_mcp_server_enabled': {
+        const target = mcpServers.find(item => item.id === readString(payload.id));
+        if (target) target.enabled = Boolean(payload.enabled);
+        return null;
+      }
+      case 'sync_mcp_server_to_openclaw': return 'C:\\Users\\Mock\\.openclaw\\openclaw.json';
+      case 'open_mcp_skills_directory': return null;
+      case 'export_mcp_servers_json': {
+        const map = Object.fromEntries(mcpServers.map(server => [
+          server.name,
+          {
+            type: server.transport,
+            ...(server.command ? { command: server.command } : {}),
+            ...(server.args.length ? { args: server.args } : {}),
+            ...(Object.keys(server.env).length ? { env: server.env } : {}),
+            ...(server.url ? { url: server.url } : {}),
+            ...(Object.keys(server.headers).length ? { headers: server.headers } : {}),
+          },
+        ]));
+        return JSON.stringify({ mcpServers: map }, null, 2);
+      }
+      case 'import_mcp_servers_json': {
+        const parsed = asObject(JSON.parse(readString(payload.raw) || '{}'));
+        const map = asObject(parsed.mcpServers ?? parsed);
+        let added = 0;
+        let updated = 0;
+        for (const [name, rawEntry] of Object.entries(map)) {
+          const entry = asObject(rawEntry);
+          const existing = mcpServers.find(item => item.name.toLowerCase() === name.toLowerCase());
+          const transport = readString(entry.type || entry.transport) || (entry.url ? 'http' : 'stdio');
+          const next = {
+            id: existing?.id ?? `mcp-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+            name,
+            transport,
+            command: entry.command ? readString(entry.command) : null,
+            args: asArray(entry.args).map(String),
+            env: clone(asObject(entry.env)) as Record<string, string>,
+            url: entry.url ? readString(entry.url) : null,
+            headers: clone(asObject(entry.headers)) as Record<string, string>,
+            enabled: entry.enabled !== false,
+            description: entry.description ? readString(entry.description) : null,
+          };
+          if (existing) {
+            Object.assign(existing, next);
+            updated += 1;
+          } else {
+            mcpServers.push(next);
+            added += 1;
+          }
+        }
+        return { added, updated, skipped: 0, errors: [] };
+      }
+      case 'list_skills': return mockSkills.map(({ body: _body, ...skill }) => clone(skill));
+      case 'get_skill_detail': {
+        const skill = mockSkills.find(item => item.path === readString(payload.path)) ?? mockSkills[0];
+        if (!skill) throw new Error('Skill not found');
+        return { entry: clone({ ...skill, body: undefined }), body: skill.body };
+      }
+      case 'set_skill_enabled': {
+        const skill = mockSkills.find(item => item.path === readString(payload.path));
+        if (skill) skill.enabled = Boolean(payload.enabled);
+        return null;
+      }
       default:
         if (command.startsWith('plugin:window|') || command.startsWith('plugin:webview|')) return null;
         console.warn(`[Browser Mock] Command not implemented: ${command}`, rawPayload);

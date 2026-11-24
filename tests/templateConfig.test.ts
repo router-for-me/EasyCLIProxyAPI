@@ -132,10 +132,10 @@ describe('template configuration drafts', () => {
     expect(claudeOauthPaths).toContain('upstream.claude.disable-cloaking-model-list');
 
     // 6. Check categories mapping
-    expect(settingsCategories.map(c => c.id)).toEqual(['general', 'proxy', 'aliases', 'routing', 'requests', 'oauth', 'diagnostics', 'software']);
-    expect(settingsTemplateGroups.general.map(g => g.id)).toContain('server');
-    expect(settingsTemplateGroups.general.map(g => g.id)).toContain('management');
-    expect(settingsTemplateGroups.routing.map(g => g.id)).toContain('routing-advanced');
+    expect(settingsCategories.map(c => c.id)).toEqual(['general', 'proxy', 'aliases', 'routing', 'requests', 'sensitiveWords', 'oauth', 'diagnostics', 'software']);
+    expect(settingsTemplateGroups.general).toEqual([]);
+    expect(settingsTemplateGroups.routing).toEqual([]);
+    expect(settingsTemplateGroups.diagnostics).toEqual([]);
     expect(settingsTemplateGroups.requests.map(g => g.id)).toContain('request-behavior');
     expect(settingsTemplateGroups.requests.map(g => g.id)).toContain('codex-client');
     expect(settingsTemplateGroups.oauth.map(g => g.id)).toContain('oauth-codex');
@@ -154,14 +154,13 @@ describe('template configuration drafts', () => {
     }
   });
 
-  test('does not expose full-editor fields again in quick settings', () => {
-    const fullPaths = new Set(CONFIG_FIELD_SEARCH_INDEX.map(entry => entry.yamlKeys?.join('.')));
-    const quickPaths = Object.values(settingsTemplateGroups).flatMap(groups => groups.flatMap(group => group.fields.map(field => field.path.join('.'))));
-    const normalizedPaths = quickPaths.map(path => path.replace(/^oauth\.providers\.(claude|codex|xai)\./, 'upstream.$1.'));
-    expect(normalizedPaths.filter(path => fullPaths.has(path))).toEqual([]);
-    expect(quickPaths).toContain('management.base-url');
-    expect(quickPaths).toContain('routing.session-affinity-rebind-on');
-    expect(quickPaths).toContain('observability.logs.request-log');
+  test('keeps native tabs free of low-level template bloat while retaining request and OAuth groups', () => {
+    expect(settingsTemplateGroups.general).toHaveLength(0);
+    expect(settingsTemplateGroups.routing).toHaveLength(0);
+    expect(settingsTemplateGroups.diagnostics).toHaveLength(0);
+    expect(settingsTemplateGroups.requests.map(group => group.id)).toContain('request-payload');
+    expect(settingsTemplateGroups.oauth.map(group => group.id)).toContain('oauth-filters');
+    expect(settingsTemplateGroups.oauth.map(group => group.id)).toContain('oauth-models');
   });
 
   test('exposes the Antigravity protective pause and sensitive-pattern replacements', () => {

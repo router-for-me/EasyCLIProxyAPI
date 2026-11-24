@@ -42,23 +42,33 @@ describe('控件自身反馈', () => {
     expect(actionCalls('AuthFileManagementPage.tsx', 'toggleStatus', 'showNotice').calls).toHaveLength(0);
   });
 
-  it('停用凭证的启用按钮使用主题高亮，停用操作仍使用次要样式', () => {
-    const file = 'AuthFileManagementPage.tsx';
-    const source = ts.createSourceFile(file, readFileSync(new URL(`../src/pages/${file}`, import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-    let button: ts.JsxOpeningElement | undefined;
-    const visit = (node: ts.Node) => {
-      if (ts.isJsxOpeningElement(node) && node.tagName.getText(source) === 'button'
-        && node.attributes.properties.some((attribute) => ts.isJsxAttribute(attribute)
-          && attribute.name.getText(source) === 'onClick'
-          && attribute.initializer?.getText(source).includes('toggleStatus(file)'))) button = node;
-      ts.forEachChild(node, visit);
+  it('凭证启用停用通过 CredentialCardActions 开关控制且不降低操作区不透明度', () => {
+    const pageSource = ts.createSourceFile('AuthFileManagementPage.tsx', readFileSync(new URL('../src/pages/AuthFileManagementPage.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let cardActions: ts.JsxSelfClosingElement | undefined;
+    const visitPage = (node: ts.Node) => {
+      if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(pageSource) === 'CredentialCardActions') cardActions = node;
+      ts.forEachChild(node, visitPage);
     };
-    visit(source);
-    const attributes = button?.attributes.properties.filter(ts.isJsxAttribute);
-    expect(attributes?.find((attribute) => attribute.name.getText(source) === 'className')?.initializer?.getText(source))
-      .toBe("{`${disabled ? 'primary-button' : 'secondary-button'} compact-button auth-card-toggle`}");
-    expect(attributes?.find((attribute) => attribute.name.getText(source) === 'disabled')?.initializer?.getText(source))
-      .toBe('{busy || resettingCooldown || !isOAuthCredentialFile(file)}');
+    visitPage(pageSource);
+    const pageAttrs = cardActions?.attributes.properties.filter(ts.isJsxAttribute);
+    expect(pageAttrs?.find((attribute) => attribute.name.getText(pageSource) === 'oauth')?.initializer?.getText(pageSource))
+      .toBe('{isOAuthCredentialFile(file)}');
+    expect(pageAttrs?.find((attribute) => attribute.name.getText(pageSource) === 'onToggle')?.initializer?.getText(pageSource))
+      .toBe('{() => void toggleStatus(file)}');
+
+    const actionsSource = ts.createSourceFile('CredentialCardActions.tsx', readFileSync(new URL('../src/components/CredentialCardActions.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let toggleSwitch: ts.JsxSelfClosingElement | undefined;
+    const visitActions = (node: ts.Node) => {
+      if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(actionsSource) === 'Switch') toggleSwitch = node;
+      ts.forEachChild(node, visitActions);
+    };
+    visitActions(actionsSource);
+    const switchAttrs = toggleSwitch?.attributes.properties.filter(ts.isJsxAttribute);
+    expect(switchAttrs?.find((attribute) => attribute.name.getText(actionsSource) === 'checked')?.initializer?.getText(actionsSource))
+      .toBe('{!props.disabled}');
+    expect(switchAttrs?.find((attribute) => attribute.name.getText(actionsSource) === 'disabled')?.initializer?.getText(actionsSource))
+      .toBe('{settingsDisabled}');
+
     const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
     expect(styles).toMatch(/\.real-auth-file-row\.disabled\s*>\s*:not\(\.auth-file-actions\)\s*\{\s*opacity:\s*0\.68;/);
     expect(styles).not.toMatch(/\.real-auth-file-row\.disabled\s*\{[^}]*opacity:/);

@@ -151,7 +151,8 @@ pub(crate) fn openclaw_agent_config_path_from_environment(
         .filter(|path| !path.as_os_str().is_empty())
         .map(|path| expand_openclaw_path(home, path))
         .unwrap_or_else(|| home.to_path_buf())
-        .join(".openclaw/openclaw.json")
+        .join(".openclaw")
+        .join("openclaw.json")
 }
 
 fn expand_openclaw_path(home: &Path, path: &Path) -> PathBuf {

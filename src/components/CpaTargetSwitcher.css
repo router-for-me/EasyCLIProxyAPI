@@ -104,7 +104,8 @@
     .sidebar .cpa-target-trigger-text { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); }
   }
   @media (max-width: 900px) {
-    .sidebar > .cpa-target-switcher { grid-column: 1 / -1; grid-row: 2; justify-self: start; margin: 0; max-width: min(300px, 100%); }
-    .sidebar > .cpa-target-switcher + .nav-section { grid-row: 3; }
+    .sidebar > .cpa-target-switcher { grid-column: 2; grid-row: 1; justify-self: start; margin: 0; max-width: min(220px, 100%); }
+    .sidebar .cpa-target-trigger { min-height: 30px; padding: 4px 8px; gap: 6px; font-size: 12px; }
+    .sidebar > .cpa-target-switcher + .nav-section { grid-row: 2; }
   }
 }

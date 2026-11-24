@@ -26,6 +26,8 @@ export function StructuredConfigEditor({ shape, value, onChange, disabled = fals
   const addText = tx({ zh: '添加', en: 'Add', ja: '追加' });
   const removeText = tx({ zh: '删除', en: 'Remove', ja: '削除' });
   const inheritText = tx({ zh: '继承 / 未设置', en: 'Inherit / not set', ja: '継承 / 未設定' });
+  const emptyListText = tx({ zh: '暂无规则项', en: 'No rules added yet', ja: 'ルールはまだありません' });
+  const emptyMapText = tx({ zh: '暂无映射项，输入名称后按回车或点击添加', en: 'No entries yet — enter a name and press Enter or Add', ja: '項目はまだありません。名前を入力して追加してください' });
   const label = tx(shape.label) || id;
 
   if (shape.type === 'any') {
@@ -64,7 +66,14 @@ export function StructuredConfigEditor({ shape, value, onChange, disabled = fals
         </div></div>
         <StructuredConfigEditor shape={{ ...item, label: item.label ?? `${label} ${index + 1}` }} value={row} onChange={next => update(index, next)} disabled={disabled} id={`${id}-${index}`} />
       </div>)}
-      <button type="button" className="secondary-button structured-add" disabled={disabled} onClick={() => onChange([...rows, defaultStructuredValue(item)])}><Plus size={14} />{addText}</button>
+      {rows.length === 0 ? (
+        <div className="structured-empty-bar">
+          <span className="structured-empty-hint">{emptyListText}</span>
+          <button type="button" className="secondary-button compact-button structured-add" disabled={disabled} onClick={() => onChange([...rows, defaultStructuredValue(item)])}><Plus size={14} />{addText}</button>
+        </div>
+      ) : (
+        <button type="button" className="secondary-button compact-button structured-add" disabled={disabled} onClick={() => onChange([...rows, defaultStructuredValue(item)])}><Plus size={14} />{addText}</button>
+      )}
     </div>;
   }
   if (shape.type === 'object') {
@@ -88,20 +97,29 @@ export function StructuredConfigEditor({ shape, value, onChange, disabled = fals
   if (shape.type === 'map') {
     const record = configRecord(value) ? value : {};
     const item = shape.item ?? { type: 'any' };
+    const entries = Object.entries(record);
+    const addMapEntry = () => {
+      const key = newKey.trim();
+      if (!key) return;
+      if (Object.prototype.hasOwnProperty.call(record, key) || ['__proto__', 'prototype', 'constructor'].includes(key)) {
+        setKeyError(tx({ zh: '名称已存在或不可使用', en: 'Name already exists or is not allowed', ja: 'この名前は使用できません' }));
+        return;
+      }
+      onChange({ ...record, [key]: defaultStructuredValue(item) });
+      setNewKey('');
+    };
     return <div className="structured-map">
-      {Object.entries(record).map(([key, entry]) => <div className="surface-card structured-map-item" key={key}>
+      {entries.map(([key, entry]) => <div className="surface-card structured-map-item" key={key}>
         <div className="structured-map-key"><strong>{key}</strong><button type="button" className="icon-button quiet" disabled={disabled} aria-label={`${removeText} ${key}`} onClick={() => {
           const next = { ...record }; delete next[key]; onChange(next);
         }}><Trash2 size={14} /></button></div>
         <StructuredConfigEditor shape={{ ...item, label: item.label ?? key }} value={entry} onChange={next => onChange({ ...record, [key]: next })} disabled={disabled} id={`${id}-${key}`} />
       </div>)}
+      {entries.length === 0 ? <p className="structured-empty-hint">{emptyMapText}</p> : null}
       <div className="structured-map-add"><input className="text-input" aria-label={tx({ zh: '新字段名称', en: 'New field name', ja: '新しいフィールド名' })} value={newKey} disabled={disabled} placeholder={tx({ zh: '字段 / 通道名称', en: 'Field / channel name', ja: 'フィールド / チャンネル名' })}
-        onChange={event => { setNewKey(event.currentTarget.value); setKeyError(''); }} />
-        <button type="button" className="secondary-button" disabled={disabled || !newKey.trim()} onClick={() => {
-          const key = newKey.trim();
-          if (Object.prototype.hasOwnProperty.call(record, key) || ['__proto__', 'prototype', 'constructor'].includes(key)) { setKeyError(tx({ zh: '名称已存在或不可使用', en: 'Name already exists or is not allowed', ja: 'この名前は使用できません' })); return; }
-          onChange({ ...record, [key]: defaultStructuredValue(item) }); setNewKey('');
-        }}><Plus size={14} />{addText}</button></div>
+        onChange={event => { setNewKey(event.currentTarget.value); setKeyError(''); }}
+        onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); addMapEntry(); } }} />
+        <button type="button" className="secondary-button compact-button" disabled={disabled || !newKey.trim()} onClick={addMapEntry}><Plus size={14} />{addText}</button></div>
       {keyError && <p role="alert" className="structured-error">{keyError}</p>}
     </div>;
   }

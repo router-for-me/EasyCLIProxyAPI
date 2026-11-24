@@ -105,6 +105,10 @@
   overflow: auto;
 }
 
+.usage-pricing-list {
+  min-height: 180px;
+}
+
 .usage-price-editor {
   min-height: 160px;
   max-height: min(320px, 40vh);

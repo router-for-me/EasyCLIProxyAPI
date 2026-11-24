@@ -30,43 +30,60 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       const panel = page.locator('#config-subpage-panel');
       const tab = id => page.locator(`#config-subpage-tab-${id}`);
       const group = id => panel.locator(`#config-group-${id}`);
-      const search = page.locator('.config-settings-search input');
-      await panel.locator('#config-system-proxy').waitFor();
-      assert.equal(await panel.locator('#config-native-management form').count(), 0, 'healthy management access needs no duplicate key editor');
-      const systemProxy = panel.locator('#config-system-proxy button.compact-button').last();
-      assert.equal(await systemProxy.isDisabled(), true);
-      await page.evaluate(async () => {
-        const invoke = window.__TAURI_INTERNALS__.invoke;
-        await invoke('set_core_proxy_url', { proxyUrl: 'http://127.0.0.1:9180' });
-        const { emit } = await import('/node_modules/@tauri-apps/api/event.js');
-        await emit('config-files-changed', { paths: [], errors: [] });
-      });
-      await systemProxy.click();
-      await page.waitForFunction(() => document.querySelector('#config-system-proxy button.compact-button:last-child')?.disabled);
+
+      // 1. General: native quick cards present, low-level server/management template bloat absent
+      for (const id of ['keys', 'management', 'network', 'system-proxy', 'tls']) {
+        await panel.locator(`#config-native-${id === 'system-proxy' ? 'management' : id}`).waitFor();
+        assert.equal(await panel.locator(`#${id === 'system-proxy' ? 'config-system-proxy' : `config-native-${id}`}`).count(), 1);
+      }
+      assert.equal(await group('server').count(), 0);
+      assert.equal(await group('management').count(), 0);
+
+      // Outbound proxy toggle & manual save
+      const systemToggle = panel.locator('#config-system-proxy input[type="checkbox"]');
+      const proxyInput = panel.locator('#config-network-proxy-url');
+      await systemToggle.setChecked(false);
+      await proxyInput.fill('http://127.0.0.1:9180');
+      await panel.locator('#config-system-proxy button[type="submit"]').click();
+      await page.waitForFunction(() => document.querySelectorAll('#config-system-proxy button[type="submit"]').length === 0);
+      assert.equal(await page.evaluate(async () => (await window.__TAURI_INTERNALS__.invoke('get_core_config_settings')).proxyOverride), true);
+      await systemToggle.setChecked(true);
+      await panel.locator('#config-system-proxy button[type="submit"]').click();
+      await page.waitForFunction(() => document.querySelectorAll('#config-system-proxy button[type="submit"]').length === 0);
       assert.equal(await page.evaluate(async () => (await window.__TAURI_INTERNALS__.invoke('get_core_config_settings')).proxyOverride), false);
-      assert.equal(await page.locator('#config-subpage-tab-sensitiveWords').count(), 0);
-      for (const id of ['keys', 'network', 'tls', 'routing', 'retry', 'sensitive-words']) {
-        assert.equal(await panel.locator(`#config-native-${id}`).count(), 0, `${id} is managed only in the full editor`);
-      }
-      for (const id of ['multimedia', 'request-payload', 'oauth-common', 'oauth-filters', 'oauth-claude-headers', 'oauth-media']) {
-        assert.equal(await group(id).count(), 0, `${id} has no remaining quick-only fields`);
-      }
-      await search.fill('github-token');
-      await panel.locator('.config-search-empty').waitFor();
+
+      // 2. Proxy & Aliases
       await tab('proxy').click();
       await panel.locator('#config-native-reverse-proxy').waitFor();
-      assert.equal(await search.inputValue(), '');
+      assert.equal(await panel.locator('#config-native-keys').isVisible(), false);
       await tab('aliases').click();
       await panel.locator('#config-native-aliases .thinking-alias-page').waitFor();
+      assert.equal(await panel.locator('#config-native-keys').isVisible(), false);
+
+      // 3. Routing: native routing & retry present, low-level concurrency bloat absent
       await tab('routing').click();
-      await group('extensions-concurrency').waitFor();
+      await panel.locator('#config-native-routing').waitFor();
+      await panel.locator('#config-native-retry').waitFor();
+      assert.equal(await group('routing-advanced').count(), 0);
+      assert.equal(await group('extensions-concurrency').count(), 0);
+
+      // 4. Requests, Sensitive Words & OAuth
       await tab('requests').click();
       await group('request-behavior').waitFor();
+      await group('request-payload').waitFor();
+      await tab('sensitiveWords').click();
+      await panel.locator('#config-native-sensitive-words .sw-provider-section').first().waitFor();
       await tab('oauth').click();
       await group('oauth-models').waitFor();
+
+      // 5. Diagnostics: native switches & retention inputs restored, inflight bloat absent
       await tab('diagnostics').click();
-      await panel.locator('#config-native-logging button').waitFor();
-      assert.equal(await panel.locator('#config-native-logging input').count(), 0, 'log viewer remains without logging configuration');
+      await panel.locator('#config-native-logging').waitFor();
+      assert.equal(await panel.locator('#config-native-logging input[type="checkbox"]').count(), 4);
+      assert.equal(await group('extensions-inflight').count(), 0);
+      assert.equal(await group('diagnostics').count(), 0);
+
+      // 6. Software preferences draft persistence & no horizontal overflow
       await tab('software').click();
       const firstSwitch = panel.locator('#config-native-software input[type="checkbox"]').first();
       await firstSwitch.waitFor();
@@ -77,16 +94,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       assert.equal(await firstSwitch.isChecked(), draft);
       assert.equal(await panel.evaluate(element => element.scrollWidth <= element.clientWidth + 1), true);
 
-      await page.evaluate(async () => {
-        const { openConfigManagementField } = await import('/src/services/configManagementNavigation.ts');
-        openConfigManagementField('githubToken');
-      });
-      await page.locator('#cfg-field-githubToken input').waitFor();
-      await page.waitForFunction(() => document.activeElement?.closest('#cfg-field-githubToken'));
       assert.deepEqual(errors, []);
       await page.close();
     }
-    console.log('PASS: duplicate controls and search entries removed; unique settings and GitHub Token navigation remain.');
+    console.log('PASS: all native quick settings, request/OAuth groups, sensitive words, and logging switches verified.');
   } finally {
     await browser?.close();
     await server.close();

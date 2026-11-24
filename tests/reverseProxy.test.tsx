@@ -129,10 +129,11 @@ describe('reverse proxy contract and settings card', () => {
         expect(message[locale]).toContain('trusted-proxies');
       }
     }
-    // Listen host is fixed and read-only in every locale
-    expect(settingsMessages.reverseProxyBindHint.zh).toContain('不可修改');
-    expect(settingsMessages.reverseProxyBindHint.en).toContain('read-only');
-    expect(settingsMessages.reverseProxyBindHint.ja).toContain('変更不可');
+    // Listen host defaults to 0.0.0.0 and explains custom IP binding in every locale
+    expect(settingsMessages.reverseProxyBindHint.zh).toContain('0.0.0.0');
+    expect(settingsMessages.reverseProxyBindHint.en).toContain('0.0.0.0');
+    expect(settingsMessages.reverseProxyBindHint.ja).toContain('0.0.0.0');
+    expect(settingsMessages.reverseProxyForwardTo.zh).toContain('转发');
   });
 
   it('places config-native-reverse-proxy after config-native-tls with expected classes', () => {
@@ -171,10 +172,12 @@ describe('reverse proxy contract and settings card', () => {
     expect(configPanelSrc).toContain('value={proxyDraft.certPath}');
     expect(configPanelSrc).toContain('value={proxyDraft.keyPath}');
 
-    // Listen host is not editable: fixed 0.0.0.0 shown read-only in advanced settings
-    expect(configPanelSrc).not.toContain('config-input-reverse-proxy-listen-host');
-    expect(configPanelSrc).toContain("<summary>{st('reverseProxyAdvancedTitle')}</summary>");
-    expect(configPanelSrc).toContain('<code>0.0.0.0</code>');
+    // Listen host is editable (defaulting to 0.0.0.0) and explicitly connected via forwarding indicator to 127.0.0.1 target
+    expect(configPanelSrc).toContain('config-input-reverse-proxy-listen-host');
+    expect(configPanelSrc).toContain('placeholder="0.0.0.0"');
+    expect(configPanelSrc).not.toContain("<summary>{st('reverseProxyAdvancedTitle')}</summary>");
+    expect(configPanelSrc).toContain('<code>127.0.0.1</code>');
+    expect(configPanelSrc).toContain("st('reverseProxyForwardTo')");
     expect(configPanelSrc).toContain("st('reverseProxyBindHint')");
 
     // Status block with running/stopped state
@@ -332,8 +335,9 @@ describe('reverse proxy contract and settings card', () => {
     expect(configPanelSrc).toContain("st('reverseProxyRoutePreview')");
     expect(configPanelSrc).toContain("st('reverseProxyRouteClientHint')");
     expect(configPanelSrc).toContain("st('reverseProxySaveApplyHint')");
-    // Running address uses the detected LAN IP and the actual saved listen port.
-    expect(configPanelSrc).toContain('https://${proxyLanIp');
+    // Running address uses the explicit bound host or detected LAN IP (when wildcard) with the saved listen port.
+    expect(configPanelSrc).toContain('https://${clientHost}:');
+    expect(configPanelSrc).toContain('proxyLanIp ??');
     expect(configPanelSrc).toContain("st('reverseProxyRouteHostPlaceholder')");
     expect(configPanelSrc).toContain("st('reverseProxyRoutePublic')");
     expect(configPanelSrc).toContain("st('reverseProxyRouteLocal')");

@@ -4,7 +4,9 @@
 .template-config-card { min-width: 0; padding: 20px; border: 1px solid var(--border-color); border-radius: var(--radius-lg); background: var(--bg-card); scroll-margin-top: 18px; transition: border-color 150ms ease, box-shadow 150ms ease; }
 .template-config-card-dirty { border-color: color-mix(in srgb, var(--primary-color) 55%, var(--border-color)); box-shadow: inset 3px 0 0 var(--primary-color); }
 .template-config-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
-.template-config-heading-main { display: flex; align-items: center; gap: 6px; flex: 1 1 220px; min-width: 0; }
+.template-config-heading-main { display: flex; align-items: center; gap: 6px; flex: 1 1 200px; min-width: 0; }
+.template-config-heading-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-left: auto; }
+.template-config-inline-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .template-config-heading h3 { min-width: 0; margin: 0; color: var(--text-primary); font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
 .template-config-restart-hint { display: inline-flex; align-items: center; gap: 5px; min-width: 0; color: var(--text-tertiary); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 .template-config-restart-hint svg { flex: none; }
@@ -25,12 +27,49 @@
 .template-config-directory > input { flex: 1 1 180px; min-width: 0; width: auto; }
 .template-config-directory > button { flex: 0 1 auto; white-space: normal; }
 .template-config-directory > .template-config-secret { flex: 1 1 180px; min-width: 0; }
-.template-config-secret > input.config-network-input { height: 38px; padding: 0 11px; }
-.template-config-custom { width: 100%; min-width: 0; padding: 10px 12px; box-sizing: border-box; }
-.template-config-custom > summary { cursor: pointer; color: var(--primary-color); font-size: 12px; }
-.template-config-custom[open] > summary { margin-bottom: 14px; }
+.template-config-secret > input.config-network-input { height: 38px; padding: 0 38px 0 11px; }
+.template-config-custom { width: 100%; min-width: 0; padding: 0; box-sizing: border-box; }
+.template-config-custom > summary.template-config-custom-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 9px 12px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.template-config-custom > summary.template-config-custom-summary::-webkit-details-marker { display: none; }
+.template-config-custom-title-wrap { display: inline-flex; align-items: center; gap: 7px; min-width: 0; flex: 1 1 auto; }
+.template-config-custom-chevron { flex: none; color: var(--text-tertiary); transition: transform 160ms ease, color 160ms ease; }
+.template-config-custom[open] > summary .template-config-custom-chevron { transform: rotate(90deg); color: var(--primary-color); }
+.template-config-custom-title { font-weight: 500; overflow-wrap: anywhere; }
+.template-config-custom-badge {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.template-config-custom-badge.is-active {
+  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+  color: var(--primary-color);
+}
+.template-config-custom-meta { display: inline-flex; align-items: center; gap: 8px; flex: none; margin-left: auto; }
+.template-config-custom-tools { display: inline-flex; align-items: center; gap: 2px; }
+.template-config-custom-action { color: var(--primary-color); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.template-config-custom[open] > summary.template-config-custom-summary {
+  border-bottom: 1px solid var(--border-color);
+}
+.template-config-custom > .template-config-control { padding: 12px 14px; }
 .template-config-control > input, .template-config-control > select, .template-config-control > textarea { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; }
-.template-config-control .config-network-input { border-color: var(--border-primary); background: var(--bg-card); color: var(--text-primary); }
+.template-config-control .config-network-input { border-color: var(--border-primary); background-color: var(--bg-card); color: var(--text-primary); }
 .template-config-control .config-network-input:focus { border-color: var(--primary-color); box-shadow: 0 0 0 3px var(--ui-focus-ring); }
 .template-config-control .config-network-input[aria-invalid='true'] { border-color: var(--danger-color); }
 .template-config-textarea { resize: vertical; line-height: 1.6; padding: 10px 12px; font-family: inherit; }

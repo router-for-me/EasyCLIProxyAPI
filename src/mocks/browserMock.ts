@@ -9,6 +9,7 @@ import { clampPluginPages, type PluginWebviewMockState } from './pluginMock';
 import './browserMock.css';
 
 const STORAGE_KEY = 'easy-cli-proxy-api.browser-mock-scenario';
+const COLLAPSED_KEY = 'easy-cli-proxy-api.browser-mock-collapsed';
 
 export type InstalledBrowserMock = {
   scenario: BrowserMockScenario;
@@ -38,8 +39,31 @@ function installToolbar(scenario: BrowserMockScenario, delayMs: number) {
   toolbar.setAttribute('aria-label', 'Browser Mock controls');
   toolbar.title = 'Shown only in regular browser development mode; Mock is disabled in Tauri and production builds.';
 
-  const badge = document.createElement('strong');
+  const badge = document.createElement('button');
+  badge.type = 'button';
+  badge.className = 'browser-mock-badge';
   badge.textContent = 'MOCK';
+  badge.setAttribute('aria-label', 'Toggle Browser Mock toolbar');
+
+  const setCollapsed = (collapsed: boolean) => {
+    toolbar.dataset.collapsed = collapsed ? 'true' : 'false';
+    badge.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    try {
+      window.sessionStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0');
+    } catch {
+    }
+  };
+  let initialCollapsed = window.innerWidth <= 768;
+  try {
+    const stored = window.sessionStorage.getItem(COLLAPSED_KEY);
+    if (stored === '1') initialCollapsed = true;
+    else if (stored === '0') initialCollapsed = false;
+  } catch {
+  }
+  setCollapsed(initialCollapsed);
+  badge.addEventListener('click', () => {
+    setCollapsed(toolbar.dataset.collapsed !== 'true');
+  });
 
   const select = document.createElement('select');
   select.setAttribute('aria-label', 'Browser Mock scenario');
