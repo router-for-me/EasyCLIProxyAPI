@@ -83,15 +83,17 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       assert.equal(await group('extensions-inflight').count(), 0);
       assert.equal(await group('diagnostics').count(), 0);
 
-      // 6. Software preferences draft persistence & no horizontal overflow
+      // 6. Software preferences auto-save persistence & no horizontal overflow
       await tab('software').click();
       const firstSwitch = panel.locator('#config-native-software input[type="checkbox"]').first();
       await firstSwitch.waitFor();
       await firstSwitch.setChecked(!(await firstSwitch.isChecked()));
-      const draft = await firstSwitch.isChecked();
+      const nextChecked = await firstSwitch.isChecked();
+      await page.waitForFunction(async expected => (await window.__TAURI_INTERNALS__.invoke('get_software_settings')).autostartEnabled === expected, nextChecked);
+      assert.equal(await page.locator('.config-sticky-save-bar').count(), 0);
       await tab('general').click();
       await tab('software').click();
-      assert.equal(await firstSwitch.isChecked(), draft);
+      assert.equal(await firstSwitch.isChecked(), nextChecked);
       assert.equal(await panel.evaluate(element => element.scrollWidth <= element.clientWidth + 1), true);
 
       assert.deepEqual(errors, []);
