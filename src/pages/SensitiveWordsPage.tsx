@@ -393,7 +393,7 @@ export const SensitiveWordsPage = forwardRef<SensitiveWordsPageHandle, { active?
                       <div className="sw-group-footer">
                         {group.length === 0 ? (
                           <span className="sw-empty-hint">
-                            {locale === 'en' ? 'No rules added yet' : locale === 'ja' ? 'ルール未設定' : '暂未配置规则'}
+                            {locale === 'en' ? 'No rules added yet' : locale === 'pt-BR' ? 'Nenhuma regra adicionada' : locale === 'ja' ? 'ルール未設定' : '暂未配置规则'}
                           </span>
                         ) : null}
                         <button

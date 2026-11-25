@@ -284,6 +284,7 @@ export const TemplateConfigSection = forwardRef<TemplateConfigSectionHandle, Tem
   const formatConfiguredCount = (count: number) => {
     if (count <= 0) return templateText(emptyStructuredLabel, locale);
     if (locale === 'en') return `${count} configured`;
+    if (locale === 'pt-BR') return count === 1 ? '1 configurado' : `${count} configurados`;
     if (locale === 'ja') return `${count} 件設定済み`;
     return `已配置 ${count} 项`;
   };
