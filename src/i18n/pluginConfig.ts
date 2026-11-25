@@ -29,7 +29,7 @@ const messages = {
   retry: ['重试', 'Retry', '再試行'],
 } as const;
 
-export const pluginConfigPtBR: Record<keyof typeof messages, string> = {
+export const pluginConfigPtBR: Partial<Record<keyof typeof messages, string>> = {
   title: "Configuração do plugin",
   enabled: "Ativar este plugin",
   enabledHint: "A opção global de plugins também precisa estar ativada para que este plugin funcione.",
@@ -88,6 +88,6 @@ const ruMessages: Record<keyof typeof messages, string> = {
 export type PluginConfigMessage = keyof typeof messages;
 
 export function pluginConfigText(key: PluginConfigMessage, locale: AppLocale = getCurrentLocale()): string {
-  const value = locale === 'pt-BR' ? pluginConfigPtBR[key] : locale === 'ru' ? ruMessages[key] : messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
+  const value = locale === 'pt-BR' ? pluginConfigPtBR[key] ?? messages[key][1] : locale === 'ru' ? ruMessages[key] : messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
   return locale === 'zh-TW' ? createTraditionalMessages({ text: value }).text : value;
 }

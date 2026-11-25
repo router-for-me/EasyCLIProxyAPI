@@ -193,13 +193,21 @@ describe('i18n', () => {
     expect(ja).toBe(jaOverrides);
   });
 
-  it('requires PT-BR to cover the canonical catalog without falling back to English', () => {
-    expect(Object.keys(ptBR).sort()).toEqual(Object.keys(zhCN).sort());
+  it('keeps PT-BR optional: known keys only, matching variables, English fallback', () => {
     const variables = (message: string) =>
       [...message.matchAll(/\{(\w+)\}/g)].map((match) => match[1]).sort();
-    for (const key of Object.keys(zhCN) as MessageKey[]) {
+    expect(Object.keys(ptBR).filter((key) => !(key in zhCN))).toEqual([]);
+    for (const key of Object.keys(ptBR) as MessageKey[]) {
       expect(ptBR[key].trim(), key).not.toBe('');
       expect(variables(ptBR[key]), key).toEqual(variables(zhCN[key]));
+    }
+    const missingKey = 'app.nav.plugins' as MessageKey;
+    const translated = ptBR[missingKey];
+    delete (ptBR as Record<string, string>)[missingKey];
+    try {
+      expect(translate('pt-BR', missingKey)).toBe(en[missingKey]);
+    } finally {
+      ptBR[missingKey] = translated;
     }
   });
 

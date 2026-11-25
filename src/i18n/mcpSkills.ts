@@ -147,7 +147,7 @@ const messages = {
   skillToggled: ['技能“{name}”{status}', 'Skill "{name}" {status}', 'スキル「{name}」を{status}にしました'],
 } as const;
 
-export const mcpSkillsPtBR: Record<keyof typeof messages, string> = {
+export const mcpSkillsPtBR: Partial<Record<keyof typeof messages, string>> = {
   title: "MCP e skills",
   description: "Gerencie servidores MCP e extensões de skills para fornecer ferramentas e contexto aos agentes.",
   tabMcp: "Servidores MCP",
@@ -403,7 +403,7 @@ export function mcpSkillsText(
   if (key === 'title' && locale === 'zh-TW') {
     return 'MCP 與技能';
   }
-  let text: string = locale === 'pt-BR' ? mcpSkillsPtBR[key] : locale === 'ru' ? ruMessages[key] : item[locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
+  let text: string = locale === 'pt-BR' ? mcpSkillsPtBR[key] ?? item[1] : locale === 'ru' ? ruMessages[key] : item[locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
   if (locale === 'zh-TW') {
     text = createTraditionalMessages({ text }).text;
   }

@@ -310,7 +310,7 @@ export const authFileTagsZhTW = {
   'authFiles.operations.selectedSummary': '已選 {selected} / 篩選 {matching} 項',
 };
 
-export const authFileListPtBR: Record<keyof typeof authFileListZhCN, string> = {
+export const authFileListPtBR: Partial<Record<keyof typeof authFileListZhCN, string>> = {
   'authFiles.tags.manage': 'Gerenciar etiquetas',
   'authFiles.tags.search': 'Pesquisar etiquetas existentes',
   'authFiles.tags.untagged': 'Sem etiqueta',

@@ -53,7 +53,7 @@ const messages = {
   invalid: ['配置值无效，请检查标注字段：', 'Invalid configuration; check field: ', '設定値が無効です。確認する項目: '],
   modelHint: ['字段关闭时保留默认行为；已启用字段中的 false、0 和空列表会明确覆盖默认值。', 'Unset fields use defaults; explicit false, 0 and empty lists override defaults.', '未設定は既定動作。false、0、空のリストは既定値を明示的に上書きします。'],
 } as const;
-export const providerTemplatePtBR: Record<keyof typeof messages, string> = {
+export const providerTemplatePtBR: Partial<Record<keyof typeof messages, string>> = {
   modelRules: "Regras de modelos",
   connectionRouting: "Conexão e roteamento",
   requestBehavior: "Comportamento das requisições",
@@ -161,6 +161,6 @@ const ruMessages: Record<keyof typeof messages, string> = {
 
 export type ProviderTemplateMessage = keyof typeof messages;
 export function providerText(key: ProviderTemplateMessage, locale: AppLocale = getCurrentLocale()): string {
-  const value = locale === 'pt-BR' ? providerTemplatePtBR[key] : locale === 'ru' ? ruMessages[key] : messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
+  const value = locale === 'pt-BR' ? providerTemplatePtBR[key] ?? messages[key][1] : locale === 'ru' ? ruMessages[key] : messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
   return locale === 'zh-TW' ? createTraditionalMessages({ text: value }).text : value;
 }

@@ -202,7 +202,7 @@ export const homeJa: Record<keyof typeof homeZhCN, string> = {
   'home.health.queued': '確認待ち',
 };
 
-export const homePtBR: Record<keyof typeof homeEn, string> = {
+export const homePtBR: Partial<Record<keyof typeof homeEn, string>> = {
   'home.catalog.refresh': "Atualizar catálogos de modelos",
   'home.catalog.refreshing': "Sincronizando catálogos…",
   'home.catalog.hint': "Sincronize os catálogos remotos de modelos e seus recursos sem reiniciar o núcleo",

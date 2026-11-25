@@ -82,7 +82,8 @@ const zhTW: typeof en = {
   remarksChange: 'API 金鑰備註將另外儲存在桌面端，不寫入 YAML。',
 };
 
-const ptBR: typeof en = {
+// Missing PT-BR messages fall back to English.
+const ptBR: Partial<typeof en> = {
   cloudRulesAdded: 'Regras da nuvem adicionadas ao rascunho. Revise as alterações antes de salvar.',
   noNewCloudRules: 'Não há regras novas da nuvem para adicionar.',
   cloudRulesFailed: 'Não foi possível carregar as regras da nuvem. O rascunho não mudou.',
@@ -110,4 +111,6 @@ const ptBR: typeof en = {
   remarksChange: 'As observações das chaves de API do aplicativo serão atualizadas à parte do YAML.',
 };
 
-export const configDocumentMessages = (locale: string) => locale === 'zh-CN' ? zhCN : locale === 'zh-TW' ? zhTW : locale === 'pt-BR' ? ptBR : en;
+const ptBRWithFallback: typeof en = { ...en, ...ptBR };
+
+export const configDocumentMessages = (locale: string) => locale === 'zh-CN' ? zhCN : locale === 'zh-TW' ? zhTW : locale === 'pt-BR' ? ptBRWithFallback : en;

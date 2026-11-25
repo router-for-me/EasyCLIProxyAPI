@@ -256,7 +256,7 @@ export const easyModeJa: Record<keyof typeof easyModeZhCN, string> = {
   "easyMode.guide.finish": "ガイドを完了",
 };
 
-export const easyModePtBR: Record<keyof typeof easyModeZhCN, string> = {
+export const easyModePtBR: Partial<Record<keyof typeof easyModeZhCN, string>> = {
   "easyMode.guide.oauthInstructions": "Selecione uma plataforma, clique em “{start}” ou “{relogin}” à direita e conclua a autorização no navegador.",
   "easyMode.guide.oauthCompletion": "Ao voltar, confira se a plataforma mostra “{signedIn}” antes de continuar.",
   "easyMode.guide.apiCredentials": "2. Informe {baseUrl} e {apiKey}. Os dois campos são obrigatórios.",

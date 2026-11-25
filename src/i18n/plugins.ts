@@ -112,7 +112,7 @@ const messages = {
   configureToken: ['配置访问令牌', 'Configure token', 'トークンを設定'],
 } as const;
 
-export const pluginsPtBR: Record<keyof typeof messages, string> = {
+export const pluginsPtBR: Partial<Record<keyof typeof messages, string>> = {
   localInstall: "Instalar plugin local",
   localBinary: "Biblioteca do plugin",
   localTrust: "Instale apenas plugins de confiança que sejam compatíveis com seu sistema operacional, arquitetura e versão do núcleo. Plugins podem acessar dados do núcleo e recursos do sistema. O arquivo será copiado para a pasta de plugins sem sobrescrever os existentes. Extraia arquivos compactados antes.",
@@ -335,6 +335,6 @@ const ruMessages: Record<keyof typeof messages, string> = {
 };
 
 export function pluginText(key: keyof typeof messages, locale: AppLocale = getCurrentLocale()): string {
-  const text = locale === 'pt-BR' ? pluginsPtBR[key] : locale === 'ru' ? ruMessages[key] : messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
+  const text = locale === 'pt-BR' ? pluginsPtBR[key] ?? messages[key][1] : locale === 'ru' ? ruMessages[key] : messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
   return locale === 'zh-TW' ? createTraditionalMessages({ text }).text : text;
 }

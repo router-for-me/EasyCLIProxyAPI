@@ -326,7 +326,7 @@ export const acpEn = {
   'acp.externalUnsupported': "ACP access is not supported for external CPA instances. Switch back to Built-in CPA to use it.",
 };
 
-export const acpPtBR: Record<keyof typeof acpEn, string> = {
+export const acpPtBR: Partial<Record<keyof typeof acpEn, string>> = {
   'acp.errorProviderSyncFailed': "Não foi possível atualizar a configuração da API do CPA. Confira os detalhes e tente novamente.",
   'acp.errorDetails': "Detalhes do erro",
   'acp.errorLogoutUnsupported': "Esta CLI não permite sair da conta. Atualize-a e tente novamente ou remova a conta local.",

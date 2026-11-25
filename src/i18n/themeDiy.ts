@@ -67,7 +67,7 @@ export const themeDiyJa = {
 };
 
 
-export const themeDiyPtBR: Record<keyof typeof themeDiyEn, string> = {
+export const themeDiyPtBR: Partial<Record<keyof typeof themeDiyEn, string>> = {
   'app.theme.diy.title': 'Temas personalizados',
   'app.theme.diy.intro': 'Envie o guia de criação a uma IA e descreva o estilo que você prefere ou compartilhe uma imagem de referência. O guia inclui as regras do tema e um exemplo completo.',
   'app.theme.diy.defaults': 'Os tokens omitidos usam os padrões do tema claro ou escuro. Ao mudar a cor de destaque, ajuste em conjunto as cores dos botões, dos controles de alternância e da barra lateral. Definir appearance como light não converte cores escuras explícitas. Use cores no formato #RRGGBB ou #RRGGBBAA (AA é a opacidade).',

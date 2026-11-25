@@ -15,13 +15,13 @@ function flatten(tree: Tree, prefix = ''): Record<string, string> {
 const variables = (value: string) => [...value.matchAll(/\{\{\s*(\w+)\s*\}\}|\{(\w+)\}/g)].map(match => match[1] ?? match[2]).sort();
 
 describe('PT-BR configuration management', () => {
-  it('covers every English message with the same variables', () => {
+  it('uses only known English keys with the same variables (missing keys fall back to English)', () => {
     const english = flatten(en as Tree);
     const portuguese = flatten(ptBR as Tree);
-    expect(Object.keys(portuguese).sort()).toEqual(Object.keys(english).sort());
-    for (const [key, value] of Object.entries(english)) {
-      expect(portuguese[key].trim()).not.toBe('');
-      expect({ key, variables: variables(portuguese[key]) }).toEqual({ key, variables: variables(value) });
+    expect(Object.keys(portuguese).filter((key) => !(key in english))).toEqual([]);
+    for (const [key, value] of Object.entries(portuguese)) {
+      expect(value.trim()).not.toBe('');
+      expect({ key, variables: variables(value) }).toEqual({ key, variables: variables(english[key]) });
     }
   });
 
@@ -31,5 +31,6 @@ describe('PT-BR configuration management', () => {
     expect(Object.keys(portuguese).sort()).toEqual(Object.keys(english).sort());
     expect(portuguese.reconnect).toBe('Reconectar');
     expect(portuguese).not.toBe(english);
+    for (const key of Object.keys(english) as (keyof typeof english)[]) expect(portuguese[key].trim()).not.toBe('');
   });
 });

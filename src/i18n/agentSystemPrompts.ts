@@ -308,4 +308,4 @@ export const agentSystemPromptsPtBR = {
   'agents.zcode.subagents.hidePrompt': 'Ocultar prompt de sistema',
   'agents.zcode.subagents.promptLabel': 'Prompt de sistema do subagente (corpo em Markdown)',
   'agents.zcode.subagents.promptHint': 'Grava o texto diretamente no corpo em Markdown do arquivo do subagente e preserva o cabeçalho YAML.',
-} as const satisfies Record<keyof typeof agentSystemPromptsEn, string>;
+} as const satisfies Partial<Record<keyof typeof agentSystemPromptsEn, string>>;

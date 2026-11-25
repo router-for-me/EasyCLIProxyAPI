@@ -1,5 +1,5 @@
 import type { TemplateText } from '../services/templateConfig';
-const text = (zh: string, en: string, ja: string, ptBR: string): TemplateText => ({ zh, en, ja, ptBR });
+const text = (zh: string, en: string, ja: string, ptBR?: string): TemplateText => ({ zh, en, ja, ptBR });
 export const sensitiveWordsMessages = {
   title: text('敏感词设置', 'Sensitive word settings', '機密語の設定', "Configuração de termos sensíveis"),
   replace: text('敏感词替换', 'Sensitive word replacements', '機密語の置換', "Substituições de termos sensíveis"),

@@ -17,29 +17,46 @@ import { templateFieldValidation, type TemplateText } from '../src/services/temp
 
 const placeholders = (value: string) => (value.match(/\{\w+\}/g) ?? []).sort();
 
-function expectTable(english: Record<string, string>, portuguese: Record<string, string>) {
-  expect(Object.keys(portuguese).sort()).toEqual(Object.keys(english).sort());
+// PT-BR entries are optional. When present they must be nonempty, use only known
+// keys and keep the English placeholders; missing entries fall back to English.
+function expectTable(english: Record<string, string>, portuguese: Partial<Record<string, string>>) {
+  expect(Object.keys(portuguese).filter((key) => !(key in english))).toEqual([]);
   for (const [key, value] of Object.entries(portuguese)) {
-    expect(value.trim()).not.toBe('');
-    expect(placeholders(value)).toEqual(placeholders(english[key]));
+    expect(value?.trim()).toBeTruthy();
+    expect(placeholders(value ?? '')).toEqual(placeholders(english[key]));
   }
 }
 
 function expectLookup<Key extends string>(
-  table: Record<Key, string>,
+  table: Partial<Record<Key, string>>,
   lookup: (key: Key, locale: 'en' | 'pt-BR') => string,
 ) {
   for (const key of Object.keys(table) as Key[]) {
-    expect(table[key].trim()).not.toBe('');
-    expect(lookup(key, 'pt-BR')).toBe(table[key]);
-    expect(placeholders(table[key])).toEqual(placeholders(lookup(key, 'en')));
+    const value = table[key] ?? '';
+    expect(value.trim()).not.toBe('');
+    expect(lookup(key, 'pt-BR')).toBe(value);
+    expect(placeholders(value)).toEqual(placeholders(lookup(key, 'en')));
+  }
+}
+
+function expectFallback<Key extends string>(
+  table: Partial<Record<Key, string>>,
+  lookup: (key: Key, locale: 'en' | 'pt-BR') => string,
+) {
+  const key = Object.keys(table)[0] as Key;
+  const value = table[key];
+  delete table[key];
+  try {
+    expect(lookup(key, 'pt-BR')).toBe(lookup(key, 'en'));
+  } finally {
+    table[key] = value;
   }
 }
 
 function expectTemplate(value: TemplateText | undefined) {
-  if (value === undefined || typeof value === 'string') return;
-  expect(value.ptBR?.trim()).toBeTruthy();
-  expect(placeholders(value.ptBR ?? '')).toEqual(placeholders(value.en));
+  if (value === undefined || typeof value === 'string' || value.ptBR === undefined) return;
+  expect(value.ptBR.trim()).toBeTruthy();
+  expect(placeholders(value.ptBR)).toEqual(placeholders(value.en));
 }
 
 describe('PT-BR auxiliary dictionaries', () => {
@@ -59,7 +76,16 @@ describe('PT-BR auxiliary dictionaries', () => {
     expect(mcpSkillsText('serverCount', 'pt-BR', { count: 2, total: 4 })).toBe('Mostrando 2 de 4 servidores');
   });
 
-  it('includes raw Portuguese settings values and labels', () => {
+  it('falls back to English when a PT-BR auxiliary entry is missing', () => {
+    expectFallback(mcpSkillsPtBR, mcpSkillsText);
+    expectFallback(pluginConfigPtBR, pluginConfigText);
+    expectFallback(pluginOAuthPtBR, pluginOAuthText);
+    expectFallback(pluginsPtBR, pluginText);
+    expectFallback(providerTemplatePtBR, providerText);
+    expect(templateText({ zh: '中文', en: 'English only' }, 'pt-BR')).toBe('English only');
+  });
+
+  it('keeps PT-BR settings values and labels consistent when present', () => {
     for (const value of Object.values({ ...sensitiveWordsMessages, ...templateMessages, ...settingsMessages })) {
       expectTemplate(value);
     }

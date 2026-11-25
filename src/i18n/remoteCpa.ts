@@ -160,7 +160,7 @@ export const remoteCpaZhCN: Record<keyof typeof remoteCpaEn, string> = {
   'remote.error.unknown': '无法完成 CPA 连接操作，请重试。',
 };
 
-export const remoteCpaPtBR: Record<keyof typeof remoteCpaEn, string> = {
+export const remoteCpaPtBR: Partial<Record<keyof typeof remoteCpaEn, string>> = {
   'remote.connect': "Conectar ao CPA remoto",
   'remote.forget': "Esquecer instância",
   'remote.confirmForget': "Confirmar remoção",

@@ -22,7 +22,7 @@ export const autoUpdateEn = dictionary(1);
 export const autoUpdateJa = dictionary(2);
 export const autoUpdateRu = dictionary(3);
 
-export const autoUpdatePtBR: Record<`autoUpdate.${keyof typeof messages}`, string> = {
+export const autoUpdatePtBR: Partial<Record<`autoUpdate.${keyof typeof messages}`, string>> = {
   'autoUpdate.title': 'Atualizações automáticas',
   'autoUpdate.enabled': 'Ativar atualizações automáticas',
   'autoUpdate.hint': 'Quando ativadas, as novas versões são baixadas em segundo plano e instaladas na próxima inicialização.',

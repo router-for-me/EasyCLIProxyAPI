@@ -5,7 +5,7 @@ import { requestTemplateGroups } from './generalTemplateFields';
 import { oauthTemplateGroups } from './oauthTemplateFields';
 import { payloadTemplateGroups } from './payloadTemplateFields';
 
-const text = (zh: string, en: string, ja: string, ptBR: string): TemplateText => ({ zh, en, ja, ptBR });
+const text = (zh: string, en: string, ja: string, ptBR?: string): TemplateText => ({ zh, en, ja, ptBR });
 export const settingsCategories = [
   { id: 'general', title: text('服务与访问', 'Service & access', 'サービスとアクセス', "Serviço e acesso") },
   { id: 'proxy', title: text('对外访问', 'External access', '外部アクセス', "Acesso externo") },

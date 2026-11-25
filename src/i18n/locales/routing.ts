@@ -432,7 +432,7 @@ export const routingJa: RoutingMessages = {
   'routing.failures': '{count} 件失敗', 'routing.updated': '更新：{time}',
 };
 
-export const routingPtBR: RoutingMessages = {
+export const routingPtBR: Partial<RoutingMessages> = {
   'routing.expandAgent': 'Expandir rotas de {agent}',
   'routing.collapseAgent': 'Recolher rotas de {agent}',
   'routing.allAgentsFolded': 'Selecione um agente para ver suas rotas.',
