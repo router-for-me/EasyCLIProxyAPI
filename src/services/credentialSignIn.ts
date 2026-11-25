@@ -2,7 +2,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from '@tauri
 import { getCurrentLocale, translate } from '../i18n';
 import { authFileHealth } from './authFileHealth';
 import { authFileName, isOAuthCredentialFile, normalizeOAuthProvider } from './authFiles';
-import { readString } from './managementApi';
+import { readBoolean, readString } from './managementApi';
 import { isTauri } from './platform';
 
 type AuthFile = Record<string, unknown>;
@@ -28,8 +28,46 @@ export function credentialNeedsSignIn(file: AuthFile): boolean {
   return signInLabels.has(health.label) || signInMessage.test(health.message);
 }
 
-export const canReauthenticate = (file: AuthFile) =>
-  REAUTH_PROVIDERS.has(normalizeOAuthProvider(readString(file, 'provider', 'type', 'account_type')));
+export const canReauthenticate = (file: AuthFile) => REAUTH_PROVIDERS.has(credentialProvider(file));
+
+const credentialProvider = (file: AuthFile) => normalizeOAuthProvider(readString(file, 'provider', 'type', 'account_type'));
+
+/** Same provider and same account, by account id when both carry one, otherwise by email. */
+function sameAccount(left: AuthFile, right: AuthFile): boolean {
+  if (credentialProvider(left) !== credentialProvider(right)) return false;
+  const leftId = readString(left, 'account_id', 'accountId');
+  const rightId = readString(right, 'account_id', 'accountId');
+  if (leftId && rightId) return leftId === rightId;
+  const leftEmail = readString(left, 'email').trim().toLowerCase();
+  return Boolean(leftEmail) && leftEmail === readString(right, 'email').trim().toLowerCase();
+}
+
+/**
+ * A working credential for the same account under another file name. The core
+ * names some auth files after details that can change between logins (Codex
+ * includes the plan, e.g. `-prolite` then `-pro`), so signing in again may add
+ * a new file instead of overwriting the expired one.
+ */
+export function signInReplacement(file: AuthFile, files: AuthFile[]): AuthFile | undefined {
+  if (!credentialNeedsSignIn(file)) return undefined;
+  const name = authFileName(file);
+  return files.find((other) => authFileName(other) !== name
+    && isOAuthCredentialFile(other)
+    && !readBoolean(other, 'disabled')
+    && !credentialNeedsSignIn(other)
+    && sameAccount(file, other));
+}
+
+export type CredentialSignInState = 'required' | 'replaced' | null;
+
+export function credentialSignInState(file: AuthFile, files: AuthFile[]): CredentialSignInState {
+  if (!credentialNeedsSignIn(file)) return null;
+  return signInReplacement(file, files) ? 'replaced' : 'required';
+}
+
+/** Credentials that still need the user to sign in: no working replacement exists. */
+export const credentialsNeedingSignIn = (files: AuthFile[]) =>
+  files.filter((file) => credentialSignInState(file, files) === 'required');
 
 /**
  * Reports credentials that entered the needs-sign-in state since the previous
@@ -39,7 +77,7 @@ export const canReauthenticate = (file: AuthFile) =>
 export function createSignInTransitionTracker() {
   let known = new Set<string>();
   return (files: AuthFile[]): AuthFile[] => {
-    const current = files.filter(credentialNeedsSignIn);
+    const current = credentialsNeedingSignIn(files);
     const entered = current.filter((file) => !known.has(authFileName(file)));
     known = new Set(current.map(authFileName));
     return entered;
@@ -79,7 +117,7 @@ export function subscribeSignInAlerts(listener: () => void) {
 }
 
 const providerLabel = (file: AuthFile) => {
-  const provider = normalizeOAuthProvider(readString(file, 'provider', 'type', 'account_type'));
+  const provider = credentialProvider(file);
   if (provider === 'xai') return 'xAI';
   return provider ? provider.charAt(0).toUpperCase() + provider.slice(1) : '';
 };
@@ -111,7 +149,7 @@ const tracker = createSignInTransitionTracker();
  */
 export function observeCredentialSignIn(files: AuthFile[]) {
   const entered = tracker(files);
-  const names = files.filter(credentialNeedsSignIn).map(authFileName);
+  const names = credentialsNeedingSignIn(files).map(authFileName);
   if (names.join('\n') !== alertNames.join('\n')) {
     alertNames = names;
     alertListeners.forEach((listener) => listener());
