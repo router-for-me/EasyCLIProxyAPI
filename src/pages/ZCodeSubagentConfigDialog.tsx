@@ -15,12 +15,12 @@ import { getAgentModels } from "../services/agents";
 import type { ModelOption } from "../services/modelService";
 
 const thoughtLevelOptions = [
-  { value: "", label: "继承默认 (inherit)", ptBR: "Herdar padrão (inherit)" },
-  { value: "disabled", label: "关闭思考 (disabled)", ptBR: "Desativado (disabled)" },
-  { value: "low", label: "低思考 (low)", ptBR: "Baixo (low)" },
-  { value: "medium", label: "中思考 (medium)", ptBR: "Médio (medium)" },
-  { value: "high", label: "高思考 (high)", ptBR: "Alto (high)" },
-  { value: "max", label: "最高思考 (max)", ptBR: "Máximo (max)" },
+  { value: "", label: "继承默认 (inherit)" },
+  { value: "disabled", label: "关闭思考 (disabled)" },
+  { value: "low", label: "低思考 (low)" },
+  { value: "medium", label: "中思考 (medium)" },
+  { value: "high", label: "高思考 (high)" },
+  { value: "max", label: "最高思考 (max)" },
 ];
 
 export function ZCodeSubagentConfigDialog({
@@ -30,8 +30,7 @@ export function ZCodeSubagentConfigDialog({
   onClose: () => void;
   onSaved: () => void | Promise<void>;
 }) {
-  const { t, locale } = useI18n();
-  const localize = (original: string, ptBR: string) => locale === "pt-BR" ? ptBR : original;
+  const { t } = useI18n();
   const [snapshot, setSnapshot] = useState<ZCodeSubagentConfigSnapshot | null>(null);
   const [defaultModel, setDefaultModel] = useState<string>("");
   const [defaultThoughtLevel, setDefaultThoughtLevel] = useState<string>("");
@@ -199,9 +198,9 @@ export function ZCodeSubagentConfigDialog({
             }}
           >
             <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px" }}>
-              <strong>{localize("全局默认子智能体模型", "Modelo padrão global dos subagentes")}</strong>
+              <strong>全局默认子智能体模型</strong>
               <Select value={defaultModel} onChange={(e) => setDefaultModel(e.currentTarget.value)}>
-                <option value="">{localize("继承主会话默认模型", "Herdar o modelo padrão da sessão principal")}</option>
+                <option value="">继承主会话默认模型</option>
                 {models.map((m) => (
                   <option key={m.name} value={m.name}>
                     {m.name}
@@ -211,11 +210,11 @@ export function ZCodeSubagentConfigDialog({
             </label>
 
             <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px" }}>
-              <strong>{localize("全局默认思考强度 (thoughtLevel)", "Esforço de raciocínio padrão global (thoughtLevel)")}</strong>
+              <strong>全局默认思考强度 (thoughtLevel)</strong>
               <Select value={defaultThoughtLevel} onChange={(e) => setDefaultThoughtLevel(e.currentTarget.value)}>
                 {thoughtLevelOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>
-                    {localize(opt.label, opt.ptBR)}
+                    {opt.label}
                   </option>
                 ))}
               </Select>
@@ -225,14 +224,14 @@ export function ZCodeSubagentConfigDialog({
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
               <div>
-                <strong style={{ fontSize: "14px" }}>{localize("已检测到的子智能体", "Subagentes detectados")} ({subagents.length})</strong>
+                <strong style={{ fontSize: "14px" }}>已检测到的子智能体 ({subagents.length})</strong>
                 <p style={{ margin: "2px 0 0", fontSize: "12px", opacity: 0.7 }}>
-                  {localize("可为具体子智能体（如 visual-judge）指定特定的 CPA 模型或思考强度", "É possível definir um modelo do CPA ou um esforço de raciocínio para cada subagente, como visual-judge.")}
+                  可为具体子智能体（如 visual-judge）指定特定的 CPA 模型或思考强度
                 </p>
               </div>
               <input
                 type="text"
-                placeholder={localize("搜索智能体名称...", "Buscar pelo nome do subagente…")}
+                placeholder="搜索智能体名称..."
                 value={search}
                 onChange={(e) => setSearch(e.currentTarget.value)}
                 style={{ fontSize: "12px", padding: "5px 10px", width: "180px", borderRadius: "4px", border: "1px solid var(--border-color, #d1d5db)" }}
@@ -294,7 +293,7 @@ export function ZCodeSubagentConfigDialog({
                             }}
                             style={{ minWidth: "150px", fontSize: "12px" }}
                           >
-                            <option value="">{localize("继承默认", "Herdar padrão")}</option>
+                            <option value="">继承默认</option>
                             {models.map((m) => (
                               <option key={m.name} value={m.name}>
                                 {m.name}
@@ -309,7 +308,7 @@ export function ZCodeSubagentConfigDialog({
                           >
                             {thoughtLevelOptions.map((opt) => (
                               <option key={opt.value} value={opt.value}>
-                                {locale === "pt-BR" ? opt.ptBR.split(" (")[0] : opt.label.split(" ")[0]}
+                                {opt.label.split(" ")[0]}
                               </option>
                             ))}
                           </Select>
@@ -338,7 +337,7 @@ export function ZCodeSubagentConfigDialog({
                 })
               ) : (
                 <div style={{ textAlign: "center", padding: "24px", opacity: 0.6, fontSize: "13px" }}>
-                  {localize("未发现匹配的子智能体文件", "Nenhum arquivo de subagente corresponde à busca")}
+                  未发现匹配的子智能体文件
                 </div>
               )}
             </div>

@@ -53,8 +53,7 @@ export function ZCodeModelCatalogDialog({
   onClose: () => void;
   onSaved: () => void | Promise<void>;
 }) {
-  const { t, locale } = useI18n();
-  const localize = (original: string, ptBR: string) => locale === "pt-BR" ? ptBR : original;
+  const { t } = useI18n();
   const { askConfirmation, confirmationDialog } = useConfirmation();
   const [snapshot, setSnapshot] = useState<ZCodeCatalogEditorSnapshot | null>(null);
   const [models, setModels] = useState<ZCodeCatalogEditorModel[]>([]);
@@ -265,14 +264,14 @@ export function ZCodeModelCatalogDialog({
                       {model.configuration.contextWindow ? (
                         <span>{Math.round(model.configuration.contextWindow / 1024)}K</span>
                       ) : null}
-                      {model.configuration.supportsImage ? <span>{localize("· 视觉", "· Visão")}</span> : null}
+                      {model.configuration.supportsImage ? <span>· 视觉</span> : null}
                     </div>
                     <div style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
                       <Switch
                         size="sm"
                         checked={model.enabled}
                         onChange={(e) => toggleModelEnabled(model.id, e?.target?.checked ?? !model.enabled)}
-                        title={model.enabled ? localize("在 ZCode 中启用", "Ativado no ZCode") : localize("在 ZCode 中隐藏", "Oculto no ZCode")}
+                        title={model.enabled ? "在 ZCode 中启用" : "在 ZCode 中隐藏"}
                       />
                     </div>
                   </div>
@@ -291,19 +290,19 @@ export function ZCodeModelCatalogDialog({
                 <div>
                   <h3>{selectedModel.id}</h3>
                   <span className="customized">
-                    {localize("已由 CPA 代管下发规格（ZCode 软件端显示为手动自定义配置，关闭其内部默认配置）", "Especificações gerenciadas pelo CPA. No ZCode, aparecem como configuração manual e substituem as configurações padrão internas.")}
+                    已由 CPA 代管下发规格（ZCode 软件端显示为手动自定义配置，关闭其内部默认配置）
                   </span>
                 </div>
               </div>
 
               <label>
-                <span>{localize("上下文窗口 (Tokens)", "Janela de contexto (tokens)")}</span>
+                <span>上下文窗口 (Tokens)</span>
                 <input
                   type="number"
                   min={1}
                   step={1024}
                   value={selectedModel.configuration.contextWindow ?? ""}
-                  placeholder={localize("例如 1048576", "Por exemplo, 1048576")}
+                  placeholder="例如 1048576"
                   onChange={(e) => {
                     const val = e.target.value;
                     updateSelectedConfig((prev) => ({
@@ -315,13 +314,13 @@ export function ZCodeModelCatalogDialog({
               </label>
 
               <label>
-                <span>{localize("最大输出 Token", "Máximo de tokens de saída")}</span>
+                <span>最大输出 Token</span>
                 <input
                   type="number"
                   min={1}
                   step={1024}
                   value={selectedModel.configuration.maxOutputTokens ?? ""}
-                  placeholder={localize("留空使用默认 (例如 128000)", "Deixe em branco para usar o padrão (por exemplo, 128000)")}
+                  placeholder="留空使用默认 (例如 128000)"
                   onChange={(e) => {
                     const val = e.target.value;
                     updateSelectedConfig((prev) => ({
@@ -333,7 +332,7 @@ export function ZCodeModelCatalogDialog({
               </label>
 
               <fieldset className="wide codex-catalog-choice-group surface-frame">
-                <legend>{localize("思考等级 (reasoningLevel)", "Nível de raciocínio (reasoningLevel)")}</legend>
+                <legend>思考等级 (reasoningLevel)</legend>
                 <div className="codex-catalog-chips">
                   {availableReasoningLevels.map((level) => {
                     const activeLevels = selectedModel.configuration.reasoningLevels;
@@ -355,11 +354,11 @@ export function ZCodeModelCatalogDialog({
               </fieldset>
 
               <fieldset className="wide codex-catalog-choice-group surface-frame">
-                <legend>{localize("输入模态支持", "Tipos de entrada compatíveis")}</legend>
+                <legend>输入模态支持</legend>
                 <div className="codex-catalog-checkboxes">
                   <label>
                     <Checkbox checked disabled onChange={() => undefined} />
-                    <span>{localize("文本 (必需)", "Texto (obrigatório)")}</span>
+                    <span>文本 (必需)</span>
                   </label>
                   <label>
                     <Checkbox
@@ -369,7 +368,7 @@ export function ZCodeModelCatalogDialog({
                         updateSelectedConfig((prev) => ({ ...prev, supportsImage: chk }));
                       }}
                     />
-                    <span>{localize("图像 (Vision)", "Imagem (visão)")}</span>
+                    <span>图像 (Vision)</span>
                   </label>
                   <label>
                     <Checkbox
@@ -379,7 +378,7 @@ export function ZCodeModelCatalogDialog({
                         updateSelectedConfig((prev) => ({ ...prev, supportsPdf: chk }));
                       }}
                     />
-                    <span>{localize("PDF 文档", "Documento PDF")}</span>
+                    <span>PDF 文档</span>
                   </label>
                   <label>
                     <Checkbox
@@ -389,13 +388,13 @@ export function ZCodeModelCatalogDialog({
                         updateSelectedConfig((prev) => ({ ...prev, supportsVideo: chk }));
                       }}
                     />
-                    <span>{localize("视频", "Vídeo")}</span>
+                    <span>视频</span>
                   </label>
                 </div>
               </fieldset>
 
               <fieldset className="wide codex-catalog-choice-group surface-frame">
-                <legend>{localize("高级特性支持", "Recursos avançados")}</legend>
+                <legend>高级特性支持</legend>
                 <div className="codex-catalog-checkboxes">
                   <label>
                     <Checkbox
@@ -405,7 +404,7 @@ export function ZCodeModelCatalogDialog({
                         updateSelectedConfig((prev) => ({ ...prev, supportsJsonSchemaOutput: chk }));
                       }}
                     />
-                    <span>{localize("结构化输出 (JSON Schema)", "Saída estruturada (JSON Schema)")}</span>
+                    <span>结构化输出 (JSON Schema)</span>
                   </label>
                   <label>
                     <Checkbox
@@ -415,7 +414,7 @@ export function ZCodeModelCatalogDialog({
                         updateSelectedConfig((prev) => ({ ...prev, supportsNativeWebSearch: chk }));
                       }}
                     />
-                    <span>{localize("原生联网搜索", "Busca nativa na web")}</span>
+                    <span>原生联网搜索</span>
                   </label>
                   <label>
                     <Checkbox
@@ -425,7 +424,7 @@ export function ZCodeModelCatalogDialog({
                         updateSelectedConfig((prev) => ({ ...prev, supportsMidConversationSystem: chk }));
                       }}
                     />
-                    <span>{localize("对话中系统消息", "Mensagens de sistema durante a conversa")}</span>
+                    <span>对话中系统消息</span>
                   </label>
                 </div>
               </fieldset>
@@ -446,7 +445,7 @@ export function ZCodeModelCatalogDialog({
             disabled={saving || !selectedModel}
           >
             <RotateCcw size={15} />
-            {localize("恢复推荐配置", "Restaurar configurações recomendadas")}
+            恢复推荐配置
           </button>
         </div>
         <div className="codex-catalog-footer-hint">
