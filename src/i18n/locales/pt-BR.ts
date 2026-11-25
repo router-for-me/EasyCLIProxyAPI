@@ -629,7 +629,7 @@ export const ptBR: Record<MessageKey, string> = {
   'easyMode.api.testSuccess': 'Conexão estabelecida! Modelos encontrados: {count}',
   'easyMode.api.testFailed': 'O teste de conexão falhou',
   'easyMode.api.platform': 'Plataforma',
-  'easyMode.api.baseUrl': 'URL base da API',
+  'easyMode.api.baseUrl': 'API Base URL',
   'easyMode.api.apiKey': 'API Key',
   'easyMode.api.name': 'Nome de identificação (opcional)',
   'easyMode.api.viewExisting': 'Ver todos os provedores conectados ({count})',

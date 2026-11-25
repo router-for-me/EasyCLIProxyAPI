@@ -272,6 +272,7 @@ describe('i18n', () => {
       'apiAccess.health.firstTokenInline',
       'apiAccess.field.key',
       'kernel.access.apiUrl',
+      'easyMode.api.baseUrl',
       'management.error.upstreamHttpDetail',
     ]);
     const unexpected = (Object.keys(en) as MessageKey[]).filter((key) =>
@@ -336,15 +337,10 @@ describe('i18n', () => {
     }
   });
 
-  it('localizes the base API URL label in Brazilian Portuguese only', () => {
-    for (const locale of supportedLocales) {
-      expect(translate(locale, 'easyMode.api.baseUrl')).toBe(locale === 'pt-BR' ? 'URL base da API' : 'API Base URL');
-    }
-  });
-
   it('preserves technical field names and units in every interface language', () => {
     for (const locale of supportedLocales) {
       for (const [key, term] of [
+        ['easyMode.api.baseUrl', 'API Base URL'],
         ['easyMode.api.apiKey', 'API Key'],
         ['apiAccess.field.baseUrl', 'Base URL'],
         ['apiAccess.field.key', 'API Key'],
