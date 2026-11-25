@@ -2614,7 +2614,7 @@ export const zhCN: Record<string, string> = {
   'notifications.signIn.title': '{provider} 账号需要重新登录',
   'notifications.signIn.body': '{name} 无法再续期登录。请打开 EasyCLIProxyAPI，在其卡片上选择“重新登录”。',
   'config.software.signInNotifications': '登录提醒',
-  'config.software.signInNotificationsDescription': 'OAuth 账号登录过期、需要重新登录时显示系统通知。',
+  'config.software.signInNotificationsDescription': 'OAuth 账号登录过期、需要重新登录时显示系统通知',
 } as const;
 
 export type MessageKey = string;

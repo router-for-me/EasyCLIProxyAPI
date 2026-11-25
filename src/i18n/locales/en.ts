@@ -2615,5 +2615,5 @@ export const en: Record<MessageKey, string> = {
   'notifications.signIn.title': '{provider} account needs to sign in again',
   'notifications.signIn.body': '{name} can no longer renew its login. Open EasyCLIProxyAPI and choose Sign in again on its card.',
   'config.software.signInNotifications': 'Sign-in alerts',
-  'config.software.signInNotificationsDescription': 'Show a system notification when an OAuth account’s login expires and it needs to sign in again.',
+  'config.software.signInNotificationsDescription': 'Show a system notification when an OAuth account’s login expires and it needs to sign in again',
 };

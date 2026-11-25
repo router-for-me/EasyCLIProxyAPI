@@ -113,6 +113,12 @@ const pages = [
     component: QuotaPage,
   },
   {
+    id: 'routing',
+    labelKey: 'app.nav.routing',
+    icon: GitBranch,
+    component: RoutingPage,
+  },
+  {
     id: 'agents',
     labelKey: 'app.nav.agents',
     icon: Bot,
@@ -135,12 +141,6 @@ const pages = [
     labelKey: 'app.nav.configManagement',
     icon: FileSliders,
     component: null,
-  },
-  {
-    id: 'routing',
-    labelKey: 'app.nav.routing',
-    icon: GitBranch,
-    component: RoutingPage,
   },
   {
     id: 'versions',

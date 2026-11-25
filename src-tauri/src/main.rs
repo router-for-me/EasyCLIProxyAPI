@@ -2639,7 +2639,7 @@ fn main() {
         linux_graphics::configure();
     }
 
-    let _instance_guard = match acquire_app_instance_guard() {
+    let instance_guard = match acquire_app_instance_guard() {
         Ok(guard) => guard,
         Err(error) => {
             #[cfg(target_os = "linux")]
@@ -2704,6 +2704,7 @@ fn main() {
         Some(vec![AUTOSTART_ARGUMENT]),
     ));
     let app = app
+        .manage(AppInstanceGuardState::new(instance_guard))
         .manage(remote_cpa)
         .plugin(
             tauri_plugin_opener::Builder::new()
@@ -3128,6 +3129,11 @@ fn main() {
             acp::submit_acp_account_authorization,
             acp::relogin_acp_account,
             acp::rename_acp_account,
+            acp::update_acp_account_settings,
+            acp::update_acp_pool_settings,
+            acp::verify_acp_account,
+            acp::verify_all_acp_accounts,
+            acp::reset_acp_account_cooldown,
             acp::remove_acp_account,
             acp::logout_acp_account,
             acp::cancel_acp_operation,
@@ -3334,7 +3340,11 @@ fn main() {
             reverse_proxy::reverse_proxy_stop
         ];
     let app = app.invoke_handler(move |invoke| {
-        let remote = remote_launch || invoke.message.webview().state::<remote_cpa::RemoteCpaState>().external_dispatch.load(Ordering::Acquire);
+        let remote = invoke
+            .message
+            .webview()
+            .state::<remote_cpa::RemoteCpaState>()
+            .uses_external_dispatch();
         if remote { remote_handler(invoke) } else { local_handler(invoke) }
     });
     let app = app.build(context).expect("failed to build app");
@@ -3349,7 +3359,12 @@ fn main() {
             #[cfg(windows)]
             webview_recovery::stop(app_handle);
         }
-        tauri::RunEvent::Exit if remote_launch => {}
+        tauri::RunEvent::Exit if remote_launch => {
+            #[cfg(windows)]
+            webview_recovery::stop(app_handle);
+            usage::stop_usage_collector(app_handle);
+            app_handle.state::<AppInstanceGuardState>().release();
+        }
         tauri::RunEvent::ExitRequested { api, code, .. } => {
             #[cfg(windows)]
             webview_recovery::stop(app_handle);
@@ -3401,6 +3416,7 @@ fn main() {
                     shutdown_managed_core(process_state.inner(), gui_config_state.inner());
                 }
             }
+            app_handle.state::<AppInstanceGuardState>().release();
         }
         _ => {}
     });

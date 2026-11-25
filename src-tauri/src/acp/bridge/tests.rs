@@ -124,7 +124,11 @@ fn stalled_stream_releases_the_writer_even_when_receiver_stays_open() {
 
 fn bridge_fixture() -> (tauri::App<tauri::test::MockRuntime>, PathBuf) {
     let app = tauri::test::mock_app();
-    app.manage(AcpState::default());
+    let state = AcpState::default();
+    let mut pool = request_pool::PoolSettings::default();
+    pool.queue_wait_ms = 0;
+    state.request_pool.set_settings(pool);
+    app.manage(state);
     let directory = crate::unique_test_temp_path("acp-enablement");
     prepare_profile(&directory).unwrap();
     mark_session(app.state::<AcpState>().inner(), &fake_session(), &directory).unwrap();
@@ -174,6 +178,7 @@ fn successful_login_refresh_relogin_and_account_switch_do_not_enable_api() {
             port: 0,
             account_pool: false,
             prompt_profile: PromptProfile::Append,
+            ..Settings::default()
         },
     )
     .unwrap();
@@ -437,6 +442,7 @@ async fn restore_only_runs_for_explicit_saved_enablement() {
             port: 12345,
             account_pool: false,
             prompt_profile: PromptProfile::Append,
+            ..Settings::default()
         },
     )
     .unwrap();
@@ -452,6 +458,7 @@ async fn restore_only_runs_for_explicit_saved_enablement() {
             port: 12345,
             account_pool: false,
             prompt_profile: PromptProfile::Append,
+            ..Settings::default()
         },
     )
     .unwrap();
@@ -479,6 +486,7 @@ async fn disable_wins_over_a_restore_that_already_started_connecting() {
             port: 0,
             account_pool: false,
             prompt_profile: PromptProfile::Append,
+            ..Settings::default()
         },
     )
     .unwrap();
@@ -1562,6 +1570,104 @@ fn fake_official_server() {
                     std::io::stdout().flush().unwrap();
                     std::thread::sleep(Duration::from_secs(15));
                 }
+                if prompt == "short-wait" {
+                    let account = std::env::var("ECPA_ACP_TEST_ACCOUNT")
+                        .unwrap_or_else(|_| "default".into());
+                    std::thread::sleep(Duration::from_millis(250));
+                    println!(
+                        "{}",
+                        json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"isolated-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":account}}}})
+                    );
+                    println!(
+                        "{}",
+                        json!({"jsonrpc":"2.0","id":value["id"],"result":{"stopReason":"end_turn"}})
+                    );
+                    std::io::stdout().flush().unwrap();
+                    continue;
+                }
+                if prompt == "proxy-echo" {
+                    let account = std::env::var("ECPA_ACP_TEST_ACCOUNT")
+                        .unwrap_or_else(|_| "default".into());
+                    let proxy = std::env::var("ECPA_ACP_TEST_PROXY").unwrap_or_default();
+                    println!(
+                        "{}",
+                        json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"isolated-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":format!("account={account};proxy={proxy}")}}}})
+                    );
+                    println!(
+                        "{}",
+                        json!({"jsonrpc":"2.0","id":value["id"],"result":{"stopReason":"end_turn"}})
+                    );
+                    std::io::stdout().flush().unwrap();
+                    continue;
+                }
+                if prompt == "failover-on-default" {
+                    let account = std::env::var("ECPA_ACP_TEST_ACCOUNT")
+                        .unwrap_or_else(|_| "default".into());
+                    if account == "default" {
+                        println!(
+                            "{}",
+                            json!({"jsonrpc":"2.0","id":value["id"],"error":{"code":-32000,"message":"rate limited","data":{"status":"RESOURCE_EXHAUSTED"}}})
+                        );
+                    } else {
+                        println!(
+                            "{}",
+                            json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"isolated-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":format!("served-by:{account}")}}}})
+                        );
+                        println!(
+                            "{}",
+                            json!({"jsonrpc":"2.0","id":value["id"],"result":{"stopReason":"end_turn"}})
+                        );
+                    }
+                    std::io::stdout().flush().unwrap();
+                    continue;
+                }
+                if prompt == "failover-auth-on-default" {
+                    let account = std::env::var("ECPA_ACP_TEST_ACCOUNT")
+                        .unwrap_or_else(|_| "default".into());
+                    if account == "default" {
+                        println!(
+                            "{}",
+                            json!({"jsonrpc":"2.0","id":value["id"],"error":{"code":-32000,"message":"auth expired","data":{"status":"UNAUTHENTICATED"}}})
+                        );
+                    } else {
+                        println!(
+                            "{}",
+                            json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"isolated-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":format!("served-by:{account}")}}}})
+                        );
+                        println!(
+                            "{}",
+                            json!({"jsonrpc":"2.0","id":value["id"],"result":{"stopReason":"end_turn"}})
+                        );
+                    }
+                    std::io::stdout().flush().unwrap();
+                    continue;
+                }
+                if prompt == "midstream-quota-on-default" {
+                    let account = std::env::var("ECPA_ACP_TEST_ACCOUNT")
+                        .unwrap_or_else(|_| "default".into());
+                    if account == "default" {
+                        println!(
+                            "{}",
+                            json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"isolated-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"partial-"}}}})
+                        );
+                        std::io::stdout().flush().unwrap();
+                        println!(
+                            "{}",
+                            json!({"jsonrpc":"2.0","id":value["id"],"error":{"code":-32000,"message":"quota midstream","data":{"status":"RESOURCE_EXHAUSTED"}}})
+                        );
+                    } else {
+                        println!(
+                            "{}",
+                            json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"isolated-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":format!("REPLAYED-BY:{account}")}}}})
+                        );
+                        println!(
+                            "{}",
+                            json!({"jsonrpc":"2.0","id":value["id"],"result":{"stopReason":"end_turn"}})
+                        );
+                    }
+                    std::io::stdout().flush().unwrap();
+                    continue;
+                }
                 for text in ["ACP_", "OK"] {
                     println!(
                         "{}",
@@ -1580,7 +1686,7 @@ fn fake_official_server() {
     }
 }
 
-fn spawn_fake(executable: &Path, profile: &Path, _: &str) -> Result<rpc::Client, String> {
+fn spawn_fake(executable: &Path, profile: &Path, proxy: &str) -> Result<rpc::Client, String> {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
         .args([
@@ -1589,6 +1695,7 @@ fn spawn_fake(executable: &Path, profile: &Path, _: &str) -> Result<rpc::Client,
             "--nocapture",
         ])
         .env("ECPA_ACP_BRIDGE_TEST_HELPER", "1")
+        .env("ECPA_ACP_TEST_PROXY", proxy)
         .env(
             "ECPA_ACP_TEST_ACCOUNT",
             if accounts::is_isolated_home(profile) {
@@ -1829,7 +1936,7 @@ async fn authenticated_http_bridge_lists_models_completes_streams_and_cancels_di
     assert_eq!(busy_response.status(), 429);
     drop(response);
     tokio::time::timeout(Duration::from_secs(5), async {
-        while app.state::<AcpState>().snapshot().unwrap().busy {
+        while app.state::<AcpState>().request_pool.active_count() > 0 {
             tokio::time::sleep(Duration::from_millis(30)).await;
         }
     })
@@ -2870,7 +2977,7 @@ async fn opt_in_pool_uses_distinct_accounts_and_keeps_continuation_sticky() {
     };
     let ready = || async {
         tokio::time::timeout(Duration::from_secs(4), async {
-            while state.snapshot().unwrap().busy {
+            while state.request_pool.active_count() > 0 {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         })
@@ -2882,7 +2989,13 @@ async fn opt_in_pool_uses_distinct_accounts_and_keeps_continuation_sticky() {
     assert_eq!(route().send().await.unwrap().status(), 429);
     drop(legacy);
     ready().await;
-    *state.request_pool.root.lock().unwrap() = Some(directory.clone());
+    {
+        let mut pool = state.request_pool.settings();
+        pool.account_pool = true;
+        pool.routing_strategy = RoutingStrategy::FillFirst;
+        state.request_pool.set_settings(pool);
+        *state.request_pool.root.lock().unwrap() = Some(directory.clone());
+    }
     let preferred: Value = route()
         .send()
         .await
@@ -2916,11 +3029,14 @@ async fn opt_in_pool_uses_distinct_accounts_and_keeps_continuation_sticky() {
     };
     assert_eq!(continue_routed().send().await.unwrap().status(), 429);
     assert_eq!(route().send().await.unwrap().status(), 429);
-    assert!(begin(app.handle(), "logout").is_err());
+    // Destructive exclusive locks on busy accounts must be rejected while API traffic is active.
+    assert!(lock_account_exclusive(app.handle(), "default").is_err());
+    assert!(lock_account_exclusive(app.handle(), &saved.id).is_err());
     state.cancel();
     drop(primary);
     drop(secondary);
     ready().await;
+    state.request_pool.mark_running();
     let sticky: Value = continue_routed()
         .send()
         .await
@@ -3032,6 +3148,7 @@ async fn real_cpa_native_profile(policy: PromptProfile) {
             port: bridge_port,
             account_pool: false,
             prompt_profile: policy,
+            ..Settings::default()
         },
     )
     .unwrap();
@@ -3214,5 +3331,427 @@ async fn real_cpa_native_profile(policy: PromptProfile) {
             std::fs::read_to_string(log_path).unwrap_or_default()
         );
     }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn high_concurrency_pool_parallel_slots_and_async_queue_wait() {
+    let (app, directory) = bridge_fixture();
+    prepare_profile(&directory).unwrap();
+    accounts::mark_saved(&directory).unwrap();
+    accounts::set_active_email(&directory, Some("primary@example.test".into())).unwrap();
+    accounts::update_settings(
+        &directory,
+        "default",
+        &accounts::AccountSettingsPatch {
+            max_concurrency: Some(2),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut secondary =
+        accounts::PendingAccount::new_isolated(&directory, "Pool B", false).unwrap();
+    let token = accounts::isolated_token(&secondary.directory().unwrap());
+    std::fs::create_dir_all(token.parent().unwrap()).unwrap();
+    crate::write_codex_private_file(&token, b"synthetic-token").unwrap();
+    secondary
+        .commit_replacing(Some("secondary@example.test".into()), None, false)
+        .unwrap();
+    accounts::update_settings(
+        &directory,
+        &secondary.id,
+        &accounts::AccountSettingsPatch {
+            max_concurrency: Some(2),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let (url, stop, server) = native_listener(&app, &directory).await;
+    let state = app.state::<AcpState>();
+    {
+        let mut pool = state.request_pool.settings();
+        pool.account_pool = true;
+        pool.routing_strategy = RoutingStrategy::RoundRobin;
+        pool.max_global_concurrency = 4;
+        pool.queue_wait_ms = 2500;
+        state.request_pool.set_settings(pool);
+        *state.request_pool.root.lock().unwrap() = Some(directory.clone());
+    }
+
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let started = std::time::Instant::now();
+    // 5 concurrent requests across 4 parallel slots (2 accounts x 2 concurrency):
+    // first 4 run concurrently (~250ms), 5th queues and succeeds once a slot releases.
+    let mut handles = Vec::new();
+    for _ in 0..5 {
+        let http = http.clone();
+        let url = url.clone();
+        handles.push(tokio::spawn(async move {
+            let reply: Value = native_request(
+                &http,
+                &url,
+                json!({"model":"acp/test-model","input":"short-wait"}),
+            )
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+            reply["output"][0]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        }));
+    }
+    let mut served = Vec::new();
+    for handle in handles {
+        served.push(handle.await.unwrap());
+    }
+    let elapsed = started.elapsed();
+    assert_eq!(served.len(), 5);
+    assert!(
+        served.iter().any(|id| id == "default") && served.iter().any(|id| id == &secondary.id),
+        "round-robin pool should spread load across both accounts: {served:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "5 requests over 4 slots should run in parallel + queue wakeup, took {elapsed:?}"
+    );
+    state.agents.clear();
+    stop.cancel();
+    server.await.unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn pre_output_failover_records_cooldown_and_never_replays_midstream() {
+    let (app, directory) = bridge_fixture();
+    prepare_profile(&directory).unwrap();
+    accounts::mark_saved(&directory).unwrap();
+    accounts::set_active_email(&directory, Some("primary@example.test".into())).unwrap();
+    let mut backup =
+        accounts::PendingAccount::new_isolated(&directory, "Backup", false).unwrap();
+    let token = accounts::isolated_token(&backup.directory().unwrap());
+    std::fs::create_dir_all(token.parent().unwrap()).unwrap();
+    crate::write_codex_private_file(&token, b"synthetic-token").unwrap();
+    backup
+        .commit_replacing(Some("backup@example.test".into()), None, false)
+        .unwrap();
+
+    let (url, stop, server) = native_listener(&app, &directory).await;
+    let state = app.state::<AcpState>();
+    {
+        let mut pool = state.request_pool.settings();
+        pool.account_pool = true;
+        pool.routing_strategy = RoutingStrategy::FillFirst;
+        pool.max_failover_attempts = 2;
+        pool.cooldown_base_secs = 60;
+        pool.cooldown_max_secs = 300;
+        pool.queue_wait_ms = 0;
+        state.request_pool.set_settings(pool);
+        *state.request_pool.root.lock().unwrap() = Some(directory.clone());
+    }
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+
+    // 1. Pre-output Quota (429) on default transparently fails over to backup (non-stream).
+    let non_stream: Value = native_request(
+        &http,
+        &url,
+        json!({"model":"acp/test-model","input":"failover-on-default"}),
+    )
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(
+        non_stream["output"][0]["content"][0]["text"],
+        format!("served-by:{}", backup.id)
+    );
+    let cooldowns = state.request_pool.cooldowns_by_account();
+    assert!(
+        cooldowns.get("default").is_some_and(|list| list
+            .iter()
+            .any(|c| c.model.as_deref() == Some("test-model") && c.reason == "rate_limited")),
+        "default account should record per-model quota cooldown: {cooldowns:?}"
+    );
+
+    // 2. Reset cooldown, then verify streaming pre-output failover ALSO succeeds seamlessly.
+    state.reset_account_health(Some("default"));
+    assert!(state.request_pool.cooldowns_by_account().is_empty());
+    let stream_text = native_request(
+        &http,
+        &url,
+        json!({"model":"acp/test-model","input":"failover-on-default","stream":true}),
+    )
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .text()
+    .await
+    .unwrap();
+    assert!(
+        stream_text.contains(&format!("served-by:{}", backup.id)),
+        "streaming pre-output failure should fail over transparently: {stream_text}"
+    );
+
+    // 3. Pre-output Authentication (401) marks default AuthRequired and fails over to backup.
+    state.reset_account_health(Some("default"));
+    let auth_failover: Value = native_request(
+        &http,
+        &url,
+        json!({"model":"acp/test-model","input":"failover-auth-on-default"}),
+    )
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(
+        auth_failover["output"][0]["content"][0]["text"],
+        format!("served-by:{}", backup.id)
+    );
+    assert_eq!(
+        state.snapshot().unwrap().account_runtime["default"].auth_state,
+        AccountAuthState::AuthRequired
+    );
+
+    // 4. Mid-stream failure AFTER first text chunk MUST NOT replay on backup!
+    state.reset_account_health(Some("default"));
+    let midstream = native_request(
+        &http,
+        &url,
+        json!({"model":"acp/test-model","input":"midstream-quota-on-default","stream":true}),
+    )
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .text()
+    .await
+    .unwrap();
+    assert!(
+        midstream.contains("partial-"),
+        "first chunk should arrive: {midstream}"
+    );
+    assert!(
+        midstream.contains("rate_limit_error"),
+        "midstream should emit SSE error: {midstream}"
+    );
+    assert!(
+        !midstream.contains("REPLAYED-BY"),
+        "midstream failure must NEVER replay on another account: {midstream}"
+    );
+
+    state.agents.clear();
+    stop.cancel();
+    server.await.unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn per_account_proxy_aggregated_models_and_non_blocking_account_ops() {
+    let (app, directory) = bridge_fixture();
+    prepare_profile(&directory).unwrap();
+    accounts::mark_saved(&directory).unwrap();
+    accounts::set_active_email(&directory, Some("primary@example.test".into())).unwrap();
+    accounts::update_settings(
+        &directory,
+        "default",
+        &accounts::AccountSettingsPatch {
+            proxy_url: Some("direct".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut second =
+        accounts::PendingAccount::new_isolated(&directory, "Custom Proxy", false).unwrap();
+    let token = accounts::isolated_token(&second.directory().unwrap());
+    std::fs::create_dir_all(token.parent().unwrap()).unwrap();
+    crate::write_codex_private_file(&token, b"synthetic-token").unwrap();
+    second
+        .commit_replacing(Some("second@example.test".into()), None, false)
+        .unwrap();
+    accounts::update_settings(
+        &directory,
+        &second.id,
+        &accounts::AccountSettingsPatch {
+            proxy_url: Some("http://127.0.0.1:18888".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let (url, stop, server) = native_listener(&app, &directory).await;
+    // Set global proxy to verify `direct` vs per-account override.
+    let mut gui_cfg = app.state::<crate::GuiConfigState>().snapshot().unwrap();
+    gui_cfg.proxy_url = "http://127.0.0.1:19999".into();
+    app.state::<crate::GuiConfigState>()
+        .replace_external(gui_cfg)
+        .unwrap();
+    let base = url.trim_end_matches("/responses").to_string();
+    let state = app.state::<AcpState>();
+    {
+        let mut status = state.status.lock().unwrap();
+        status.accounts = accounts::read(&directory).unwrap().accounts;
+    }
+    state.record_account_verified(
+        &second.id,
+        vec![
+            AcpModel {
+                id: "test-model".into(),
+                name: "Test model".into(),
+                reasoning_levels: Vec::new(),
+                reasoning_variants: BTreeMap::new(),
+            },
+            AcpModel {
+                id: "pool-exclusive-model".into(),
+                name: "Pool Exclusive".into(),
+                reasoning_levels: Vec::new(),
+                reasoning_variants: BTreeMap::new(),
+            },
+        ],
+    );
+    {
+        let mut pool = state.request_pool.settings();
+        pool.account_pool = true;
+        pool.routing_strategy = RoutingStrategy::FillFirst;
+        pool.queue_wait_ms = 0;
+        state.request_pool.set_settings(pool);
+        *state.request_pool.root.lock().unwrap() = Some(directory.clone());
+    }
+
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+
+    // 1. /v1/models aggregates models from all enabled verified pool accounts.
+    let models_reply: Value = http
+        .get(format!("{base}/models"))
+        .bearer_auth("internal-test-key")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let advertised: Vec<&str> = models_reply["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|m| m["id"].as_str())
+        .collect();
+    assert!(advertised.contains(&"acp/test-model"), "{advertised:?}");
+    assert!(
+        advertised.contains(&"acp/pool-exclusive-model"),
+        "{advertised:?}"
+    );
+
+    // 2. Per-account proxy propagation (`direct` on default -> empty proxy; custom proxy on second).
+    let primary_proxy: Value = native_request(
+        &http,
+        &url,
+        json!({"model":"acp/test-model","input":"proxy-echo"}),
+    )
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(
+        primary_proxy["output"][0]["content"][0]["text"],
+        "account=default;proxy="
+    );
+
+    // Start a blocking request on default so second serves next request AND we test non-blocking ops.
+    let mut blocking = native_request(
+        &http,
+        &url,
+        json!({"model":"acp/test-model","input":"wait","stream":true}),
+    )
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap();
+    assert!(blocking.chunk().await.unwrap().is_some());
+
+    let second_proxy: Value = native_request(
+        &http,
+        &url,
+        json!({"model":"acp/test-model","input":"proxy-echo"}),
+    )
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(
+        second_proxy["output"][0]["content"][0]["text"],
+        format!("account={};proxy=http://127.0.0.1:18888", second.id)
+    );
+
+    // 3. While default is serving an active API request:
+    // - Mutating busy default is safely rejected.
+    assert!(remove_account_local(state.inner(), &directory, "default").is_err());
+    // - Updating or removing idle second account succeeds without blocking or killing default's request!
+    accounts::update_settings(
+        &directory,
+        &second.id,
+        &accounts::AccountSettingsPatch {
+            weight: Some(4),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    remove_account_local(state.inner(), &directory, &second.id).unwrap();
+    assert_eq!(
+        state.request_pool.active_for("default"),
+        1,
+        "removing idle secondary account must not cancel active primary request"
+    );
+
+    drop(blocking);
+    tokio::time::timeout(Duration::from_secs(4), async {
+        while state.request_pool.active_count() > 0 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    state.agents.clear();
+    stop.cancel();
+    server.await.unwrap();
     std::fs::remove_dir_all(directory).unwrap();
 }

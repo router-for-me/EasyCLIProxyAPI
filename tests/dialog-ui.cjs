@@ -42,7 +42,7 @@ const path = require('node:path');
       return page;
     };
     const agents = async (page, tab) => {
-      await page.locator('.nav-section button').nth(4).click();
+      await page.locator('.nav-section').getByRole('button', { name: 'Agent Configuration', exact: true }).click();
       if (tab) await page.locator(`#agent-subpage-tab-${tab}`).click();
       return page.locator('main');
     };

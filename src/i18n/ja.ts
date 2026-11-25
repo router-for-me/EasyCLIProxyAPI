@@ -2610,5 +2610,5 @@ export const jaOverrides = {
   'notifications.signIn.title': '{provider} アカウントの再ログインが必要です',
   'notifications.signIn.body': '{name} のログインを更新できなくなりました。EasyCLIProxyAPI を開き、カードの「再ログイン」を選んでください。',
   'config.software.signInNotifications': 'ログイン通知',
-  'config.software.signInNotificationsDescription': 'OAuth アカウントのログインが期限切れになり、再ログインが必要なときにシステム通知を表示します。',
+  'config.software.signInNotificationsDescription': 'OAuth アカウントのログインが期限切れになり、再ログインが必要なときにシステム通知を表示します',
 } satisfies Record<MessageKey, string>;

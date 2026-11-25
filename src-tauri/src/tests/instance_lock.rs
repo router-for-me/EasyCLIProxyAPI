@@ -26,6 +26,21 @@ fn app_instance_guard_rejects_a_second_copy_and_releases_on_drop() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn app_instance_guard_state_release_allows_restarted_instance_to_acquire_lock() {
+    let root = agent_test_home("instance-lock-restart");
+    let state = AppInstanceGuardState::new(acquire_app_instance_guard_for(&root).unwrap());
+
+    assert!(acquire_app_instance_guard_for(&root).is_err());
+
+    state.release();
+    state.release();
+
+    let restarted = acquire_app_instance_guard_for(&root).unwrap();
+    drop(restarted);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn a_second_launch_asks_the_running_copy_to_show_its_window() {

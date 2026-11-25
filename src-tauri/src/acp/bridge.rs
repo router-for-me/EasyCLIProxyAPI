@@ -1,13 +1,14 @@
 pub(super) mod responses;
 
 use super::agent::{Identity, Protocol};
-use super::request_pool::{begin_request, AdmissionError};
+use super::request_pool::{acquire_request, AdmissionError, PoolSettings, RoutingStrategy};
 use super::*;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use http_body_util::{BodyExt, Full, Limited, StreamBody};
 use hyper::body::{Bytes, Frame, Incoming};
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
+use std::collections::BTreeSet;
 use std::convert::Infallible;
 use tokio_util::sync::CancellationToken;
 
@@ -24,19 +25,73 @@ pub(super) type SpawnClient = fn(&Path, &Path, &str) -> Result<rpc::Client, Stri
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum PromptProfile {
+pub(crate) enum PromptProfile {
     #[default]
     Append,
     FirstTurnContext,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct Settings {
     enabled: bool,
     port: u16,
     account_pool: bool,
     prompt_profile: PromptProfile,
+    routing_strategy: RoutingStrategy,
+    max_global_concurrency: usize,
+    max_live_sessions: usize,
+    queue_wait_ms: u64,
+    max_failover_attempts: usize,
+    cooldown_base_secs: u64,
+    cooldown_max_secs: u64,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        let pool = PoolSettings::default();
+        Self {
+            enabled: false,
+            port: 0,
+            account_pool: pool.account_pool,
+            prompt_profile: pool.prompt_profile,
+            routing_strategy: pool.routing_strategy,
+            max_global_concurrency: pool.max_global_concurrency,
+            max_live_sessions: pool.max_live_sessions,
+            queue_wait_ms: pool.queue_wait_ms,
+            max_failover_attempts: pool.max_failover_attempts,
+            cooldown_base_secs: pool.cooldown_base_secs,
+            cooldown_max_secs: pool.cooldown_max_secs,
+        }
+    }
+}
+
+impl Settings {
+    fn pool_settings(&self) -> PoolSettings {
+        PoolSettings {
+            account_pool: self.account_pool,
+            routing_strategy: self.routing_strategy,
+            max_global_concurrency: self.max_global_concurrency,
+            max_live_sessions: self.max_live_sessions,
+            queue_wait_ms: self.queue_wait_ms,
+            max_failover_attempts: self.max_failover_attempts,
+            cooldown_base_secs: self.cooldown_base_secs,
+            cooldown_max_secs: self.cooldown_max_secs,
+            prompt_profile: self.prompt_profile,
+        }
+    }
+
+    fn apply_pool_settings(&mut self, pool: &PoolSettings) {
+        self.account_pool = pool.account_pool;
+        self.routing_strategy = pool.routing_strategy;
+        self.max_global_concurrency = pool.max_global_concurrency;
+        self.max_live_sessions = pool.max_live_sessions;
+        self.queue_wait_ms = pool.queue_wait_ms;
+        self.max_failover_attempts = pool.max_failover_attempts;
+        self.cooldown_base_secs = pool.cooldown_base_secs;
+        self.cooldown_max_secs = pool.cooldown_max_secs;
+        self.prompt_profile = pool.prompt_profile;
+    }
 }
 
 pub(super) struct Runtime {
@@ -77,6 +132,22 @@ fn read_settings(profile: &Path) -> Result<Settings, String> {
 
 pub(super) fn upstream_enabled(profile: &Path) -> Result<bool, String> {
     Ok(read_settings(profile)?.enabled)
+}
+
+pub(super) fn read_pool_settings(profile: &Path) -> Result<PoolSettings, String> {
+    let settings = read_settings(profile)?;
+    let pool = settings.pool_settings();
+    if pool.validate().is_err() {
+        return Ok(PoolSettings::default());
+    }
+    Ok(pool)
+}
+
+pub(super) fn save_pool_settings(profile: &Path, pool: &PoolSettings) -> Result<(), String> {
+    pool.validate()?;
+    let mut settings = read_settings(profile)?;
+    settings.apply_pool_settings(pool);
+    save_settings(profile, &settings)
 }
 
 fn save_settings(profile: &Path, settings: &Settings) -> Result<(), String> {
@@ -262,15 +333,9 @@ async fn set_enabled<R: tauri::Runtime>(
             .map_err(|_| "ACP bridge state unavailable")?;
         let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
         if settings.enabled || !settings_path(profile).is_file() {
-            save_settings(
-                profile,
-                &Settings {
-                    enabled: false,
-                    port: settings.port,
-                    account_pool: settings.account_pool,
-                    prompt_profile: settings.prompt_profile,
-                },
-            )?;
+            let mut updated = settings.clone();
+            updated.enabled = false;
+            save_settings(profile, &updated)?;
         }
         status.upstream_enabled = false;
         status.upstream_url = None;
@@ -280,6 +345,7 @@ async fn set_enabled<R: tauri::Runtime>(
             .root
             .lock()
             .map_err(|_| "ACP pool unavailable")? = None;
+        state.request_pool.cancel();
         state.agents.clear();
         drop(status);
         drop(runtime);
@@ -287,8 +353,29 @@ async fn set_enabled<R: tauri::Runtime>(
             format!("ACP API access is off, but provider cleanup failed: {error}")
         })?;
     } else {
+        let pool_settings = settings.pool_settings();
+        state.request_pool.set_settings(pool_settings.clone());
+        state.agents.set_max_live(pool_settings.max_live_sessions);
+        state.request_pool.mark_running();
+        *state
+            .request_pool
+            .root
+            .lock()
+            .map_err(|_| "ACP pool unavailable")? =
+            settings.account_pool.then(|| profile.to_path_buf());
         let status = state.snapshot()?;
-        if !status.authenticated || status.models.is_empty() {
+        let models = state.aggregated_models();
+        let ready = if settings.account_pool {
+            state.has_ready_pool_account() && !models.is_empty()
+        } else {
+            status.authenticated && !models.is_empty()
+        };
+        if !ready {
+            *state
+                .request_pool
+                .root
+                .lock()
+                .map_err(|_| "ACP pool unavailable")? = None;
             return Err("Connect ACP and load available models first".into());
         }
         let existing = state
@@ -298,7 +385,7 @@ async fn set_enabled<R: tauri::Runtime>(
             .as_ref()
             .map(|runtime| (runtime.url.clone(), runtime.key.clone()));
         if let Some((url, key)) = existing {
-            register_at(config, Some(&url), &key, &status.models)?;
+            register_at(config, Some(&url), &key, &models)?;
         } else {
             prepare_profile(profile)?;
             let listener =
@@ -321,16 +408,11 @@ async fn set_enabled<R: tauri::Runtime>(
                 key: key.clone(),
                 config: config.into(),
             };
-            register_at(config, Some(&url), &key, &status.models)?;
-            if let Err(error) = save_settings(
-                profile,
-                &Settings {
-                    enabled: true,
-                    port,
-                    account_pool: settings.account_pool,
-                    prompt_profile: settings.prompt_profile,
-                },
-            ) {
+            register_at(config, Some(&url), &key, &models)?;
+            let mut updated = settings.clone();
+            updated.enabled = true;
+            updated.port = port;
+            if let Err(error) = save_settings(profile, &updated) {
                 let rollback = register_at(config, None, "", &[]).err();
                 return Err(format!(
                     "{error}{}",
@@ -358,36 +440,117 @@ async fn set_enabled<R: tauri::Runtime>(
                 rpc::Client::spawn,
             ));
         }
-        *state
-            .request_pool
-            .root
-            .lock()
-            .map_err(|_| "ACP pool unavailable")? =
-            settings.account_pool.then(|| profile.to_path_buf());
     }
     drop(_guard);
     let _ = tauri::Emitter::emit(app, crate::CONFIG_FILES_CHANGED_EVENT, ());
     state.snapshot()
 }
 
+fn is_external_dispatch<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+    app.try_state::<crate::remote_cpa::RemoteCpaState>()
+        .is_some_and(|remote| remote.uses_external_dispatch())
+}
+
 pub(crate) async fn restore(app: tauri::AppHandle) {
+    if is_external_dispatch(&app) {
+        return;
+    }
     let result: Result<(), String> = async {
         let profile = profile(&crate::core_base_dir()?);
+        let settings = read_settings(&profile)?;
+        let pool_settings = settings.pool_settings();
+        {
+            let state = app.state::<AcpState>();
+            state.request_pool.set_settings(pool_settings.clone());
+            state.agents.set_max_live(pool_settings.max_live_sessions);
+        }
         restore_if_enabled(&profile, || async {
+            if is_external_dispatch(&app) {
+                return Ok(());
+            }
             if let Err(error) = super::acp_connect(app.clone(), false).await {
-                register(None, "", &[])?;
-                return Err(error);
+                if is_external_dispatch(&app) {
+                    return Ok(());
+                }
+                if settings.account_pool {
+                    let _ = super::verify_all_acp_accounts(app.clone()).await;
+                    if is_external_dispatch(&app) {
+                        return Ok(());
+                    }
+                    if !app.state::<AcpState>().has_ready_pool_account() {
+                        register(None, "", &[])?;
+                        return Err(error);
+                    }
+                } else {
+                    register(None, "", &[])?;
+                    return Err(error);
+                }
+            }
+            if is_external_dispatch(&app) {
+                return Ok(());
             }
             let config = crate::core_install_dir()?.join(crate::CORE_CONFIG_FILE);
             set_enabled(&app, &profile, &config, true, true).await?;
+            if settings.account_pool {
+                // Warm up secondary pool accounts asynchronously without blocking startup.
+                let bg_app = app.clone();
+                let bg_root = profile.clone();
+                tauri::async_runtime::spawn(async move {
+                    if is_external_dispatch(&bg_app) {
+                        return;
+                    }
+                    let Ok(home) = bg_app.path().home_dir() else {
+                        return;
+                    };
+                    let Some(executable) = crate::find_antigravity_cli(&home) else {
+                        return;
+                    };
+                    let Ok(registry) = accounts::read(&bg_root) else {
+                        return;
+                    };
+                    let Ok(global_proxy) = bg_app
+                        .state::<crate::GuiConfigState>()
+                        .snapshot()
+                        .map(|c| c.proxy_url)
+                    else {
+                        return;
+                    };
+                    let active = registry.active.clone();
+                    let targets: Vec<accounts::Account> = registry
+                        .accounts
+                        .into_iter()
+                        .filter(|a| a.enabled && a.saved && a.id != active)
+                        .collect();
+                    if targets.is_empty() {
+                        return;
+                    }
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    if super::verify_accounts_batch(
+                        &bg_app,
+                        &bg_root,
+                        &executable,
+                        &global_proxy,
+                        targets,
+                        cancel,
+                    )
+                    .await
+                    .is_ok()
+                        && !is_external_dispatch(&bg_app)
+                    {
+                        let _ = sync_models(bg_app.state::<AcpState>().inner());
+                    }
+                });
+            }
             Ok(())
         })
         .await
     }
     .await;
     if let Err(error) = result {
-        if let Ok(mut status) = app.state::<AcpState>().status.lock() {
-            status.error = Some(error);
+        if !is_external_dispatch(&app) {
+            if let Ok(mut status) = app.state::<AcpState>().status.lock() {
+                status.error = Some(error);
+            }
         }
     }
 }
@@ -403,7 +566,7 @@ async fn restore_if_enabled<F: std::future::Future<Output = Result<(), String>>>
 }
 
 pub(super) fn sync_models(state: &AcpState) -> Result<(), String> {
-    let status = state.snapshot()?;
+    let models = state.aggregated_models();
     let runtime = state
         .bridge
         .lock()
@@ -413,7 +576,7 @@ pub(super) fn sync_models(state: &AcpState) -> Result<(), String> {
             &runtime.config,
             Some(&runtime.url),
             &runtime.key,
-            &status.models,
+            &models,
         )?;
     }
     Ok(())
@@ -427,6 +590,15 @@ async fn serve<R: tauri::Runtime>(
     policy: PromptProfile,
     spawn: SpawnClient,
 ) {
+    {
+        let state = app.state::<AcpState>();
+        state.request_pool.mark_running();
+        if policy != PromptProfile::Append {
+            let mut settings = state.request_pool.settings();
+            settings.prompt_profile = policy;
+            state.request_pool.set_settings(settings);
+        }
+    }
     loop {
         let accepted = tokio::select! {
             _ = stop.cancelled() => break,
@@ -438,7 +610,7 @@ async fn serve<R: tauri::Runtime>(
         let stop = stop.clone();
         tauri::async_runtime::spawn(async move {
             let service = hyper::service::service_fn(move |request| {
-                handle(app.clone(), request, key.clone(), policy, spawn)
+                handle(app.clone(), request, key.clone(), spawn)
             });
             tokio::select! {
                 _ = stop.cancelled() => {},
@@ -462,6 +634,7 @@ fn error(status: StatusCode, message: impl AsRef<str>) -> Response<Body> {
     )
 }
 
+#[derive(Clone)]
 pub(super) struct Completion {
     pub policy: PromptProfile,
     pub model: String,
@@ -1368,21 +1541,69 @@ fn complete<F: FnMut(&str)>(
     Ok(text)
 }
 
+fn is_non_retryable_upstream(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("client disconnected")
+        || lower.contains("request cancelled")
+        || lower.contains("stopped reading")
+        || lower.contains("exceeds 1 mib")
+}
+
+fn record_attempt_failure(
+    state: &AcpState,
+    account_id: &str,
+    model: &str,
+    error: &RunError,
+) -> bool {
+    match error {
+        RunError::InvalidRequest(_) => false,
+        RunError::Rejected(kind) => match kind {
+            rpc::Rejection::InvalidRequest => false,
+            rpc::Rejection::Authentication | rpc::Rejection::Permission => {
+                let message = match kind {
+                    rpc::Rejection::Authentication => "The upstream ACP account needs authentication",
+                    _ => "The upstream ACP service denied permission",
+                };
+                state.record_account_auth_required(account_id, message.to_string());
+                state
+                    .request_pool
+                    .record_failure(account_id, Some(model), *kind);
+                true
+            }
+            rpc::Rejection::Quota
+            | rpc::Rejection::Overloaded
+            | rpc::Rejection::Timeout
+            | rpc::Rejection::Unknown => {
+                state
+                    .request_pool
+                    .record_failure(account_id, Some(model), *kind);
+                true
+            }
+        },
+        RunError::Upstream(message) => {
+            if is_non_retryable_upstream(message) {
+                false
+            } else {
+                state.request_pool.record_spawn_failure(account_id);
+                true
+            }
+        }
+    }
+}
+
 async fn handle<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     request: Request<Incoming>,
     key: String,
-    policy: PromptProfile,
     spawn: SpawnClient,
 ) -> Result<Response<Body>, Infallible> {
-    Ok(handle_inner(app, request, key, policy, spawn).await)
+    Ok(handle_inner(app, request, key, spawn).await)
 }
 
 async fn handle_inner<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     request: Request<Incoming>,
     key: String,
-    policy: PromptProfile,
     spawn: SpawnClient,
 ) -> Response<Body> {
     if request
@@ -1398,12 +1619,13 @@ async fn handle_inner<R: tauri::Runtime>(
         Ok(status) => status,
         Err(e) => return error(StatusCode::SERVICE_UNAVAILABLE, e),
     };
+    let catalog = state.aggregated_models();
     let native = request.uri().path() == "/v1/responses";
     match (request.method().as_str(), request.uri().path()) {
         ("GET", "/v1/models") => {
             return response(
                 StatusCode::OK,
-                json!({"object":"list","data":status.models.iter().map(|model| json!({"id":format!("acp/{}", model.id),"object":"model","created":0,"owned_by":PROVIDER})).collect::<Vec<_>>()}),
+                json!({"object":"list","data":catalog.iter().map(|model| json!({"id":format!("acp/{}", model.id),"object":"model","created":0,"owned_by":PROVIDER})).collect::<Vec<_>>()}),
             )
         }
         ("POST", "/v1/chat/completions" | "/v1/responses") => {}
@@ -1414,12 +1636,23 @@ async fn handle_inner<R: tauri::Runtime>(
             )
         }
     }
-    if !status.upstream_enabled || !status.authenticated {
+    let pool_active = state
+        .request_pool
+        .root
+        .lock()
+        .ok()
+        .is_some_and(|root| root.is_some());
+    if !status.upstream_enabled
+        || (!pool_active && !status.authenticated)
+        || (pool_active && catalog.is_empty() && !status.authenticated)
+    {
         return error(
             StatusCode::SERVICE_UNAVAILABLE,
             "ACP API access is not connected",
         );
     }
+    let pool_settings = state.request_pool.settings();
+    let policy = pool_settings.prompt_profile;
     // Only the private authenticated bridge may carry the executor's derived
     // caller scope. The public executor constructs the request from scratch.
     let caller = if native {
@@ -1468,7 +1701,7 @@ async fn handle_inner<R: tauri::Runtime>(
         Err(e) => return error(StatusCode::BAD_REQUEST, e),
     };
     let full = if native && previous.is_none() {
-        match responses::parse_with_profile(&value, &status.models, None, policy) {
+        match responses::parse_with_profile(&value, &catalog, None, policy) {
             Ok(request) => Some(request),
             Err(e) => return error(StatusCode::BAD_REQUEST, e),
         }
@@ -1509,54 +1742,35 @@ async fn handle_inner<R: tauri::Runtime>(
         .map(|context| &context.identity.account)
         .or(chat_identity.as_ref())
         .or(history_match.as_ref().map(|(_, account, _)| account));
-    let (guard, status) = match begin_request(&app, pinned) {
-        Ok(admitted) => admitted,
-        Err(AdmissionError::Busy) => {
-            return error(
-                StatusCode::TOO_MANY_REQUESTS,
-                "An ACP operation is already running or the account pool is busy",
-            )
-        }
-        Err(AdmissionError::Disconnected) => {
-            return error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "ACP API access is not connected",
-            )
-        }
-        Err(AdmissionError::Stale) => {
-            return error(
-                StatusCode::BAD_REQUEST,
-                "The ACP continuation account is no longer available",
-            )
-        }
-    };
-    let mut request = match if native {
-        responses::parse_with_profile(&value, &status.models, context.as_ref(), policy)
+    let mut parsed_request = match if native {
+        responses::parse_with_profile(&value, &catalog, context.as_ref(), policy)
     } else {
-        parse_with_profile(&value, &status.models, policy)
+        parse_with_profile(&value, &catalog, policy)
     } {
         Ok(request) => request,
         Err(e) => return error(StatusCode::BAD_REQUEST, e),
     };
-    if native && previous.is_none() && history_match.is_none() && !request.results.is_empty() {
+    if native && previous.is_none() && history_match.is_none() && !parsed_request.results.is_empty()
+    {
         return error(
             StatusCode::BAD_REQUEST,
             "A live ACP function output requires previous_response_id",
         );
     }
     if let Some((_, _, count)) = &history_match {
-        if request.results.is_empty() {
-            let suffix = request
+        if parsed_request.results.is_empty() {
+            let suffix = parsed_request
                 .messages
                 .iter()
                 .filter(|m| m["role"] != "system" && m["role"] != "developer")
                 .skip(*count)
                 .cloned()
                 .collect::<Vec<_>>();
-            request.prompt = match plan_prompt(&suffix, &mut request.ignored_parameters, policy) {
-                Ok((prompt, _)) => prompt,
-                Err(e) => return error(StatusCode::BAD_REQUEST, e),
-            };
+            parsed_request.prompt =
+                match plan_prompt(&suffix, &mut parsed_request.ignored_parameters, policy) {
+                    Ok((prompt, _)) => prompt,
+                    Err(e) => return error(StatusCode::BAD_REQUEST, e),
+                };
         }
     }
     let continuation = previous
@@ -1572,21 +1786,19 @@ async fn handle_inner<R: tauri::Runtime>(
             )
         }
     };
-    let profile = guard.account.profile.clone();
-    let proxy = match app.state::<crate::GuiConfigState>().snapshot() {
+    let global_proxy = match app.state::<crate::GuiConfigState>().snapshot() {
         Ok(config) => config.proxy_url,
         Err(e) => return error(StatusCode::SERVICE_UNAVAILABLE, e),
     };
-    let cancel = CancelOnDrop(guard.cancel.clone());
-    let stream = request.stream;
-    let ignored_parameters = request.ignored_parameters.clone();
+    let stream = parsed_request.stream;
+    let ignored_parameters = parsed_request.ignored_parameters.clone();
     if !ignored_parameters.is_empty() {
         eprintln!(
             "ACP compatibility: CLI defaults used; parameters not applied: {}",
             ignored_parameters.join(", ")
         );
     }
-    let model = request.alias.clone();
+    let model = parsed_request.alias.clone();
     let created = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -1607,191 +1819,371 @@ async fn handle_inner<R: tauri::Runtime>(
             NEXT_ID.fetch_add(1, Ordering::Relaxed)
         )
     };
-    let agent_identity = Identity {
-        account: guard.account.clone(),
-        model: request.model.clone(),
-        system: request.system.clone(),
-        instructions_bytes: request.instructions_bytes,
-        tools: request.tools.clone(),
-        caller,
-        protocol: if native {
-            Protocol::Responses
-        } else {
-            Protocol::Chat
-        },
+
+    // Failover is strictly restricted to fresh (unpinned) turns before any
+    // response frame or tool call has been emitted to the client.
+    let can_failover =
+        pinned.is_none() && pool_active && pool_settings.max_failover_attempts > 0;
+    let max_attempts = if can_failover {
+        1 + pool_settings.max_failover_attempts
+    } else {
+        1
     };
-    let resumed = match state.agents.resume(&request, &agent_identity, continuation) {
-        Ok(session) => session,
-        Err(error_message) => return error(StatusCode::BAD_REQUEST, error_message),
-    };
-    let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
-    let mut events = CompletionStream {
-        sender,
-        cancel: guard.cancel.clone(),
-        id: id.clone(),
-        model: model.clone(),
-        created,
-        started: false,
-        native,
-        previous: previous.clone(),
-        sequence: 0,
-        text_started: false,
-    };
-    let worker_app = app.clone();
-    let worker = tauri::async_runtime::spawn_blocking(move || {
-        let _guard = guard;
-        let result: Result<Output, RunError> = (|| {
-            let mut send_text = |part: &str| {
-                if stream {
-                    if events.text(part).is_err() {
-                        _guard.cancel.store(true, Ordering::Release);
-                    }
+    let mut tried_accounts = BTreeSet::new();
+    let mut last_error: Option<RunError> = None;
+
+    for attempt in 0..max_attempts {
+        let (guard, _status) = match acquire_request(
+            &app,
+            pinned,
+            Some(&parsed_request.model),
+            &tried_accounts,
+        )
+        .await
+        {
+            Ok(admitted) => admitted,
+            Err(AdmissionError::Busy) => {
+                if let Some(previous_error) = last_error {
+                    return previous_error.into_response();
                 }
-            };
-            let state = worker_app.state::<AcpState>();
-            let session = match resumed {
-                // The original request already negotiated image capability;
-                // history matching rejects changed attachments on continuation.
-                Some(session) => session,
-                None => {
-                    request.frame_opening().map_err(RunError::InvalidRequest)?;
-                    let mut client = spawn(&executable, &profile, &proxy)?;
-                    client.initialize(&_guard.cancel)?;
-                    if !client.supports_prompt_images() && has_images(&request.prompt) {
-                        return Err(RunError::InvalidRequest(IMAGE_UNSUPPORTED.into()));
-                    }
-                    if !native && request.tools.is_empty() {
-                        let text =
-                            complete(&mut client, &profile, &request, &_guard.cancel, send_text)?;
-                        return Ok(Output {
-                            text,
-                            calls: Vec::new(),
-                        });
-                    }
-                    state.agents.start(&request, agent_identity, client)?
+                return error(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "An ACP operation is already running or the account pool is busy",
+                );
+            }
+            Err(AdmissionError::NoHealthyAccount(message)) => {
+                if let Some(previous_error) = last_error {
+                    return previous_error.into_response();
                 }
-            };
-            let output = state.agents.collect(
-                &session,
-                &request,
-                &_guard.cancel,
-                preserve_transcript,
-                &mut send_text,
-            )?;
-            if stream && !native && !output.calls.is_empty() {
-                let calls: Vec<_> = output
-                    .calls
-                    .iter()
-                    .enumerate()
-                    .map(|(index, call)| {
-                        let mut call = call.clone();
-                        call["index"] = json!(index);
-                        call
-                    })
-                    .collect();
-                events.delta(json!({"tool_calls":calls}))?;
+                let code = if message.contains("cooling down") {
+                    StatusCode::TOO_MANY_REQUESTS
+                } else {
+                    StatusCode::SERVICE_UNAVAILABLE
+                };
+                return error(code, message);
             }
-            if _guard.cancel.load(Ordering::Acquire) {
-                return Err("ACP API client disconnected or request cancelled"
-                    .to_owned()
-                    .into());
+            Err(AdmissionError::Disconnected | AdmissionError::Cancelled) => {
+                if let Some(previous_error) = last_error {
+                    return previous_error.into_response();
+                }
+                return error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "ACP API access is not connected",
+                );
             }
-            state.agents.publish(
-                &session,
-                native.then_some(events.id.as_str()),
-                &output,
-                &_guard.cancel,
-            )?;
-            Ok(output)
-        })();
-        if stream {
-            match result {
-                Ok(output) => {
-                    if events.finish(&output).is_err() {
-                        let state = worker_app.state::<AcpState>();
-                        if native {
-                            state.agents.abandon(&events.id);
+            Err(AdmissionError::Stale) => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "The ACP continuation account is no longer available",
+                );
+            }
+        };
+
+        let account_id = guard.account.id.clone();
+        tried_accounts.insert(account_id.clone());
+        let profile = guard.account.profile.clone();
+        let proxy = accounts::resolve_proxy(guard.proxy_url.as_deref(), &global_proxy);
+        let cancel = CancelOnDrop(guard.cancel.clone());
+        let mut request = parsed_request.clone();
+        let agent_identity = Identity {
+            account: guard.account.clone(),
+            model: request.model.clone(),
+            system: request.system.clone(),
+            instructions_bytes: request.instructions_bytes,
+            tools: request.tools.clone(),
+            caller: caller.clone(),
+            protocol: if native {
+                Protocol::Responses
+            } else {
+                Protocol::Chat
+            },
+        };
+        let resumed = match state.agents.resume(&request, &agent_identity, continuation) {
+            Ok(session) => session,
+            Err(error_message) => return error(StatusCode::BAD_REQUEST, error_message),
+        };
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(64);
+        let mut events = CompletionStream {
+            sender,
+            cancel: guard.cancel.clone(),
+            id: id.clone(),
+            model: model.clone(),
+            created,
+            started: false,
+            native,
+            previous: previous.clone(),
+            sequence: 0,
+            text_started: false,
+        };
+        let worker_app = app.clone();
+        let worker_executable = executable.clone();
+        let worker_account_id = account_id.clone();
+        let worker_model = request.model.clone();
+        let worker = tauri::async_runtime::spawn_blocking(move || {
+            let _guard = guard;
+            let result: Result<Output, RunError> = (|| {
+                let mut send_text = |part: &str| {
+                    if stream {
+                        if events.text(part).is_err() {
+                            _guard.cancel.store(true, Ordering::Release);
                         }
-                        for call in &output.calls {
-                            if let Some(id) = call["id"].as_str() {
-                                state.agents.abandon(id);
+                    }
+                };
+                let state = worker_app.state::<AcpState>();
+                let session = match resumed {
+                    // The original request already negotiated image capability;
+                    // history matching rejects changed attachments on continuation.
+                    Some(session) => session,
+                    None => {
+                        request.frame_opening().map_err(RunError::InvalidRequest)?;
+                        let mut client = spawn(&worker_executable, &profile, &proxy)?;
+                        client.initialize(&_guard.cancel)?;
+                        if !client.supports_prompt_images() && has_images(&request.prompt) {
+                            return Err(RunError::InvalidRequest(IMAGE_UNSUPPORTED.into()));
+                        }
+                        if !native && request.tools.is_empty() {
+                            let text = complete(
+                                &mut client,
+                                &profile,
+                                &request,
+                                &_guard.cancel,
+                                send_text,
+                            )?;
+                            return Ok(Output {
+                                text,
+                                calls: Vec::new(),
+                            });
+                        }
+                        state.agents.start(&request, agent_identity, client)?
+                    }
+                };
+                let output = state.agents.collect(
+                    &session,
+                    &request,
+                    &_guard.cancel,
+                    preserve_transcript,
+                    &mut send_text,
+                )?;
+                if stream && !native && !output.calls.is_empty() {
+                    let calls: Vec<_> = output
+                        .calls
+                        .iter()
+                        .enumerate()
+                        .map(|(index, call)| {
+                            let mut call = call.clone();
+                            call["index"] = json!(index);
+                            call
+                        })
+                        .collect();
+                    events.delta(json!({"tool_calls":calls}))?;
+                }
+                if _guard.cancel.load(Ordering::Acquire) {
+                    return Err("ACP API client disconnected or request cancelled"
+                        .to_owned()
+                        .into());
+                }
+                state.agents.publish(
+                    &session,
+                    native.then_some(events.id.as_str()),
+                    &output,
+                    &_guard.cancel,
+                )?;
+                Ok(output)
+            })();
+            if stream {
+                match result {
+                    Ok(output) => {
+                        worker_app
+                            .state::<AcpState>()
+                            .request_pool
+                            .record_success(&worker_account_id, Some(&worker_model));
+                        if events.finish(&output).is_err() {
+                            let state = worker_app.state::<AcpState>();
+                            if native {
+                                state.agents.abandon(&events.id);
+                            }
+                            for call in &output.calls {
+                                if let Some(id) = call["id"].as_str() {
+                                    state.agents.abandon(id);
+                                }
                             }
                         }
                     }
+                    Err(error) if events.started => {
+                        if pool_active {
+                            record_attempt_failure(
+                                worker_app.state::<AcpState>().inner(),
+                                &worker_account_id,
+                                &worker_model,
+                                &error,
+                            );
+                        }
+                        if native {
+                            let (status, code, message) = error.parts();
+                            let _ = events.event(
+                                "error",
+                                json!({"code":code,"message":message,"param":null,"status":status.as_u16()}),
+                            );
+                        } else {
+                            let _ = events.send(Err(error));
+                        }
+                    }
+                    Err(error) => {
+                        let _ = events.send(Err(error));
+                    }
                 }
-                Err(error) if native && events.started => {
-                    let (status, code, message) = error.parts();
-                    let _ = events.event(
-                        "error",
-                        json!({"code":code,"message":message,"param":null,"status":status.as_u16()}),
-                    );
+                None
+            } else {
+                Some(result)
+            }
+        });
+
+        if stream {
+            // Do not commit HTTP 200 until the upstream produces its first event.
+            // Pre-output failures can safely fail over to another healthy account.
+            let first = match receiver.recv().await {
+                Some(Ok(frame)) => frame,
+                Some(Err(run_error)) => {
+                    drop(cancel);
+                    let _ = worker.await;
+                    let retryable = if pool_active {
+                        record_attempt_failure(
+                            state.inner(),
+                            &account_id,
+                            &parsed_request.model,
+                            &run_error,
+                        )
+                    } else {
+                        false
+                    };
+                    if can_failover && retryable && attempt + 1 < max_attempts {
+                        last_error = Some(run_error);
+                        continue;
+                    }
+                    return run_error.into_response();
                 }
-                Err(error) => {
-                    let _ = events.send(Err(error));
+                None => {
+                    drop(cancel);
+                    let _ = worker.await;
+                    let run_error = RunError::Upstream("ACP worker exited unexpectedly".into());
+                    let retryable = if pool_active {
+                        record_attempt_failure(
+                            state.inner(),
+                            &account_id,
+                            &parsed_request.model,
+                            &run_error,
+                        )
+                    } else {
+                        false
+                    };
+                    if can_failover && retryable && attempt + 1 < max_attempts {
+                        last_error = Some(run_error);
+                        continue;
+                    }
+                    return run_error.into_response();
+                }
+            };
+            let frames = futures_util::stream::unfold(
+                (Some(first), receiver, cancel),
+                |(mut first, mut receiver, cancel)| async move {
+                    let next = match first.take() {
+                        Some(frame) => Some(Ok(frame)),
+                        None => receiver.recv().await,
+                    };
+                    next.map(|data| {
+                        let data = match data {
+                            Ok(frame) => frame,
+                            Err(error) => {
+                                // An SSE error terminates the stream; never append
+                                // a success finish_reason or [DONE] after it.
+                                receiver.close();
+                                let (status, code, message) = error.parts();
+                                let value = json!({"error":{"message":message,"type":code,"code":status.as_u16()}});
+                                format!("event: error\ndata: {value}\n\n")
+                            }
+                        };
+                        (
+                            Ok::<_, Infallible>(Frame::data(Bytes::from(data))),
+                            (None, receiver, cancel),
+                        )
+                    })
+                },
+            );
+            let reply = Response::builder()
+                .header("content-type", "text/event-stream")
+                .header("cache-control", "no-cache")
+                .body(StreamBody::new(frames).boxed_unsync())
+                .unwrap();
+            return compatibility_headers(reply, &ignored_parameters);
+        } else {
+            let result = worker.await;
+            drop(cancel);
+            match result {
+                Ok(Some(Ok(output))) => {
+                    state
+                        .request_pool
+                        .record_success(&account_id, Some(&parsed_request.model));
+                    let reply = if native {
+                        response(
+                            StatusCode::OK,
+                            responses::envelope(
+                                &id,
+                                &model,
+                                created,
+                                previous.as_deref(),
+                                Some(&output),
+                            ),
+                        )
+                    } else {
+                        response(
+                            StatusCode::OK,
+                            json!({"id":id,"object":"chat.completion","created":created,"model":model,"choices":[{"index":0,"message":output.message(),"finish_reason":output.finish(),"logprobs":null}]}),
+                        )
+                    };
+                    return compatibility_headers(reply, &ignored_parameters);
+                }
+                Ok(Some(Err(run_error))) => {
+                    let retryable = if pool_active {
+                        record_attempt_failure(
+                            state.inner(),
+                            &account_id,
+                            &parsed_request.model,
+                            &run_error,
+                        )
+                    } else {
+                        false
+                    };
+                    if can_failover && retryable && attempt + 1 < max_attempts {
+                        last_error = Some(run_error);
+                        continue;
+                    }
+                    return run_error.into_response();
+                }
+                _ => {
+                    let run_error = RunError::Upstream("ACP worker exited unexpectedly".into());
+                    let retryable = if pool_active {
+                        record_attempt_failure(
+                            state.inner(),
+                            &account_id,
+                            &parsed_request.model,
+                            &run_error,
+                        )
+                    } else {
+                        false
+                    };
+                    if can_failover && retryable && attempt + 1 < max_attempts {
+                        last_error = Some(run_error);
+                        continue;
+                    }
+                    return run_error.into_response();
                 }
             }
-            None
-        } else {
-            Some(result)
         }
-    });
-    let reply = if stream {
-        // Do not commit HTTP 200 until the upstream produces its first event.
-        // CPA can then handle startup failures through its existing HTTP error
-        // path rather than trying to translate them as completion chunks.
-        let first = match receiver.recv().await {
-            Some(Ok(frame)) => frame,
-            Some(Err(error)) => return error.into_response(),
-            None => return error(StatusCode::BAD_GATEWAY, "ACP worker exited unexpectedly"),
-        };
-        let frames = futures_util::stream::unfold(
-            (Some(first), receiver, cancel),
-            |(mut first, mut receiver, cancel)| async move {
-                let next = match first.take() {
-                    Some(frame) => Some(Ok(frame)),
-                    None => receiver.recv().await,
-                };
-                next.map(|data| {
-                    let data = match data {
-                        Ok(frame) => frame,
-                        Err(error) => {
-                            // An SSE error terminates the stream; never append
-                            // a success finish_reason or [DONE] after it.
-                            receiver.close();
-                            let (status, code, message) = error.parts();
-                            let value = json!({"error":{"message":message,"type":code,"code":status.as_u16()}});
-                            format!("event: error\ndata: {value}\n\n")
-                        }
-                    };
-                    (
-                        Ok::<_, Infallible>(Frame::data(Bytes::from(data))),
-                        (None, receiver, cancel),
-                    )
-                })
-            },
-        );
-        Response::builder()
-            .header("content-type", "text/event-stream")
-            .header("cache-control", "no-cache")
-            .body(StreamBody::new(frames).boxed_unsync())
-            .unwrap()
-    } else {
-        let result = worker.await;
-        drop(cancel);
-        match result {
-            Ok(Some(Ok(output))) if native => response(
-                StatusCode::OK,
-                responses::envelope(&id, &model, created, previous.as_deref(), Some(&output)),
-            ),
-            Ok(Some(Ok(output))) => response(
-                StatusCode::OK,
-                json!({"id":id,"object":"chat.completion","created":created,"model":model,"choices":[{"index":0,"message":output.message(),"finish_reason":output.finish(),"logprobs":null}]}),
-            ),
-            Ok(Some(Err(error))) => error.into_response(),
-            _ => error(StatusCode::BAD_GATEWAY, "ACP worker exited unexpectedly"),
-        }
-    };
-    compatibility_headers(reply, &ignored_parameters)
+    }
+
+    last_error
+        .map(RunError::into_response)
+        .unwrap_or_else(|| error(StatusCode::SERVICE_UNAVAILABLE, "ACP request failed"))
 }
 
 static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);

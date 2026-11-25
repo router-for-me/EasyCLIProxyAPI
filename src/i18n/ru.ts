@@ -2949,5 +2949,5 @@ export const ru: Record<MessageKey, string> = {
   'notifications.signIn.title': 'Аккаунту {provider} нужен повторный вход',
   'notifications.signIn.body': '{name} больше не может продлить вход. Откройте EasyCLIProxyAPI и нажмите «Войти снова» на его карточке.',
   'config.software.signInNotifications': 'Уведомления о входе',
-  'config.software.signInNotificationsDescription': 'Показывать системное уведомление, когда вход OAuth-аккаунта истекает и нужно войти снова.',
+  'config.software.signInNotificationsDescription': 'Показывать системное уведомление, когда вход OAuth-аккаунта истекает и нужно войти снова',
 };

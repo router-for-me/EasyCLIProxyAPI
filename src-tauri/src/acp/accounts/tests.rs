@@ -292,10 +292,10 @@ fn registry_and_recovery_data_are_private_and_registry_link_is_refused() {
 #[test]
 fn empty_placeholder_does_not_reduce_capacity_and_unsuccessful_add_is_not_saved() {
     let root = fixture();
-    for index in 0..32 {
+    for index in 0..MAX_ACCOUNTS {
         add(&root, &format!("Account{index}"));
     }
-    assert_eq!(read(&root).unwrap().accounts.len(), 32);
+    assert_eq!(read(&root).unwrap().accounts.len(), MAX_ACCOUNTS);
     assert!(PendingAccount::new(&root, "Overflow").is_err());
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -554,5 +554,95 @@ fn isolated_accounts_restore_and_read_separate_files_across_fresh_processes() {
     assert!(!legacy
         .get_envs()
         .any(|(name, _)| name == "HOME" || name == "SSH_CONNECTION"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn per_account_settings_validate_persist_and_survive_reauthorization() {
+    let root = fixture();
+    // Legacy accounts.json without new fields deserializes with safe defaults.
+    std::fs::write(
+        root.join("accounts.json"),
+        br#"{"active":"default","accounts":[{"id":"default","label":"Default","saved":true,"email":"a@example.test"}]}"#,
+    )
+    .unwrap();
+    let legacy = read(&root).unwrap();
+    assert!(legacy.accounts[0].enabled);
+    assert_eq!(legacy.accounts[0].priority, 0);
+    assert_eq!(legacy.accounts[0].weight, 1);
+    assert_eq!(legacy.accounts[0].max_concurrency, 1);
+    assert_eq!(legacy.accounts[0].proxy_url, None);
+
+    // Invalid weights, concurrencies, and proxies are rejected cleanly.
+    for bad in [
+        AccountSettingsPatch { weight: Some(0), ..Default::default() },
+        AccountSettingsPatch { weight: Some(101), ..Default::default() },
+        AccountSettingsPatch { max_concurrency: Some(0), ..Default::default() },
+        AccountSettingsPatch { max_concurrency: Some(17), ..Default::default() },
+        AccountSettingsPatch { proxy_url: Some("ftp://bad.example".into()), ..Default::default() },
+        AccountSettingsPatch { proxy_url: Some("http://bad proxy".into()), ..Default::default() },
+    ] {
+        assert!(update_settings(&root, "default", &bad).is_err());
+    }
+
+    let updated = update_settings(
+        &root,
+        "default",
+        &AccountSettingsPatch {
+            label: Some("  Primary Pool  ".into()),
+            enabled: Some(false),
+            priority: Some(2),
+            weight: Some(5),
+            max_concurrency: Some(4),
+            proxy_url: Some("http://127.0.0.1:7890".into()),
+        },
+    )
+    .unwrap();
+    assert_eq!(updated.label, "Primary Pool");
+    assert!(!updated.enabled);
+    assert_eq!(updated.priority, 2);
+    assert_eq!(updated.weight, 5);
+    assert_eq!(updated.max_concurrency, 4);
+    assert_eq!(updated.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
+    assert_eq!(resolve_proxy(updated.proxy_url.as_deref(), "http://global:1080"), "http://127.0.0.1:7890");
+    assert_eq!(resolve_proxy(Some("direct"), "http://global:1080"), "");
+    assert_eq!(resolve_proxy(None, "http://global:1080"), "http://global:1080");
+    // Disabled account must not yield a pool route.
+    assert!(route_profile(&root, &updated).is_none());
+
+    // Isolated account reauthorization preserves its routing settings.
+    let mut iso = PendingAccount::new_isolated(&root, "Work", false).unwrap();
+    let token = isolated_token(&iso.directory().unwrap());
+    std::fs::create_dir_all(token.parent().unwrap()).unwrap();
+    std::fs::write(&token, b"synthetic").unwrap();
+    iso.commit_replacing(Some("work@example.test".into()), None, false).unwrap();
+    let iso_id = iso.id.clone();
+    update_settings(
+        &root,
+        &iso_id,
+        &AccountSettingsPatch {
+            priority: Some(1),
+            weight: Some(7),
+            max_concurrency: Some(3),
+            proxy_url: Some("direct".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let iso_account = get(&root, &iso_id).unwrap();
+    assert!(route_profile(&root, &iso_account).is_some());
+
+    let mut replacement = PendingAccount::new_isolated(&root, "Work", true).unwrap();
+    let rtoken = isolated_token(&replacement.directory().unwrap());
+    std::fs::create_dir_all(rtoken.parent().unwrap()).unwrap();
+    std::fs::write(&rtoken, b"synthetic-v2").unwrap();
+    replacement
+        .commit_replacing(Some("work@example.test".into()), Some(&iso_id), false)
+        .unwrap();
+    let replaced = get(&root, &replacement.id).unwrap();
+    assert_eq!(replaced.priority, 1);
+    assert_eq!(replaced.weight, 7);
+    assert_eq!(replaced.max_concurrency, 3);
+    assert_eq!(replaced.proxy_url.as_deref(), Some("direct"));
     std::fs::remove_dir_all(root).unwrap();
 }

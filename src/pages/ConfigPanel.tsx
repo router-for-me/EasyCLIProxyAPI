@@ -103,9 +103,40 @@ type ConfigAction =
   | 'network'
   | 'retry'
   | 'tls'
-  | 'software'
   | null;
 type ConfigSubpage = SettingsCategory;
+
+type SoftwarePreferenceValues = {
+  closeBehavior: CloseBehavior;
+  autostartEnabled: boolean;
+  startCoreOnLaunch: boolean;
+  silentStartEnabled: boolean;
+  defaultTerminal: string;
+};
+
+const DEFAULT_SOFTWARE_PREFERENCES: SoftwarePreferenceValues = {
+  closeBehavior: 'ask',
+  autostartEnabled: false,
+  startCoreOnLaunch: true,
+  silentStartEnabled: false,
+  defaultTerminal: 'auto',
+};
+
+const pickSoftwarePreferences = (source: SoftwareSettings): SoftwarePreferenceValues => ({
+  closeBehavior: source.closeBehavior,
+  autostartEnabled: source.autostartEnabled,
+  startCoreOnLaunch: source.startCoreOnLaunch,
+  silentStartEnabled: source.silentStartEnabled,
+  defaultTerminal: source.defaultTerminal,
+});
+
+const sameSoftwarePreferences = (a: SoftwarePreferenceValues, b: SoftwarePreferenceValues) => (
+  a.closeBehavior === b.closeBehavior
+  && a.autostartEnabled === b.autostartEnabled
+  && a.startCoreOnLaunch === b.startCoreOnLaunch
+  && a.silentStartEnabled === b.silentStartEnabled
+  && a.defaultTerminal === b.defaultTerminal
+);
 type SettingDestination = { category: ConfigSubpage; target: string; field?: string };
 type SettingSearchEntry = SettingDestination & { title: string; context: string; keywords: string };
 
@@ -166,11 +197,8 @@ export function ConfigPanelPage() {
   const [settings, setSettings] = useState<CoreConfigSettings | null>(null);
   const [softwareSettings, setSoftwareSettings] = useState<SoftwareSettings | null>(null);
   const [softwareSettingsLoading, setSoftwareSettingsLoading] = useState(true);
-  const [softwareCloseBehaviorDraft, setSoftwareCloseBehaviorDraft] = useState<CloseBehavior>('ask');
-  const [softwareAutostartDraft, setSoftwareAutostartDraft] = useState(false);
-  const [softwareStartCoreDraft, setSoftwareStartCoreDraft] = useState(true);
-  const [softwareSilentStartDraft, setSoftwareSilentStartDraft] = useState(false);
-  const [softwareDefaultTerminalDraft, setSoftwareDefaultTerminalDraft] = useState('auto');
+  const [softwareValues, setSoftwareValues] = useState<SoftwarePreferenceValues>(DEFAULT_SOFTWARE_PREFERENCES);
+  const [softwareSaving, setSoftwareSaving] = useState(false);
   const [softwareSavedStatusVisible, setSoftwareSavedStatusVisible] = useState(false);
   const [signInNotifications, setSignInNotifications] = useSignInNotificationsPreference();
   const [tlsSettings, setTlsSettings] = useState<CoreTlsSettings | null>(null);
@@ -303,8 +331,14 @@ export function ConfigPanelPage() {
   const [retryError, setRetryError] = useState('');
   const networkDraftDirtyRef = useRef<NetworkDraftDirty>(cleanNetworkDraft());
   const loggingDraftDirtyRef = useRef(false);
-  const otherDraftDirtyRef = useRef({ software: false, tls: false });
+  const otherDraftDirtyRef = useRef({ tls: false });
   const copyTimerRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
+  const softwarePersistedRef = useRef<SoftwareSettings | null>(null);
+  const softwareDesiredRef = useRef<SoftwarePreferenceValues | null>(null);
+  const softwareSaveInFlightRef = useRef(false);
+  const softwareMutationSeqRef = useRef(0);
+  const softwareSavedTimerRef = useRef<number | null>(null);
 
   const [proxyState, setProxyState] = useState<ReverseProxyState | null>(null);
   const [proxyInitialLoading, setProxyInitialLoading] = useState(true);
@@ -518,6 +552,7 @@ export function ConfigPanelPage() {
   }, [external, activeSubpage, proxyAction, proxyInitialLoading]);
 
   useEffect(() => {
+    mountedRef.current = true;
     let disposed = false;
     let stop: (() => void) | null = null;
     void loadSettings();
@@ -535,10 +570,15 @@ export function ConfigPanelPage() {
       else stop = unlisten;
     });
     return () => {
+      mountedRef.current = false;
       disposed = true;
       stop?.();
       if (copyTimerRef.current !== null) {
         window.clearTimeout(copyTimerRef.current);
+      }
+      if (softwareSavedTimerRef.current !== null) {
+        window.clearTimeout(softwareSavedTimerRef.current);
+        softwareSavedTimerRef.current = null;
       }
     };
   }, []);
@@ -623,24 +663,30 @@ export function ConfigPanelPage() {
   }
 
   async function loadSoftwareSettings(mode: DraftRefreshMode = 'replace') {
+    const seqAtStart = softwareMutationSeqRef.current;
     if (mode === 'replace') {
       setSoftwareSettingsLoading(true);
       setSoftwareSavedStatusVisible(false);
     }
     try {
       const result = await getSoftwareSettings();
-      if (mode === 'preserve' && otherDraftDirtyRef.current.software) return;
+      if (!mountedRef.current) return;
+      if (mode === 'preserve' && (softwareSaveInFlightRef.current || softwareMutationSeqRef.current !== seqAtStart)) return;
+      softwarePersistedRef.current = result;
+      const nextValues = pickSoftwarePreferences(result);
+      softwareDesiredRef.current = nextValues;
       setSoftwareSettings(result);
-      setSoftwareCloseBehaviorDraft(result.closeBehavior);
-      setSoftwareAutostartDraft(result.autostartEnabled);
-      setSoftwareStartCoreDraft(result.startCoreOnLaunch);
-      setSoftwareSilentStartDraft(result.silentStartEnabled);
-      setSoftwareDefaultTerminalDraft(result.defaultTerminal);
+      setSoftwareValues(nextValues);
     } catch (error) {
-      setSoftwareSettings(null);
+      if (!mountedRef.current) return;
+      if (mode === 'replace') {
+        softwarePersistedRef.current = null;
+        softwareDesiredRef.current = null;
+        setSoftwareSettings(null);
+      }
       softwareFeedback.showNotice({ key: 'config.error.saveFailed', variables: { error: String(error) } }, 'error');
     } finally {
-      setSoftwareSettingsLoading(false);
+      if (mountedRef.current) setSoftwareSettingsLoading(false);
     }
   }
 
@@ -1212,44 +1258,81 @@ export function ConfigPanelPage() {
     }
   };
 
-  const saveSoftwareSettings = async (): Promise<boolean> => {
-    softwareFeedback.clearNotice();
-    if (!softwareSettings || busyAction !== null) return false;
-    if (
-      softwareCloseBehaviorDraft === softwareSettings.closeBehavior
-      && softwareAutostartDraft === softwareSettings.autostartEnabled
-      && softwareStartCoreDraft === softwareSettings.startCoreOnLaunch
-      && softwareSilentStartDraft === softwareSettings.silentStartEnabled
-      && softwareDefaultTerminalDraft === softwareSettings.defaultTerminal
-    ) return true;
-
-    setBusyAction('software');
+  const flushSoftwarePreferences = async () => {
+    if (softwareSaveInFlightRef.current) return;
+    softwareSaveInFlightRef.current = true;
+    setSoftwareSaving(true);
+    let savedAny = false;
     try {
-      const result = await saveSoftwareSettingsCommand({
-        settings: {
-          closeBehavior: softwareCloseBehaviorDraft,
-          autostartEnabled: softwareAutostartDraft,
-          startCoreOnLaunch: softwareStartCoreDraft,
-          silentStartEnabled: softwareSilentStartDraft,
-          defaultTerminal: softwareDefaultTerminalDraft,
-        },
-      });
-      setSoftwareSettings(result);
-      setSoftwareCloseBehaviorDraft(result.closeBehavior);
-      setSoftwareAutostartDraft(result.autostartEnabled);
-      setSoftwareStartCoreDraft(result.startCoreOnLaunch);
-      setSoftwareSilentStartDraft(result.silentStartEnabled);
-      setSoftwareDefaultTerminalDraft(result.defaultTerminal);
+      while (softwareDesiredRef.current) {
+        const target = softwareDesiredRef.current;
+        const persisted = softwarePersistedRef.current;
+        if (persisted && sameSoftwarePreferences(target, pickSoftwarePreferences(persisted))) {
+          break;
+        }
+        const result = await saveSoftwareSettingsCommand({ settings: target });
+        softwarePersistedRef.current = result;
+        savedAny = true;
+        if (!mountedRef.current) return;
+        setSoftwareSettings(result);
+        if (softwareDesiredRef.current === target) {
+          const confirmed = pickSoftwarePreferences(result);
+          softwareDesiredRef.current = confirmed;
+          setSoftwareValues(confirmed);
+          break;
+        }
+      }
+      if (!mountedRef.current || !savedAny) return;
       setSoftwareSavedStatusVisible(true);
-      return true;
+      if (softwareSavedTimerRef.current !== null) {
+        window.clearTimeout(softwareSavedTimerRef.current);
+      }
+      softwareSavedTimerRef.current = window.setTimeout(() => {
+        if (mountedRef.current) setSoftwareSavedStatusVisible(false);
+        softwareSavedTimerRef.current = null;
+      }, 2400);
     } catch (error) {
+      if (!mountedRef.current) return;
       setSoftwareSavedStatusVisible(false);
+      const seqAtFailure = softwareMutationSeqRef.current;
+      if (softwarePersistedRef.current) {
+        const rollback = pickSoftwarePreferences(softwarePersistedRef.current);
+        softwareDesiredRef.current = rollback;
+        setSoftwareValues(rollback);
+      }
       softwareFeedback.showNotice({ key: 'config.error.saveFailed', variables: { error: String(error) } }, 'error');
-      void loadSoftwareSettings('preserve');
-      return false;
+      void getSoftwareSettings()
+        .then((latest) => {
+          if (!mountedRef.current || softwareSaveInFlightRef.current || softwareMutationSeqRef.current !== seqAtFailure) return;
+          softwarePersistedRef.current = latest;
+          const synced = pickSoftwarePreferences(latest);
+          softwareDesiredRef.current = synced;
+          setSoftwareSettings(latest);
+          setSoftwareValues(synced);
+        })
+        .catch(() => {});
     } finally {
-      setBusyAction(null);
+      softwareSaveInFlightRef.current = false;
+      if (mountedRef.current) setSoftwareSaving(false);
     }
+  };
+
+  const updateSoftwarePreference = (patch: Partial<SoftwarePreferenceValues>) => {
+    const persisted = softwarePersistedRef.current;
+    if (!persisted) return;
+    const base = softwareDesiredRef.current ?? pickSoftwarePreferences(persisted);
+    const next: SoftwarePreferenceValues = { ...base, ...patch };
+    if (sameSoftwarePreferences(base, next)) return;
+    softwareMutationSeqRef.current += 1;
+    softwareDesiredRef.current = next;
+    setSoftwareValues(next);
+    softwareFeedback.clearNotice();
+    if (softwareSavedTimerRef.current !== null) {
+      window.clearTimeout(softwareSavedTimerRef.current);
+      softwareSavedTimerRef.current = null;
+    }
+    setSoftwareSavedStatusVisible(false);
+    void flushSoftwarePreferences();
   };
 
   const discardNetworkEndpointDraft = () => {
@@ -1315,15 +1398,6 @@ export function ConfigPanelPage() {
     setLoggingError('');
   };
 
-  const discardSoftwareDraft = () => {
-    if (!softwareSettings) return;
-    setSoftwareCloseBehaviorDraft(softwareSettings.closeBehavior);
-    setSoftwareAutostartDraft(softwareSettings.autostartEnabled);
-    setSoftwareStartCoreDraft(softwareSettings.startCoreOnLaunch);
-    setSoftwareSilentStartDraft(softwareSettings.silentStartEnabled);
-    setSoftwareDefaultTerminalDraft(softwareSettings.defaultTerminal);
-  };
-
   const coreUnavailable = loading || settings === null;
   const nativeSectionsPending = loading || loadError !== '';
   const renderNativeSkeleton = () => (
@@ -1360,40 +1434,12 @@ export function ConfigPanelPage() {
     || usageStatisticsDraft !== settings?.usageStatisticsEnabled
     || redisUsageRetentionDraft !== String(settings?.redisUsageQueueRetentionSeconds)
   );
-  const softwareCloseBehaviorDirty = softwareSettings !== null
-    && softwareCloseBehaviorDraft !== softwareSettings.closeBehavior;
-  const softwareAutostartDirty = softwareSettings !== null
-    && softwareAutostartDraft !== softwareSettings.autostartEnabled;
-  const softwareSilentStartDirty = softwareSettings !== null
-    && softwareSilentStartDraft !== softwareSettings.silentStartEnabled;
-  const softwareStartCoreDirty = softwareSettings !== null
-    && softwareStartCoreDraft !== softwareSettings.startCoreOnLaunch;
-  const softwareDefaultTerminalDirty = softwareSettings !== null
-    && softwareDefaultTerminalDraft !== softwareSettings.defaultTerminal;
-  const softwareSettingsDirty = softwareCloseBehaviorDirty
-    || softwareAutostartDirty
-    || softwareStartCoreDirty
-    || softwareSilentStartDirty
-    || softwareDefaultTerminalDirty;
-  const softwareStatusLabel = softwareSettingsLoading
-    ? t('common.loading')
-    : softwareSettings === null
-      ? t('common.unavailable')
-      : softwareSettingsDirty
-        ? t('config.network.unsaved')
-        : softwareSavedStatusVisible
-          ? t('config.network.saved')
-          : '';
-  const softwareStatusIsSaved = !softwareSettingsLoading
-    && softwareSettings !== null
-    && !softwareSettingsDirty
-    && softwareSavedStatusVisible;
   const tlsSettingsDirty = tlsSettings !== null && (
     tlsEnabledDraft !== tlsSettings.enabled
     || tlsCertDraft.trim() !== tlsSettings.cert
     || tlsKeyDraft.trim() !== tlsSettings.key
   );
-  otherDraftDirtyRef.current = { software: softwareSettingsDirty, tls: tlsSettingsDirty };
+  otherDraftDirtyRef.current = { tls: tlsSettingsDirty };
   const tlsStatusLabel = tlsSettingsLoading
     ? t('common.loading')
     : tlsSettings === null
@@ -1420,7 +1466,7 @@ export function ConfigPanelPage() {
   const retryControlsDisabled = coreUnavailable || busyAction === 'retry';
   const diagnosticsControlsDisabled = coreUnavailable || busyAction === 'logging' || busyAction === 'open-logs';
   const tlsControlsDisabled = tlsSettingsLoading || tlsSettings === null || busyAction === 'tls';
-  const softwareControlsDisabled = softwareSettingsLoading || softwareSettings === null || busyAction === 'software';
+  const softwareControlsDisabled = softwareSettingsLoading || softwareSettings === null;
   const proxyControlsDisabled = backendNotReady || proxyInitialLoading || proxyAction !== null || proxyFileSelecting !== null;
   const activateConfigSubpage = (subpage: ConfigSubpage) => {
     setSettingsSearch('');
@@ -1443,7 +1489,7 @@ export function ConfigPanelPage() {
   const nativeDirty = {
     keys: false, management: Boolean(managementSecretDraft || managementSecretConfirm),
     network: networkSettingsDirty, tls: tlsSettingsDirty, routing: sessionRoutingDirty,
-    retry: retrySettingsDirty, logging: loggingSettingsDirty, software: softwareSettingsDirty,
+    retry: retrySettingsDirty, logging: loggingSettingsDirty,
   };
   const nativeEntries: SettingSearchEntry[] = [
     { category: 'general', target: 'config-native-keys', title: t('config.keys.title'), context: '', keywords: 'API key token 鉴权密钥 api-keys access' },
@@ -1468,7 +1514,7 @@ export function ConfigPanelPage() {
     sensitiveWords: sensitiveWordsDirty,
     diagnostics: loggingSettingsDirty,
     oauth: false,
-    software: softwareSettingsDirty,
+    software: false,
   };
   const categoryDirty = (id: ConfigSubpage) => nativeCategoryDirty[id]
     || settingsTemplateGroups[id].some(group => dirtyTemplateGroups.includes(group.id));
@@ -1499,7 +1545,6 @@ export function ConfigPanelPage() {
     ...(sessionRoutingDirty ? [{ key: 'routing', category: 'routing' as const, target: 'config-native-routing', label: st('nativeRouting') }] : []),
     ...(retrySettingsDirty ? [{ key: 'retry', category: 'routing' as const, target: 'config-native-retry', label: st('nativeRetry') }] : []),
     ...(loggingSettingsDirty ? [{ key: 'logging', category: 'diagnostics' as const, target: 'config-native-logging', label: t('config.diagnostics.title') }] : []),
-    ...(softwareSettingsDirty ? [{ key: 'software', category: 'software' as const, target: 'config-native-software', label: softwareTabTitle }] : []),
     ...(sensitiveWordsDirty ? [{ key: 'sensitiveWords', category: 'sensitiveWords' as const, target: 'config-native-sensitive-words', label: t('config.sensitiveWords.title') }] : []),
     ...dirtyTemplateGroups.flatMap((groupId) => {
       const category = settingsCategories.find((item) => settingsTemplateGroups[item.id].some((group) => group.id === groupId));
@@ -1520,7 +1565,6 @@ export function ConfigPanelPage() {
     if (sessionRoutingDirty) discardSessionRoutingDraft();
     if (retrySettingsDirty) discardRetryDraft();
     if (loggingSettingsDirty) discardLoggingDraft();
-    if (softwareSettingsDirty) discardSoftwareDraft();
     if (dirtyTemplateGroups.length > 0) templateSectionRef.current?.discardAllDirtyGroups();
     if (sensitiveWordsDirty) void sensitiveWordsRef.current?.discardImmediate();
   };
@@ -1538,7 +1582,6 @@ export function ConfigPanelPage() {
       if (sessionRoutingDirty) steps.push({ category: 'routing', target: 'config-native-routing', run: saveSessionRoutingSettings });
       if (retrySettingsDirty) steps.push({ category: 'routing', target: 'config-native-retry', run: saveRetrySettings });
       if (loggingSettingsDirty) steps.push({ category: 'diagnostics', target: 'config-native-logging', run: saveCoreLoggingSettings });
-      if (softwareSettingsDirty) steps.push({ category: 'software', target: 'config-native-software', run: saveSoftwareSettings });
       if (dirtyTemplateGroups.length > 0) {
         const firstGroupId = dirtyTemplateGroups[0];
         const firstCategory = settingsCategories.find((item) => settingsTemplateGroups[item.id].some((group) => group.id === firstGroupId))?.id ?? activeSubpage;
@@ -2712,6 +2755,11 @@ export function ConfigPanelPage() {
               <h2>{t('config.diagnostics.title')}</h2>
             </div>
             <div className="config-heading-actions">
+              {loggingSettingsBusy ? (
+                <span className="state-pill">{t('common.saving')}</span>
+              ) : loggingSettingsDirty ? (
+                <span className="state-pill">{t('config.network.unsaved')}</span>
+              ) : null}
               <button
                 type="button"
                 className="secondary-button compact-button"
@@ -2722,135 +2770,167 @@ export function ConfigPanelPage() {
                 <FolderOpen size={15} aria-hidden="true" />
                 {external ? st('readLogs') : t('config.diagnostics.openLogs')}
               </button>
-              {loggingSettingsDirty ? (
-                <div className="config-inline-dirty-actions">
-                  <button
-                    type="button"
-                    className="secondary-button compact-button"
-                    disabled={diagnosticsControlsDisabled}
-                    onClick={discardLoggingDraft}
-                  >
-                    {t('agents.catalog.discard')}
-                  </button>
-                  <button
-                    type="button"
-                    className="primary-button compact-button"
-                    disabled={diagnosticsControlsDisabled}
-                    onClick={() => void saveCoreLoggingSettings()}
-                  >
-                    <Check size={15} aria-hidden="true" />
-                    {loggingSettingsBusy ? t('common.saving') : t('common.save')}
-                  </button>
-                </div>
-              ) : loggingSettingsBusy ? (
-                <span className="state-pill">{t('common.saving')}</span>
-              ) : null}
             </div>
           </div>
 
           {nativeSectionsPending ? renderNativeSkeleton() : (<>
-          <div className="config-diagnostics-toggle-grid">
-            <div className="config-diagnostics-setting">
-              <span className="config-diagnostics-setting-icon" aria-hidden="true"><Bug size={18} /></span>
-              <div className="config-diagnostics-setting-copy">
-                <span className="config-field-label"><strong>{t('config.diagnostics.debug.title')}</strong><SettingsHelp label={t('config.diagnostics.debug.title')}>{t('config.diagnostics.debug.description')}</SettingsHelp></span>
-
-              </div>
-              <Switch title={t('config.diagnostics.debug.title')} checked={debugDraft} aria-label={t('config.diagnostics.debug.title')} disabled={diagnosticsControlsDisabled} onChange={(event) => {
+          <div className="config-diagnostics-list">
+            <div className="config-diagnostics-toggle-grid">
+              <div className={`config-diagnostics-setting${diagnosticsControlsDisabled ? ' is-disabled' : ''}`}>
+                <label className="config-diagnostics-setting-copy" htmlFor="config-diagnostics-debug">
+                  <span className="config-diagnostics-setting-icon" aria-hidden="true"><Bug size={17} /></span>
+                  <div>
+                    <strong>{t('config.diagnostics.debug.title')}</strong>
+                    <small>{t('config.diagnostics.debug.description')}</small>
+                  </div>
+                </label>
+                <Switch
+                  id="config-diagnostics-debug"
+                  title={t('config.diagnostics.debug.title')}
+                  checked={debugDraft}
+                  aria-label={t('config.diagnostics.debug.title')}
+                  disabled={diagnosticsControlsDisabled}
+                  onChange={(event) => {
                     setDebugDraft(event.currentTarget.checked);
                     markLoggingDraftDirty();
-                  }} />
-            </div>
-
-            <div className="config-diagnostics-setting">
-              <span className="config-diagnostics-setting-icon" aria-hidden="true"><Gauge size={18} /></span>
-              <div className="config-diagnostics-setting-copy">
-                <span className="config-field-label"><strong>{t('config.diagnostics.commercial.title')}</strong><SettingsHelp label={t('config.diagnostics.commercial.title')}>{t('config.diagnostics.commercial.description')} {t('config.diagnostics.commercial.warning')}</SettingsHelp></span>
-
+                  }}
+                />
               </div>
-              <Switch title={t('config.diagnostics.commercial.title')} checked={commercialModeDraft} aria-label={t('config.diagnostics.commercial.title')} disabled={diagnosticsControlsDisabled} onChange={(event) => {
+
+              <div className={`config-diagnostics-setting${diagnosticsControlsDisabled ? ' is-disabled' : ''}`}>
+                <label className="config-diagnostics-setting-copy" htmlFor="config-diagnostics-commercial">
+                  <span className="config-diagnostics-setting-icon" aria-hidden="true"><Gauge size={17} /></span>
+                  <div>
+                    <strong>{t('config.diagnostics.commercial.title')}</strong>
+                    <small>{t('config.diagnostics.commercial.description')} {t('config.diagnostics.commercial.warning')}</small>
+                  </div>
+                </label>
+                <Switch
+                  id="config-diagnostics-commercial"
+                  title={t('config.diagnostics.commercial.title')}
+                  checked={commercialModeDraft}
+                  aria-label={t('config.diagnostics.commercial.title')}
+                  disabled={diagnosticsControlsDisabled}
+                  onChange={(event) => {
                     setCommercialModeDraft(event.currentTarget.checked);
                     markLoggingDraftDirty();
-                  }} />
-            </div>
-
-            <div className="config-diagnostics-setting">
-              <span className="config-diagnostics-setting-icon" aria-hidden="true"><HardDrive size={18} /></span>
-              <div className="config-diagnostics-setting-copy">
-                <span className="config-field-label"><strong>{t('config.diagnostics.fileLogging.title')}</strong><SettingsHelp label={t('config.diagnostics.fileLogging.title')}>{t('config.diagnostics.fileLogging.description')}</SettingsHelp></span>
-
+                  }}
+                />
               </div>
-              <Switch title={t('config.diagnostics.fileLogging.title')} checked={loggingToFileDraft} aria-label={t('config.diagnostics.fileLogging.title')} disabled={diagnosticsControlsDisabled} onChange={(event) => {
+
+              <div className={`config-diagnostics-setting${diagnosticsControlsDisabled ? ' is-disabled' : ''}`}>
+                <label className="config-diagnostics-setting-copy" htmlFor="config-diagnostics-file-logging">
+                  <span className="config-diagnostics-setting-icon" aria-hidden="true"><HardDrive size={17} /></span>
+                  <div>
+                    <strong>{t('config.diagnostics.fileLogging.title')}</strong>
+                    <small>{t('config.diagnostics.fileLogging.description')}</small>
+                  </div>
+                </label>
+                <Switch
+                  id="config-diagnostics-file-logging"
+                  title={t('config.diagnostics.fileLogging.title')}
+                  checked={loggingToFileDraft}
+                  aria-label={t('config.diagnostics.fileLogging.title')}
+                  disabled={diagnosticsControlsDisabled}
+                  onChange={(event) => {
                     setLoggingToFileDraft(event.currentTarget.checked);
                     markLoggingDraftDirty();
-                  }} />
-            </div>
-
-            <div className="config-diagnostics-setting">
-              <span className="config-diagnostics-setting-icon" aria-hidden="true"><Database size={18} /></span>
-              <div className="config-diagnostics-setting-copy">
-                <span className="config-field-label"><strong>{t('config.diagnostics.usage.title')}</strong><SettingsHelp label={t('config.diagnostics.usage.title')}>{t('config.diagnostics.usage.description')}</SettingsHelp></span>
-
+                  }}
+                />
               </div>
-              <Switch title={t('config.diagnostics.usage.title')} checked={usageStatisticsDraft} aria-label={t('config.diagnostics.usage.title')} disabled={diagnosticsControlsDisabled} onChange={(event) => {
+
+              <div className={`config-diagnostics-setting${diagnosticsControlsDisabled ? ' is-disabled' : ''}`}>
+                <label className="config-diagnostics-setting-copy" htmlFor="config-diagnostics-usage">
+                  <span className="config-diagnostics-setting-icon" aria-hidden="true"><Database size={17} /></span>
+                  <div>
+                    <strong>{t('config.diagnostics.usage.title')}</strong>
+                    <small>{t('config.diagnostics.usage.description')}</small>
+                  </div>
+                </label>
+                <Switch
+                  id="config-diagnostics-usage"
+                  title={t('config.diagnostics.usage.title')}
+                  checked={usageStatisticsDraft}
+                  aria-label={t('config.diagnostics.usage.title')}
+                  disabled={diagnosticsControlsDisabled}
+                  onChange={(event) => {
                     setUsageStatisticsDraft(event.currentTarget.checked);
                     markLoggingDraftDirty();
-                  }} />
+                  }}
+                />
+              </div>
             </div>
-          </div>
 
-          <div className="config-diagnostics-fields">
-            <div className="config-diagnostics-field">
-              <span className="config-field-label"><label htmlFor="config-input-config-diagnostics-maxSize-title">{t('config.diagnostics.maxSize.title')}</label><SettingsHelp label={t('config.diagnostics.maxSize.title')}>{t('config.diagnostics.maxSize.hint')}</SettingsHelp></span>
-              <input
-                id="config-input-config-diagnostics-maxSize-title"
-                className="config-network-input"
-                type="number"
-                min="0"
-                step="1"
-                value={logsMaxTotalSizeDraft}
-                disabled={diagnosticsControlsDisabled}
-                onChange={(event) => {
-                  setLogsMaxTotalSizeDraft(event.currentTarget.value);
-                  markLoggingDraftDirty();
-                }}
-              />
+            <div className="config-diagnostics-fields">
+              <div className={`config-diagnostics-field${diagnosticsControlsDisabled ? ' is-disabled' : ''}`}>
+                <label className="config-diagnostics-setting-copy" htmlFor="config-input-config-diagnostics-maxSize-title">
+                  <span className="config-diagnostics-setting-icon" aria-hidden="true"><FileText size={17} /></span>
+                  <div>
+                    <strong>{t('config.diagnostics.maxSize.title')}</strong>
+                    <small>{t('config.diagnostics.maxSize.hint')}</small>
+                  </div>
+                </label>
+                <input
+                  id="config-input-config-diagnostics-maxSize-title"
+                  className="config-network-input"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={logsMaxTotalSizeDraft}
+                  disabled={diagnosticsControlsDisabled}
+                  onChange={(event) => {
+                    setLogsMaxTotalSizeDraft(event.currentTarget.value);
+                    markLoggingDraftDirty();
+                  }}
+                />
+              </div>
 
-            </div>
-            <div className="config-diagnostics-field">
-              <span className="config-field-label"><label htmlFor="config-input-config-diagnostics-errorFiles-title">{t('config.diagnostics.errorFiles.title')}</label><SettingsHelp label={t('config.diagnostics.errorFiles.title')}>{t('config.diagnostics.errorFiles.hint')}</SettingsHelp></span>
-              <input
-                id="config-input-config-diagnostics-errorFiles-title"
-                className="config-network-input"
-                type="number"
-                min="0"
-                step="1"
-                value={errorLogsMaxFilesDraft}
-                disabled={diagnosticsControlsDisabled}
-                onChange={(event) => {
-                  setErrorLogsMaxFilesDraft(event.currentTarget.value);
-                  markLoggingDraftDirty();
-                }}
-              />
+              <div className={`config-diagnostics-field${diagnosticsControlsDisabled ? ' is-disabled' : ''}`}>
+                <label className="config-diagnostics-setting-copy" htmlFor="config-input-config-diagnostics-errorFiles-title">
+                  <span className="config-diagnostics-setting-icon" aria-hidden="true"><AlertCircle size={17} /></span>
+                  <div>
+                    <strong>{t('config.diagnostics.errorFiles.title')}</strong>
+                    <small>{t('config.diagnostics.errorFiles.hint')}</small>
+                  </div>
+                </label>
+                <input
+                  id="config-input-config-diagnostics-errorFiles-title"
+                  className="config-network-input"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={errorLogsMaxFilesDraft}
+                  disabled={diagnosticsControlsDisabled}
+                  onChange={(event) => {
+                    setErrorLogsMaxFilesDraft(event.currentTarget.value);
+                    markLoggingDraftDirty();
+                  }}
+                />
+              </div>
 
-            </div>
-            <div className="config-diagnostics-field">
-              <span className="config-field-label"><label htmlFor="config-input-config-diagnostics-redisRetention-title">{t('config.diagnostics.redisRetention.title')}</label><SettingsHelp label={t('config.diagnostics.redisRetention.title')}>{t('config.diagnostics.redisRetention.hint')}</SettingsHelp></span>
-              <input
-                id="config-input-config-diagnostics-redisRetention-title"
-                className="config-network-input"
-                type="number"
-                min="1"
-                max="3600"
-                step="1"
-                value={redisUsageRetentionDraft}
-                disabled={diagnosticsControlsDisabled}
-                onChange={(event) => {
-                  setRedisUsageRetentionDraft(event.currentTarget.value);
-                  markLoggingDraftDirty();
-                }}
-              />
-
+              <div className={`config-diagnostics-field${diagnosticsControlsDisabled ? ' is-disabled' : ''}`}>
+                <label className="config-diagnostics-setting-copy" htmlFor="config-input-config-diagnostics-redisRetention-title">
+                  <span className="config-diagnostics-setting-icon" aria-hidden="true"><Clock3 size={17} /></span>
+                  <div>
+                    <strong>{t('config.diagnostics.redisRetention.title')}</strong>
+                    <small>{t('config.diagnostics.redisRetention.hint')}</small>
+                  </div>
+                </label>
+                <input
+                  id="config-input-config-diagnostics-redisRetention-title"
+                  className="config-network-input"
+                  type="number"
+                  min="1"
+                  max="3600"
+                  step="1"
+                  value={redisUsageRetentionDraft}
+                  disabled={diagnosticsControlsDisabled}
+                  onChange={(event) => {
+                    setRedisUsageRetentionDraft(event.currentTarget.value);
+                    markLoggingDraftDirty();
+                  }}
+                />
+              </div>
             </div>
           </div>
 
@@ -2872,114 +2952,116 @@ export function ConfigPanelPage() {
                 <h2>{softwareTabTitle}</h2>
               </div>
               <div className="config-heading-actions">
-                {softwareSettingsDirty ? (
-                  <div className="config-inline-dirty-actions">
-                    <button
-                      type="button"
-                      className="secondary-button compact-button"
-                      disabled={softwareControlsDisabled}
-                      onClick={discardSoftwareDraft}
-                    >
-                      {t('agents.catalog.discard')}
-                    </button>
-                    <button
-                      type="button"
-                      className="primary-button compact-button"
-                      disabled={softwareControlsDisabled}
-                      onClick={() => void saveSoftwareSettings()}
-                    >
-                      <Check size={15} aria-hidden="true" />
-                      {busyAction === 'software' ? t('common.saving') : t('common.save')}
-                    </button>
-                  </div>
-                ) : busyAction === 'software' ? (
+                {softwareSettingsLoading && softwareSettings === null ? (
+                  <span className="config-inline-status">{t('common.loading')}</span>
+                ) : softwareSettings === null ? (
+                  <span className="state-pill">{t('common.unavailable')}</span>
+                ) : softwareSaving ? (
                   <span className="state-pill">{t('common.saving')}</span>
-                ) : softwareStatusLabel ? (
-                  <span className={`state-pill ${softwareStatusIsSaved ? 'success' : ''}`}>
-                    {softwareStatusLabel}
-                  </span>
-                ) : null}
+                ) : softwareSavedStatusVisible ? (
+                  <span className="state-pill success">{t('config.network.saved')}</span>
+                ) : (
+                  <span className="config-inline-status">{st('automatic')}</span>
+                )}
               </div>
             </div>
-            {nativeSectionsPending ? renderNativeSkeleton() : (<>
+            {softwareSettingsLoading && softwareSettings === null ? renderNativeSkeleton() : (<>
             <div className="config-software-content">
-              {renderFeedback(softwareFeedback)}
               <div className="config-software-settings-list">
-                <div className="config-software-setting-row">
-                  <div className="config-software-setting-copy">
+                <div className={`config-software-setting-row${softwareControlsDisabled ? ' is-disabled' : ''}`}>
+                  <label className="config-software-setting-copy" htmlFor="config-software-autostart">
                     <span className="config-software-setting-icon" aria-hidden="true">
-                      <Clock3 size={18} />
+                      <Clock3 size={17} />
                     </span>
                     <div>
                       <strong>{t('config.software.autostart')}</strong>
+                      <small>{t('config.software.autostartDescription')}</small>
                     </div>
-                  </div>
-                  <Switch title={t('config.software.autostart')} aria-label={t('config.software.autostart')} checked={softwareAutostartDraft} disabled={softwareControlsDisabled} onChange={(event) => {
-                        setSoftwareSavedStatusVisible(false);
-                        setSoftwareAutostartDraft(event.currentTarget.checked);
-                      }} />
+                  </label>
+                  <Switch
+                    id="config-software-autostart"
+                    title={t('config.software.autostart')}
+                    aria-label={t('config.software.autostart')}
+                    checked={softwareValues.autostartEnabled}
+                    disabled={softwareControlsDisabled}
+                    onChange={(event) => updateSoftwarePreference({ autostartEnabled: event.currentTarget.checked })}
+                  />
                 </div>
-                <div className="config-software-setting-row">
-                  <div className="config-software-setting-copy">
+                <div className={`config-software-setting-row${external || softwareControlsDisabled ? ' is-disabled' : ''}`}>
+                  <label className="config-software-setting-copy" htmlFor="config-software-start-core">
                     <span className="config-software-setting-icon" aria-hidden="true">
-                      <Power size={18} />
+                      <Power size={17} />
                     </span>
                     <div>
-                      <strong>{t('config.software.startCoreOnLaunch')}</strong>{external && <small>{st('externalUnsupported')}</small>}
+                      <strong>{t('config.software.startCoreOnLaunch')}</strong>
+                      <small>{external ? st('externalUnsupported') : t('config.software.startCoreOnLaunchDescription')}</small>
                     </div>
-                  </div>
-                  <Switch title={t('config.software.startCoreOnLaunch')} aria-label={t('config.software.startCoreOnLaunch')} checked={softwareStartCoreDraft} disabled={external || softwareControlsDisabled} onChange={(event) => {
-                        setSoftwareSavedStatusVisible(false);
-                        setSoftwareStartCoreDraft(event.currentTarget.checked);
-                      }} />
+                  </label>
+                  <Switch
+                    id="config-software-start-core"
+                    title={t('config.software.startCoreOnLaunch')}
+                    aria-label={t('config.software.startCoreOnLaunch')}
+                    checked={softwareValues.startCoreOnLaunch}
+                    disabled={external || softwareControlsDisabled}
+                    onChange={(event) => updateSoftwarePreference({ startCoreOnLaunch: event.currentTarget.checked })}
+                  />
                 </div>
-                <div className="config-software-setting-row">
-                  <div className="config-software-setting-copy">
+                <div className={`config-software-setting-row${softwareControlsDisabled ? ' is-disabled' : ''}`}>
+                  <label className="config-software-setting-copy" htmlFor="config-software-silent-start">
                     <span className="config-software-setting-icon" aria-hidden="true">
-                      <EyeOff size={18} />
+                      <EyeOff size={17} />
                     </span>
                     <div>
-                      <span className="config-field-label"><strong>{t('config.software.silentStart')}</strong><SettingsHelp label={t('config.software.silentStart')}>{t('config.software.silentStartDescription')}</SettingsHelp></span>
-
+                      <strong>{t('config.software.silentStart')}</strong>
+                      <small>{t('config.software.silentStartDescription')}</small>
                     </div>
-                  </div>
-                  <Switch title={t('config.software.silentStart')} aria-label={t('config.software.silentStart')} checked={softwareSilentStartDraft} disabled={softwareControlsDisabled} onChange={(event) => {
-                        setSoftwareSavedStatusVisible(false);
-                        setSoftwareSilentStartDraft(event.currentTarget.checked);
-                      }} />
+                  </label>
+                  <Switch
+                    id="config-software-silent-start"
+                    title={t('config.software.silentStart')}
+                    aria-label={t('config.software.silentStart')}
+                    checked={softwareValues.silentStartEnabled}
+                    disabled={softwareControlsDisabled}
+                    onChange={(event) => updateSoftwarePreference({ silentStartEnabled: event.currentTarget.checked })}
+                  />
                 </div>
                 <div className="config-software-setting-row">
-                  <div className="config-software-setting-copy">
+                  <label className="config-software-setting-copy" htmlFor="config-software-sign-in-notifications">
                     <span className="config-software-setting-icon" aria-hidden="true">
-                      <Bell size={18} />
+                      <Bell size={17} />
                     </span>
                     <div>
-                      <span className="config-field-label"><strong>{t('config.software.signInNotifications')}</strong><SettingsHelp label={t('config.software.signInNotifications')}>{t('config.software.signInNotificationsDescription')}</SettingsHelp></span>
+                      <strong>{t('config.software.signInNotifications')}</strong>
+                      <small>{t('config.software.signInNotificationsDescription')}</small>
                     </div>
-                  </div>
+                  </label>
                   {/* Applies immediately: a local preference, not part of the saved software settings. */}
-                  <Switch title={t('config.software.signInNotifications')} aria-label={t('config.software.signInNotifications')} checked={signInNotifications}
-                    onChange={(event) => setSignInNotifications(event.currentTarget.checked)} />
+                  <Switch
+                    id="config-software-sign-in-notifications"
+                    title={t('config.software.signInNotifications')}
+                    aria-label={t('config.software.signInNotifications')}
+                    checked={signInNotifications}
+                    onChange={(event) => setSignInNotifications(event.currentTarget.checked)}
+                  />
                 </div>
-                <div className="config-software-setting-row config-software-close-row">
-                  <div className="config-software-setting-copy">
+                <div className={`config-software-setting-row config-software-close-row${softwareControlsDisabled ? ' is-disabled' : ''}`}>
+                  <label className="config-software-setting-copy" htmlFor="config-software-default-terminal">
                     <span className="config-software-setting-icon" aria-hidden="true">
-                      <Terminal size={18} />
+                      <Terminal size={17} />
                     </span>
                     <div>
                       <strong>{t('config.software.defaultTerminal')}</strong>
+                      <small>{t('config.software.defaultTerminalDescription')}</small>
                     </div>
-                  </div>
-                  <label className="config-software-select">
-                    <span className="sr-only">{t('config.software.defaultTerminal')}</span>
+                  </label>
+                  <div className="config-software-select">
                     <Select
+                      id="config-software-default-terminal"
+                      aria-label={t('config.software.defaultTerminal')}
                       className="config-network-input"
-                      value={softwareDefaultTerminalDraft}
+                      value={softwareValues.defaultTerminal}
                       disabled={softwareControlsDisabled}
-                      onChange={(event) => {
-                        setSoftwareSavedStatusVisible(false);
-                        setSoftwareDefaultTerminalDraft(event.currentTarget.value);
-                      }}
+                      onChange={(event) => updateSoftwarePreference({ defaultTerminal: event.currentTarget.value })}
                     >
                       {(softwareSettings?.availableTerminals ?? []).map((terminal) => (
                         <option value={terminal.id} key={terminal.id}>
@@ -2987,33 +3069,32 @@ export function ConfigPanelPage() {
                         </option>
                       ))}
                     </Select>
-                  </label>
+                  </div>
                 </div>
-                <div className="config-software-setting-row config-software-close-row">
-                  <div className="config-software-setting-copy">
+                <div className={`config-software-setting-row config-software-close-row${softwareControlsDisabled ? ' is-disabled' : ''}`}>
+                  <label className="config-software-setting-copy" htmlFor="config-software-close-behavior">
                     <span className="config-software-setting-icon" aria-hidden="true">
-                      <X size={18} />
+                      <X size={17} />
                     </span>
                     <div>
                       <strong>{t('config.software.closeBehavior')}</strong>
+                      <small>{t('config.software.closeBehaviorDescription')}</small>
                     </div>
-                  </div>
-                  <label className="config-software-select">
-                    <span className="sr-only">{t('config.software.closeBehavior')}</span>
+                  </label>
+                  <div className="config-software-select">
                     <Select
+                      id="config-software-close-behavior"
+                      aria-label={t('config.software.closeBehavior')}
                       className="config-network-input"
-                      value={softwareCloseBehaviorDraft}
+                      value={softwareValues.closeBehavior}
                       disabled={softwareControlsDisabled}
-                      onChange={(event) => {
-                        setSoftwareSavedStatusVisible(false);
-                        setSoftwareCloseBehaviorDraft(event.currentTarget.value as CloseBehavior);
-                      }}
+                      onChange={(event) => updateSoftwarePreference({ closeBehavior: event.currentTarget.value as CloseBehavior })}
                     >
                       <option value="ask">{t('config.software.behavior.ask')}</option>
                       <option value="minimize-to-tray">{t('config.software.behavior.minimize')}</option>
                       <option value="exit">{t('config.software.behavior.exit')}</option>
                     </Select>
-                  </label>
+                  </div>
                 </div>
               </div>
             </div>

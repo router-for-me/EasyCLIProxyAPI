@@ -12,8 +12,8 @@ const pages = [
   { file: '1.png', navigationIndex: 0 },
   { file: '2.png', navigationIndex: 2 },
   { file: '3.png', navigationIndex: 1 },
-  { file: '4.png', navigationIndex: 5 },
-  { file: '5.png', navigationIndex: 4 },
+  { file: '4.png', navigationIndex: 6 },
+  { file: '5.png', navigationIndex: 5 },
 ];
 
 (async () => {

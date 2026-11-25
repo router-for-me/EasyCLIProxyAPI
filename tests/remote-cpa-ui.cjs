@@ -186,6 +186,11 @@ async function assertMenuBounds(page, menu) {
     await page.getByRole('dialog').getByText(/^fixture log: http:\/\/127/).waitFor();
     await page.keyboard.press('Escape');
     assert.ok(await page.evaluate(() => !['reverse_proxy_get_state','get_lan_ipv4','open_core_logs_directory','restart_core_process'].some(cmd => window.remoteTestCalls.includes(cmd))));
+    await nav.getByRole('button', { name: 'OAuth Management', exact: true }).click();
+    await page.locator('#oauth-subpage-tab-acp').click();
+    await page.locator('.acp-access-page').getByText('ACP access is not supported for external CPA instances. Switch back to Built-in CPA to use it.').waitFor();
+    assert.ok(!await page.evaluate(() => window.remoteTestCalls.includes('get_acp_status')));
+    await nav.getByRole('button', { name: 'Quick Configuration', exact: true }).click();
     await page.locator('#config-subpage-tab-general').click();
     const add = page.getByRole('button', {name:'Add Authentication Key', exact:true});
     await add.click();
@@ -202,6 +207,11 @@ async function assertMenuBounds(page, menu) {
     assert.ok(await page.evaluate(() => window.remoteTestControls.localRunning));
     await add.waitFor();
     assert.ok(await page.evaluate(() => window.originalShell === document.querySelector('.app-shell')));
+    await nav.getByRole('button', { name: 'OAuth Management', exact: true }).click();
+    await page.locator('#oauth-subpage-tab-acp').click();
+    await page.locator('.acp-access-page #acp-provider-title').waitFor();
+    await page.waitForFunction(() => window.remoteTestCalls.includes('get_acp_status'));
+    assert.equal(await page.locator('.acp-action-notice').count(), 0);
 
     const savedA = 'http://127.0.0.1:8888';
     const savedB = 'https://management-gateway-with-a-long-test-subdomain.for-a-private-network.example.test/team/';
