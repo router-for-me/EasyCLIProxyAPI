@@ -36,5 +36,23 @@ export const submitOAuthCallback = (args: { provider: string; redirectUrl: strin
 export const listOAuthBrowsers = (): Promise<OAuthBrowserOption[]> =>
   invoke<OAuthBrowserOption[]>('list_oauth_browsers');
 
+const OAUTH_BROWSER_STORAGE_KEY = 'easy-cli-proxy-api.oauth-browser.v3';
+export const NO_AUTO_OPEN_BROWSER_ID = 'none';
+
+export const loadOAuthBrowserPreference = (): string => {
+  try {
+    return window.localStorage.getItem(OAUTH_BROWSER_STORAGE_KEY)?.trim() || '';
+  } catch {
+    return '';
+  }
+};
+
+export const saveOAuthBrowserPreference = (browser: string) => {
+  try {
+    window.localStorage.setItem(OAUTH_BROWSER_STORAGE_KEY, browser);
+  } catch {
+  }
+};
+
 export const checkCodexOAuthLogin = (): Promise<void> =>
   invoke<void>('check_codex_oauth_login');
