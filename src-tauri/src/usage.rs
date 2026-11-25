@@ -25,7 +25,7 @@ use std::{
     fs,
     path::{Component, Path, PathBuf},
     sync::{LazyLock, Mutex},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{Emitter, Manager};
 use tokio_util::sync::CancellationToken;
@@ -64,11 +64,19 @@ const USAGE_QUEUE_BATCH_SIZE: usize = 10_000;
 const USAGE_INBOX_PROCESS_LIMIT: usize = 500;
 const USAGE_INBOX_MAX_ATTEMPTS: i64 = 5;
 const USAGE_SUBSCRIBE_RETRY_SECONDS: u64 = 30;
+const USAGE_SUBSCRIBE_BATCH_MAX_MESSAGES: usize = 100;
+const USAGE_SUBSCRIBE_BATCH_WINDOW_MS: u64 = 250;
 const USAGE_QUEUE_KEY: &str = "usage";
 const LEGACY_USAGE_QUEUE_KEY: &str = "queue";
 const HTTP_USAGE_QUEUE_SOURCE: &str = "http_pull:usage_queue";
 const SQLITE_BUSY_TIMEOUT_SECONDS: u64 = 5;
 const BYTES_PER_MB: u64 = 1024 * 1024;
+const USAGE_DATABASE_WAL_HEADROOM_MAX_BYTES: u64 = 16 * BYTES_PER_MB;
+const USAGE_DATABASE_PRUNE_BAND_MAX_BYTES: u64 = 32 * BYTES_PER_MB;
+const USAGE_DATABASE_PHYSICAL_RECLAIM_COOLDOWN: Duration = Duration::from_secs(15 * 60);
+const USAGE_DATABASE_FORCE_RECLAIM_OVERAGE_NUM: u64 = 110;
+const USAGE_DATABASE_FORCE_RECLAIM_OVERAGE_DEN: u64 = 100;
+const SQLITE_AUTO_VACUUM_INCREMENTAL: i64 = 2;
 const TOKENS_PER_PRICE_UNIT: f64 = 1_000_000.0;
 const LONG_CONTEXT_INPUT_TOKEN_THRESHOLD: u64 = 272_000;
 const GROK_47_LONG_CONTEXT_INPUT_TOKEN_THRESHOLD: u64 = 200_000;
@@ -90,6 +98,14 @@ const USAGE_DISPLAY_MODEL_SQL: &str =
 
 tokio::task_local! { pub(crate) static USAGE_TARGET: Option<crate::remote_cpa::Target>; }
 static COLLECTOR_SLOT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static USAGE_PHYSICAL_VACUUM_COOLDOWNS: LazyLock<Mutex<HashMap<PathBuf, (Instant, u64)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+#[cfg(test)]
+static USAGE_FULL_VACUUM_COUNTS: LazyLock<Mutex<HashMap<PathBuf, u64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+#[cfg(test)]
+static USAGE_INCREMENTAL_VACUUM_COUNTS: LazyLock<Mutex<HashMap<PathBuf, u64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn usage_target() -> Option<crate::remote_cpa::Target> { USAGE_TARGET.try_with(Clone::clone).ok().flatten() }
 
@@ -695,13 +711,21 @@ fn copy_usage_storage_directory(source: &Path, target: &Path) -> Result<(), Stri
 fn initialize_usage_storage_at(root: &Path) -> Result<(), String> {
     fs::create_dir_all(root).map_err(|error| format!("Failed to create usage records directory: {error}"))?;
     let mut connection = open_usage_database_at(root)?;
+    // Brand-new databases enable incremental auto_vacuum before the first page
+    // is allocated so future physical reclamation stays O(reclaimed pages).
+    // Existing databases are left untouched here to guarantee zero-cost upgrades.
+    if usage_database_page_count(&connection)? == 0 {
+        connection
+            .pragma_update(None, "auto_vacuum", "INCREMENTAL")
+            .map_err(|error| format!("Failed to enable SQLite incremental auto_vacuum: {error}"))?;
+    }
     connection
         .pragma_update(None, "journal_mode", "WAL")
         .map_err(|error| format!("Failed to enable SQLite WAL: {error}"))?;
     migrate_usage_database(&mut connection, root)?;
     migrate_legacy_json_storage(&mut connection, root)?;
     cleanup_usage_inbox(&connection, Local::now())?;
-    enforce_usage_database_limit(&connection).map(|_| ())
+    enforce_usage_database_limit(&mut connection).map(|_| ())
 }
 
 #[tauri::command]
@@ -732,9 +756,9 @@ pub(crate) async fn save_usage_storage_settings(remote: tauri::State<'_, crate::
     USAGE_TARGET.scope(target, async move {
         let settings = run_usage_task(move || {
             let root = usage_root_dir()?;
-            let connection = open_usage_database_at(&root)?;
+            let mut connection = open_usage_database_at(&root)?;
             save_usage_database_limit(&connection, max_database_size_mb)?;
-            let deleted = enforce_usage_database_limit(&connection)?;
+            let deleted = enforce_usage_database_limit_with_cooldown(&mut connection, false)?;
             load_usage_storage_settings(&connection, &root, deleted)
         })
         .await?;
@@ -754,8 +778,8 @@ pub(crate) async fn shrink_usage_database(remote: tauri::State<'_, crate::remote
     USAGE_TARGET.scope(target, async move {
         let settings = run_usage_task(move || {
             let root = usage_root_dir()?;
-            let connection = open_usage_database_at(&root)?;
-            let deleted = shrink_usage_database_to_mb(&connection, target_database_size_mb)?;
+            let mut connection = open_usage_database_at(&root)?;
+            let deleted = shrink_usage_database_to_mb(&mut connection, target_database_size_mb)?;
             load_usage_storage_settings(&connection, &root, deleted)
         })
         .await?;
@@ -1572,32 +1596,61 @@ fn save_usage_database_limit(
         .map_err(|error| format!("Failed to save usage records database size limit: {error}"))
 }
 
-fn usage_database_active_bytes(connection: &Connection) -> Result<u64, String> {
+#[derive(Clone, Copy, Debug)]
+struct UsageDatabasePageStats {
+    page_size: u64,
+    page_count: u64,
+    freelist_count: u64,
+}
+
+impl UsageDatabasePageStats {
+    fn allocated_bytes(self) -> Result<u64, String> {
+        self.page_count
+            .checked_mul(self.page_size)
+            .ok_or_else(|| "Usage records database size overflow".to_string())
+    }
+
+    fn active_bytes(self) -> Result<u64, String> {
+        self.page_count
+            .saturating_sub(self.freelist_count)
+            .checked_mul(self.page_size)
+            .ok_or_else(|| "Usage records database size overflow".to_string())
+    }
+}
+
+fn usage_database_page_count(connection: &Connection) -> Result<u64, String> {
+    connection
+        .query_row("PRAGMA page_count", [], |row| row.get::<_, u64>(0))
+        .map_err(|error| format!("Failed to read usage records database page count: {error}"))
+}
+
+fn usage_database_page_stats(connection: &Connection) -> Result<UsageDatabasePageStats, String> {
     let page_size = connection
         .query_row("PRAGMA page_size", [], |row| row.get::<_, u64>(0))
         .map_err(|error| format!("Failed to read usage records database page size: {error}"))?;
-    let page_count = connection
-        .query_row("PRAGMA page_count", [], |row| row.get::<_, u64>(0))
-        .map_err(|error| format!("Failed to read usage records database page count: {error}"))?;
-    let free_pages = connection
+    let page_count = usage_database_page_count(connection)?;
+    let freelist_count = connection
         .query_row("PRAGMA freelist_count", [], |row| row.get::<_, u64>(0))
         .map_err(|error| format!("Failed to read usage records database free page count: {error}"))?;
-    page_count
-        .saturating_sub(free_pages)
-        .checked_mul(page_size)
-        .ok_or_else(|| "Usage records database size overflow".to_string())
+    Ok(UsageDatabasePageStats {
+        page_size,
+        page_count,
+        freelist_count,
+    })
+}
+
+fn usage_database_auto_vacuum(connection: &Connection) -> Result<i64, String> {
+    connection
+        .query_row("PRAGMA auto_vacuum", [], |row| row.get::<_, i64>(0))
+        .map_err(|error| format!("Failed to read usage records database auto_vacuum mode: {error}"))
+}
+
+fn usage_database_active_bytes(connection: &Connection) -> Result<u64, String> {
+    usage_database_page_stats(connection)?.active_bytes()
 }
 
 fn usage_database_allocated_bytes(connection: &Connection) -> Result<u64, String> {
-    let page_size = connection
-        .query_row("PRAGMA page_size", [], |row| row.get::<_, u64>(0))
-        .map_err(|error| format!("Failed to read usage records database page size: {error}"))?;
-    let page_count = connection
-        .query_row("PRAGMA page_count", [], |row| row.get::<_, u64>(0))
-        .map_err(|error| format!("Failed to read usage records database page count: {error}"))?;
-    page_count
-        .checked_mul(page_size)
-        .ok_or_else(|| "Usage records database size overflow".to_string())
+    usage_database_page_stats(connection)?.allocated_bytes()
 }
 
 fn usage_database_file_bytes(database_path: &Path) -> Result<u64, String> {
@@ -1659,7 +1712,218 @@ fn load_usage_storage_settings(
     })
 }
 
-fn enforce_usage_database_limit(connection: &Connection) -> Result<u64, String> {
+fn usage_auto_limit_watermarks(max_bytes: u64) -> (u64, u64) {
+    let wal_headroom = (max_bytes / 10).min(USAGE_DATABASE_WAL_HEADROOM_MAX_BYTES);
+    let prune_band = (max_bytes / 10).min(USAGE_DATABASE_PRUNE_BAND_MAX_BYTES);
+    let high_active_bytes = max_bytes.saturating_sub(wal_headroom);
+    let low_target_bytes = high_active_bytes.saturating_sub(prune_band);
+    (low_target_bytes, high_active_bytes)
+}
+
+fn usage_database_tracking_key(connection: &Connection) -> Option<PathBuf> {
+    connection.path().map(PathBuf::from)
+}
+
+fn should_skip_full_vacuum_due_to_cooldown(
+    db_key: Option<&PathBuf>,
+    allocated_bytes: u64,
+    max_bytes: u64,
+) -> bool {
+    let Some(db_key) = db_key else {
+        return false;
+    };
+    let Ok(cooldowns) = USAGE_PHYSICAL_VACUUM_COOLDOWNS.lock() else {
+        return false;
+    };
+    let Some(&(last_at, last_allocated_bytes)) = cooldowns.get(db_key) else {
+        return false;
+    };
+    if last_at.elapsed() >= USAGE_DATABASE_PHYSICAL_RECLAIM_COOLDOWN {
+        return false;
+    }
+    let baseline = last_allocated_bytes.max(max_bytes);
+    let force_threshold = baseline
+        .saturating_mul(USAGE_DATABASE_FORCE_RECLAIM_OVERAGE_NUM)
+        / USAGE_DATABASE_FORCE_RECLAIM_OVERAGE_DEN;
+    allocated_bytes <= force_threshold
+}
+
+fn record_full_vacuum(db_key: Option<&PathBuf>, post_allocated_bytes: u64) {
+    let Some(db_key) = db_key else {
+        return;
+    };
+    if let Ok(mut cooldowns) = USAGE_PHYSICAL_VACUUM_COOLDOWNS.lock() {
+        cooldowns.insert(db_key.clone(), (Instant::now(), post_allocated_bytes));
+    }
+    #[cfg(test)]
+    if let Ok(mut counts) = USAGE_FULL_VACUUM_COUNTS.lock() {
+        *counts.entry(db_key.clone()).or_insert(0) += 1;
+    }
+}
+
+#[cfg(test)]
+fn record_incremental_vacuum(db_key: Option<&PathBuf>) {
+    let Some(db_key) = db_key else {
+        return;
+    };
+    if let Ok(mut counts) = USAGE_INCREMENTAL_VACUUM_COUNTS.lock() {
+        *counts.entry(db_key.clone()).or_insert(0) += 1;
+    }
+}
+
+fn delete_oldest_usage_records_to_active_target(
+    connection: &mut Connection,
+    target_active_bytes: u64,
+) -> Result<(usize, u64), String> {
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("Failed to begin usage records cleanup transaction: {error}"))?;
+    let inbox_deleted = transaction
+        .execute(
+            "DELETE FROM usage_inbox WHERE status IN ('processed', 'decode_failed', 'discarded')",
+            [],
+        )
+        .map_err(|error| format!("Failed to clean up temporary usage data: {error}"))?;
+    let mut active_bytes = usage_database_active_bytes(&transaction)?;
+    let mut deleted_records = 0_u64;
+
+    if active_bytes > target_active_bytes {
+        let mut remaining_records = transaction
+            .query_row("SELECT COUNT(*) FROM usage_events", [], |row| {
+                row.get::<_, u64>(0)
+            })
+            .map_err(|error| format!("Failed to count usage records pending cleanup: {error}"))?;
+        let mut min_batch = 1_u64;
+        let mut iteration = 0_u32;
+
+        while active_bytes > target_active_bytes && remaining_records > 0 {
+            let excess = active_bytes.saturating_sub(target_active_bytes);
+            let mut estimated = ((remaining_records as u128 * excess as u128)
+                .saturating_add(active_bytes.saturating_sub(1) as u128)
+                / active_bytes.max(1) as u128) as u64;
+            if iteration > 0 {
+                estimated = estimated.saturating_add(estimated / 10);
+            }
+            let batch_u64 = estimated.max(min_batch).min(remaining_records);
+            let batch = batch_u64.min(i64::MAX as u64) as i64;
+            let deleted = transaction
+                .execute(
+                    r#"DELETE FROM usage_events
+                       WHERE id IN (
+                           SELECT id FROM usage_events
+                           ORDER BY timestamp_ms ASC, id ASC
+                           LIMIT ?1
+                       )"#,
+                    params![batch],
+                )
+                .map_err(|error| format!("Failed to delete oldest usage records: {error}"))?
+                as u64;
+            if deleted == 0 {
+                break;
+            }
+            deleted_records = deleted_records.saturating_add(deleted);
+            remaining_records = remaining_records.saturating_sub(deleted);
+            let next_active_bytes = usage_database_active_bytes(&transaction)?;
+            if next_active_bytes >= active_bytes {
+                // Partially filled pages may stay allocated across several small deletes;
+                // grow the batch geometrically so fragmented B-trees still finish quickly.
+                min_batch = batch_u64.saturating_mul(2).max(64);
+            } else {
+                min_batch = 1;
+            }
+            active_bytes = next_active_bytes;
+            iteration = iteration.saturating_add(1);
+        }
+    }
+
+    transaction
+        .commit()
+        .map_err(|error| format!("Failed to commit usage records cleanup transaction: {error}"))?;
+    Ok((inbox_deleted, deleted_records))
+}
+
+fn reclaim_usage_database_space(
+    connection: &Connection,
+    max_bytes: u64,
+    physical_target_bytes: u64,
+    reclaimed_anything: bool,
+    respect_cooldown: bool,
+) -> Result<(), String> {
+    let mut stats = usage_database_page_stats(connection)?;
+    let mut allocated_bytes = stats.allocated_bytes()?;
+    if allocated_bytes <= max_bytes {
+        return Ok(());
+    }
+
+    let db_key = usage_database_tracking_key(connection);
+    let auto_vacuum = usage_database_auto_vacuum(connection)?;
+
+    if auto_vacuum == SQLITE_AUTO_VACUUM_INCREMENTAL && stats.freelist_count > 0 {
+        let excess_bytes = allocated_bytes.saturating_sub(physical_target_bytes);
+        let pages_to_free = excess_bytes.div_ceil(stats.page_size.max(1)).max(1);
+        // NOTE: Do not use rusqlite's `execute_batch` here because it only calls
+        // `sqlite3_step` once, whereas SQLite's `PRAGMA incremental_vacuum(N)`
+        // steps through pages until `SQLITE_DONE`.
+        {
+            let mut statement = connection
+                .prepare(&format!("PRAGMA incremental_vacuum({pages_to_free})"))
+                .map_err(|error| format!("Failed to prepare incremental usage records vacuum: {error}"))?;
+            let mut rows = statement
+                .query([])
+                .map_err(|error| format!("Failed to start incremental usage records vacuum: {error}"))?;
+            while rows
+                .next()
+                .map_err(|error| format!("Failed to incrementally reclaim usage records space: {error}"))?
+                .is_some()
+            {}
+        }
+        #[cfg(test)]
+        record_incremental_vacuum(db_key.as_ref());
+        truncate_usage_database_wal(connection);
+        stats = usage_database_page_stats(connection)?;
+        allocated_bytes = stats.allocated_bytes()?;
+        if allocated_bytes <= max_bytes {
+            return Ok(());
+        }
+    }
+
+    // Nothing was deleted, no free pages exist, and auto_vacuum is already upgraded:
+    // a full VACUUM cannot meaningfully shrink non-evictable tables below max_bytes.
+    if auto_vacuum == SQLITE_AUTO_VACUUM_INCREMENTAL
+        && !reclaimed_anything
+        && stats.freelist_count == 0
+    {
+        return Ok(());
+    }
+
+    if respect_cooldown
+        && should_skip_full_vacuum_due_to_cooldown(db_key.as_ref(), allocated_bytes, max_bytes)
+    {
+        return Ok(());
+    }
+
+    if auto_vacuum != SQLITE_AUTO_VACUUM_INCREMENTAL {
+        connection
+            .pragma_update(None, "auto_vacuum", "INCREMENTAL")
+            .map_err(|error| format!("Failed to switch usage records database to incremental auto_vacuum: {error}"))?;
+    }
+    connection
+        .execute_batch("VACUUM;")
+        .map_err(|error| format!("Failed to reclaim usage records database space: {error}"))?;
+    truncate_usage_database_wal(connection);
+    let post_allocated_bytes = usage_database_allocated_bytes(connection)?;
+    record_full_vacuum(db_key.as_ref(), post_allocated_bytes);
+    Ok(())
+}
+
+fn enforce_usage_database_limit(connection: &mut Connection) -> Result<u64, String> {
+    enforce_usage_database_limit_with_cooldown(connection, true)
+}
+
+fn enforce_usage_database_limit_with_cooldown(
+    connection: &mut Connection,
+    respect_cooldown: bool,
+) -> Result<u64, String> {
     let max_database_size_mb = load_usage_database_limit(connection)?;
     if max_database_size_mb == 0 {
         return Ok(0);
@@ -1667,11 +1931,42 @@ fn enforce_usage_database_limit(connection: &Connection) -> Result<u64, String> 
     let max_bytes = max_database_size_mb
         .checked_mul(BYTES_PER_MB)
         .ok_or_else(|| "Usage records database size limit is too large".to_string())?;
-    prune_usage_database_to_bytes(connection, max_bytes)
+    let (low_target_bytes, high_active_bytes) = usage_auto_limit_watermarks(max_bytes);
+
+    let disk_bytes = usage_database_connection_disk_bytes(connection)?;
+    if disk_bytes <= high_active_bytes {
+        return Ok(0);
+    }
+    if disk_bytes > max_bytes {
+        truncate_usage_database_wal(connection);
+    }
+
+    let stats = usage_database_page_stats(connection)?;
+    let allocated_bytes = stats.allocated_bytes()?;
+    let active_bytes = stats.active_bytes()?;
+    if allocated_bytes <= max_bytes && active_bytes <= high_active_bytes {
+        return Ok(0);
+    }
+
+    let (inbox_deleted, deleted_records) =
+        delete_oldest_usage_records_to_active_target(connection, low_target_bytes)?;
+
+    if usage_database_connection_disk_bytes(connection)? > max_bytes {
+        truncate_usage_database_wal(connection);
+    }
+
+    reclaim_usage_database_space(
+        connection,
+        max_bytes,
+        high_active_bytes,
+        inbox_deleted > 0 || deleted_records > 0,
+        respect_cooldown,
+    )?;
+    Ok(deleted_records)
 }
 
 fn shrink_usage_database_to_mb(
-    connection: &Connection,
+    connection: &mut Connection,
     target_database_size_mb: u64,
 ) -> Result<u64, String> {
     if target_database_size_mb == 0 {
@@ -1680,67 +1975,36 @@ fn shrink_usage_database_to_mb(
     let target_bytes = target_database_size_mb
         .checked_mul(BYTES_PER_MB)
         .ok_or_else(|| "Database compaction target is too large".to_string())?;
-    prune_usage_database_to_bytes(connection, target_bytes)
-}
-
-fn prune_usage_database_to_bytes(connection: &Connection, max_bytes: u64) -> Result<u64, String> {
-    if usage_database_connection_disk_bytes(connection)? <= max_bytes {
+    if usage_database_connection_disk_bytes(connection)? <= target_bytes {
         return Ok(0);
     }
     truncate_usage_database_wal(connection);
-    let allocated_bytes = usage_database_allocated_bytes(connection)?;
-    if allocated_bytes <= max_bytes {
+    let stats = usage_database_page_stats(connection)?;
+    if stats.allocated_bytes()? <= target_bytes {
         return Ok(0);
     }
 
-    let inbox_deleted = connection
-        .execute(
-            "DELETE FROM usage_inbox WHERE status IN ('processed', 'decode_failed', 'discarded')",
-            [],
-        )
-        .map_err(|error| format!("Failed to clean up temporary usage data: {error}"))?;
-    let mut active_bytes = usage_database_active_bytes(connection)?;
-    let mut deleted_records = 0_u64;
-
-    while active_bytes > max_bytes {
-        let total_records = connection
-            .query_row("SELECT COUNT(*) FROM usage_events", [], |row| {
-                row.get::<_, u64>(0)
-            })
-            .map_err(|error| format!("Failed to count usage records pending cleanup: {error}"))?;
-        if total_records == 0 {
-            break;
-        }
-        let excess = active_bytes.saturating_sub(max_bytes);
-        let estimated = ((total_records as u128 * excess as u128)
-            .saturating_add(active_bytes.saturating_sub(1) as u128)
-            / active_bytes.max(1) as u128) as u64;
-        let batch = estimated.max(1).min(total_records).min(i64::MAX as u64) as i64;
-        let deleted = connection
-            .execute(
-                r#"DELETE FROM usage_events
-                   WHERE id IN (
-                       SELECT id FROM usage_events
-                       ORDER BY timestamp_ms ASC, id ASC
-                       LIMIT ?1
-                   )"#,
-                params![batch],
-            )
-            .map_err(|error| format!("Failed to delete oldest usage records: {error}"))?
-            as u64;
-        if deleted == 0 {
-            break;
-        }
-        deleted_records = deleted_records.saturating_add(deleted);
-        active_bytes = usage_database_active_bytes(connection)?;
-    }
-
-    if allocated_bytes > max_bytes || inbox_deleted > 0 || deleted_records > 0 {
-        connection
-            .execute_batch("VACUUM;")
-            .map_err(|error| format!("Failed to reclaim usage records database space: {error}"))?;
-        truncate_usage_database_wal(connection);
-    }
+    let auto_vacuum = usage_database_auto_vacuum(connection)?;
+    let target_active_bytes = if auto_vacuum == SQLITE_AUTO_VACUUM_INCREMENTAL {
+        target_bytes
+    } else {
+        // Reserve a small allowance for pointer-map pages introduced when
+        // switching a legacy database from auto_vacuum=NONE to INCREMENTAL.
+        let reserve = (target_bytes / 128)
+            .max(stats.page_size.saturating_mul(4))
+            .min(target_bytes / 4);
+        target_bytes.saturating_sub(reserve)
+    };
+    let (inbox_deleted, deleted_records) =
+        delete_oldest_usage_records_to_active_target(connection, target_active_bytes)?;
+    truncate_usage_database_wal(connection);
+    reclaim_usage_database_space(
+        connection,
+        target_bytes,
+        target_bytes,
+        inbox_deleted > 0 || deleted_records > 0,
+        false,
+    )?;
     Ok(deleted_records)
 }
 
@@ -2105,55 +2369,59 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
         }
 
         if let Some(active_subscription) = subscription.as_mut() {
-            let message = tokio::select! {
-                _ = token.cancelled() => return,
-                result = tokio::time::timeout(
-                    Duration::from_secs(2),
-                    active_subscription.next_message(),
-                ) => result,
-            };
-            match message {
-                Ok(Ok(payload)) => {
-                    match persist_raw_usage_message_from_source(
-                        &root,
-                        "redis_subscribe:usage",
-                        payload,
-                        &config,
-                    ) {
-                        Ok(outcome) => {
-                            let saved = outcome.inserted;
-                            publish_collected_records(
-                                &app,
-                                outcome,
-                                &format!("Live subscription saved {saved} new records"),
-                            );
-                            retry_seconds = 1;
-                        }
-                        Err(error) => {
-                            set_collector_error(&app, error);
-                            wait_or_cancel(&token, retry_seconds).await;
-                            retry_seconds = (retry_seconds * 2).min(10);
-                        }
+            let batch = receive_subscription_batch(
+                active_subscription,
+                &token,
+                Duration::from_secs(2),
+                Duration::from_millis(USAGE_SUBSCRIBE_BATCH_WINDOW_MS),
+                USAGE_SUBSCRIBE_BATCH_MAX_MESSAGES,
+            )
+            .await;
+
+            if !batch.messages.is_empty() {
+                match persist_raw_usage_messages_from_source(
+                    &root,
+                    "redis_subscribe:usage",
+                    batch.messages,
+                    &config,
+                ) {
+                    Ok(outcome) => {
+                        let saved = outcome.inserted;
+                        publish_collected_records(
+                            &app,
+                            outcome,
+                            &format!("Live subscription saved {saved} new records"),
+                        );
+                        retry_seconds = 1;
                     }
-                    continue;
+                    Err(error) => {
+                        set_collector_error(&app, error);
+                        wait_or_cancel(&token, retry_seconds).await;
+                        retry_seconds = (retry_seconds * 2).min(10);
+                    }
                 }
-                Err(_) => {
+            }
+
+            if batch.cancelled {
+                return;
+            }
+            if let Some(error) = batch.disconnect_error {
+                subscription = None;
+                subscription_config = None;
+                subscribe_retry_at = tokio::time::Instant::now()
+                    + Duration::from_secs(USAGE_SUBSCRIBE_RETRY_SECONDS);
+                set_collector_status(
+                    &app,
+                    "collecting",
+                    &format!("Live subscription disconnected; switched to HTTP compatibility mode: {error}"),
+                    None,
+                );
+            } else {
+                if !batch.received_any {
                     set_collector_status(&app, "collecting", "Collecting from CPA usage live subscription", None);
                     retry_seconds = 1;
-                    continue;
                 }
-                Ok(Err(error)) => {
-                    subscription = None;
-                    subscription_config = None;
-                    subscribe_retry_at = tokio::time::Instant::now()
-                        + Duration::from_secs(USAGE_SUBSCRIBE_RETRY_SECONDS);
-                    set_collector_status(
-                        &app,
-                        "collecting",
-                        &format!("Live subscription disconnected; switched to HTTP compatibility mode: {error}"),
-                        None,
-                    );
-                }
+                continue;
             }
         }
 
@@ -2203,6 +2471,91 @@ async fn usage_collector_loop(app: tauri::AppHandle, token: CancellationToken) {
                 retry_seconds = (retry_seconds * 2).min(10);
             }
         }
+    }
+}
+
+struct SubscriptionBatch {
+    messages: Vec<String>,
+    received_any: bool,
+    disconnect_error: Option<String>,
+    cancelled: bool,
+}
+
+async fn receive_subscription_batch(
+    subscription: &mut UsageSubscription,
+    token: &CancellationToken,
+    idle_timeout: Duration,
+    batch_window: Duration,
+    max_messages: usize,
+) -> SubscriptionBatch {
+    let first = tokio::select! {
+        _ = token.cancelled() => {
+            return SubscriptionBatch {
+                messages: Vec::new(),
+                received_any: false,
+                disconnect_error: None,
+                cancelled: true,
+            };
+        }
+        result = tokio::time::timeout(idle_timeout, subscription.next_message()) => result,
+    };
+
+    let mut messages = match first {
+        Ok(Ok(payload)) => {
+            let mut batch = Vec::with_capacity(max_messages.clamp(1, 16));
+            batch.push(payload);
+            batch
+        }
+        Ok(Err(error)) => {
+            return SubscriptionBatch {
+                messages: Vec::new(),
+                received_any: false,
+                disconnect_error: Some(error),
+                cancelled: false,
+            };
+        }
+        Err(_) => {
+            return SubscriptionBatch {
+                messages: Vec::new(),
+                received_any: false,
+                disconnect_error: None,
+                cancelled: false,
+            };
+        }
+    };
+
+    let limit = max_messages.max(1);
+    let deadline = tokio::time::Instant::now() + batch_window;
+    let mut disconnect_error = None;
+    let mut cancelled = false;
+
+    while messages.len() < limit {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let next = tokio::select! {
+            _ = token.cancelled() => {
+                cancelled = true;
+                break;
+            }
+            result = tokio::time::timeout(remaining, subscription.next_message()) => result,
+        };
+        match next {
+            Ok(Ok(payload)) => messages.push(payload),
+            Ok(Err(error)) => {
+                disconnect_error = Some(error);
+                break;
+            }
+            Err(_) => break,
+        }
+    }
+
+    SubscriptionBatch {
+        messages,
+        received_any: true,
+        disconnect_error,
+        cancelled,
     }
 }
 
@@ -2505,15 +2858,6 @@ fn is_ignorable_usage_message(raw: &str) -> bool {
             .get("support_refresh")
             .and_then(Value::as_bool)
             .is_some_and(|enabled| enabled)
-}
-
-fn persist_raw_usage_message_from_source(
-    root: &Path,
-    source: &str,
-    raw_message: String,
-    config: &GuiConfigFile,
-) -> Result<UsagePersistOutcome, String> {
-    persist_raw_usage_messages_from_source(root, source, vec![raw_message], config)
 }
 
 fn persist_raw_usage_messages_from_source(
@@ -5676,7 +6020,7 @@ mod tests {
         }
         fixture.await.unwrap();
         let other = database_root(base.clone(),Some(&second));
-        { let connection = open_usage_database_at(&other).unwrap(); save_usage_database_limit(&connection, 9).unwrap(); shrink_usage_database_to_mb(&connection,1).unwrap(); }
+        { let mut connection = open_usage_database_at(&other).unwrap(); save_usage_database_limit(&connection, 9).unwrap(); shrink_usage_database_to_mb(&mut connection, 1).unwrap(); }
         for (target,id) in [(None,"built-in"),(Some(&first),"first"),(Some(&second),"second")] {
             let connection = open_usage_database_at(&database_root(base.clone(),target)).unwrap();
             let keys = connection.prepare("SELECT event_key FROM usage_events ORDER BY id").unwrap().query_map([], |row| row.get::<_,String>(0)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
@@ -5860,10 +6204,10 @@ mod tests {
     #[test]
     fn usage_database_limit_defaults_to_unlimited_and_persists() {
         let root = test_root("database-limit-persistence");
-        let connection = open_test_database(&root);
+        let mut connection = open_test_database(&root);
 
         assert_eq!(load_usage_database_limit(&connection).unwrap(), 0);
-        assert!(shrink_usage_database_to_mb(&connection, 0).is_err());
+        assert!(shrink_usage_database_to_mb(&mut connection, 0).is_err());
         save_usage_database_limit(&connection, 128).unwrap();
         drop(connection);
 
@@ -5899,7 +6243,7 @@ mod tests {
         }
         transaction.commit().unwrap();
 
-        let deleted = shrink_usage_database_to_mb(&connection, 1).unwrap();
+        let deleted = shrink_usage_database_to_mb(&mut connection, 1).unwrap();
 
         assert!(deleted > 0);
         assert_eq!(load_usage_database_limit(&connection).unwrap(), 128);
@@ -5971,6 +6315,328 @@ mod tests {
         assert_eq!(settings.deleted_records, outcome.deleted);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    fn test_full_vacuum_count(root: &Path) -> u64 {
+        let key = root.join(USAGE_DATABASE_FILE);
+        USAGE_FULL_VACUUM_COUNTS
+            .lock()
+            .unwrap()
+            .get(&key)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn test_incremental_vacuum_count(root: &Path) -> u64 {
+        let key = root.join(USAGE_DATABASE_FILE);
+        USAGE_INCREMENTAL_VACUUM_COUNTS
+            .lock()
+            .unwrap()
+            .get(&key)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn seed_sized_usage_events(
+        connection: &mut Connection,
+        prefix: &str,
+        start_ts: i64,
+        count: i64,
+        payload_bytes: usize,
+    ) {
+        let payload = "x".repeat(payload_bytes);
+        let transaction = connection.transaction().unwrap();
+        for offset in 0..count {
+            let ts = start_ts + offset;
+            transaction
+                .execute(
+                    r#"INSERT INTO usage_events (
+                           event_key, timestamp, timestamp_ms, local_hour, model,
+                           failure_body, created_at
+                       ) VALUES (?1, ?2, ?3, '2026-01-01T00', 'retention-test', ?4, ?2)"#,
+                    params![
+                        format!("{prefix}-{ts}"),
+                        format!("2026-01-01T00:00:{:03}Z", ts % 60),
+                        ts,
+                        payload,
+                    ],
+                )
+                .unwrap();
+        }
+        transaction.commit().unwrap();
+    }
+
+    #[test]
+    fn usage_database_limit_steady_state_avoids_repeated_full_vacuums() {
+        let root = test_root("database-limit-steady-state");
+        let mut connection = open_test_database(&root);
+        assert_eq!(
+            usage_database_auto_vacuum(&connection).unwrap(),
+            SQLITE_AUTO_VACUUM_INCREMENTAL
+        );
+        save_usage_database_limit(&connection, 1).unwrap();
+        seed_sized_usage_events(&mut connection, "initial", 1_000, 140, 8 * 1024);
+        let initial_deleted = enforce_usage_database_limit(&mut connection).unwrap();
+        assert!(initial_deleted > 0);
+        assert!(usage_database_disk_bytes(&root).unwrap() <= BYTES_PER_MB);
+
+        let full_vacuums_before = test_full_vacuum_count(&root);
+        let inc_vacuums_before = test_incremental_vacuum_count(&root);
+        let post_stats = usage_database_page_stats(&connection).unwrap();
+        assert_eq!(
+            full_vacuums_before, 0,
+            "brand-new incremental database should reclaim without full VACUUM (inc={inc_vacuums_before}, stats={post_stats:?}, auto_vacuum={})",
+            usage_database_auto_vacuum(&connection).unwrap()
+        );
+        assert!(test_incremental_vacuum_count(&root) >= 1);
+
+        let config = GuiConfigFile::default();
+        let failure_payload = "y".repeat(1_800);
+        for batch_index in 0_i64..30 {
+            let items = (0_i64..15)
+                .map(|item_index| {
+                    let seq = batch_index * 15 + item_index;
+                    let seconds = seq % 60;
+                    let minutes = (seq / 60) % 60;
+                    serde_json::json!({
+                        "timestamp": format!("2026-09-18T12:{minutes:02}:{seconds:02}+08:00"),
+                        "request_id": format!("steady-{seq}"),
+                        "model": "retention-test",
+                        "failed": true,
+                        "failure_status": 429,
+                        "failure_body": failure_payload,
+                        "tokens": { "input_tokens": 100, "output_tokens": 0 }
+                    })
+                })
+                .collect::<Vec<_>>();
+            enqueue_usage_queue_items(&mut connection, "steady-test", items).unwrap();
+            let outcome = process_usage_inbox(&mut connection, &config).unwrap();
+            assert_eq!(outcome.inserted, 15);
+            assert!(
+                usage_database_disk_bytes(&root).unwrap() <= BYTES_PER_MB,
+                "disk size exceeded limit on steady-state batch {batch_index}"
+            );
+        }
+
+        assert_eq!(
+            test_full_vacuum_count(&root),
+            full_vacuums_before,
+            "steady-state rolling retention must not trigger full-DB VACUUM"
+        );
+        let newest_present: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM usage_events WHERE request_id = 'steady-449'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(newest_present, 1);
+
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_auto_vacuum_none_database_at_limit_upgrades_smoothly_and_stops_thrashing() {
+        let root = test_root("legacy-auto-vacuum-upgrade");
+        fs::create_dir_all(&root).unwrap();
+        {
+            // Simulate a pre-fix database created with SQLite default auto_vacuum=NONE
+            // sitting right past its 1 MB limit.
+            let mut legacy = open_usage_database_at(&root).unwrap();
+            legacy.pragma_update(None, "journal_mode", "WAL").unwrap();
+            initialize_usage_schema(&legacy).unwrap();
+            assert_eq!(usage_database_auto_vacuum(&legacy).unwrap(), 0);
+            save_usage_database_limit(&legacy, 1).unwrap();
+            seed_sized_usage_events(&mut legacy, "legacy-row", 10_000, 160, 8 * 1024);
+            truncate_usage_database_wal(&legacy);
+            assert!(usage_database_disk_bytes(&root).unwrap() > BYTES_PER_MB);
+        }
+
+        // Upgrade startup path runs initialize_usage_storage_at on the existing file.
+        initialize_usage_storage_at(&root).unwrap();
+
+        let mut connection = open_usage_database_at(&root).unwrap();
+        let user_version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(user_version, USAGE_DATABASE_SCHEMA_VERSION);
+        assert_eq!(load_usage_database_limit(&connection).unwrap(), 1);
+        assert_eq!(
+            usage_database_auto_vacuum(&connection).unwrap(),
+            SQLITE_AUTO_VACUUM_INCREMENTAL
+        );
+        assert!(usage_database_disk_bytes(&root).unwrap() <= BYTES_PER_MB);
+        assert_eq!(
+            test_full_vacuum_count(&root),
+            1,
+            "legacy oversized DB should run at most one one-time VACUUM to migrate to INCREMENTAL"
+        );
+        let newest_legacy_kept: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM usage_events WHERE event_key = 'legacy-row-10159'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(newest_legacy_kept, 1);
+
+        // Subsequent rolling ingestion must stay under limit with zero additional full VACUUMs.
+        let config = GuiConfigFile::default();
+        let failure_payload = "z".repeat(1_800);
+        for batch_index in 0_i64..25 {
+            let items = (0_i64..15)
+                .map(|item_index| {
+                    let seq = batch_index * 15 + item_index;
+                    let seconds = seq % 60;
+                    let minutes = (seq / 60) % 60;
+                    serde_json::json!({
+                        "timestamp": format!("2026-09-19T12:{minutes:02}:{seconds:02}+08:00"),
+                        "request_id": format!("post-upgrade-{seq}"),
+                        "model": "retention-test",
+                        "failed": true,
+                        "failure_status": 429,
+                        "failure_body": failure_payload,
+                        "tokens": { "input_tokens": 100, "output_tokens": 0 }
+                    })
+                })
+                .collect::<Vec<_>>();
+            enqueue_usage_queue_items(&mut connection, "post-upgrade", items).unwrap();
+            process_usage_inbox(&mut connection, &config).unwrap();
+            assert!(usage_database_disk_bytes(&root).unwrap() <= BYTES_PER_MB);
+        }
+        assert_eq!(
+            test_full_vacuum_count(&root),
+            1,
+            "no additional full VACUUM should happen after one-time upgrade"
+        );
+
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_database_without_limit_or_below_limit_upgrades_with_zero_vacuum() {
+        for (suffix, limit_mb) in [("unlimited", 0_u64), ("below-limit", 64_u64)] {
+            let root = test_root(&format!("legacy-no-op-upgrade-{suffix}"));
+            fs::create_dir_all(&root).unwrap();
+            {
+                let mut legacy = open_usage_database_at(&root).unwrap();
+                legacy.pragma_update(None, "journal_mode", "WAL").unwrap();
+                initialize_usage_schema(&legacy).unwrap();
+                if limit_mb > 0 {
+                    save_usage_database_limit(&legacy, limit_mb).unwrap();
+                }
+                seed_sized_usage_events(&mut legacy, "keep", 1_000, 20, 1024);
+            }
+
+            initialize_usage_storage_at(&root).unwrap();
+
+            let connection = open_usage_database_at(&root).unwrap();
+            let count: i64 = connection
+                .query_row("SELECT COUNT(*) FROM usage_events", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 20);
+            assert_eq!(usage_database_auto_vacuum(&connection).unwrap(), 0);
+            assert_eq!(test_full_vacuum_count(&root), 0);
+            drop(connection);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn auto_limit_with_non_evictable_oversize_data_does_not_thrash_vacuum() {
+        let root = test_root("non-evictable-oversize");
+        let mut connection = open_test_database(&root);
+        save_usage_database_limit(&connection, 1).unwrap();
+
+        // Populate non-evictable pending inbox rows so the file exceeds 1 MB even
+        // when usage_events is completely empty.
+        let large_pending = "p".repeat(16 * 1024);
+        let transaction = connection.transaction().unwrap();
+        for index in 0..90 {
+            transaction
+                .execute(
+                    r#"INSERT INTO usage_inbox (
+                           source, message_hash, raw_message, status, attempt_count,
+                           received_at, created_at, updated_at
+                       ) VALUES ('test', ?1, ?2, 'pending', 0, '2026-09-18T00:00:00Z',
+                                 '2026-09-18T00:00:00Z', '2026-09-18T00:00:00Z')"#,
+                    params![format!("hash-{index}"), large_pending],
+                )
+                .unwrap();
+        }
+        transaction.commit().unwrap();
+        truncate_usage_database_wal(&connection);
+        assert!(usage_database_disk_bytes(&root).unwrap() > BYTES_PER_MB);
+
+        for _ in 0..10 {
+            let deleted = enforce_usage_database_limit(&mut connection).unwrap();
+            assert_eq!(deleted, 0);
+        }
+        assert_eq!(
+            test_full_vacuum_count(&root),
+            0,
+            "incremental DB with nothing reclaimable must not spin full VACUUM"
+        );
+
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn receive_subscription_batch_coalesces_burst_and_preserves_messages_on_disconnect() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut auth = vec![0_u8; b"*2\r\n$4\r\nAUTH\r\n$6\r\nsecret\r\n".len()];
+            stream.read_exact(&mut auth).await.unwrap();
+            stream.write_all(b"+OK\r\n").await.unwrap();
+
+            let mut sub = vec![0_u8; b"*2\r\n$9\r\nSUBSCRIBE\r\n$5\r\nusage\r\n".len()];
+            stream.read_exact(&mut sub).await.unwrap();
+            stream
+                .write_all(b"*3\r\n$9\r\nsubscribe\r\n$5\r\nusage\r\n:1\r\n")
+                .await
+                .unwrap();
+
+            // Send a burst of 5 messages immediately, then close the socket after a brief pause.
+            for index in 0..5 {
+                let payload = format!("{{\"request_id\":\"burst-{index}\"}}");
+                let frame = format!(
+                    "*3\r\n$7\r\nmessage\r\n$5\r\nusage\r\n${}\r\n{payload}\r\n",
+                    payload.len()
+                );
+                stream.write_all(frame.as_bytes()).await.unwrap();
+            }
+            drop(stream);
+        });
+
+        let mut subscription = UsageSubscription::connect(port, "secret").await.unwrap();
+        let token = CancellationToken::new();
+        let batch = receive_subscription_batch(
+            &mut subscription,
+            &token,
+            Duration::from_secs(2),
+            Duration::from_millis(200),
+            100,
+        )
+        .await;
+
+        assert!(batch.received_any);
+        assert!(!batch.cancelled);
+        assert_eq!(batch.messages.len(), 5);
+        assert_eq!(batch.messages[0], "{\"request_id\":\"burst-0\"}");
+        assert_eq!(batch.messages[4], "{\"request_id\":\"burst-4\"}");
+        assert!(
+            batch.disconnect_error.is_some(),
+            "disconnect after burst should be reported without dropping already-received messages"
+        );
+        server.await.unwrap();
     }
 
     #[test]

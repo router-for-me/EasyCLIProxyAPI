@@ -272,18 +272,6 @@
   .config-page .config-settings-content .template-config-field-wide { grid-column: 1 / -1; }
   .config-page .config-settings-content :is(.config-network-routing-field, .config-proxy-field) { grid-column: 1 / -1; }
   .config-page .config-settings-content .config-network-routing-field > .routing-segmented { max-width: 540px; }
-  .config-page .config-settings-content .config-software-settings-list {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    column-gap: 32px;
-    border-radius: var(--radius-none);
-  }
-  .config-page .config-settings-content .config-software-setting-row {
-    border: 0;
-    border-bottom: 1px solid var(--border-color);
-    min-height: 54px;
-    padding-block: 8px;
-  }
 }
 
 /* Keep labels attached to their controls rather than spanning empty grid tracks. */
@@ -1032,37 +1020,6 @@ input::-ms-clear {
   border-bottom: 1px solid var(--border-color);
   border-radius: var(--radius-none);
 }
-.config-page .config-settings-content .config-diagnostics-setting {
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  justify-content: stretch;
-  min-height: 40px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-color);
-  border-radius: var(--radius-none);
-}
-.config-page .config-settings-content .config-diagnostics-field {
-  grid-template-columns: minmax(0, 1fr) 128px;
-  align-items: center;
-  min-height: 40px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-color);
-  border-radius: var(--radius-none);
-}
-@container settings-card (min-width: 920px) {
-  .config-page #config-native-logging .config-diagnostics-toggle-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 10px 24px;
-  }
-  .config-page #config-native-logging .config-diagnostics-fields {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px 24px;
-  }
-  .config-page #config-native-logging .config-diagnostics-field {
-    grid-template-columns: minmax(0, 1fr) 108px;
-    border-bottom: 0;
-    padding-bottom: 0;
-  }
-}
 
 .config-page .config-settings-content .config-proxy-heading { max-width: none; }
 
@@ -1104,7 +1061,6 @@ input::-ms-clear {
 }
 
 @container settings-card (max-width: 400px) {
-  .config-page .config-settings-content .config-diagnostics-field { grid-template-columns: minmax(0, 1fr); }
   .config-page .config-settings-content .template-config-field:not(.template-config-field-wide):not(.template-config-toggle) {
     grid-template-columns: minmax(0, 1fr);
     gap: 6px;
@@ -1182,29 +1138,218 @@ input::-ms-clear {
   }
 }
 
-/* App preferences: flush workspace width; 3 switches on row 1, 2 selects on row 2, tight rows. */
-.config-page .config-settings-content #config-native-software { width: 100%; justify-self: stretch; }
-.config-page .config-settings-content #config-native-software .config-software-setting-row {
-  min-height: 40px;
-  padding-block: 6px;
+/* Logging & diagnostics: uniform single-column settings list matching App Preferences. */
+.config-page #config-native-logging .config-diagnostics-list,
+.config-page #config-native-logging .config-diagnostics-toggle-grid,
+.config-page #config-native-logging .config-diagnostics-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 100%;
+  margin: 0;
+  padding: 0;
 }
-.config-page .config-settings-content .config-software-select {
-  width: min(100%, 200px);
+.config-page #config-native-logging .config-diagnostics-fields {
+  border-top: 1px solid var(--border-color);
+}
+.config-page #config-native-logging .config-diagnostics-setting,
+.config-page #config-native-logging .config-diagnostics-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  align-content: center;
+  gap: 12px 24px;
+  min-height: 60px;
+  padding: 13px 10px;
+  border: 0;
+  border-radius: var(--radius-none);
+  background: transparent;
+  transition: background-color 140ms ease;
+}
+.config-page #config-native-logging .config-diagnostics-setting + .config-diagnostics-setting,
+.config-page #config-native-logging .config-diagnostics-field + .config-diagnostics-field {
+  border-top: 1px solid var(--border-color);
+}
+@media (hover: hover) {
+  .config-page #config-native-logging :is(.config-diagnostics-setting, .config-diagnostics-field):not(.is-disabled):hover {
+    background: var(--bg-hover);
+  }
+}
+.config-page #config-native-logging :is(.config-diagnostics-setting, .config-diagnostics-field).is-disabled {
+  opacity: 0.6;
+}
+.config-page #config-native-logging .config-diagnostics-setting-copy {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  cursor: pointer;
+}
+.config-page #config-native-logging :is(.config-diagnostics-setting, .config-diagnostics-field).is-disabled .config-diagnostics-setting-copy {
+  cursor: not-allowed;
+}
+.config-page #config-native-logging .config-diagnostics-setting-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+.config-page #config-native-logging .config-diagnostics-setting-copy > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.config-page #config-native-logging .config-diagnostics-setting-copy strong {
+  color: var(--text-primary);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.config-page #config-native-logging .config-diagnostics-setting-copy small {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+.config-page #config-native-logging .config-diagnostics-setting > .switch-control {
+  margin-left: 0;
   justify-self: end;
 }
-@container settings-card (min-width: 760px) {
-  .config-page #config-native-software .config-software-settings-list {
-    display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    column-gap: 24px;
+.config-page #config-native-logging .config-diagnostics-field > input.config-network-input {
+  width: 140px;
+  max-width: 100%;
+  height: 36px;
+  justify-self: end;
+  font-variant-numeric: tabular-nums;
+}
+@container settings-card (max-width: 560px) {
+  .config-page #config-native-logging :is(.config-diagnostics-setting, .config-diagnostics-field) {
+    gap: 10px 14px;
+    padding: 12px 6px;
   }
-  .config-page #config-native-software .config-software-setting-row:not(.config-software-close-row) {
-    grid-column: span 2;
+  .config-page #config-native-logging .config-diagnostics-field {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .config-page #config-native-logging .config-diagnostics-field > input.config-network-input {
+    width: 100%;
+    max-width: none;
+    justify-self: stretch;
+  }
+}
+
+/* App preferences: clean single-column settings list with clear icon/copy/control alignment and instant auto-save. */
+.config-page .config-settings-content #config-native-software {
+  width: 100%;
+  justify-self: stretch;
+}
+.config-page #config-native-software .config-software-content {
+  width: 100%;
+  margin: 0;
+}
+.config-page #config-native-software .config-software-settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 0;
+  border-radius: var(--radius-none);
+  background: transparent;
+}
+.config-page #config-native-software .config-software-setting-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  align-content: center;
+  gap: 12px 24px;
+  min-height: 60px;
+  padding: 13px 10px;
+  border: 0;
+  border-radius: var(--radius-none);
+  transition: background-color 140ms ease;
+}
+.config-page #config-native-software .config-software-setting-row + .config-software-setting-row {
+  border-top: 1px solid var(--border-color);
+}
+@media (hover: hover) {
+  .config-page #config-native-software .config-software-setting-row:not(.is-disabled):hover {
+    background: var(--bg-hover);
+  }
+}
+.config-page #config-native-software .config-software-setting-row.is-disabled {
+  opacity: 0.6;
+}
+.config-page #config-native-software .config-software-setting-copy {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  cursor: pointer;
+}
+.config-page #config-native-software .config-software-setting-row.is-disabled .config-software-setting-copy {
+  cursor: not-allowed;
+}
+.config-page #config-native-software .config-software-setting-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+.config-page #config-native-software .config-software-setting-copy > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.config-page #config-native-software .config-software-setting-copy strong {
+  color: var(--text-primary);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.config-page #config-native-software .config-software-setting-copy small {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+.config-page #config-native-software .config-software-setting-row > .switch-control {
+  justify-self: end;
+}
+.config-page #config-native-software .config-software-select {
+  display: grid;
+  width: 220px;
+  max-width: 100%;
+  padding: 0;
+  justify-self: end;
+}
+.config-page #config-native-software .config-software-select .config-network-input {
+  width: 100%;
+  height: 36px;
+}
+@container settings-card (max-width: 560px) {
+  .config-page #config-native-software .config-software-setting-row {
+    gap: 10px 14px;
+    padding: 12px 6px;
   }
   .config-page #config-native-software .config-software-setting-row.config-software-close-row {
-    grid-column: span 3;
-    border-bottom: 0;
-    padding-bottom: 0;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .config-page #config-native-software .config-software-select {
+    width: 100%;
+    justify-self: stretch;
+    padding-left: 0;
   }
 }
 

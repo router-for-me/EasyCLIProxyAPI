@@ -624,3 +624,91 @@ fn failed_switch_stays_selected_and_never_revives_old_capabilities() {
     assert!(!state.snapshot().unwrap().upstream_enabled);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn suspend_for_remote_and_prepare_for_local_reset_runtime_without_losing_accounts() {
+    let (root, state) = fixture();
+    {
+        let mut status = state.status.lock().unwrap();
+        status.upstream_enabled = true;
+        status.upstream_url = Some("http://127.0.0.1:43210/v1".into());
+        status.error = Some("stale error".into());
+    }
+    *state.request_pool.root.lock().unwrap() = Some(root.clone());
+
+    state.suspend_for_remote();
+    let suspended = state.snapshot().unwrap();
+    assert!(suspended.upstream_url.is_none());
+    assert!(suspended.error.is_none());
+    assert!(state.request_pool.root.lock().unwrap().is_none());
+    assert!(suspended.authenticated);
+
+    {
+        let mut status = state.status.lock().unwrap();
+        status.error = Some("Built-in CPA operation unavailable".into());
+    }
+    state.prepare_for_local();
+    let ready = state.snapshot().unwrap();
+    assert!(ready.error.is_none());
+    assert!(ready.authenticated);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn relogin_non_active_default_account_preserves_active_account_and_updates_runtime() {
+    let (root, state) = fixture();
+    let mut pending = accounts::PendingAccount::new_isolated(&root, "Work", false).unwrap();
+    let isolated_dir = pending.directory().unwrap();
+    let token = accounts::isolated_token(&isolated_dir);
+    std::fs::create_dir_all(token.parent().unwrap()).unwrap();
+    std::fs::write(&token, "synthetic-token").unwrap();
+    let work_id = pending.id.clone();
+    pending
+        .commit_replacing(Some("work@example.test".into()), None, true)
+        .unwrap();
+    refresh_account_identity(&state, &root).unwrap();
+    mark_session(
+        &state,
+        &json!({"models":{"availableModels":[{"modelId":"work-model"}]}}),
+        &isolated_dir,
+    )
+    .unwrap();
+
+    let calls = root.join("relogin-methods");
+    relogin_profile_for(
+        &state,
+        &root,
+        "default",
+        &root,
+        &Arc::new(AtomicBool::new(false)),
+        &mut fixture_client("ok", Some(&calls), Some(&root)),
+    )
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&calls).unwrap(),
+        "initialize\nlogout\nauthenticate\nsession/new\n"
+    );
+    let registry = accounts::read(&root).unwrap();
+    assert_eq!(registry.active, work_id);
+    assert_eq!(
+        registry
+            .accounts
+            .iter()
+            .find(|a| a.id == "default")
+            .and_then(|a| a.email.as_deref()),
+        Some("new@example.test")
+    );
+    let snapshot = state.snapshot().unwrap();
+    assert_eq!(snapshot.active_account, work_id);
+    assert!(snapshot.authenticated);
+    assert_eq!(snapshot.models[0].id, "work-model");
+    assert_eq!(
+        snapshot
+            .account_runtime
+            .get("default")
+            .map(|rt| (rt.auth_state, rt.model_count)),
+        Some((AccountAuthState::Ready, 1))
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}

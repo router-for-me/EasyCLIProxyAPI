@@ -10,6 +10,23 @@ pub(crate) struct AppInstanceGuard {
     _file: fs::File,
 }
 
+pub(crate) struct AppInstanceGuardState {
+    guard: std::sync::Mutex<Option<AppInstanceGuard>>,
+}
+
+impl AppInstanceGuardState {
+    pub(crate) fn new(guard: AppInstanceGuard) -> Self {
+        Self {
+            guard: std::sync::Mutex::new(Some(guard)),
+        }
+    }
+
+    pub(crate) fn release(&self) {
+        let mut guard = self.guard.lock().unwrap_or_else(|error| error.into_inner());
+        guard.take();
+    }
+}
+
 pub(crate) fn acquire_app_instance_guard() -> Result<AppInstanceGuard, String> {
     let executable_dir = super::executable_dir()?;
     acquire_app_instance_guard_for(&executable_dir)

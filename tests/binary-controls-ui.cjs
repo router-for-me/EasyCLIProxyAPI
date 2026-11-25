@@ -101,7 +101,7 @@ const capturedPaint = {
       localStorage.setItem('cpa-gui.agent-selected-client.v1', 'codex');
     });
     await page.goto(`${base}/?mock=running`);
-    await page.locator('.nav-section button').nth(4).click();
+    await page.locator('.nav-section').getByRole('button', { name: 'Agent Configuration', exact: true }).click();
     await page.locator('#agent-subpage-tab-sessions').click();
     const sessions = page.locator('.codex-sessions-page');
     await sessions.locator('.codex-session-row').first().waitFor();

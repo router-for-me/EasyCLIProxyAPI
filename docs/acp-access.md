@@ -41,9 +41,27 @@ Thinking levels are detected from official model ID suffixes (none, minimal, low
 
 By default, one HTTP/native operation runs at a time and concurrent requests return 429. Tool waits release the HTTP slot while preserving their own CLI execution. At most 16 live or waiting ACP sessions are retained across accounts. A dropped HTTP/SSE client cancels in-flight work. Switching accounts, signing out, or disabling API access retires suspended sessions; account management remains exclusive with active HTTP work. Cancel in-flight work before retrying an account action that reports busy. ECPA must remain running while clients use ACP.
 
-### Opt-in account pool
+### Multi-account concurrency pool, routing & failover
 
-Set `"account_pool": true` in the existing private `core_base_dir()/acp/antigravity/bridge.json`, preserving `enabled` and `port`, then restart ECPA or disable and re-enable ACP API access. The pool never enables API access on its own. It prefers the manually selected account and considers separately signed-in, saved isolated profiles only when an additional slot is needed. Existing legacy accounts are never automatically added as secondary routes. The selected account's model list remains the public catalog, and the chosen CLI must report the requested model before the prompt starts. The pool admits one in-flight request per account and up to four in total. Continuations always stay on their original account; saturation returns 429 and no request is replayed on another account after a failure, stream update, or tool call. Set `"account_pool": false` to restore active-account-only behavior.
+Multi-account concurrency pooling is controlled directly from the **ACP Access** page (and persisted in `core_base_dir()/acp/antigravity/bridge.json`, keeping `enabled` and `port` backwards-compatible with [`plugins/acp-responses`](../plugins/acp-responses/README.md)):
+
+- **Pool toggle (`account_pool`, default `false`)**: When disabled, API traffic routes strictly to the active account (up to its configured `max_concurrency`). When enabled, API traffic distributes across all enabled, saved pool accounts (the default CLI account when saved, plus all separately authorized isolated accounts whose private token file passes read-only verification). Legacy non-isolated secondary accounts are never pooled.
+- **Routing strategies (`routing_strategy`, default `round_robin`)**:
+  - `round_robin`: Fairly rotates across eligible accounts within the highest available priority tier (`priority` ascending).
+  - `least_busy`: Selects the account with the lowest utilization (`active / max_concurrency`).
+  - `fill_first`: Prefers the active account / registration order until saturated or cooled down.
+  - `weighted`: Smooth weighted round-robin based on each account's `weight` (`1..=100`).
+- **Per-account settings (`accounts.json`, up to 64 accounts)**: Each saved account supports `enabled` (pool on/off without removing credentials), `priority` (lower value = higher tier), `weight` (`1..=100`), `maxConcurrency` (`1..=16`), and optional `proxyUrl` (overrides global ECPA proxy; supports `direct` to bypass proxy). Reauthorizing an isolated account preserves these settings.
+- **Concurrency limits, queuing & live sessions**:
+  - `max_global_concurrency` (default `16`, `1..=128`): Global simultaneous in-flight API turn cap.
+  - `max_live_sessions` (default `64`, `4..=256`): Live suspended Responses / pending tool-call sessions across accounts; tool waits release HTTP concurrency slots while keeping their own CLI session alive.
+  - `queue_wait_ms` (default `3000`, `0..=60000`): Async slot queue timeout when all healthy slots are momentarily busy; client disconnect immediately cancels waiting without leaking slots.
+- **Per-(account, model) cooldown & safe pre-output failover**:
+  - Upstream `RESOURCE_EXHAUSTED` (429), `UNAVAILABLE` (503), and `DEADLINE_EXCEEDED` (504) record exponential backoff cooldowns scoped to `(account, model)` (`cooldown_base_secs` default `60`, `cooldown_max_secs` default `600`). Upstream `UNAUTHENTICATED` (401) / `PERMISSION_DENIED` (403) mark the account `auth_required` until re-verified or reset.
+  - Fresh (unpinned) requests transparently fail over up to `max_failover_attempts` (default `2`) times **strictly before** HTTP 200 / first output text / tool calls are emitted. Mid-stream failures never replay, `400 InvalidRequest` never cools down or fails over, and pinned continuations (`previous_response_id`, Chat `tool_call_id`, `history_match`) always stay sticky on their owning account.
+- **Non-blocking operations & aggregated model catalog**:
+  - API request admission is decoupled from interactive UI actions: adding a new account, editing settings, verifying another account, or resetting cooldowns does not block healthy accounts serving API traffic. Destructive actions (`logout` / `remove`) protect the target account if it has active requests and only abandon that account's suspended sessions.
+  - When `account_pool` is enabled, `/v1/models` and the CPA `ecpa-antigravity-acp` provider register the deduplicated union of models advertised by all enabled verified pool accounts, while routing each request only to accounts supporting that model.
 
 ## Chat Completions and streaming contract
 

@@ -40,7 +40,7 @@ mkdirSync(screenshots, { recursive: true });
         return invoke(command, args, options);
       };
     });
-    await page.locator('.nav-section button').nth(4).click();
+    await page.locator('.nav-section').getByRole('button', { name: 'Agent Configuration', exact: true }).click();
     await page.locator('#agent-subpage-tab-sessions').click();
     await page.locator('.codex-sessions-page').waitFor();
 
@@ -204,7 +204,7 @@ mkdirSync(screenshots, { recursive: true });
         return result;
       };
     });
-    await page.locator('.nav-section button').nth(4).click();
+    await page.locator('.nav-section').getByRole('button', { name: 'Agent Configuration', exact: true }).click();
     await page.locator('#agent-subpage-tab-sessions').click();
     await page.locator('.codex-session-context-button').first().click();
     for (const count of [43, 1000]) {

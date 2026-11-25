@@ -143,6 +143,13 @@ impl RemoteCpaState {
         }
     }
 
+    pub(crate) fn uses_external_dispatch(&self) -> bool {
+        self.remote_launch
+            || self
+                .external_dispatch
+                .load(std::sync::atomic::Ordering::Acquire)
+    }
+
     pub(crate) fn take_builtin_start(&mut self) -> Result<bool, RemoteError> {
         let selection = self.selection.get_mut();
         if !matches!(selection.profile, Ok(Profile::Local)) || !selection.book.start_builtin { return Ok(false); }
@@ -976,50 +983,73 @@ pub(crate) async fn select_cpa_connection(
     } else {
         Profile::Local
     };
-    let mut was_running = false;
-    let _operation = if remote && matches!(selection.profile, Ok(Profile::Local)) {
-        let guard = crate::lock_core_operation(process.inner()).map_err(|_| RemoteError::Busy)?;
-        was_running = process.managed_pid().is_some();
-        crate::stop_core_processes(process.inner(), false).map_err(|_| RemoteError::StopFailed)?;
-        Some(guard)
-    } else { None };
-    if !remote && !state.remote_launch {
-        use tauri::Manager;
-        use std::sync::atomic::Ordering;
-        let _guard = crate::CORE_OPERATION_LOCK.try_lock().map_err(|_| RemoteError::Busy)?;
-        process.remote_selected.store(false, Ordering::Release);
-        let gui = app.state::<crate::GuiConfigState>();
-        let status = match crate::start_core_process_with_state(process.inner(), gui.inner()) {
-            Ok(status) => status,
-            Err(error) => {
-                process.remote_selected.store(true, Ordering::Release);
-                eprintln!("Could not start built-in CPA on switch: {error}");
-                return Err(RemoteError::StartFailed);
-            }
-        };
-        let result = state.persist(&mut selection, profile);
-        if result.is_err() {
-            let stopped = crate::stop_core_processes(process.inner(), false);
-            process.remote_selected.store(true, Ordering::Release);
-            stopped.map_err(|_| RemoteError::StopFailed)?;
-        } else {
-            crate::usage::switch_collector(&app);
-            crate::emit_core_status(&app, &status);
-        }
-        return result;
-    }
-    let view = state.persist(&mut selection, profile).map_err(|error| {
-        if _operation.is_some() && was_running {
+    let view = {
+        let mut was_running = false;
+        let _operation = if remote && matches!(selection.profile, Ok(Profile::Local)) {
+            let guard = crate::lock_core_operation(process.inner()).map_err(|_| RemoteError::Busy)?;
+            was_running = process.managed_pid().is_some();
+            crate::stop_core_processes(process.inner(), false).map_err(|_| RemoteError::StopFailed)?;
+            Some(guard)
+        } else { None };
+        if !remote && !state.remote_launch {
             use tauri::Manager;
-            match crate::start_core_process_with_state(process.inner(), app.state::<crate::GuiConfigState>().inner()) {
-                Ok(status) => crate::emit_core_status(&app, &status),
-                Err(_) => return RemoteError::RollbackFailed,
+            use std::sync::atomic::Ordering;
+            let _guard = crate::CORE_OPERATION_LOCK.try_lock().map_err(|_| RemoteError::Busy)?;
+            process.remote_selected.store(false, Ordering::Release);
+            let gui = app.state::<crate::GuiConfigState>();
+            let status = match crate::start_core_process_with_state(process.inner(), gui.inner()) {
+                Ok(status) => status,
+                Err(error) => {
+                    process.remote_selected.store(true, Ordering::Release);
+                    eprintln!("Could not start built-in CPA on switch: {error}");
+                    return Err(RemoteError::StartFailed);
+                }
+            };
+            let result = state.persist(&mut selection, profile);
+            if result.is_err() {
+                let stopped = crate::stop_core_processes(process.inner(), false);
+                process.remote_selected.store(true, Ordering::Release);
+                stopped.map_err(|_| RemoteError::StopFailed)?;
+            } else {
+                crate::usage::switch_collector(&app);
+                crate::emit_core_status(&app, &status);
+                app.state::<crate::acp::AcpState>().prepare_for_local();
+                tauri::async_runtime::spawn(crate::acp::restore(app.clone()));
             }
+            return result;
         }
-        error
-    })?;
-    process.remote_selected.store(remote, std::sync::atomic::Ordering::Release);
-    if !remote && state.remote_launch { app.request_restart(); } else { crate::usage::switch_collector(&app); }
+        let view = state.persist(&mut selection, profile).map_err(|error| {
+            if _operation.is_some() && was_running {
+                use tauri::Manager;
+                match crate::start_core_process_with_state(process.inner(), app.state::<crate::GuiConfigState>().inner()) {
+                    Ok(status) => crate::emit_core_status(&app, &status),
+                    Err(_) => return RemoteError::RollbackFailed,
+                }
+            }
+            error
+        })?;
+        process.remote_selected.store(remote, std::sync::atomic::Ordering::Release);
+        view
+    };
+    if !remote && state.remote_launch {
+        use tauri::Manager;
+        crate::usage::stop_usage_collector(&app);
+        if let Some(guard) = app.try_state::<crate::AppInstanceGuardState>() {
+            guard.release();
+        }
+        drop(selection);
+        app.request_restart();
+        // Give the main event loop a moment to exit and launch the fresh Built-in
+        // CPA process without returning a view that fires Built-in IPC against this
+        // dying remote-launch process.
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    } else {
+        if remote {
+            use tauri::Manager;
+            app.state::<crate::acp::AcpState>().suspend_for_remote();
+        }
+        crate::usage::switch_collector(&app);
+    }
     Ok(view)
 }
 
