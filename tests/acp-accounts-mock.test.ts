@@ -42,3 +42,53 @@ test('ACP mock follows saved/current/busy/cancel/remove/logout contracts', async
   expect((await status()).accounts).toEqual([{ id: 'default', label: 'Default', email: null, saved: false }]);
   expect((await status()).upstreamEnabled).toBe(true);
 });
+
+test('ACP mock supports multi-account pool settings, per-account tuning, verify all and cooldown reset', async () => {
+  const runtime = createBrowserMockRuntime('running');
+  const status = async () => await runtime.invoke('get_acp_status') as AcpStatus;
+  await runtime.invoke('acp_connect', { login: true });
+  await runtime.invoke('add_acp_account', { label: 'Pool Worker' });
+  const workerId = (await status()).activeAccount;
+
+  const updatedAcc = await runtime.invoke('update_acp_account_settings', {
+    accountId: workerId,
+    patch: { enabled: false, priority: 1, weight: 5, maxConcurrency: 3, proxyUrl: 'http://127.0.0.1:7890' },
+  }) as AcpStatus;
+  const worker = updatedAcc.accounts.find(a => a.id === workerId)!;
+  expect(worker.enabled).toBe(false);
+  expect(worker.priority).toBe(1);
+  expect(worker.weight).toBe(5);
+  expect(worker.maxConcurrency).toBe(3);
+  expect(worker.proxyUrl).toBe('http://127.0.0.1:7890');
+
+  await expect(runtime.invoke('update_acp_account_settings', {
+    accountId: workerId,
+    patch: { proxyUrl: 'ftp://invalid.example' },
+  })).rejects.toThrow('valid proxy URL');
+
+  const updatedPool = await runtime.invoke('update_acp_pool_settings', {
+    settings: {
+      accountPool: true,
+      routingStrategy: 'weighted',
+      maxGlobalConcurrency: 24,
+      maxLiveSessions: 96,
+      queueWaitMs: 4000,
+      maxFailoverAttempts: 3,
+      cooldownBaseSecs: 30,
+      cooldownMaxSecs: 300,
+      promptProfile: 'first_turn_context',
+    },
+  }) as AcpStatus;
+  expect(updatedPool.poolSettings?.accountPool).toBe(true);
+  expect(updatedPool.poolSettings?.routingStrategy).toBe('weighted');
+  expect(updatedPool.poolSettings?.maxGlobalConcurrency).toBe(24);
+  expect(updatedPool.poolSettings?.promptProfile).toBe('first_turn_context');
+
+  await runtime.invoke('update_acp_account_settings', { accountId: workerId, patch: { enabled: true } });
+  const verifiedAll = await runtime.invoke('verify_all_acp_accounts') as AcpStatus;
+  expect(verifiedAll.accountRuntime?.[workerId]?.authState).toBe('ready');
+  expect(verifiedAll.accountRuntime?.default?.authState).toBe('ready');
+
+  const reset = await runtime.invoke('reset_acp_account_cooldown', { accountId: workerId }) as AcpStatus;
+  expect(reset.accountRuntime?.[workerId]?.cooldowns).toEqual([]);
+});

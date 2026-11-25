@@ -7,7 +7,7 @@ import { createPluginMock, type PluginWebviewMockState } from './pluginMock';
 import { createQuotaMock, createQuotaMockFiles } from './quotaMock';
 import { normalizeAuthFileTags } from '../services/authFiles';
 import { hasDeepSeekArgumentConflict, parseAgentLaunchArguments } from '../services/agentLaunchArguments';
-import type { AcpStatus } from '../services/acp';
+import { DEFAULT_ACP_POOL_SETTINGS, type AcpAccountRuntime, type AcpPoolSettings, type AcpStatus } from '../services/acp';
 import type { UsageQuery } from '../services/usage';
 import { filterMockUsage, mockUsageAnalysis, mockUsageOverview, mockUsagePricing } from './usageMock';
 import { initialMockConfigYaml } from './configDocumentFixture';
@@ -1251,6 +1251,10 @@ export function createBrowserMockRuntime(
     executable: 'C:/Users/demo/AppData/Local/agy/bin/agy.exe', profile: 'C:/ECPA/acp/antigravity',
     authenticated: false, busy: false, operation: '', models: [], selectedModel: '', error: null, latestProbe: null, upstreamEnabled: false, upstreamUrl: null,
     accounts: [{ id: 'default', label: 'Default', email: null as string | null, saved: false }], activeAccount: 'default',
+    poolSettings: clone(DEFAULT_ACP_POOL_SETTINGS),
+    activeRequests: 0,
+    liveSessions: 0,
+    accountRuntime: {},
   };
   const acpAccountModels = new Map<string, string>();
   let acpCancelled = false;
@@ -1260,6 +1264,34 @@ export function createBrowserMockRuntime(
     const raw = readString(value); const label = raw.trim();
     if (!label || [...label].length > 80 || /[\u0000-\u001f\u007f-\u009f]/u.test(raw)) throw new Error('Enter an ACP account label of 1–80 characters without control characters');
     return label;
+  };
+  const ensureMockRuntime = (id: string): AcpAccountRuntime => {
+    acp.accountRuntime ??= {};
+    if (!acp.accountRuntime[id]) {
+      acp.accountRuntime[id] = { authState: 'unknown', modelCount: 0, activeRequests: 0, liveSessions: 0, operating: false, cooldowns: [] };
+    }
+    return acp.accountRuntime[id];
+  };
+  const markMockAccountReady = (id: string) => {
+    const rt = ensureMockRuntime(id);
+    rt.authState = 'ready';
+    rt.modelCount = mockAcpModels.length;
+    rt.lastVerifiedAt = Math.floor(Date.now() / 1000);
+    rt.lastError = null;
+    rt.cooldowns = [];
+  };
+  const validateMockProxy = (value: unknown): string | null => {
+    const raw = readString(value).trim();
+    if (!raw) return null;
+    if (raw.length > 512 || /[\u0000-\u001f\u007f\s]/u.test(raw)) {
+      throw new Error("Enter a valid proxy URL (http://, https://, socks5://, socks5h://) or 'direct'");
+    }
+    if (raw.toLowerCase() === 'direct') return 'direct';
+    const lower = raw.toLowerCase();
+    if (!['http://', 'https://', 'socks5://', 'socks5h://', 'socks4://'].some(prefix => lower.startsWith(prefix) && raw.length > prefix.length)) {
+      throw new Error("Enter a valid proxy URL (http://, https://, socks5://, socks5h://) or 'direct'");
+    }
+    return raw;
   };
   const clearMockAcp = () => Object.assign(acp, { authenticated: false, models: [], selectedModel: '', latestProbe: null });
   const mockAcpOperation = async (operation: string, action: () => void) => {
@@ -1814,13 +1846,14 @@ export function createBrowserMockRuntime(
       case 'add_acp_account': {
         const label = validateAcpLabel(payload.label);
         if (!acp.executable) throw new Error('Install official Antigravity CLI before adding an account');
-        if (acp.accounts.filter(a => a.saved).length >= 32) throw new Error('Up to 32 ACP accounts can be saved');
+        if (acp.accounts.filter(a => a.saved).length >= 64) throw new Error('Up to 64 ACP accounts can be saved');
         return mockAcpOperation('login', () => {
           const id = (++acpSequence).toString(16).padStart(32, '0');
           acpAccountModels.set(acp.activeAccount, acp.selectedModel);
           acp.accounts = acp.accounts.filter(a => a.id !== 'default' || a.saved);
           acp.accounts.push({ id, label, email: 'work.acp@example.test', saved: true });
           acp.activeAccount = id;
+          markMockAccountReady(id);
           Object.assign(acp, { authenticated: true, models: clone(mockAcpModels), selectedModel: mockAcpModels[0].id, latestProbe: null });
         });
       }
@@ -1832,18 +1865,98 @@ export function createBrowserMockRuntime(
           account.label = label;
         });
       }
+      case 'update_acp_account_settings': {
+        const id = readString(payload.accountId);
+        const patch = asObject(payload.patch);
+        const account = acp.accounts.find(a => a.id === id);
+        if (!account) throw new Error('Unknown ACP account');
+        if (patch.label !== undefined) account.label = validateAcpLabel(patch.label);
+        if (patch.enabled !== undefined) account.enabled = Boolean(patch.enabled);
+        if (patch.priority !== undefined) {
+          const priority = Math.max(0, Math.floor(readNumber(patch.priority, 0)));
+          account.priority = priority;
+        }
+        if (patch.weight !== undefined) {
+          const weight = Math.floor(readNumber(patch.weight, 1));
+          if (weight < 1 || weight > 100) throw new Error('ACP account weight must be between 1 and 100');
+          account.weight = weight;
+        }
+        if (patch.maxConcurrency !== undefined) {
+          const limit = Math.floor(readNumber(patch.maxConcurrency, 1));
+          if (limit < 1 || limit > 16) throw new Error('ACP account max concurrency must be between 1 and 16');
+          account.maxConcurrency = limit;
+        }
+        if (patch.proxyUrl !== undefined) {
+          account.proxyUrl = validateMockProxy(patch.proxyUrl);
+        }
+        return clone(acp);
+      }
+      case 'update_acp_pool_settings': {
+        const next = asObject(payload.settings) as Partial<AcpPoolSettings>;
+        const merged: AcpPoolSettings = { ...(acp.poolSettings || DEFAULT_ACP_POOL_SETTINGS), ...next };
+        if (merged.maxGlobalConcurrency < 1 || merged.maxGlobalConcurrency > 128) throw new Error('ACP global max concurrency must be between 1 and 128');
+        if (merged.maxLiveSessions < 4 || merged.maxLiveSessions > 256) throw new Error('ACP max live sessions must be between 4 and 256');
+        if (merged.queueWaitMs < 0 || merged.queueWaitMs > 60000) throw new Error('ACP queue wait timeout must be between 0 and 60000 ms');
+        if (merged.maxFailoverAttempts < 0 || merged.maxFailoverAttempts > 8) throw new Error('ACP failover attempts must be between 0 and 8');
+        if (merged.cooldownBaseSecs < 5 || merged.cooldownBaseSecs > 3600) throw new Error('ACP cooldown base must be between 5 and 3600 seconds');
+        if (merged.cooldownMaxSecs < merged.cooldownBaseSecs || merged.cooldownMaxSecs > 86400) throw new Error('ACP cooldown max must be between 10 and 86400 seconds');
+        acp.poolSettings = merged;
+        return clone(acp);
+      }
+      case 'verify_acp_account': {
+        const id = readString(payload.accountId);
+        const account = acp.accounts.find(a => a.id === id);
+        if (!account) throw new Error('Unknown ACP account');
+        if (!acp.executable) throw new Error('Install official Antigravity CLI before connecting');
+        return mockAcpOperation('refresh', () => {
+          account.saved = true;
+          markMockAccountReady(id);
+          if (acp.activeAccount === id) {
+            Object.assign(acp, { authenticated: true, models: clone(mockAcpModels), selectedModel: acp.selectedModel || mockAcpModels[0].id });
+          }
+        });
+      }
+      case 'verify_all_acp_accounts': {
+        if (!acp.executable) throw new Error('Install official Antigravity CLI before connecting');
+        return mockAcpOperation('verify_all', () => {
+          for (const account of acp.accounts) {
+            if (account.enabled !== false && (account.saved || account.id === acp.activeAccount)) {
+              markMockAccountReady(account.id);
+              if (account.id === acp.activeAccount) {
+                Object.assign(acp, { authenticated: true, models: clone(mockAcpModels), selectedModel: acp.selectedModel || mockAcpModels[0].id });
+              }
+            }
+          }
+        });
+      }
+      case 'reset_acp_account_cooldown': {
+        const id = payload.accountId ? readString(payload.accountId) : null;
+        acp.accountRuntime ??= {};
+        for (const [key, rt] of Object.entries(acp.accountRuntime)) {
+          if (!id || key === id) {
+            rt.cooldowns = [];
+            if (rt.authState === 'auth_required' || rt.authState === 'error') rt.authState = 'unknown';
+            rt.lastError = null;
+          }
+        }
+        return clone(acp);
+      }
       case 'remove_acp_account': return mockAcpOperation('remove', () => {
         const id = readString(payload.accountId);
         if (!acp.accounts.some(a => a.id === id)) throw new Error('Unknown ACP account');
         acp.accounts = acp.accounts.filter(a => a.id !== id);
         acpAccountModels.delete(id);
+        if (acp.accountRuntime) delete acp.accountRuntime[id];
         if (!acp.accounts.length) acp.accounts = [{ id: 'default', label: 'Default', email: null, saved: false }];
         if (acp.activeAccount === id) { acp.activeAccount = acp.accounts[0].id; clearMockAcp(); }
       });
       case 'logout_acp_account': return mockAcpOperation('logout', () => {
-        clearMockAcp();
-        const account = acp.accounts.find(a => a.id === acp.activeAccount);
-        if (account) account.email = null;
+        const id = payload.accountId ? readString(payload.accountId) : acp.activeAccount;
+        const account = acp.accounts.find(a => a.id === id);
+        if (!account) throw new Error('Unknown ACP account');
+        if (acp.accountRuntime) delete acp.accountRuntime[id];
+        if (id === acp.activeAccount) clearMockAcp();
+        account.email = null;
       });
       case 'switch_acp_account': {
         const id = readString(payload.accountId);
@@ -1851,13 +1964,14 @@ export function createBrowserMockRuntime(
         return mockAcpOperation('refresh', () => {
           acpAccountModels.set(acp.activeAccount, acp.selectedModel);
           acp.activeAccount = id;
+          markMockAccountReady(id);
           Object.assign(acp, { authenticated: true, models: clone(mockAcpModels), selectedModel: acpAccountModels.get(id) || mockAcpModels[0].id, latestProbe: null });
         });
       }
       case 'relogin_acp_account':
       case 'acp_connect': return mockAcpOperation('login', () => {
         const account = acp.accounts.find(account => account.id === acp.activeAccount);
-        if (account) { account.saved = true; account.email = account.id === 'default' ? 'personal.acp@example.test' : 'work.acp@example.test'; }
+        if (account) { account.saved = true; account.email = account.id === 'default' ? 'personal.acp@example.test' : 'work.acp@example.test'; markMockAccountReady(account.id); }
         Object.assign(acp, { authenticated: true, error: null, latestProbe: null, models: clone(mockAcpModels) });
         if (!acp.models.some(model => model.id === acp.selectedModel)) acp.selectedModel = acp.models[0].id;
       });
@@ -1870,12 +1984,14 @@ export function createBrowserMockRuntime(
       }
       case 'test_acp_connection': {
         if (acp.busy) throw new Error('An ACP operation is already running');
-        if (!acp.authenticated || !acp.selectedModel) throw new Error('Refresh available ACP models first');
+        const targetId = payload.accountId ? readString(payload.accountId) : acp.activeAccount;
+        const targetModel = payload.model ? readString(payload.model) : acp.selectedModel;
+        if (!acp.authenticated || !targetModel) throw new Error('Refresh available ACP models first');
         acp.busy = true; acp.operation = 'test'; acp.error = null; acp.latestProbe = null; acpCancelled = false;
         try {
           await sleep(Math.max(delayMs, 250));
           if (acpCancelled) throw new Error('ACP request cancelled');
-          acp.latestProbe = { text: 'ACP_OK', model: acp.selectedModel, durationMs: 9214, firstTextMs: 8780, stopReason: 'end_turn' };
+          acp.latestProbe = { text: 'ACP_OK', model: targetModel, durationMs: 9214, firstTextMs: 8780, stopReason: 'end_turn', accountId: targetId };
           return clone(acp.latestProbe);
         } catch (cause) {
           acp.error = cause instanceof Error ? cause.message : String(cause);

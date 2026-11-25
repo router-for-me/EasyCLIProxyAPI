@@ -1,6 +1,24 @@
 use super::*;
 use std::io::Write;
 
+pub(super) const MAX_ACCOUNTS: usize = 64;
+pub(super) const MIN_WEIGHT: u32 = 1;
+pub(super) const MAX_WEIGHT: u32 = 100;
+pub(super) const MIN_ACCOUNT_CONCURRENCY: u32 = 1;
+pub(super) const MAX_ACCOUNT_CONCURRENCY: u32 = 16;
+
+fn default_enabled() -> bool {
+    true
+}
+
+fn default_weight() -> u32 {
+    1
+}
+
+fn default_max_concurrency() -> u32 {
+    1
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Account {
     pub(super) id: String,
@@ -12,6 +30,36 @@ pub(crate) struct Account {
     pub(super) saved: bool,
     #[serde(default)]
     pub(super) isolated: bool,
+    #[serde(default = "default_enabled")]
+    pub(super) enabled: bool,
+    #[serde(default)]
+    pub(super) priority: u32,
+    #[serde(default = "default_weight")]
+    pub(super) weight: u32,
+    #[serde(
+        default = "default_max_concurrency",
+        rename = "maxConcurrency",
+        alias = "max_concurrency"
+    )]
+    pub(super) max_concurrency: u32,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "proxyUrl",
+        alias = "proxy_url"
+    )]
+    pub(super) proxy_url: Option<String>,
+}
+
+#[derive(Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AccountSettingsPatch {
+    pub(super) label: Option<String>,
+    pub(super) enabled: Option<bool>,
+    pub(super) priority: Option<u32>,
+    pub(super) weight: Option<u32>,
+    pub(super) max_concurrency: Option<u32>,
+    pub(super) proxy_url: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -30,6 +78,11 @@ impl Default for Accounts {
                 email: None,
                 saved: false,
                 isolated: false,
+                enabled: true,
+                priority: 0,
+                weight: 1,
+                max_concurrency: 1,
+                proxy_url: None,
             }],
         }
     }
@@ -47,6 +100,66 @@ pub(super) fn validate_label(label: &str) -> Result<&str, String> {
         );
     }
     Ok(trimmed)
+}
+
+pub(super) fn validate_weight(weight: u32) -> Result<u32, String> {
+    if !(MIN_WEIGHT..=MAX_WEIGHT).contains(&weight) {
+        return Err(format!(
+            "ACP account weight must be between {MIN_WEIGHT} and {MAX_WEIGHT}"
+        ));
+    }
+    Ok(weight)
+}
+
+pub(super) fn validate_max_concurrency(limit: u32) -> Result<u32, String> {
+    if !(MIN_ACCOUNT_CONCURRENCY..=MAX_ACCOUNT_CONCURRENCY).contains(&limit) {
+        return Err(format!(
+            "ACP account max concurrency must be between {MIN_ACCOUNT_CONCURRENCY} and {MAX_ACCOUNT_CONCURRENCY}"
+        ));
+    }
+    Ok(limit)
+}
+
+pub(super) fn validate_proxy_url(proxy: Option<&str>) -> Result<Option<String>, String> {
+    let Some(raw) = proxy else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.len() > 512
+        || trimmed
+            .chars()
+            .any(|ch| ch.is_control() || ch.is_whitespace())
+    {
+        return Err(
+            "Enter a valid proxy URL (http://, https://, socks5://, socks5h://) or 'direct'"
+                .into(),
+        );
+    }
+    if trimmed.eq_ignore_ascii_case("direct") {
+        return Ok(Some("direct".into()));
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let valid_scheme = ["http://", "https://", "socks5://", "socks5h://", "socks4://"]
+        .iter()
+        .any(|prefix| lower.starts_with(prefix) && trimmed.len() > prefix.len());
+    if !valid_scheme {
+        return Err(
+            "Enter a valid proxy URL (http://, https://, socks5://, socks5h://) or 'direct'"
+                .into(),
+        );
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
+pub(super) fn resolve_proxy(account_proxy: Option<&str>, global_proxy: &str) -> String {
+    match account_proxy.map(str::trim).filter(|p| !p.is_empty()) {
+        None => global_proxy.to_string(),
+        Some(proxy) if proxy.eq_ignore_ascii_case("direct") => String::new(),
+        Some(proxy) => proxy.to_string(),
+    }
 }
 
 // Refuse links at every existing component, including the root itself. Never
@@ -165,19 +278,23 @@ pub(super) fn read(root: &Path) -> Result<Accounts, String> {
     };
     let mut ids = std::collections::HashSet::new();
     if registry.accounts.is_empty()
-        || registry.accounts.len() > 32
+        || registry.accounts.len() > MAX_ACCOUNTS
         || registry.accounts.iter().any(|account| {
             !valid_id(&account.id)
                 || !ids.insert(account.id.clone())
                 || validate_label(&account.label).is_err()
+                || validate_weight(account.weight).is_err()
+                || validate_max_concurrency(account.max_concurrency).is_err()
+                || validate_proxy_url(account.proxy_url.as_deref()).is_err()
         })
         || !ids.contains(&registry.active)
     {
         return Err("Invalid ACP account registry".into());
     }
-    // Keep all labels normalized after legacy migration.
+    // Keep all labels and optional proxy overrides normalized after legacy migration.
     for account in &mut registry.accounts {
         account.label = account.label.trim().into();
+        account.proxy_url = validate_proxy_url(account.proxy_url.as_deref())?;
     }
     Ok(registry)
 }
@@ -222,12 +339,25 @@ fn write(root: &Path, registry: &Accounts) -> Result<(), String> {
     result
 }
 
+pub(super) fn get(root: &Path, id: &str) -> Result<Account, String> {
+    read(root)?
+        .accounts
+        .into_iter()
+        .find(|account| account.id == id)
+        .ok_or_else(|| "Unknown ACP account".into())
+}
+
 pub(super) fn set_active_email(root: &Path, email: Option<String>) -> Result<(), String> {
+    let active = read(root)?.active;
+    set_email(root, &active, email)
+}
+
+pub(super) fn set_email(root: &Path, id: &str, email: Option<String>) -> Result<(), String> {
     let mut registry = read(root)?;
     let account = registry
         .accounts
         .iter_mut()
-        .find(|account| account.id == registry.active)
+        .find(|account| account.id == id)
         .ok_or("Unknown ACP account")?;
     account.email = email;
     write(root, &registry)
@@ -238,11 +368,16 @@ pub(super) fn recoveries_path(root: &Path) -> PathBuf {
 }
 
 pub(super) fn mark_saved(root: &Path) -> Result<(), String> {
+    let active = read(root)?.active;
+    mark_saved_by_id(root, &active)
+}
+
+pub(super) fn mark_saved_by_id(root: &Path, id: &str) -> Result<(), String> {
     let mut registry = read(root)?;
     registry
         .accounts
         .iter_mut()
-        .find(|account| account.id == registry.active)
+        .find(|account| account.id == id)
         .ok_or("Unknown ACP account")?
         .saved = true;
     write(root, &registry)
@@ -332,6 +467,20 @@ pub(super) fn pool_profile(root: &Path, account: &Account) -> Option<PathBuf> {
     Some(home)
 }
 
+// Resolve a read-only pool profile path for any account eligible for pool routing.
+// Isolated accounts require their own credential file; `default` may participate as
+// the sole shared-CLI slot when saved and enabled. Non-isolated legacy secondary
+// records are strictly excluded so two slots never alias the same OS HOME.
+pub(super) fn route_profile(root: &Path, account: &Account) -> Option<PathBuf> {
+    if !account.enabled || !account.saved {
+        return None;
+    }
+    if account.id == "default" {
+        return safe_path(root).ok().map(|_| root.to_path_buf());
+    }
+    pool_profile(root, account)
+}
+
 pub(super) fn checked_isolated_home(path: &Path) -> Result<PathBuf, String> {
     safe_path(path)?;
     let home = path
@@ -389,15 +538,62 @@ pub(super) fn select(root: &Path, id: &str) -> Result<(), String> {
 }
 
 pub(super) fn rename(root: &Path, id: &str, label: &str) -> Result<(), String> {
-    let label = validate_label(label)?;
+    let patch = AccountSettingsPatch {
+        label: Some(label.to_string()),
+        ..Default::default()
+    };
+    update_settings(root, id, &patch).map(|_| ())
+}
+
+pub(super) fn update_settings(
+    root: &Path,
+    id: &str,
+    patch: &AccountSettingsPatch,
+) -> Result<Account, String> {
+    let next_label = patch
+        .label
+        .as_deref()
+        .map(validate_label)
+        .transpose()?
+        .map(str::to_owned);
+    let next_weight = patch.weight.map(validate_weight).transpose()?;
+    let next_concurrency = patch
+        .max_concurrency
+        .map(validate_max_concurrency)
+        .transpose()?;
+    let next_proxy = match patch.proxy_url.as_deref() {
+        Some(raw) => Some(validate_proxy_url(Some(raw))?),
+        None => None,
+    };
     let mut registry = read(root)?;
-    registry
-        .accounts
-        .iter_mut()
-        .find(|account| account.id == id)
-        .ok_or("Unknown ACP account")?
-        .label = label.into();
-    write(root, &registry)
+    let updated = {
+        let account = registry
+            .accounts
+            .iter_mut()
+            .find(|account| account.id == id)
+            .ok_or("Unknown ACP account")?;
+        if let Some(label) = next_label {
+            account.label = label;
+        }
+        if let Some(enabled) = patch.enabled {
+            account.enabled = enabled;
+        }
+        if let Some(priority) = patch.priority {
+            account.priority = priority;
+        }
+        if let Some(weight) = next_weight {
+            account.weight = weight;
+        }
+        if let Some(limit) = next_concurrency {
+            account.max_concurrency = limit;
+        }
+        if let Some(proxy) = next_proxy {
+            account.proxy_url = proxy;
+        }
+        account.clone()
+    };
+    write(root, &registry)?;
+    Ok(updated)
 }
 
 pub(super) const DUPLICATE_EMAIL: &str = "This Google account is already saved. Add a different Google account, or select the existing account";
@@ -437,9 +633,9 @@ impl PendingAccount {
                 .iter()
                 .filter(|a| a.saved || a.id != "default")
                 .count()
-                >= 32
+                >= MAX_ACCOUNTS
         {
-            return Err("Up to 32 ACP accounts can be saved".into());
+            return Err(format!("Up to {MAX_ACCOUNTS} ACP accounts can be saved"));
         }
         let id = random_id()?;
         let path = account_dir(root, &id)?;
@@ -538,17 +734,31 @@ impl PendingAccount {
         }
         self.finished = true;
         let previous = registry.active.clone();
+        let preserved = replace.and_then(|target| {
+            registry
+                .accounts
+                .iter()
+                .find(|a| a.id == target)
+                .map(|a| (a.enabled, a.priority, a.weight, a.max_concurrency, a.proxy_url.clone()))
+        });
         registry.accounts.retain(|a| {
             (!activate && a.id == previous)
                 || (replace != Some(a.id.as_str())
                     && (a.id != "default" || a.saved || a.email.is_some()))
         });
+        let (enabled, priority, weight, max_concurrency, proxy_url) =
+            preserved.unwrap_or((true, 0, 1, 1, None));
         registry.accounts.push(Account {
             id: self.id.clone(),
             label: self.label.clone(),
             email: email.map(str::to_owned),
             saved: true,
             isolated: self.isolated,
+            enabled,
+            priority,
+            weight,
+            max_concurrency,
+            proxy_url,
         });
         if activate {
             registry.active = self.id.clone();

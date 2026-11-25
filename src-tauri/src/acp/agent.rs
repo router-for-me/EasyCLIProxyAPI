@@ -4,7 +4,9 @@ use super::*;
 use std::sync::{atomic::AtomicUsize, mpsc};
 use std::time::{Duration, Instant};
 
-const MAX_LIVE: usize = 16;
+pub(super) const DEFAULT_MAX_LIVE: usize = 64;
+pub(super) const MIN_MAX_LIVE: usize = 4;
+pub(super) const MAX_MAX_LIVE: usize = 256;
 const IDLE: Duration = Duration::from_secs(180);
 const POLL: Duration = Duration::from_millis(50);
 
@@ -53,11 +55,25 @@ fn send_event(
     }
 }
 
-#[derive(Default)]
-pub(super) struct Sessions(Arc<Mutex<BTreeMap<String, Live>>>, Arc<AtomicUsize>);
+pub(super) struct Sessions(
+    Arc<Mutex<BTreeMap<String, Live>>>,
+    Arc<AtomicUsize>,
+    Arc<AtomicUsize>,
+);
+
+impl Default for Sessions {
+    fn default() -> Self {
+        Self(
+            Arc::new(Mutex::new(BTreeMap::new())),
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(DEFAULT_MAX_LIVE)),
+        )
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct Live {
+    account_id: String,
     turn: Arc<Mutex<Session>>,
     cancel: Arc<AtomicBool>,
 }
@@ -88,6 +104,56 @@ impl Drop for Capacity {
 }
 
 impl Sessions {
+    pub fn set_max_live(&self, limit: usize) {
+        self.2
+            .store(limit.clamp(MIN_MAX_LIVE, MAX_MAX_LIVE), Ordering::Release);
+    }
+
+    pub fn max_live(&self) -> usize {
+        self.2.load(Ordering::Acquire)
+    }
+
+    pub fn total_live(&self) -> usize {
+        self.1.load(Ordering::Acquire)
+    }
+
+    pub fn live_counts_by_account(&self) -> BTreeMap<String, usize> {
+        let mut counts = BTreeMap::new();
+        let Ok(sessions) = self.0.lock() else {
+            return counts;
+        };
+        let mut seen = std::collections::HashSet::new();
+        let now = Instant::now();
+        for live in sessions.values() {
+            let ptr = Arc::as_ptr(&live.turn) as usize;
+            if !seen.insert(ptr) || live.cancel.load(Ordering::Acquire) {
+                continue;
+            }
+            let alive = live
+                .turn
+                .try_lock()
+                .map(|turn| now < turn.expires)
+                .unwrap_or(true);
+            if alive {
+                *counts.entry(live.account_id.clone()).or_insert(0) += 1;
+            }
+        }
+        counts
+    }
+
+    pub fn abandon_account(&self, account_id: &str) {
+        if let Ok(mut sessions) = self.0.lock() {
+            sessions.retain(|_, live| {
+                if live.account_id == account_id {
+                    live.cancel.store(true, Ordering::Release);
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+    }
+
     pub fn clear(&self) {
         if let Ok(mut sessions) = self.0.lock() {
             for session in sessions.values() {
@@ -278,10 +344,11 @@ impl Sessions {
         identity: Identity,
         mut client: rpc::Client,
     ) -> Result<Live, String> {
+        let max_live = self.2.load(Ordering::Acquire);
         if self
             .1
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-                (n < MAX_LIVE).then_some(n + 1)
+                (n < max_live).then_some(n + 1)
             })
             .is_err()
         {
@@ -290,12 +357,14 @@ impl Sessions {
             );
         }
         let capacity = Capacity(self.1.clone());
+        let account_id = identity.account.id.clone();
         let profile = identity.account.profile.clone();
         let persistent = identity.protocol == Protocol::Responses;
         let (sender, receiver) = mpsc::sync_channel(128);
         let (commands, prompts) = mpsc::sync_channel(1);
         let cancel = Arc::new(AtomicBool::new(false));
         let live = Live {
+            account_id,
             turn: Arc::new(Mutex::new(Session {
                 receiver,
                 commands,
@@ -663,6 +732,7 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         let identity = identity("same", Protocol::Responses);
         let live = Live {
+            account_id: "same".into(),
             cancel: cancel.clone(),
             turn: Arc::new(Mutex::new(Session {
                 receiver,
@@ -689,6 +759,7 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         let (commands, _) = mpsc::sync_channel(1);
         let turn = Live {
+            account_id: "old".into(),
             cancel: cancel.clone(),
             turn: Arc::new(Mutex::new(Session {
                 receiver,
@@ -727,6 +798,7 @@ mod tests {
         let first = identity("first", Protocol::Chat);
         let (commands, _) = mpsc::sync_channel(1);
         let turn = Live {
+            account_id: "first".into(),
             cancel: cancel.clone(),
             turn: Arc::new(Mutex::new(Session {
                 receiver,
@@ -777,5 +849,52 @@ mod tests {
         assert_eq!(delivered.recv().unwrap()["content"][0]["text"], "RESULT");
         assert!(sessions.resume(&request, &first, None).is_err());
         drop(events);
+    }
+
+    #[test]
+    fn abandon_account_only_drops_target_sessions_and_live_counts_deduplicate() {
+        let sessions = Sessions::default();
+        sessions.set_max_live(128);
+        assert_eq!(sessions.max_live(), 128);
+        let mk_live = |id: &str| {
+            let (_s, receiver) = mpsc::sync_channel(1);
+            let (commands, _) = mpsc::sync_channel(1);
+            let cancel = Arc::new(AtomicBool::new(false));
+            let live = Live {
+                account_id: id.into(),
+                cancel: cancel.clone(),
+                turn: Arc::new(Mutex::new(Session {
+                    receiver,
+                    commands,
+                    cancel: cancel.clone(),
+                    supports_images: false,
+                    pending: BTreeMap::new(),
+                    expected: Vec::new(),
+                    transcript: None,
+                    identity: identity(id, Protocol::Chat),
+                    expires: Instant::now() + TOOL_WAIT,
+                })),
+            };
+            (live, cancel)
+        };
+        let (acc_a, cancel_a) = mk_live("acc-a");
+        let (acc_b, cancel_b) = mk_live("acc-b");
+        {
+            let mut map = sessions.0.lock().unwrap();
+            // Two tool IDs sharing one live session for acc-a should count as 1.
+            map.insert("call-a1".into(), acc_a.clone());
+            map.insert("call-a2".into(), acc_a);
+            map.insert("call-b1".into(), acc_b);
+        }
+        let counts = sessions.live_counts_by_account();
+        assert_eq!(counts.get("acc-a"), Some(&1));
+        assert_eq!(counts.get("acc-b"), Some(&1));
+
+        sessions.abandon_account("acc-a");
+        assert!(cancel_a.load(Ordering::Acquire));
+        assert!(!cancel_b.load(Ordering::Acquire));
+        let counts_after = sessions.live_counts_by_account();
+        assert_eq!(counts_after.get("acc-a"), None);
+        assert_eq!(counts_after.get("acc-b"), Some(&1));
     }
 }

@@ -20,13 +20,45 @@ pub(crate) async fn set_acp_upstream_enabled(
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AccountAuthState {
+    #[default]
+    Unknown,
+    Ready,
+    AuthRequired,
+    Error,
+}
+
+#[derive(Clone, Default)]
+pub(super) struct AccountRuntime {
+    pub auth_state: AccountAuthState,
+    pub models: Vec<AcpModel>,
+    pub last_verified_at: Option<u64>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AccountRuntimeSnapshot {
+    pub auth_state: AccountAuthState,
+    pub model_count: usize,
+    pub last_verified_at: Option<u64>,
+    pub last_error: Option<String>,
+    pub active_requests: usize,
+    pub live_sessions: usize,
+    pub operating: bool,
+    pub cooldowns: Vec<request_pool::CooldownSnapshot>,
+}
 
 #[derive(Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,6 +76,10 @@ pub(crate) struct AcpStatus {
     upstream_url: Option<String>,
     accounts: Vec<accounts::Account>,
     active_account: String,
+    pool_settings: request_pool::PoolSettings,
+    active_requests: usize,
+    live_sessions: usize,
+    account_runtime: BTreeMap<String, AccountRuntimeSnapshot>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -65,16 +101,22 @@ pub(crate) struct AcpState {
     agents: agent::Sessions,
     request_pool: request_pool::Pool,
     manual_auth: manual_auth::ManualAuth,
+    operating_accounts: Mutex<BTreeSet<String>>,
+    account_runtime: Mutex<BTreeMap<String, AccountRuntime>>,
 }
 
 impl AcpState {
-    pub(crate) fn cancel(&self) {
-        self.request_pool.cancel();
+    pub(crate) fn cancel_interactive(&self) {
         if let Ok(guard) = self.cancel.lock() {
             if let Some(cancel) = guard.as_ref() {
                 cancel.store(true, Ordering::Release);
             }
         }
+    }
+
+    pub(crate) fn cancel(&self) {
+        self.request_pool.cancel();
+        self.cancel_interactive();
     }
 
     pub(crate) fn shutdown(&self) {
@@ -86,10 +128,320 @@ impl AcpState {
     }
 
     fn snapshot(&self) -> Result<AcpStatus, String> {
-        self.status
+        let mut status = self
+            .status
             .lock()
-            .map(|status| status.clone())
-            .map_err(|_| "ACP state unavailable".into())
+            .map_err(|_| "ACP state unavailable")?
+            .clone();
+        self.populate_telemetry(&mut status);
+        Ok(status)
+    }
+
+    fn populate_telemetry(&self, status: &mut AcpStatus) {
+        status.pool_settings = self.request_pool.settings();
+        status.active_requests = self.request_pool.active_count();
+        status.live_sessions = self.agents.total_live();
+        let active_by_account = self.request_pool.active_counts_by_account();
+        let live_by_account = self.agents.live_counts_by_account();
+        let cooldowns_by_account = self.request_pool.cooldowns_by_account();
+        let operating = self
+            .operating_accounts
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default();
+        let runtime_map = self
+            .account_runtime
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default();
+
+        let mut ids: BTreeSet<String> = status.accounts.iter().map(|a| a.id.clone()).collect();
+        if !status.active_account.is_empty() {
+            ids.insert(status.active_account.clone());
+        }
+        ids.extend(runtime_map.keys().cloned());
+        ids.extend(active_by_account.keys().cloned());
+        ids.extend(live_by_account.keys().cloned());
+        ids.extend(cooldowns_by_account.keys().cloned());
+
+        let mut snapshots = BTreeMap::new();
+        for id in ids {
+            let rt = runtime_map.get(&id);
+            let is_active_auth = id == status.active_account && status.authenticated;
+            let auth_state = match rt.map(|r| r.auth_state) {
+                Some(AccountAuthState::Unknown) | None if is_active_auth => AccountAuthState::Ready,
+                Some(state) => state,
+                None => AccountAuthState::Unknown,
+            };
+            let model_count = rt
+                .map(|r| r.models.len())
+                .filter(|&count| count > 0)
+                .unwrap_or_else(|| if is_active_auth { status.models.len() } else { 0 });
+            snapshots.insert(
+                id.clone(),
+                AccountRuntimeSnapshot {
+                    auth_state,
+                    model_count,
+                    last_verified_at: rt.and_then(|r| r.last_verified_at),
+                    last_error: rt.and_then(|r| r.last_error.clone()),
+                    active_requests: active_by_account.get(&id).copied().unwrap_or(0),
+                    live_sessions: live_by_account.get(&id).copied().unwrap_or(0),
+                    operating: operating.contains(&id),
+                    cooldowns: cooldowns_by_account.get(&id).cloned().unwrap_or_default(),
+                },
+            );
+        }
+        status.account_runtime = snapshots;
+    }
+
+    pub(super) fn aggregated_models(&self) -> Vec<AcpModel> {
+        let Ok(status) = self.status.lock().map(|g| g.clone()) else {
+            return Vec::new();
+        };
+        let pool_enabled = self
+            .request_pool
+            .root
+            .lock()
+            .ok()
+            .is_some_and(|root| root.is_some())
+            || self.request_pool.settings().account_pool;
+        if !pool_enabled {
+            return status.models;
+        }
+        let runtime_map = self
+            .account_runtime
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        let enabled_ids: BTreeSet<String> = status
+            .accounts
+            .iter()
+            .filter(|a| a.enabled)
+            .map(|a| a.id.clone())
+            .collect();
+        let mut merged: Vec<AcpModel> = Vec::new();
+        let mut index_by_id: BTreeMap<String, usize> = BTreeMap::new();
+        let mut push_models = |models: &[AcpModel]| {
+            for model in models {
+                if let Some(&idx) = index_by_id.get(&model.id) {
+                    let existing = &mut merged[idx];
+                    for (level, variant) in &model.reasoning_variants {
+                        existing
+                            .reasoning_variants
+                            .entry(level.clone())
+                            .or_insert_with(|| variant.clone());
+                    }
+                    existing.reasoning_levels = REASONING_LEVELS
+                        .iter()
+                        .filter(|level| existing.reasoning_variants.contains_key(**level))
+                        .map(|level| (*level).to_string())
+                        .collect();
+                } else {
+                    index_by_id.insert(model.id.clone(), merged.len());
+                    merged.push(model.clone());
+                }
+            }
+        };
+        let active_enabled = status.accounts.is_empty() || enabled_ids.contains(&status.active_account);
+        if status.authenticated && active_enabled {
+            push_models(&status.models);
+        }
+        for account in &status.accounts {
+            if !account.enabled {
+                continue;
+            }
+            if let Some(rt) = runtime_map.get(&account.id) {
+                if rt.auth_state == AccountAuthState::Ready && !rt.models.is_empty() {
+                    push_models(&rt.models);
+                }
+            }
+        }
+        if merged.is_empty() && status.authenticated {
+            return status.models;
+        }
+        merged
+    }
+
+    pub(super) fn has_ready_pool_account(&self) -> bool {
+        let Ok(status) = self.status.lock().map(|g| g.clone()) else {
+            return false;
+        };
+        let enabled_ids: BTreeSet<String> = status
+            .accounts
+            .iter()
+            .filter(|a| a.enabled)
+            .map(|a| a.id.clone())
+            .collect();
+        if status.authenticated
+            && (status.accounts.is_empty() || enabled_ids.contains(&status.active_account))
+        {
+            return true;
+        }
+        let runtime_map = self
+            .account_runtime
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        status.accounts.iter().any(|account| {
+            account.enabled
+                && runtime_map.get(&account.id).is_some_and(|rt| {
+                    rt.auth_state == AccountAuthState::Ready && !rt.models.is_empty()
+                })
+        })
+    }
+
+    pub(super) fn record_account_verified(&self, account_id: &str, models: Vec<AcpModel>) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if let Ok(mut runtime) = self.account_runtime.lock() {
+            runtime.insert(
+                account_id.to_string(),
+                AccountRuntime {
+                    auth_state: AccountAuthState::Ready,
+                    models,
+                    last_verified_at: Some(now),
+                    last_error: None,
+                },
+            );
+        }
+        self.request_pool.reset_cooldown(Some(account_id));
+    }
+
+    pub(super) fn record_account_auth_required(&self, account_id: &str, error: String) {
+        if let Ok(mut runtime) = self.account_runtime.lock() {
+            let entry = runtime.entry(account_id.to_string()).or_default();
+            entry.auth_state = AccountAuthState::AuthRequired;
+            entry.last_error = Some(error);
+        }
+    }
+
+    pub(super) fn record_account_error(&self, account_id: &str, error: String) {
+        if let Ok(mut runtime) = self.account_runtime.lock() {
+            let entry = runtime.entry(account_id.to_string()).or_default();
+            entry.auth_state = AccountAuthState::Error;
+            entry.last_error = Some(error);
+        }
+    }
+
+    pub(super) fn clear_account_runtime(&self, account_id: &str) {
+        if let Ok(mut runtime) = self.account_runtime.lock() {
+            runtime.remove(account_id);
+        }
+        self.request_pool.remove_account(account_id);
+    }
+
+    pub(super) fn reset_account_health(&self, account_id: Option<&str>) {
+        if let Ok(mut runtime) = self.account_runtime.lock() {
+            match account_id {
+                Some(target) => {
+                    if let Some(entry) = runtime.get_mut(target) {
+                        if matches!(
+                            entry.auth_state,
+                            AccountAuthState::AuthRequired | AccountAuthState::Error
+                        ) {
+                            entry.auth_state = AccountAuthState::Unknown;
+                        }
+                        entry.last_error = None;
+                    }
+                }
+                None => {
+                    for entry in runtime.values_mut() {
+                        if matches!(
+                            entry.auth_state,
+                            AccountAuthState::AuthRequired | AccountAuthState::Error
+                        ) {
+                            entry.auth_state = AccountAuthState::Unknown;
+                        }
+                        entry.last_error = None;
+                    }
+                }
+            }
+        }
+        self.request_pool.reset_cooldown(account_id);
+    }
+}
+
+struct AccountExclusiveGuard<R: tauri::Runtime = tauri::Wry> {
+    app: tauri::AppHandle<R>,
+    account_id: String,
+}
+
+impl<R: tauri::Runtime> Drop for AccountExclusiveGuard<R> {
+    fn drop(&mut self) {
+        let state = self.app.state::<AcpState>();
+        if let Ok(mut operating) = state.operating_accounts.lock() {
+            operating.remove(&self.account_id);
+        }
+        state.request_pool.wake_waiters();
+    }
+}
+
+fn lock_account_exclusive<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    account_id: &str,
+) -> Result<AccountExclusiveGuard<R>, String> {
+    let state = app.state::<AcpState>();
+    {
+        let mut operating = state
+            .operating_accounts
+            .lock()
+            .map_err(|_| "ACP state unavailable")?;
+        if state.request_pool.active_for(account_id) > 0 {
+            return Err("This ACP account has active API requests; wait for them to finish".into());
+        }
+        if !operating.insert(account_id.to_string()) {
+            return Err("An ACP operation is already running".into());
+        }
+        if state.request_pool.active_for(account_id) > 0 {
+            operating.remove(account_id);
+            return Err("This ACP account has active API requests; wait for them to finish".into());
+        }
+    }
+    Ok(AccountExclusiveGuard {
+        app: app.clone(),
+        account_id: account_id.to_string(),
+    })
+}
+
+fn lock_account_state<'a>(
+    state: &'a AcpState,
+    account_id: &str,
+) -> Result<StateAccountGuard<'a>, String> {
+    {
+        let mut operating = state
+            .operating_accounts
+            .lock()
+            .map_err(|_| "ACP state unavailable")?;
+        if state.request_pool.active_for(account_id) > 0 {
+            return Err("This ACP account has active API requests; wait for them to finish".into());
+        }
+        if !operating.insert(account_id.to_string()) {
+            return Err("An ACP operation is already running".into());
+        }
+        if state.request_pool.active_for(account_id) > 0 {
+            operating.remove(account_id);
+            return Err("This ACP account has active API requests; wait for them to finish".into());
+        }
+    }
+    Ok(StateAccountGuard {
+        state,
+        account_id: account_id.to_string(),
+    })
+}
+
+struct StateAccountGuard<'a> {
+    state: &'a AcpState,
+    account_id: String,
+}
+
+impl Drop for StateAccountGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut operating) = self.state.operating_accounts.lock() {
+            operating.remove(&self.account_id);
+        }
+        self.state.request_pool.wake_waiters();
     }
 }
 
@@ -197,11 +549,17 @@ fn mark_session(state: &AcpState, session: &Value, profile: &Path) -> Result<(),
             .unwrap_or(&models[0].id)
             .to_string()
     };
-    let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
-    status.authenticated = true;
-    status.models = models;
-    status.selected_model = selected;
-    status.profile = profile.to_string_lossy().into_owned();
+    let active_id = {
+        let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
+        status.authenticated = true;
+        status.models = models.clone();
+        status.selected_model = selected;
+        status.profile = profile.to_string_lossy().into_owned();
+        status.active_account.clone()
+    };
+    if !active_id.is_empty() {
+        state.record_account_verified(&active_id, models);
+    }
     Ok(())
 }
 
@@ -211,20 +569,29 @@ pub(crate) fn get_acp_status(
     state: tauri::State<'_, AcpState>,
 ) -> Result<AcpStatus, String> {
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
-    status.executable =
-        crate::find_antigravity_cli(&home).map(|path| path.to_string_lossy().into_owned());
     let root = profile(&crate::core_base_dir()?);
-    status.upstream_enabled = bridge::upstream_enabled(&root)?;
+    let upstream_enabled = bridge::upstream_enabled(&root)?;
+    let pool_settings = bridge::read_pool_settings(&root)?;
     let accounts = accounts::read(&root)?;
-    let profile = accounts::directory(&root, &accounts.active)?;
-    status.active_account = accounts.active;
-    status.accounts = accounts.accounts;
-    status.profile = profile.to_string_lossy().into_owned();
-    if !status.authenticated && !status.busy {
-        status.selected_model = read_selected(&profile)?;
-    }
-    Ok(status.clone())
+    let profile_dir = accounts::directory(&root, &accounts.active)?;
+    let selected_fallback = read_selected(&profile_dir)?;
+    state.request_pool.set_settings(pool_settings.clone());
+    state.agents.set_max_live(pool_settings.max_live_sessions);
+    let mut snapshot = {
+        let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
+        status.executable =
+            crate::find_antigravity_cli(&home).map(|path| path.to_string_lossy().into_owned());
+        status.upstream_enabled = upstream_enabled;
+        status.active_account = accounts.active;
+        status.accounts = accounts.accounts;
+        status.profile = profile_dir.to_string_lossy().into_owned();
+        if !status.authenticated && !status.busy {
+            status.selected_model = selected_fallback;
+        }
+        status.clone()
+    };
+    state.populate_telemetry(&mut snapshot);
+    Ok(snapshot)
 }
 
 struct OperationGuard<R: tauri::Runtime = tauri::Wry> {
@@ -306,25 +673,62 @@ pub(crate) async fn add_acp_account(
     let root = profile(&crate::core_base_dir()?);
     let replacement = if let Some(id) = replace.as_deref() {
         let registry = accounts::read(&root)?;
-        Some(registry.accounts.into_iter().find(|account| account.id == id && account.isolated && registry.active == id)
-            .ok_or("Only the active isolated ACP account can sign in again")?)
-    } else { None };
-    let mut pending = accounts::PendingAccount::new_isolated(&root, replacement.as_ref().map_or(label.as_str(), |account| account.label.as_str()), replacement.is_some())?;
+        let target = registry
+            .accounts
+            .into_iter()
+            .find(|account| account.id == id && account.isolated)
+            .ok_or("Only an isolated ACP account can sign in again")?;
+        let was_active = registry.active == id;
+        Some((target, was_active))
+    } else {
+        None
+    };
+    let _exclusive = match replacement.as_ref() {
+        Some((target, _)) => Some(lock_account_exclusive(&app, &target.id)?),
+        None => None,
+    };
+    let mut pending = accounts::PendingAccount::new_isolated(
+        &root,
+        replacement
+            .as_ref()
+            .map_or(label.as_str(), |(account, _)| account.label.as_str()),
+        replacement.is_some(),
+    )?;
     let directory = pending.directory()?;
-    let proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
+    let global_proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
+    let proxy = accounts::resolve_proxy(
+        replacement
+            .as_ref()
+            .and_then(|(account, _)| account.proxy_url.as_deref()),
+        &global_proxy,
+    );
     tauri::async_runtime::spawn_blocking(move || {
+        let _exclusive = _exclusive;
         let state = app.state::<AcpState>();
         let result = (|| {
             // Terminal authentication is not an ACP authenticate RPC. Use the
             // fixed official invocation, then reconnect to the same profile.
-            let login = manual_auth::TerminalLogin::resolve(&executable, &directory, &proxy, &guard.cancel)?;
+            let login =
+                manual_auth::TerminalLogin::resolve(&executable, &directory, &proxy, &guard.cancel)?;
             let command = login.command(&executable, &directory, &proxy)?;
             let identity = state.manual_auth.run(command, &pending.id, &guard.cancel, |link| {
                 on_link.send(link).map_err(|_| String::from(manual_auth::FAILED))
             })?;
             accounts::require_isolated_token(&directory)?;
             let mut client = rpc::Client::spawn(&executable, &directory, &proxy)?;
-            finish_manual_add(state.inner(), &root, &directory, &guard.cancel, &mut client, &mut pending, identity, replacement.as_ref().map(|account| account.id.as_str()))
+            let replace_id = replacement.as_ref().map(|(account, _)| account.id.as_str());
+            let activate = replacement.as_ref().is_none_or(|(_, was_active)| *was_active);
+            finish_manual_add_ex(
+                state.inner(),
+                &root,
+                &directory,
+                &guard.cancel,
+                &mut client,
+                &mut pending,
+                identity,
+                replace_id,
+                activate,
+            )
         })();
         let result = if let Err(error) = result {
             let error = match pending.rollback() {
@@ -347,38 +751,91 @@ pub(crate) fn submit_acp_account_authorization(
     state.manual_auth.submit(&attempt, &response)
 }
 
+#[cfg(test)]
 fn finish_manual_add(
-    state: &AcpState, root: &Path, profile: &Path,
-    cancel: &Arc<AtomicBool>, client: &mut rpc::Client,
+    state: &AcpState,
+    root: &Path,
+    profile: &Path,
+    cancel: &Arc<AtomicBool>,
+    client: &mut rpc::Client,
     pending: &mut accounts::PendingAccount,
     terminal_identity: Option<String>,
     replace: Option<&str>,
+) -> Result<(), String> {
+    finish_manual_add_ex(
+        state,
+        root,
+        profile,
+        cancel,
+        client,
+        pending,
+        terminal_identity,
+        replace,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_manual_add_ex(
+    state: &AcpState,
+    root: &Path,
+    profile: &Path,
+    cancel: &Arc<AtomicBool>,
+    client: &mut rpc::Client,
+    pending: &mut accounts::PendingAccount,
+    terminal_identity: Option<String>,
+    replace: Option<&str>,
+    activate: bool,
 ) -> Result<(), String> {
     // The fresh server loads the terminal-authorized profile. Only its own
     // official identity log is trusted; neither a label nor user input is identity.
     client.initialize(cancel)?;
     let session = client.session(profile, cancel);
-    if cancel.load(Ordering::Acquire) { return Err("ACP request cancelled".into()); }
+    if cancel.load(Ordering::Acquire) {
+        return Err("ACP request cancelled".into());
+    }
     let session_identity = client.account_email(profile);
     if let (Some(terminal), Some(session)) = (&terminal_identity, &session_identity) {
-        if !session.eq_ignore_ascii_case(terminal) { return Err(accounts::IDENTITY_UNKNOWN.into()); }
+        if !session.eq_ignore_ascii_case(terminal) {
+            return Err(accounts::IDENTITY_UNKNOWN.into());
+        }
     }
     let identity = session_identity.or(terminal_identity);
     let session = match session {
         Ok(session) if !model_list(&session).is_empty() => session,
         _ if replace.is_none() && identity.is_some() => {
             pending.commit_replacing(identity, None, false)?;
-            return Err("Account saved; connection not verified: Antigravity did not provide usable models".into());
+            return Err(
+                "Account saved; connection not verified: Antigravity did not provide usable models"
+                    .into(),
+            );
         }
         _ => return Err("Antigravity did not verify the isolated ACP connection".into()),
     };
-    pending.commit_replacing(identity, replace, true)?;
-    let discovered = (|| {
-        reset_account(state)?;
-        refresh_account_identity(state, root)?;
-        mark_session(state, &session, profile)
-    })();
-    if discovered.is_err() { let _ = reset_account(state); }
+    let models = model_list(&session);
+    pending.commit_replacing(identity, replace, activate)?;
+    let committed_id = pending.id.clone();
+    if let Some(old_id) = replace {
+        state.agents.abandon_account(old_id);
+        state.clear_account_runtime(old_id);
+    }
+    state.record_account_verified(&committed_id, models);
+    let discovered = if activate {
+        (|| {
+            if let Some(old_id) = replace {
+                reset_account_for(state, old_id)?;
+            } else {
+                reset_active_status_only(state)?;
+            }
+            refresh_account_identity(state, root)?;
+            mark_session(state, &session, profile)
+        })()
+    } else {
+        refresh_account_identity(state, root)
+    };
+    if discovered.is_err() && activate {
+        let _ = reset_active_status_only(state);
+    }
     let result = combine_account_errors(discovered, sync_account_models(state));
     if let Some(id) = replace {
         return combine_account_errors(result, accounts::archive_replaced(root, id));
@@ -389,11 +846,16 @@ fn finish_manual_add(
 #[tauri::command]
 pub(crate) async fn relogin_acp_account(app: tauri::AppHandle) -> Result<AcpStatus, String> {
     let guard = begin(&app, "login")?;
-    if accounts::is_isolated_home(&accounts::active(&profile(&crate::core_base_dir()?))?) {
+    let root = profile(&crate::core_base_dir()?);
+    let registry = accounts::read(&root)?;
+    if accounts::is_isolated_home(&accounts::active(&root)?) {
         return Err("Use the account's isolated sign-in to authorize it again".into());
     }
-    clear_account(&app)?;
-    connect(app, true, true, None, guard).await
+    let exclusive = lock_account_exclusive(&app, &registry.active)?;
+    clear_account_for(&app, &registry.active)?;
+    let result = connect(app, true, true, None, guard).await;
+    drop(exclusive);
+    result
 }
 
 #[tauri::command]
@@ -409,6 +871,58 @@ pub(crate) fn rename_acp_account(
 }
 
 #[tauri::command]
+pub(crate) fn update_acp_account_settings(
+    app: tauri::AppHandle,
+    account_id: String,
+    patch: accounts::AccountSettingsPatch,
+) -> Result<AcpStatus, String> {
+    let root = profile(&crate::core_base_dir()?);
+    accounts::update_settings(&root, &account_id, &patch)?;
+    let state = app.state::<AcpState>();
+    let _ = refresh_account_identity(state.inner(), &root);
+    state.request_pool.wake_waiters();
+    sync_account_models(state.inner())?;
+    get_acp_status(app.clone(), state)
+}
+
+#[tauri::command]
+pub(crate) fn update_acp_pool_settings(
+    app: tauri::AppHandle,
+    settings: request_pool::PoolSettings,
+) -> Result<AcpStatus, String> {
+    settings.validate()?;
+    let root = profile(&crate::core_base_dir()?);
+    bridge::save_pool_settings(&root, &settings)?;
+    let state = app.state::<AcpState>();
+    state.request_pool.set_settings(settings.clone());
+    state.agents.set_max_live(settings.max_live_sessions);
+    let running = state
+        .bridge
+        .lock()
+        .map_err(|_| "ACP bridge state unavailable")?
+        .is_some();
+    if running {
+        *state
+            .request_pool
+            .root
+            .lock()
+            .map_err(|_| "ACP pool unavailable")? = settings.account_pool.then(|| root.clone());
+        sync_account_models(state.inner())?;
+    }
+    get_acp_status(app.clone(), state)
+}
+
+#[tauri::command]
+pub(crate) fn reset_acp_account_cooldown(
+    app: tauri::AppHandle,
+    account_id: Option<String>,
+) -> Result<AcpStatus, String> {
+    let state = app.state::<AcpState>();
+    state.reset_account_health(account_id.as_deref());
+    get_acp_status(app.clone(), state)
+}
+
+#[tauri::command]
 pub(crate) fn remove_acp_account(
     app: tauri::AppHandle,
     account_id: String,
@@ -421,31 +935,50 @@ pub(crate) fn remove_acp_account(
 }
 
 #[tauri::command]
-pub(crate) async fn logout_acp_account(app: tauri::AppHandle) -> Result<AcpStatus, String> {
+pub(crate) async fn logout_acp_account(
+    app: tauri::AppHandle,
+    account_id: Option<String>,
+) -> Result<AcpStatus, String> {
     let guard = begin(&app, "logout")?;
-    clear_account(&app)?;
+    let root = profile(&crate::core_base_dir()?);
+    let registry = accounts::read(&root)?;
+    let target_id = account_id.unwrap_or_else(|| registry.active.clone());
+    let target_account = registry
+        .accounts
+        .into_iter()
+        .find(|account| account.id == target_id)
+        .ok_or("Unknown ACP account")?;
+    let exclusive = lock_account_exclusive(&app, &target_id)?;
+    clear_account_for(&app, &target_id)?;
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let executable = match crate::find_antigravity_cli(&home) {
         Some(executable) => executable,
         None => {
             let state = app.state::<AcpState>();
-            let result = combine_account_errors(Err("Install official Antigravity CLI to sign out. You can still remove the local account record.".into()), sync_account_models(state.inner()));
+            let result = combine_account_errors(
+                Err("Install official Antigravity CLI to sign out. You can still remove the local account record.".into()),
+                sync_account_models(state.inner()),
+            );
             if let Err(error) = &result {
                 record_error(state.inner(), error);
             }
+            drop(exclusive);
             return result;
         }
     };
-    let root = profile(&crate::core_base_dir()?);
-    let profile = accounts::active(&root)?;
-    let proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
+    let target_profile = accounts::directory(&root, &target_id)?;
+    let global_proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
+    let proxy = accounts::resolve_proxy(target_account.proxy_url.as_deref(), &global_proxy);
     tauri::async_runtime::spawn_blocking(move || {
+        let _exclusive = exclusive;
         let mut result = (|| {
-            prepare_profile(&profile)?;
-            let mut client = rpc::Client::spawn(&executable, &profile, &proxy)?;
-            logout_session(
+            prepare_profile(&target_profile)?;
+            let mut client = rpc::Client::spawn(&executable, &target_profile, &proxy)?;
+            logout_session_for(
                 app.state::<AcpState>().inner(),
                 &root,
+                &target_id,
+                &target_profile,
                 &guard.cancel,
                 &mut client,
             )
@@ -463,8 +996,193 @@ pub(crate) async fn logout_acp_account(app: tauri::AppHandle) -> Result<AcpStatu
     .map_err(|e| e.to_string())?
 }
 
-fn reset_account(state: &AcpState) -> Result<(), String> {
-    state.agents.clear();
+fn verify_account_with_client(
+    state: &AcpState,
+    root: &Path,
+    account_id: &str,
+    account_profile: &Path,
+    cancel: &Arc<AtomicBool>,
+    client: &mut rpc::Client,
+) -> Result<Vec<AcpModel>, String> {
+    if let Err(error) = client.initialize(cancel) {
+        let message = error.to_string();
+        state.record_account_error(account_id, message.clone());
+        return Err(message);
+    }
+    match client.session(account_profile, cancel) {
+        Ok(session) => {
+            let models = model_list(&session);
+            if models.is_empty() {
+                let message = "Official ACP server did not return available models".to_string();
+                state.record_account_error(account_id, message.clone());
+                return Err(message);
+            }
+            state.record_account_verified(account_id, models.clone());
+            let _ = accounts::mark_saved_by_id(root, account_id);
+            if let Some(email) = client.account_email(account_profile) {
+                let _ = accounts::set_email(root, account_id, Some(email));
+            }
+            let is_active = state
+                .status
+                .lock()
+                .map(|s| s.active_account == account_id)
+                .unwrap_or(false);
+            if is_active {
+                let _ = mark_session(state, &session, account_profile);
+            }
+            Ok(models)
+        }
+        Err(error) => {
+            let lower = error.to_ascii_lowercase();
+            if lower.contains("unauthenticated")
+                || lower.contains("authentication")
+                || lower.contains("permission")
+                || lower.contains("sign in")
+                || lower.contains("oauth")
+            {
+                state.record_account_auth_required(account_id, error.clone());
+            } else {
+                state.record_account_error(account_id, error.clone());
+            }
+            let is_active = state
+                .status
+                .lock()
+                .map(|s| s.active_account == account_id)
+                .unwrap_or(false);
+            if is_active {
+                let _ = reset_account_for(state, account_id);
+            }
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn verify_acp_account(
+    app: tauri::AppHandle,
+    account_id: String,
+) -> Result<AcpStatus, String> {
+    let root = profile(&crate::core_base_dir()?);
+    let account = accounts::get(&root, &account_id)?;
+    let target_profile = accounts::directory(&root, &account_id)?;
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let executable = crate::find_antigravity_cli(&home)
+        .ok_or("Install official Antigravity CLI before connecting")?;
+    let global_proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
+    let proxy = accounts::resolve_proxy(account.proxy_url.as_deref(), &global_proxy);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let app_for_task = app.clone();
+    let id_for_task = account_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        prepare_profile(&target_profile)?;
+        let mut client = rpc::Client::spawn(&executable, &target_profile, &proxy)?;
+        let state = app_for_task.state::<AcpState>();
+        let models = verify_account_with_client(
+            state.inner(),
+            &root,
+            &id_for_task,
+            &target_profile,
+            &cancel,
+            &mut client,
+        );
+        let sync = sync_account_models(state.inner());
+        combine_account_errors(models.map(|_| ()), sync)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    if let Err(error) = result {
+        record_error(app.state::<AcpState>().inner(), &error);
+        return Err(error);
+    }
+    get_acp_status(app.clone(), app.state::<AcpState>())
+}
+
+#[tauri::command]
+pub(crate) async fn verify_all_acp_accounts(app: tauri::AppHandle) -> Result<AcpStatus, String> {
+    let guard = begin(&app, "verify_all")?;
+    let root = profile(&crate::core_base_dir()?);
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let executable = crate::find_antigravity_cli(&home)
+        .ok_or("Install official Antigravity CLI before connecting")?;
+    let registry = accounts::read(&root)?;
+    let global_proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
+    let targets: Vec<accounts::Account> = registry
+        .accounts
+        .into_iter()
+        .filter(|account| account.enabled && (account.saved || account.id == registry.active))
+        .collect();
+    verify_accounts_batch(
+        &app,
+        &root,
+        &executable,
+        &global_proxy,
+        targets,
+        guard.cancel.clone(),
+    )
+    .await?;
+    let _ = sync_account_models(app.state::<AcpState>().inner());
+    drop(guard);
+    get_acp_status(app.clone(), app.state::<AcpState>())
+}
+
+pub(super) async fn verify_accounts_batch<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    root: &Path,
+    executable: &Path,
+    global_proxy: &str,
+    targets: Vec<accounts::Account>,
+    cancel: Arc<AtomicBool>,
+) -> Result<(), String> {
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(4));
+    let mut join_set = tokio::task::JoinSet::new();
+    for account in targets {
+        let permit = semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| "ACP verification queue closed".to_string())?;
+        if cancel.load(Ordering::Acquire) {
+            return Err("ACP request cancelled".into());
+        }
+        let app = app.clone();
+        let root = root.to_path_buf();
+        let executable = executable.to_path_buf();
+        let proxy = accounts::resolve_proxy(account.proxy_url.as_deref(), global_proxy);
+        let cancel = cancel.clone();
+        join_set.spawn_blocking(move || {
+            let _permit = permit;
+            let state = app.state::<AcpState>();
+            let Ok(target_profile) = accounts::directory(&root, &account.id) else {
+                return;
+            };
+            if prepare_profile(&target_profile).is_err() {
+                return;
+            }
+            match rpc::Client::spawn(&executable, &target_profile, &proxy) {
+                Ok(mut client) => {
+                    let _ = verify_account_with_client(
+                        state.inner(),
+                        &root,
+                        &account.id,
+                        &target_profile,
+                        &cancel,
+                        &mut client,
+                    );
+                }
+                Err(error) => {
+                    state.record_account_error(&account.id, error);
+                }
+            }
+        });
+    }
+    while join_set.join_next().await.is_some() {}
+    if cancel.load(Ordering::Acquire) {
+        return Err("ACP request cancelled".into());
+    }
+    Ok(())
+}
+
+fn reset_active_status_only(state: &AcpState) -> Result<(), String> {
     let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
     status.authenticated = false;
     status.models.clear();
@@ -473,11 +1191,29 @@ fn reset_account(state: &AcpState) -> Result<(), String> {
     Ok(())
 }
 
+fn reset_account_for(state: &AcpState, account_id: &str) -> Result<(), String> {
+    state.agents.abandon_account(account_id);
+    let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
+    if status.active_account == account_id || status.active_account.is_empty() {
+        status.authenticated = false;
+        status.models.clear();
+        status.selected_model.clear();
+        status.latest_probe = None;
+    }
+    Ok(())
+}
+
+fn reset_account(state: &AcpState) -> Result<(), String> {
+    state.agents.clear();
+    reset_active_status_only(state)
+}
+
 fn refresh_account_identity(state: &AcpState, root: &Path) -> Result<(), String> {
     let registry = accounts::read(root)?;
     let directory = accounts::directory(root, &registry.active)?;
     let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
     status.active_account = registry.active;
+    status.accounts = registry.accounts;
     status.profile = directory.to_string_lossy().into_owned();
     Ok(())
 }
@@ -486,6 +1222,13 @@ fn clear_account(app: &tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<AcpState>();
     reset_account(state.inner())?;
     // Clearing local state is independent of CPA provider-file maintenance.
+    refresh_account_identity(state.inner(), &profile(&crate::core_base_dir()?))
+}
+
+fn clear_account_for(app: &tauri::AppHandle, account_id: &str) -> Result<(), String> {
+    let state = app.state::<AcpState>();
+    reset_account_for(state.inner(), account_id)?;
+    state.clear_account_runtime(account_id);
     refresh_account_identity(state.inner(), &profile(&crate::core_base_dir()?))
 }
 
@@ -514,7 +1257,17 @@ fn select_account_local(state: &AcpState, root: &Path, id: &str) -> Result<(), S
     {
         return Err("Unknown ACP account".into());
     }
-    reset_account(state)?;
+    let pool_enabled = state
+        .request_pool
+        .root
+        .lock()
+        .ok()
+        .is_some_and(|root| root.is_some());
+    if pool_enabled {
+        reset_active_status_only(state)?;
+    } else {
+        reset_account(state)?;
+    }
     let result = accounts::select(root, id).and_then(|_| refresh_account_identity(state, root));
     if result.is_err() {
         let result = combine_account_errors(result, sync_account_models(state));
@@ -527,15 +1280,22 @@ fn select_account_local(state: &AcpState, root: &Path, id: &str) -> Result<(), S
 }
 
 fn remove_account_local(state: &AcpState, root: &Path, id: &str) -> Result<(), String> {
+    let _exclusive = lock_account_state(state, id)?;
     let current = accounts::read(root)?.active == id;
-    if current {
-        reset_account(state)?;
-    }
+    reset_account_for(state, id)?;
+    state.clear_account_runtime(id);
     // Never let a damaged/unwritable CPA provider config prevent isolating an
     // account. Apply local mutation first, then report both independent errors.
     let mut result = accounts::remove(root, id).map(|_| ());
-    if current {
-        result = combine_account_errors(result, refresh_account_identity(state, root));
+    result = combine_account_errors(result, refresh_account_identity(state, root));
+    if current
+        || state
+            .request_pool
+            .root
+            .lock()
+            .ok()
+            .is_some_and(|r| r.is_some())
+    {
         result = combine_account_errors(result, sync_account_models(state));
     }
     if let Err(error) = &result {
@@ -577,11 +1337,21 @@ async fn connect(
         }
     };
     let root = profile(&crate::core_base_dir()?);
-    let directory = match pending.as_ref() {
-        Some(pending) => pending.directory()?,
-        None => accounts::active(&root)?,
+    let (directory, account_proxy) = match pending.as_ref() {
+        Some(pending) => (pending.directory()?, None),
+        None => {
+            let registry = accounts::read(&root)?;
+            let dir = accounts::directory(&root, &registry.active)?;
+            let proxy = registry
+                .accounts
+                .into_iter()
+                .find(|a| a.id == registry.active)
+                .and_then(|a| a.proxy_url);
+            (dir, proxy)
+        }
     };
-    let proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
+    let global_proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
+    let proxy = accounts::resolve_proxy(account_proxy.as_deref(), &global_proxy);
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AcpState>();
         let mut result: Result<(), String> = (|| {
@@ -612,7 +1382,17 @@ async fn connect(
             if pending.as_ref().is_none_or(|pending| {
                 accounts::read(&root).is_ok_and(|registry| registry.active == pending.id)
             }) {
-                result = combine_account_errors(result, reset_account(state.inner()));
+                let active_id = accounts::read(&root)
+                    .map(|registry| registry.active)
+                    .unwrap_or_default();
+                if !active_id.is_empty() {
+                    result = combine_account_errors(
+                        result,
+                        reset_account_for(state.inner(), &active_id),
+                    );
+                } else {
+                    result = combine_account_errors(result, reset_active_status_only(state.inner()));
+                }
                 result = combine_account_errors(result, sync_account_models(state.inner()));
             }
             record_error(state.inner(), result.as_ref().unwrap_err());
@@ -625,20 +1405,39 @@ async fn connect(
     .map_err(|e| e.to_string())?
 }
 
+#[cfg(test)]
 fn logout_session(
     state: &AcpState,
     root: &Path,
     cancel: &Arc<AtomicBool>,
     client: &mut rpc::Client,
 ) -> Result<(), String> {
+    let active_id = accounts::read(root)?.active;
+    let target_profile = accounts::directory(root, &active_id)?;
+    logout_session_for(state, root, &active_id, &target_profile, cancel, client)
+}
+
+fn logout_session_for(
+    state: &AcpState,
+    root: &Path,
+    account_id: &str,
+    target_profile: &Path,
+    cancel: &Arc<AtomicBool>,
+    client: &mut rpc::Client,
+) -> Result<(), String> {
     // Invalidation is local and immediate even when official logout is missing.
     // Never silently substitute deleting credentials for the official method.
-    reset_account(state)?;
+    reset_account_for(state, account_id)?;
+    state.clear_account_runtime(account_id);
     let maintenance = sync_account_models(state);
     let action = (|| {
         client.initialize(cancel)?;
         client.logout(cancel)?;
-        if accounts::is_isolated_home(&accounts::active(root)?) { Ok(()) } else { accounts::set_active_email(root, None) }
+        if accounts::is_isolated_home(target_profile) {
+            Ok(())
+        } else {
+            accounts::set_email(root, account_id, None)
+        }
     })();
     let result = combine_account_errors(action, maintenance);
     if let Err(error) = &result {
@@ -772,7 +1571,7 @@ fn connect_profile(
 
 #[tauri::command]
 pub(crate) fn cancel_acp_operation(state: tauri::State<'_, AcpState>) {
-    state.cancel();
+    state.cancel_interactive();
 }
 
 #[tauri::command]
@@ -780,22 +1579,27 @@ pub(crate) fn select_acp_model(
     state: tauri::State<'_, AcpState>,
     model: String,
 ) -> Result<AcpStatus, String> {
-    let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
-    if status.busy {
-        return Err("Wait for the current ACP operation to finish".into());
+    let available = state.aggregated_models();
+    {
+        let mut status = state.status.lock().map_err(|_| "ACP state unavailable")?;
+        if status.busy {
+            return Err("Wait for the current ACP operation to finish".into());
+        }
+        if !status.models.iter().any(|item| item.id == model)
+            && !available.iter().any(|item| item.id == model)
+        {
+            return Err("Refresh available ACP models first".into());
+        }
+        let profile = accounts::active(&profile(&crate::core_base_dir()?))?;
+        prepare_profile(&profile)?;
+        crate::write_codex_private_file(
+            &selected_path(&profile),
+            &serde_json::to_vec(&model).map_err(|e| e.to_string())?,
+        )?;
+        status.selected_model = model;
+        status.latest_probe = None;
     }
-    if !status.models.iter().any(|item| item.id == model) {
-        return Err("Refresh available ACP models first".into());
-    }
-    let profile = accounts::active(&profile(&crate::core_base_dir()?))?;
-    prepare_profile(&profile)?;
-    crate::write_codex_private_file(
-        &selected_path(&profile),
-        &serde_json::to_vec(&model).map_err(|e| e.to_string())?,
-    )?;
-    status.selected_model = model;
-    status.latest_probe = None;
-    Ok(status.clone())
+    state.snapshot()
 }
 
 #[derive(Clone, Serialize)]
@@ -806,37 +1610,81 @@ pub(crate) struct ProbeResult {
     duration_ms: u64,
     first_text_ms: Option<u64>,
     stop_reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account_id: Option<String>,
 }
 
 #[tauri::command]
-pub(crate) async fn test_acp_connection(app: tauri::AppHandle) -> Result<ProbeResult, String> {
+pub(crate) async fn test_acp_connection(
+    app: tauri::AppHandle,
+    account_id: Option<String>,
+    model: Option<String>,
+) -> Result<ProbeResult, String> {
     let guard = begin(&app, "test")?;
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let executable =
         crate::find_antigravity_cli(&home).ok_or("Official Antigravity CLI not found")?;
-    let model = app.state::<AcpState>().snapshot()?.selected_model;
-    let profile = accounts::active(&profile(&crate::core_base_dir()?))?;
-    let proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
+    let root = profile(&crate::core_base_dir()?);
+    let registry = accounts::read(&root)?;
+    let target_id = account_id.unwrap_or_else(|| registry.active.clone());
+    let target_account = registry
+        .accounts
+        .into_iter()
+        .find(|account| account.id == target_id)
+        .ok_or("Unknown ACP account")?;
+    let target_profile = accounts::directory(&root, &target_id)?;
+    let model = model
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| app.state::<AcpState>().snapshot().map(|s| s.selected_model).unwrap_or_default());
+    let global_proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
+    let proxy = accounts::resolve_proxy(target_account.proxy_url.as_deref(), &global_proxy);
     tauri::async_runtime::spawn_blocking(move || {
         let started = std::time::Instant::now();
         let result: Result<ProbeResult, String> = (|| {
-            let mut client = rpc::Client::spawn(&executable, &profile, &proxy)?;
+            prepare_profile(&target_profile)?;
+            let mut client = rpc::Client::spawn(&executable, &target_profile, &proxy)?;
             client.initialize(&guard.cancel)?;
-            let session = client.session(&profile, &guard.cancel)?;
-            client.model(&session, &model, &guard.cancel)?;
+            let session = client.session(&target_profile, &guard.cancel)?;
+            let discovered = model_list(&session);
+            let chosen_model = if !model.is_empty() && discovered.iter().any(|m| m.id == model) {
+                model
+            } else if !discovered.is_empty() {
+                discovered[0].id.clone()
+            } else {
+                model
+            };
+            client.model(&session, &chosen_model, &guard.cancel)?;
             let mut text = String::new();
             let mut first_text_ms = None;
-            let result = client.call("session/prompt", json!({"sessionId":session["sessionId"],"prompt":[{"type":"text","text":"Reply with only ACP_OK. Do not use any tools."}]}), &guard.cancel, |update| {
-                if update["sessionUpdate"] == "agent_message_chunk" && update["content"]["type"] == "text" {
-                    if let Some(part) = update["content"]["text"].as_str() {
-                        first_text_ms.get_or_insert(started.elapsed().as_millis() as u64);
-                        text.push_str(part);
+            let result = client.call(
+                "session/prompt",
+                json!({"sessionId":session["sessionId"],"prompt":[{"type":"text","text":"Reply with only ACP_OK. Do not use any tools."}]}),
+                &guard.cancel,
+                |update| {
+                    if update["sessionUpdate"] == "agent_message_chunk" && update["content"]["type"] == "text" {
+                        if let Some(part) = update["content"]["text"].as_str() {
+                            first_text_ms.get_or_insert(started.elapsed().as_millis() as u64);
+                            text.push_str(part);
+                        }
                     }
-                }
-            })?;
+                },
+            )?;
             let stop_reason = result["stopReason"].as_str().unwrap_or("unknown").to_string();
-            if stop_reason != "end_turn" || text.trim() != "ACP_OK" { return Err("ACP test did not return the expected complete response".into()); }
-            Ok(ProbeResult { text, model, duration_ms: started.elapsed().as_millis() as u64, first_text_ms, stop_reason })
+            if stop_reason != "end_turn" || text.trim() != "ACP_OK" {
+                return Err("ACP test did not return the expected complete response".into());
+            }
+            if !discovered.is_empty() {
+                app.state::<AcpState>()
+                    .record_account_verified(&target_id, discovered);
+            }
+            Ok(ProbeResult {
+                text,
+                model: chosen_model,
+                duration_ms: started.elapsed().as_millis() as u64,
+                first_text_ms,
+                stop_reason,
+                account_id: Some(target_id),
+            })
         })();
         if let Ok(mut status) = app.state::<AcpState>().status.lock() {
             match &result {
@@ -846,7 +1694,9 @@ pub(crate) async fn test_acp_connection(app: tauri::AppHandle) -> Result<ProbeRe
         }
         drop(guard);
         result
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
