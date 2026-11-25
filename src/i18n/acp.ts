@@ -148,7 +148,6 @@ export const acpZhCN = {
   'acp.accountReady': "就绪",
   'acp.accountAuthRequired': "需重新授权",
   'acp.accountError': "校验失败",
-  'acp.accountIsolated': "隔离账号",
   'acp.accountInFlight': "并发 {count}",
   'acp.accountSessions': "会话 {count}",
   'acp.accountCooldown': "冷却 {secs}s",
@@ -160,6 +159,7 @@ export const acpZhCN = {
   'acp.accountMetaSummary': "P{priority} · W{weight} · 并发 {concurrency}",
   'acp.accountProxyTag': "独立代理",
   'acp.testAccount': "测试账号",
+  'acp.externalUnsupported': "非内置 CPA 不支持 ACP 接入，请切换回内置 CPA 后使用。",
 };
 
 export const acpEn = {
@@ -312,7 +312,6 @@ export const acpEn = {
   'acp.accountReady': "Ready",
   'acp.accountAuthRequired': "Re-auth needed",
   'acp.accountError': "Check failed",
-  'acp.accountIsolated': "Isolated",
   'acp.accountInFlight': "Active {count}",
   'acp.accountSessions': "Sessions {count}",
   'acp.accountCooldown': "Cooldown {secs}s",
@@ -324,4 +323,5 @@ export const acpEn = {
   'acp.accountMetaSummary': "P{priority} · W{weight} · C{concurrency}",
   'acp.accountProxyTag': "Custom proxy",
   'acp.testAccount': "Test account",
+  'acp.externalUnsupported': "ACP access is not supported for external CPA instances. Switch back to Built-in CPA to use it.",
 };

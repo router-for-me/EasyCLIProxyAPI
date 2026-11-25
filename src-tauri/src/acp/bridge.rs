@@ -446,7 +446,15 @@ async fn set_enabled<R: tauri::Runtime>(
     state.snapshot()
 }
 
+fn is_external_dispatch<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+    app.try_state::<crate::remote_cpa::RemoteCpaState>()
+        .is_some_and(|remote| remote.uses_external_dispatch())
+}
+
 pub(crate) async fn restore(app: tauri::AppHandle) {
+    if is_external_dispatch(&app) {
+        return;
+    }
     let result: Result<(), String> = async {
         let profile = profile(&crate::core_base_dir()?);
         let settings = read_settings(&profile)?;
@@ -457,9 +465,18 @@ pub(crate) async fn restore(app: tauri::AppHandle) {
             state.agents.set_max_live(pool_settings.max_live_sessions);
         }
         restore_if_enabled(&profile, || async {
+            if is_external_dispatch(&app) {
+                return Ok(());
+            }
             if let Err(error) = super::acp_connect(app.clone(), false).await {
+                if is_external_dispatch(&app) {
+                    return Ok(());
+                }
                 if settings.account_pool {
                     let _ = super::verify_all_acp_accounts(app.clone()).await;
+                    if is_external_dispatch(&app) {
+                        return Ok(());
+                    }
                     if !app.state::<AcpState>().has_ready_pool_account() {
                         register(None, "", &[])?;
                         return Err(error);
@@ -469,6 +486,9 @@ pub(crate) async fn restore(app: tauri::AppHandle) {
                     return Err(error);
                 }
             }
+            if is_external_dispatch(&app) {
+                return Ok(());
+            }
             let config = crate::core_install_dir()?.join(crate::CORE_CONFIG_FILE);
             set_enabled(&app, &profile, &config, true, true).await?;
             if settings.account_pool {
@@ -476,6 +496,9 @@ pub(crate) async fn restore(app: tauri::AppHandle) {
                 let bg_app = app.clone();
                 let bg_root = profile.clone();
                 tauri::async_runtime::spawn(async move {
+                    if is_external_dispatch(&bg_app) {
+                        return;
+                    }
                     let Ok(home) = bg_app.path().home_dir() else {
                         return;
                     };
@@ -512,6 +535,7 @@ pub(crate) async fn restore(app: tauri::AppHandle) {
                     )
                     .await
                     .is_ok()
+                        && !is_external_dispatch(&bg_app)
                     {
                         let _ = sync_models(bg_app.state::<AcpState>().inner());
                     }
@@ -523,8 +547,10 @@ pub(crate) async fn restore(app: tauri::AppHandle) {
     }
     .await;
     if let Err(error) = result {
-        if let Ok(mut status) = app.state::<AcpState>().status.lock() {
-            status.error = Some(error);
+        if !is_external_dispatch(&app) {
+            if let Ok(mut status) = app.state::<AcpState>().status.lock() {
+                status.error = Some(error);
+            }
         }
     }
 }

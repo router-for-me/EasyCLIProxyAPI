@@ -1968,7 +1968,18 @@ export function createBrowserMockRuntime(
           Object.assign(acp, { authenticated: true, models: clone(mockAcpModels), selectedModel: acpAccountModels.get(id) || mockAcpModels[0].id, latestProbe: null });
         });
       }
-      case 'relogin_acp_account':
+      case 'relogin_acp_account': return mockAcpOperation('login', () => {
+        const id = payload.accountId ? readString(payload.accountId) : acp.activeAccount;
+        const account = acp.accounts.find(a => a.id === id);
+        if (!account) throw new Error('Unknown ACP account');
+        account.saved = true;
+        account.email = account.id === 'default' ? 'personal.acp@example.test' : 'work.acp@example.test';
+        markMockAccountReady(account.id);
+        if (id === acp.activeAccount) {
+          Object.assign(acp, { authenticated: true, error: null, latestProbe: null, models: clone(mockAcpModels) });
+          if (!acp.models.some(model => model.id === acp.selectedModel)) acp.selectedModel = acp.models[0].id;
+        }
+      });
       case 'acp_connect': return mockAcpOperation('login', () => {
         const account = acp.accounts.find(account => account.id === acp.activeAccount);
         if (account) { account.saved = true; account.email = account.id === 'default' ? 'personal.acp@example.test' : 'work.acp@example.test'; markMockAccountReady(account.id); }

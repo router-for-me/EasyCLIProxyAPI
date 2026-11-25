@@ -20,24 +20,21 @@ import {
   type AcpStatus,
 } from '../services/acp';
 import { openExternalUrl } from '../services/appSettings';
+import { selectedRemoteEndpoint } from '../services/remoteCpa';
 import './AcpAccessPage.css';
 
 // Same anchored button/dropdown pattern used by MCP management. Keep it in
 // the dialog DOM for its focus trap; opening it never changes the row height.
 function AccountMoreActions({
-  current,
-  isolated,
   busy,
   hasCli,
   hasIssue,
   onAction,
 }: {
-  current: boolean;
-  isolated: boolean;
   busy: boolean;
   hasCli: boolean;
   hasIssue: boolean;
-  onAction: (kind: 'verify' | 'resetCooldown' | 'relogin' | 'remove' | 'logout') => void;
+  onAction: (kind: 'verify' | 'resetCooldown' | 'remove' | 'logout') => void;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -110,7 +107,6 @@ function AccountMoreActions({
     }}>
       <button type="button" role="menuitem" className="acp-account-menu-item" disabled={!hasCli} onClick={() => { close(true); onAction('verify'); }}><ShieldCheck size={14} aria-hidden="true" />{t('acp.verifyNow')}</button>
       {hasIssue ? <button type="button" role="menuitem" className="acp-account-menu-item" onClick={() => { close(true); onAction('resetCooldown'); }}><RotateCcw size={14} aria-hidden="true" />{t('acp.resetCooldown')}</button> : null}
-      {!current && isolated ? <button type="button" role="menuitem" className="acp-account-menu-item" disabled={!hasCli} onClick={() => { close(true); onAction('relogin'); }}><LogIn size={14} aria-hidden="true" />{t('acp.relogin')}</button> : null}
       <button type="button" role="menuitem" className="acp-account-menu-item" disabled={!hasCli} onClick={() => { close(true); onAction('logout'); }}><LogOut size={14} aria-hidden="true" />{t('acp.logout')}</button>
       <button type="button" role="menuitem" className="acp-account-menu-item acp-remove-action" onClick={() => { close(true); onAction('remove'); }}><Trash2 size={14} aria-hidden="true" />{t('acp.removeLocal')}</button>
     </div> : null}
@@ -120,8 +116,9 @@ function AccountMoreActions({
 export function AcpAccessPage() {
   const { t } = useI18n();
   const privacy = usePrivacyMask();
+  const external = Boolean(selectedRemoteEndpoint());
   const [status, setStatus] = useState<AcpStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!external);
   const [operation, setOperation] = useState('');
   const [error, setError] = useState('');
   const [managingAccounts, setManagingAccounts] = useState(false);
@@ -160,13 +157,18 @@ export function AcpAccessPage() {
 
   useEffect(() => {
     mounted.current = true;
+    if (external) {
+      setLoading(false);
+      return () => { mounted.current = false; };
+    }
     void refresh().catch(cause => { if (mounted.current) setError(String(cause)); })
       .finally(() => { if (mounted.current) setLoading(false); });
     return () => { mounted.current = false; };
-  }, [refresh]);
+  }, [external, refresh]);
 
   // Observe live pool concurrency, cooldowns, and external operations.
   useEffect(() => {
+    if (external) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     const interval = status?.busy || operation ? 1000 : status?.upstreamEnabled || status?.poolSettings?.accountPool ? 3000 : 5000;
@@ -176,7 +178,7 @@ export function AcpAccessPage() {
     };
     timer = setTimeout(() => void poll(), interval);
     return () => { active = false; clearTimeout(timer); };
-  }, [status?.busy, status?.upstreamEnabled, status?.poolSettings?.accountPool, operation, refresh]);
+  }, [external, status?.busy, status?.upstreamEnabled, status?.poolSettings?.accountPool, operation, refresh]);
 
   const run = async (name: string, action: () => Promise<unknown>) => {
     if (pending.current || status?.busy) return false;
@@ -372,7 +374,7 @@ export function AcpAccessPage() {
       ? acpApi.removeAccount(account.id)
       : kind === 'logout'
         ? acpApi.logoutAccount(account.id)
-        : acpApi.reloginAccount());
+        : acpApi.reloginAccount(account.id));
   };
   const operationStatus = busy ? <div className="acp-operation-status" role="status" aria-live="polite"><span><LoaderCircle size={16} className="spin" aria-hidden="true" />{busyLabel}</span>
     {!['rename', 'remove', 'select', 'upstream', 'pool'].includes(activeOperation || '') ? <button type="button" className="secondary-button compact-button" onClick={() => void acpApi.cancel().catch(cause => setError(String(cause)))}><X size={14} aria-hidden="true" />{t('acp.cancel')}</button> : null}
@@ -385,6 +387,15 @@ export function AcpAccessPage() {
     setPoolDirty(true);
     setPoolSavedNotice(false);
   };
+
+  if (external) {
+    return <div className="acp-access-page" data-connected={false}>
+      <header className="acp-page-heading">
+        <div><h1>{t('oauth.acp.tab')}</h1><p>{t('acp.description')}</p></div>
+      </header>
+      <Notice tone="info">{t('acp.externalUnsupported')}</Notice>
+    </div>;
+  }
 
   return <div className="acp-access-page" aria-busy={busy || loading} data-connected={connected}>
     <header className="acp-page-heading">
@@ -627,7 +638,6 @@ export function AcpAccessPage() {
                 {current ? <><span>{t('acp.currentUse')}</span><span data-connected={connected}>{t(connected ? 'acp.connected' : 'acp.notVerified')}</span></>
                   : rt?.authState === 'ready' ? <span data-connected="true">{t('acp.accountReady')}</span>
                   : <span>{t('acp.saved')}</span>}
-                {account.isolated ? <span>{t('acp.accountIsolated')}</span> : null}
                 {!accountEnabled ? <span data-warn="true">{t('acp.accountDisabled')}</span> : null}
                 {rt?.authState === 'auth_required' ? <span data-warn="true">{t('acp.accountAuthRequired')}</span> : null}
                 {rt?.authState === 'error' ? <span data-warn="true">{t('acp.accountError')}</span> : null}
@@ -644,11 +654,10 @@ export function AcpAccessPage() {
                 aria-label={t('acp.accountEnabledLabel', { label: accountName(account) })}
                 onChange={event => void toggleAccountEnabled(account, event.currentTarget.checked)}
               />
-              {!current ? <button type="button" className="secondary-button" disabled={busy || !hasCli} onClick={() => void run('refresh', () => acpApi.switchAccount(account.id))}>{t('acp.useAccount')}</button> : <button type="button" className="secondary-button" disabled={busy || !hasCli} onClick={() => void confirmAccountAction('relogin', account)}><LogIn size={14} aria-hidden="true" />{t('acp.relogin')}</button>}
+              {!current ? <button type="button" className="secondary-button" disabled={busy || !hasCli} onClick={() => void run('refresh', () => acpApi.switchAccount(account.id))}>{t('acp.useAccount')}</button> : null}
+              <button type="button" className="secondary-button" disabled={busy || !hasCli} onClick={() => void confirmAccountAction('relogin', account)}><LogIn size={14} aria-hidden="true" />{t('acp.relogin')}</button>
               <button type="button" className="icon-button quiet" disabled={busy} aria-label={t('acp.renameAccount', { label: accountName(account) })} title={t('acp.editNote')} onClick={() => openEditor(account)}><Pencil size={15} aria-hidden="true" /></button>
               <AccountMoreActions
-                current={current}
-                isolated={Boolean(account.isolated)}
                 busy={busy}
                 hasCli={hasCli}
                 hasIssue={hasIssue}

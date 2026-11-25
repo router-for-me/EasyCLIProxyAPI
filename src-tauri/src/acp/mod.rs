@@ -127,6 +127,24 @@ impl AcpState {
         }
     }
 
+    pub(crate) fn suspend_for_remote(&self) {
+        self.shutdown();
+        if let Ok(mut root) = self.request_pool.root.lock() {
+            *root = None;
+        }
+        if let Ok(mut status) = self.status.lock() {
+            status.upstream_url = None;
+            status.error = None;
+        }
+    }
+
+    pub(crate) fn prepare_for_local(&self) {
+        self.request_pool.mark_running();
+        if let Ok(mut status) = self.status.lock() {
+            status.error = None;
+        }
+    }
+
     fn snapshot(&self) -> Result<AcpStatus, String> {
         let mut status = self
             .status
@@ -844,17 +862,121 @@ fn finish_manual_add_ex(
 }
 
 #[tauri::command]
-pub(crate) async fn relogin_acp_account(app: tauri::AppHandle) -> Result<AcpStatus, String> {
+pub(crate) async fn relogin_acp_account(
+    app: tauri::AppHandle,
+    account_id: Option<String>,
+) -> Result<AcpStatus, String> {
     let guard = begin(&app, "login")?;
     let root = profile(&crate::core_base_dir()?);
     let registry = accounts::read(&root)?;
-    if accounts::is_isolated_home(&accounts::active(&root)?) {
+    let target_id = account_id.unwrap_or_else(|| registry.active.clone());
+    let target_account = registry
+        .accounts
+        .into_iter()
+        .find(|account| account.id == target_id)
+        .ok_or("Unknown ACP account")?;
+    let target_profile = accounts::directory(&root, &target_id)?;
+    if target_account.isolated || accounts::is_isolated_home(&target_profile) {
         return Err("Use the account's isolated sign-in to authorize it again".into());
     }
-    let exclusive = lock_account_exclusive(&app, &registry.active)?;
-    clear_account_for(&app, &registry.active)?;
-    let result = connect(app, true, true, None, guard).await;
-    drop(exclusive);
+    let exclusive = lock_account_exclusive(&app, &target_id)?;
+    clear_account_for(&app, &target_id)?;
+    if target_id == registry.active {
+        let result = connect(app, true, true, None, guard).await;
+        drop(exclusive);
+        return result;
+    }
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let executable = match crate::find_antigravity_cli(&home) {
+        Some(executable) => executable,
+        None => {
+            let state = app.state::<AcpState>();
+            let result = combine_account_errors(
+                Err("Install official Antigravity CLI before connecting".into()),
+                sync_account_models(state.inner()),
+            );
+            if let Err(error) = &result {
+                record_error(state.inner(), error);
+            }
+            drop(exclusive);
+            return result;
+        }
+    };
+    let global_proxy = app.state::<crate::GuiConfigState>().snapshot()?.proxy_url;
+    let proxy = accounts::resolve_proxy(target_account.proxy_url.as_deref(), &global_proxy);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _exclusive = exclusive;
+        let state = app.state::<AcpState>();
+        let result = (|| {
+            prepare_profile(&target_profile)?;
+            let mut client = rpc::Client::spawn(&executable, &target_profile, &proxy)?;
+            relogin_profile_for(
+                state.inner(),
+                &root,
+                &target_id,
+                &target_profile,
+                &guard.cancel,
+                &mut client,
+            )
+        })();
+        if let Err(error) = &result {
+            record_error(state.inner(), error);
+        }
+        drop(guard);
+        result?;
+        get_acp_status(app.clone(), app.state::<AcpState>())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn relogin_profile_for(
+    state: &AcpState,
+    root: &Path,
+    account_id: &str,
+    target_profile: &Path,
+    cancel: &Arc<AtomicBool>,
+    client: &mut rpc::Client,
+) -> Result<(), String> {
+    let mut maintenance = sync_account_models(state);
+    let action = (|| {
+        client.initialize(cancel)?;
+        client.logout(cancel)?;
+        accounts::set_email(root, account_id, None)?;
+        client.call(
+            "authenticate",
+            json!({"methodId":"oauth-personal"}),
+            cancel,
+            |_| {},
+        )?;
+        accounts::mark_saved_by_id(root, account_id)?;
+        if let Some(email) = client.account_email(target_profile) {
+            accounts::set_email(root, account_id, Some(email))?;
+        }
+        let session = client.session(target_profile, cancel)?;
+        let models = model_list(&session);
+        if models.is_empty() {
+            return Err("Official ACP server did not return available models".into());
+        }
+        state.record_account_verified(account_id, models);
+        if let Some(email) = client.account_email(target_profile) {
+            accounts::set_email(root, account_id, Some(email))?;
+        }
+        refresh_account_identity(state, root)?;
+        maintenance = combine_account_errors(
+            std::mem::replace(&mut maintenance, Ok(())),
+            sync_account_models(state),
+        );
+        Ok(())
+    })();
+    let mut result = combine_account_errors(action, maintenance);
+    if result.is_err() {
+        result = combine_account_errors(result, reset_account_for(state, account_id));
+        result = combine_account_errors(result, sync_account_models(state));
+    }
+    if let Err(error) = &result {
+        record_error(state, error);
+    }
     result
 }
 

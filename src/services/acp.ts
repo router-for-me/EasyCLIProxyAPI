@@ -110,7 +110,8 @@ export const acpApi = {
   },
   submitAccountAuthorization: (attempt: string, response: string) =>
     invoke<void>('submit_acp_account_authorization', { attempt, response }),
-  reloginAccount: () => invoke<AcpStatus>('relogin_acp_account'),
+  reloginAccount: (accountId?: string) =>
+    invoke<AcpStatus>('relogin_acp_account', accountId ? { accountId } : {}),
   renameAccount: (accountId: string, label: string) => invoke<AcpStatus>('rename_acp_account', { accountId, label }),
   updateAccountSettings: (accountId: string, patch: AcpAccountSettingsPatch) =>
     invoke<AcpStatus>('update_acp_account_settings', { accountId, patch }),

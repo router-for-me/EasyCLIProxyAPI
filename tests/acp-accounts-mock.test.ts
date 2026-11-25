@@ -33,6 +33,12 @@ test('ACP mock follows saved/current/busy/cancel/remove/logout contracts', async
   expect((await status()).accounts).toHaveLength(2);
   expect((await status()).upstreamEnabled).toBe(true);
   await runtime.invoke('relogin_acp_account');
+  await runtime.invoke('logout_acp_account', { accountId: 'default' });
+  expect((await status()).accounts.find(a => a.id === 'default')?.email).toBeNull();
+  await runtime.invoke('relogin_acp_account', { accountId: 'default' });
+  expect((await status()).activeAccount).toBe(work);
+  expect((await status()).accounts.find(a => a.id === 'default')?.email).toBe('personal.acp@example.test');
+  expect((await status()).accountRuntime?.default?.authState).toBe('ready');
   await runtime.invoke('switch_acp_account', { accountId: 'default' });
   expect((await status()).activeAccount).toBe('default');
   await runtime.invoke('remove_acp_account', { accountId: work });

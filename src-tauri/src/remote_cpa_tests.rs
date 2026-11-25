@@ -201,6 +201,60 @@ async fn profile_switch_keeps_local_files_unmodified_and_never_exports_its_key()
     assert!(corrupt.view(&*corrupt.selection.lock().await).needs_repair);
 }
 
+#[tokio::test]
+async fn external_dispatch_gate_allows_builtin_commands_after_returning_to_local() {
+    let directory = TestDir::new();
+    let path = directory.0.join(PROFILE_FILE);
+
+    // Local launch -> Remote -> Local clears external_dispatch immediately in-process.
+    let local = RemoteCpaState::from_path(Some(path.clone()));
+    assert!(!local.uses_external_dispatch());
+    {
+        let mut selection = local.selection.lock().await;
+        local
+            .persist(
+                &mut selection,
+                Profile::Remote {
+                    endpoint: "http://127.0.0.1:9999/".into(),
+                    key: KEY.into(),
+                },
+            )
+            .unwrap();
+    }
+    assert!(local.uses_external_dispatch());
+    {
+        let mut selection = local.selection.lock().await;
+        local.persist(&mut selection, Profile::Local).unwrap();
+    }
+    assert!(!local.uses_external_dispatch());
+
+    // Remote launch -> persist Local -> restarted process clears remote_launch and allows Built-in IPC.
+    {
+        let mut selection = local.selection.lock().await;
+        local
+            .persist(
+                &mut selection,
+                Profile::Remote {
+                    endpoint: "http://127.0.0.1:9999/".into(),
+                    key: KEY.into(),
+                },
+            )
+            .unwrap();
+    }
+    let remote = RemoteCpaState::from_path(Some(path.clone()));
+    assert!(remote.remote_launch);
+    assert!(remote.uses_external_dispatch());
+    {
+        let mut selection = remote.selection.lock().await;
+        remote.persist(&mut selection, Profile::Local).unwrap();
+    }
+    assert!(remote.uses_external_dispatch());
+    let mut restarted = RemoteCpaState::from_path(Some(path));
+    assert!(!restarted.remote_launch);
+    assert!(!restarted.uses_external_dispatch());
+    assert!(restarted.take_builtin_start().unwrap());
+}
+
 async fn receive(tcp: &mut TcpStream) -> (String, String) {
     let mut buf = Vec::new();
     let header_end = loop {

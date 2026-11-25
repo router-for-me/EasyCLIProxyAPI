@@ -181,7 +181,7 @@
     .acp-account-settings-grid { grid-template-columns: minmax(0, 1fr); }
     .acp-pool-grid { grid-template-columns: minmax(0, 1fr); }
   }
-  .acp-managed-identity { flex: 1 1 210px; min-width: 0; }
+  .acp-managed-identity { flex: 1 1 180px; min-width: 0; }
   .acp-managed-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
   .acp-account-more { position: relative; }
   .acp-account-dialog .acp-more-trigger { gap: 4px; color: var(--acp-muted); font-size: 11px; }
