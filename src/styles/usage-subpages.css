@@ -1,7 +1,8 @@
 /* Shared surfaces for usage subpages; the overview keeps its own chart palette. */
 .usage-records-page .usage-tab-panel:not([aria-labelledby='usage-tab-overview']):not([aria-labelledby='usage-tab-live-routing']),
 .usage-price-sync-dialog,
-.usage-column-dialog {
+.usage-column-dialog,
+.usage-log-detail-dialog {
   --usage-page-text: var(--usage-subpage-text);
   --usage-page-muted: var(--usage-subpage-muted);
   --usage-page-border: var(--usage-subpage-border);
@@ -63,7 +64,8 @@
   .usage-price-row-actions button, .secondary-button
 ),
 :root .app-dialog.usage-price-sync-dialog :is(input:not([type='checkbox']):not([type='radio']), .secondary-button),
-:root .app-dialog.usage-column-dialog :is(input:not([type='checkbox']):not([type='radio']), select, .secondary-button) {
+:root .app-dialog.usage-column-dialog :is(input:not([type='checkbox']):not([type='radio']), select, .secondary-button),
+:root .app-dialog.usage-log-detail-dialog :is(input:not([type='checkbox']):not([type='radio']), select, .secondary-button) {
   background: var(--bg-card);
   color: var(--usage-page-text);
   border-color: var(--usage-page-border);
@@ -71,7 +73,8 @@
 
 .usage-records-page .usage-tab-panel:not([aria-labelledby='usage-tab-overview']) input::placeholder,
 .usage-price-sync-dialog input::placeholder,
-.usage-column-dialog input::placeholder {
+.usage-column-dialog input::placeholder,
+.usage-log-detail-dialog input::placeholder {
   color: var(--usage-page-muted);
   opacity: 1;
 }
