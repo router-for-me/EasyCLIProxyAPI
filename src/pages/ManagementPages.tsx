@@ -1,5 +1,8 @@
 import { Notice } from '../components/Notice';
-import { getOAuthStatus, startOAuthLogin, openOAuthUrl, submitOAuthCallback, listOAuthBrowsers } from '../services/oauth';
+import {
+  getOAuthStatus, startOAuthLogin, openOAuthUrl, submitOAuthCallback, listOAuthBrowsers,
+  loadOAuthBrowserPreference, saveOAuthBrowserPreference, NO_AUTO_OPEN_BROWSER_ID,
+} from '../services/oauth';
 import type { OAuthBrowserOption } from '../services/oauth';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -45,6 +48,7 @@ import { notifyPluginResourcesChanged, PLUGIN_RESOURCES_REFRESH_EVENT } from '..
 import { VertexLoginCard } from './VertexLoginCard';
 import { Select } from '../components/Select';
 import { AcpAccessPage } from './AcpAccessPage';
+import { useSignInAlerts } from '../components/useCredentialSignIn';
 
 type OAuthProviderId = 'codex' | 'claude' | 'antigravity' | 'kimi' | 'xai' | 'devin' | 'meta';
 type OAuthFlowStatus = 'idle' | 'waiting' | 'success' | 'error';
@@ -83,8 +87,6 @@ const OAUTH_CALLBACK_SUPPORTED = new Set<OAuthProviderId>([
 const BUILTIN_OAUTH_PROVIDER_IDS = oauthProviders.map(provider => provider.id);
 const XAI_CALLBACK_URL = 'http://127.0.0.1:56121/callback';
 const OAUTH_POLL_INTERVAL_MS = 3000;
-const OAUTH_BROWSER_STORAGE_KEY = 'easy-cli-proxy-api.oauth-browser.v3';
-const NO_AUTO_OPEN_BROWSER_ID = 'none';
 const OAUTH_ACCOUNT_PREVIEW_LIMIT = 3;
 const oauthLoginSuccessCache = createOAuthLoginSuccessCache<OAuthProviderId>();
 
@@ -99,14 +101,6 @@ const resolveOAuthBrowserSelection = (
     ?? NO_AUTO_OPEN_BROWSER_ID;
 };
 
-const loadOAuthBrowserPreference = (): string => {
-  try {
-    return window.localStorage.getItem(OAUTH_BROWSER_STORAGE_KEY)?.trim() || '';
-  } catch {
-    return '';
-  }
-};
-
 const cachedOAuthProviderStates = (): Partial<Record<OAuthProviderId, OAuthProviderState>> => (
   oauthLoginSuccessCache.snapshot().reduce<Partial<Record<OAuthProviderId, OAuthProviderState>>>(
     (states, provider) => ({ ...states, [provider]: { status: 'success' } }),
@@ -118,6 +112,7 @@ export function OAuthManagementPage() {
   const { t } = useI18n();
   const [activeSubpage, setActiveSubpage] = useState<OAuthSubpage>('login');
   const [authFilesProvider, setAuthFilesProvider] = useState<string | undefined>();
+  const signInAlerts = useSignInAlerts();
   const openAuthFiles = useCallback((provider?: string) => {
     setAuthFilesProvider(provider);
     setActiveSubpage('authFiles');
@@ -127,7 +122,10 @@ export function OAuthManagementPage() {
     <section className="page oauth-management-page">
       <Tabs className="oauth-subpage-tabs secondary-page-tabs" aria-label={t('oauth.tabs.label')} value={activeSubpage}
         onChange={subpage => { setAuthFilesProvider(undefined); setActiveSubpage(subpage); }}
-        items={oauthSubpages.map(subpage => ({ value: subpage.id, id: `oauth-subpage-tab-${subpage.id}`, panelId: 'oauth-subpage-panel', label: t(subpage.labelKey) }))} />
+        items={oauthSubpages.map(subpage => ({ value: subpage.id, id: `oauth-subpage-tab-${subpage.id}`, panelId: 'oauth-subpage-panel',
+          label: subpage.id === 'authFiles' && signInAlerts.length > 0
+            ? <>{t(subpage.labelKey)}<span className="oauth-subpage-alert" title={t('authFiles.signIn.badge', { count: signInAlerts.length })}>{signInAlerts.length}</span></>
+            : t(subpage.labelKey) }))} />
 
       <div
         className="oauth-subpage-panel"
@@ -201,12 +199,7 @@ export function OAuthLoginPage({ onOpenAuthFiles }: { onOpenAuthFiles?: (provide
     return () => window.removeEventListener(PLUGIN_RESOURCES_REFRESH_EVENT, refresh);
   }, [loadAccounts]);
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(OAUTH_BROWSER_STORAGE_KEY, selectedBrowser);
-    } catch {
-    }
-  }, [selectedBrowser]);
+  useEffect(() => saveOAuthBrowserPreference(selectedBrowser), [selectedBrowser]);
 
   const updateProviderState = useCallback(
     (provider: OAuthProviderId, next: Partial<OAuthProviderState>) => {

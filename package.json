@@ -40,6 +40,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@tauri-apps/api": "2.12.4",
     "@tauri-apps/plugin-dialog": "2.8.3",
+    "@tauri-apps/plugin-notification": "2.8.1",
     "@uiw/react-codemirror": "^4.25.12",
     "diff": "^8.0.2",
     "lucide-react": "^1.24.0",

@@ -9,7 +9,7 @@ import { commitFetchedQuota } from '../services/quotaEnrichment';
 import { ResetCreditExpiries } from '../components/ResetCreditExpiries';
 import { MessageNotice } from '../appNotice';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Check, ChevronDown, ChevronLeft, ChevronRight, Gauge, ListRestart, LoaderCircle, Pencil, RefreshCw, Search, X } from 'lucide-react';
+import { AlertCircle, Check, ChevronDown, ChevronLeft, ChevronRight, Gauge, ListRestart, LoaderCircle, LogIn, Pencil, RefreshCw, Search, X } from 'lucide-react';
 import { SelectMenu } from '../components/SelectMenu';
 import {
   filterQuotaRows,
@@ -23,6 +23,8 @@ import { OAuthPageToolbar } from '../components/OAuthPageToolbar';
 import { QuotaActionFeedback } from '../components/QuotaActionFeedback';
 import { canResetQuota, hasPendingClaudeReset } from '../services/quotaActions';
 import { useQuotaReset } from '../components/useQuotaReset';
+import { useCredentialReauth } from '../components/useCredentialSignIn';
+import { canReauthenticate, credentialNeedsSignIn, observeCredentialSignIn } from '../services/credentialSignIn';
 import antigravityIcon from '../assets/icons/antigravity.svg';
 import claudeIcon from '../assets/icons/claude.svg';
 import codexIcon from '../assets/icons/codex.svg';
@@ -146,6 +148,7 @@ export function QuotaPage() {
         loadZaiCodingPlanFiles(),
       ]);
       const listed = dedupeAuthFiles(responseList(payload, 'files'));
+      observeCredentialSignIn(listed);
       const listedIndexes = new Set(listed.map((file) => normalizeAuthIndex(file.auth_index ?? file.authIndex)).filter(Boolean));
       const allFiles = sortAuthFilesByPriority([
         ...listed,
@@ -187,6 +190,13 @@ export function QuotaPage() {
   }, [t]);
 
   const resetQuota = useQuotaReset(askConfirmation, setError);
+  const reauth = useCredentialReauth();
+  const signInAgain = useCallback(async (file: AuthFile) => {
+    setError('');
+    const result = await reauth.signInAgain(readString(file, 'name'), String(file.provider ?? file.type ?? '').toLowerCase());
+    if (result.status === 'success') await loadFiles();
+    else if (result.status === 'error') setError(t('authFiles.signIn.failed', { name: readString(file, 'name'), error: result.error || t('oauth.authFailed') }));
+  }, [loadFiles, reauth, t]);
 
   const refreshAll = useCallback(async () => {
     if (Object.values(getQuotaCacheSnapshot()).some((quota) => quota.status === 'loading')) return;
@@ -237,7 +247,13 @@ export function QuotaPage() {
   const pageItems = listedItems.pageItems;
   const glance = (file: AuthFile) => layout === 'compact' && !expanded.has(quotaKey(file));
   const cards = pageItems.map(({ provider, file, quota }) => <QuotaCard key={quotaKey(file)} file={file} quota={quota} onRefresh={() => void refreshOne(file)} onReset={provider === 'codex' || provider === 'claude' ? () => void resetQuota(file, quota) : undefined}
-    glance={layout === 'compact' ? glance(file) : undefined} onToggleGlance={() => toggleExpanded(quotaKey(file))} onSaveNote={(nextNote) => saveCredentialNote(file, nextNote)} />);
+    glance={layout === 'compact' ? glance(file) : undefined} onToggleGlance={() => toggleExpanded(quotaKey(file))} onSaveNote={(nextNote) => saveCredentialNote(file, nextNote)}
+    signIn={credentialNeedsSignIn(file) ? {
+      pending: reauth.pending === readString(file, 'name'),
+      busy: Boolean(reauth.pending),
+      onSignIn: canReauthenticate(file) ? () => void signInAgain(file) : undefined,
+      onCancel: reauth.cancel,
+    } : undefined} />);
 
   return (
     <section className="page management-page quota-page" aria-label={t('quota.title')}>
@@ -329,6 +345,7 @@ export function QuotaCard({
   glance,
   onToggleGlance,
   onSaveNote,
+  signIn,
 }: {
   file: AuthFile;
   quota: QuotaState;
@@ -337,6 +354,8 @@ export function QuotaCard({
   glance?: boolean;
   onToggleGlance?: () => void;
   onSaveNote?: (note: string) => Promise<void> | void;
+  /** Set when the credential's login expired and it must sign in again (#724). */
+  signIn?: { pending: boolean; busy: boolean; onSignIn?: () => void; onCancel: () => void };
 }) {
   const { locale, t } = useI18n();
   const now = useQuotaClock() + (quota.serverTimeOffsetMs ?? 0);
@@ -463,9 +482,16 @@ export function QuotaCard({
         </div> : null}
       </div>
       <QuotaActionFeedback quota={quota} name={name} />
+      {signIn ? <Notice tone="error" variant="text" className="quota-card-error quota-card-signin" icon={<LogIn size={18} />}
+        title={t('authFiles.signIn.required')}
+        action={signIn.pending
+          ? <button type="button" className="secondary-button tiny-button" onClick={signIn.onCancel}>{t('common.cancel')}</button>
+          : signIn.onSignIn ? <button type="button" className="primary-button tiny-button" disabled={signIn.busy} onClick={signIn.onSignIn}>{t('authFiles.signIn.action')}</button> : null}>
+        <small>{t(signIn.pending ? 'authFiles.signIn.waiting' : 'authFiles.signIn.hint')}</small>
+      </Notice> : null}
       {quota.status === 'idle' ? <div className="quota-card-message"><span>{disabled ? t('quota.fileDisabled') : t('quota.notFetched')}</span><button type="button" className="secondary-button compact-button" onClick={onRefresh} disabled={disabled}>{disabled ? t('quota.disabled') : t('quota.fetch')}</button></div> : null}
       {quota.status === 'loading' ? <div className="quota-card-message"><LoaderCircle size={18} className="spin" />{t(quota.pendingAction === 'reset' ? 'quota.resetting' : 'quota.querying')}</div> : null}
-      {quota.status === 'error' ? <>
+      {quota.status === 'error' && !signIn ? <>
         <Notice tone="error" variant="text" className="quota-card-error" icon={<AlertCircle size={18} />}>{t('authFiles.quota.failed')}{quota.error ? <small>{privacy.text(quota.error)}</small> : null}</Notice>
       </> : null}
       {quota.status === 'success' && (provider === 'codex' || provider === 'claude') && hasResetCreditSummary ? <div className="quota-reset-credit-summary surface-section surface-muted">

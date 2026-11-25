@@ -168,6 +168,8 @@
 .quota-page .quota-card-message, .quota-page .quota-card-error { min-height: 36px; flex-wrap: wrap; }
 .quota-page .quota-card-error .notice-body { display: grid; gap: 4px; min-width: 0; }
 .quota-page .quota-card-error small { overflow-wrap: anywhere; font-size: 11px; }
+.quota-page .quota-card-signin .notice-main { align-items: flex-start; }
+.quota-page .quota-card-signin small { color: var(--text-secondary); }
 
 /* Compact grouped quota layout, shared by light and dark themes. */
 .quota-page .quota-identity strong {
