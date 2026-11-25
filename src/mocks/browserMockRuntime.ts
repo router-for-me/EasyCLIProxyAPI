@@ -1899,9 +1899,13 @@ export function createBrowserMockRuntime(
         const provider = state.oauthSessions.get(session);
         if (!provider) return { status: 'error', error: 'Unknown or canceled mock OAuth session' };
         if (provider && !state.authFiles.some((file) => file.name === `${provider}-mock-login.json`)) {
+          // Like the core, a re-login can land in a new file for the same account
+          // (Codex names files after the plan), next to the expired one.
+          const expired = state.authFiles.find((file) => file.provider === provider && file.status === 'error');
           state.authFiles.push({
             name: `${provider}-mock-login.json`, provider, type: provider, source: 'file',
             auth_index: `mock-${provider}-${state.authFiles.length + 1}`, priority: 0, disabled: false, modtime: Date.now(),
+            ...(expired ? { email: expired.email, account_id: expired.account_id, status: 'active' } : {}),
           });
         }
         return { status: 'ok', error: null };

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'bun:test';
-import { canReauthenticate, createSignInTransitionTracker, credentialNeedsSignIn } from '../src/services/credentialSignIn';
+import {
+  canReauthenticate,
+  createSignInTransitionTracker,
+  credentialNeedsSignIn,
+  credentialSignInState,
+  credentialsNeedingSignIn,
+  signInReplacement,
+} from '../src/services/credentialSignIn';
 
 const claude = (overrides: Record<string, unknown> = {}) => ({
   name: 'claude-example.json', provider: 'claude', status: 'active', ...overrides,
@@ -46,5 +53,36 @@ describe('sign-in transition tracker', () => {
     // Recovered, then expired again: report again.
     expect(track([claude(), other]).length).toBe(0);
     expect(track([expired(), other]).map((file) => file.name)).toEqual(['claude-example.json']);
+  });
+});
+
+describe('re-login under a new file name', () => {
+  // The core names Codex files after the plan, so a re-login can add a file instead of replacing it.
+  const oldCodex = expired({ name: 'codex-abc-user@example.com-prolite.json', provider: 'codex', email: 'user@example.com', account_id: 'acct-1' });
+  const newCodex = claude({ name: 'codex-abc-user@example.com-pro.json', provider: 'codex', email: 'user@example.com', account_id: 'acct-1' });
+
+  it('treats an expired credential with a working same-account sibling as replaced', () => {
+    expect(signInReplacement(oldCodex, [oldCodex, newCodex])?.name).toBe(newCodex.name);
+    expect(credentialSignInState(oldCodex, [oldCodex, newCodex])).toBe('replaced');
+    expect(credentialsNeedingSignIn([oldCodex, newCodex]).length).toBe(0);
+  });
+
+  it('still asks to sign in when the sibling is another account, provider, disabled or also expired', () => {
+    const other = { ...newCodex, account_id: 'acct-2', email: 'other@example.com' };
+    expect(credentialSignInState(oldCodex, [oldCodex, other])).toBe('required');
+    expect(credentialSignInState(oldCodex, [oldCodex, { ...newCodex, provider: 'claude' }])).toBe('required');
+    expect(credentialSignInState(oldCodex, [oldCodex, { ...newCodex, disabled: true }])).toBe('required');
+    expect(credentialSignInState(oldCodex, [oldCodex, expired({ ...newCodex })])).toBe('required');
+  });
+
+  it('matches by email when account ids are missing', () => {
+    const { account_id: _old, ...oldNoId } = oldCodex;
+    const { account_id: _new, ...newNoId } = newCodex;
+    expect(credentialSignInState(oldNoId, [oldNoId, { ...newNoId, email: 'USER@example.com' }])).toBe('replaced');
+  });
+
+  it('does not notify for a credential that already has a working replacement', () => {
+    const track = createSignInTransitionTracker();
+    expect(track([oldCodex, newCodex]).length).toBe(0);
   });
 });

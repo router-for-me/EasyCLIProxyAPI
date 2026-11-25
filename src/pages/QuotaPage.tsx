@@ -24,7 +24,7 @@ import { QuotaActionFeedback } from '../components/QuotaActionFeedback';
 import { canResetQuota, hasPendingClaudeReset } from '../services/quotaActions';
 import { useQuotaReset } from '../components/useQuotaReset';
 import { useCredentialReauth } from '../components/useCredentialSignIn';
-import { canReauthenticate, credentialNeedsSignIn, observeCredentialSignIn } from '../services/credentialSignIn';
+import { canReauthenticate, credentialSignInState, observeCredentialSignIn } from '../services/credentialSignIn';
 import antigravityIcon from '../assets/icons/antigravity.svg';
 import claudeIcon from '../assets/icons/claude.svg';
 import codexIcon from '../assets/icons/codex.svg';
@@ -248,7 +248,7 @@ export function QuotaPage() {
   const glance = (file: AuthFile) => layout === 'compact' && !expanded.has(quotaKey(file));
   const cards = pageItems.map(({ provider, file, quota }) => <QuotaCard key={quotaKey(file)} file={file} quota={quota} onRefresh={() => void refreshOne(file)} onReset={provider === 'codex' || provider === 'claude' ? () => void resetQuota(file, quota) : undefined}
     glance={layout === 'compact' ? glance(file) : undefined} onToggleGlance={() => toggleExpanded(quotaKey(file))} onSaveNote={(nextNote) => saveCredentialNote(file, nextNote)}
-    signIn={credentialNeedsSignIn(file) ? {
+    signIn={credentialSignInState(file, files) === 'required' ? {
       pending: reauth.pending === readString(file, 'name'),
       busy: Boolean(reauth.pending),
       onSignIn: canReauthenticate(file) ? () => void signInAgain(file) : undefined,

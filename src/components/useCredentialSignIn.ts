@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { managementApi, responseList } from '../services/managementApi';
+import { managementApi, readString, responseList } from '../services/managementApi';
+import { dedupeAuthFiles } from '../services/authFiles';
 import {
   observeCredentialSignIn,
+  signInReplacement,
   readSignInAlerts,
   setSignInNotificationsEnabled,
   signInNotificationsEnabled,
@@ -43,8 +45,28 @@ export function useSignInNotificationsPreference() {
   return [enabled, setSignInNotificationsEnabled] as const;
 }
 
+/**
+ * After a successful sign-in, delete the expired file when the core wrote the
+ * new tokens to a different file for the same account. Leaves it alone when the
+ * user signed in to another account, so nothing is lost.
+ */
+async function removeReplacedCredential(name: string): Promise<string | undefined> {
+  try {
+    const files = dedupeAuthFiles(responseList(await managementApi.get('/credentials'), 'files'));
+    const previous = files.find((file) => readString(file, 'name') === name);
+    const replacement = previous && signInReplacement(previous, files);
+    if (!replacement) return undefined;
+    await managementApi.delete('/credentials', { query: { name } });
+    return readString(replacement, 'name');
+  } catch {
+    return undefined;
+  }
+}
+
 export type ReauthResult =
-  | { status: 'success' }
+  // `replacedFile` is set when the core saved the new login under another name
+  // and the expired file was removed.
+  | { status: 'success'; replacedFile?: string }
   | { status: 'error'; error: string }
   | { status: 'cancelled' };
 
@@ -80,7 +102,7 @@ export function useCredentialReauth() {
         if (session.current !== id) break;
         const result = await getOAuthStatus({ state });
         const status = (result.status || '').toLowerCase();
-        if (status === 'ok') return { status: 'success' };
+        if (status === 'ok') return { status: 'success', replacedFile: await removeReplacedCredential(name) };
         if (status === 'error') return { status: 'error', error: result.error || '' };
       }
       return { status: 'cancelled' };
