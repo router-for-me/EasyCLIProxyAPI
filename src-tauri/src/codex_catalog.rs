@@ -1225,8 +1225,8 @@ mod tests {
         validate_embedded_catalog().unwrap();
         let state = catalog_state().unwrap().read().unwrap();
         let sources = &state.sources;
-        assert_eq!(sources.templates.len(), 12);
-        assert_eq!(sources.revision, 9);
+        assert_eq!(sources.templates.len(), 14);
+        assert_eq!(sources.revision, 10);
         let embedded: Value = serde_json::from_str(MODEL_CATALOG_JSON).unwrap();
         assert!(embedded.get("fallback_model").is_none());
         let fallback: Value = serde_json::from_str(FALLBACK_MODEL_JSON).unwrap();
@@ -1256,6 +1256,8 @@ mod tests {
         assert_eq!(sources.fallback["truncation_policy"]["mode"], "bytes");
 
         let official_slugs = [
+            "gpt-6.2-sol",
+            "gpt-6.2-astra",
             "gpt-6.1-terra",
             "gpt-6-astra",
             "gpt-6.1-sol",
@@ -1768,6 +1770,90 @@ mod tests {
 
         assert_eq!(model["default_reasoning_level"], "medium");
         assert_eq!(reasoning_efforts(model), ["low", "medium", "max"]);
+    }
+
+    #[test]
+    fn gpt_6_2_sol_and_astra_use_official_templates_and_rank_first() {
+        let sources = parse_sources(MODEL_CATALOG_JSON).unwrap();
+        let runtime = runtime(serde_json::json!({"models":[
+            {"id": "gpt-6-astra"},
+            {"id": "gpt-6.1-sol"},
+            {"id": "gpt-6.1-terra"},
+            {"id": "gpt-6.2-astra", "default_reasoning_level": "high"},
+            {"id": "gpt-6.2-sol", "default_reasoning_level": "high"}
+        ]}));
+        let catalog = prepare_catalog_with_sources(&runtime, &sources).unwrap();
+        let models = output_models(&catalog);
+        let ordered_slugs: Vec<&str> = models
+            .iter()
+            .map(|model| model["slug"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            ordered_slugs,
+            [
+                "gpt-6.2-sol",
+                "gpt-6.2-astra",
+                "gpt-6.1-terra",
+                "gpt-6.1-sol",
+                "gpt-6-astra",
+            ]
+        );
+
+        for (index, (slug, expected_context, expected_priority)) in [
+            ("gpt-6.2-sol", 500_000_u64, 1_i64),
+            ("gpt-6.2-astra", 272_000_u64, 2_i64),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let model = &models[index];
+            let template = &sources.templates[slug].value;
+            assert_eq!(model["slug"], slug);
+            assert_eq!(model["display_name"], slug);
+            assert_eq!(model["priority"], expected_priority);
+            assert_eq!(model["context_window"], expected_context);
+            assert_eq!(model["max_context_window"], 872_000);
+            assert_eq!(model["default_reasoning_level"], "low");
+            assert_eq!(model["minimal_client_version"], "0.166.0");
+            assert_eq!(
+                reasoning_efforts(model),
+                ["low", "medium", "high", "xhigh", "max", "ultra"]
+            );
+            for field in [
+                "model_messages",
+                "base_instructions",
+                "shell_type",
+                "tool_mode",
+                "experimental_supported_tools",
+                "supports_reasoning_effort_updates",
+                "supports_parallel_tool_calls",
+                "supports_image_detail_original",
+                "allow_only_codex_cloud_agent_orchestrator",
+                "allow_only_chatgpt_workspace_executor",
+            ] {
+                assert_eq!(model[field], template[field], "{slug} field: {field}");
+            }
+            assert_eq!(model["shell_type"], "shell_command");
+            assert_eq!(model["tool_mode"], "code_mode_only");
+            assert_eq!(model["supports_reasoning_effort_updates"], true);
+            assert_eq!(model["default_service_tier"], Value::Null);
+            assert_eq!(model["additional_speed_tiers"], serde_json::json!(["fast"]));
+            assert_eq!(
+                model["service_tiers"],
+                serde_json::json!([{
+                    "id": "priority",
+                    "name": "Fast",
+                    "description": "2x speed, increased usage"
+                }])
+            );
+            assert_eq!(
+                model["base_instructions"],
+                model["model_messages"]["instructions_template"]
+                    .as_str()
+                    .unwrap()
+                    .replace("{{ personality }}", "")
+            );
+        }
     }
 
     #[test]
