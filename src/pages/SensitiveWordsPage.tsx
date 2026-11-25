@@ -6,7 +6,6 @@ import { useConfirmation } from '../components/ConfirmationDialog';
 import { useI18n } from '../i18n';
 import { sensitiveWordsMessages } from '../i18n/sensitiveWords';
 import { templateText } from '../i18n/templateConfig';
-import { localizedOwnError } from '../services/localizedOwnError';
 import {
   getCoreSensitiveWordsSettings,
   saveCoreSensitiveWordsSettings,
@@ -213,7 +212,7 @@ export const SensitiveWordsPage = forwardRef<SensitiveWordsPageHandle, { active?
       {confirmationDialog}
       {error ? (
         <Dialog alert size="sm" title={st('title')} onClose={() => setError('')}>
-          <p>{localizedOwnError('sensitiveWords', error, locale)}</p>
+          <p>{error}</p>
         </Dialog>
       ) : null}
       <div className="config-panel-heading">

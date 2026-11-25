@@ -71,7 +71,6 @@ import {
 } from 'lucide-react';
 import { useCoreRuntime } from '../coreRuntime';
 import { useI18n } from '../i18n';
-import { localizedOwnError } from '../services/localizedOwnError';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { webUiManagementUrl } from '../services/clientAccess';
 import { ThinkingAliasesPage } from './ThinkingAliasesPage';
@@ -482,15 +481,11 @@ export function ConfigPanelPage() {
       }
       setBackendNotReady(false);
       setProxyDirty(false);
-      proxyFeedback.showNotice(state.error ? localizedOwnError('reverseProxyTls', state.error, locale) : st('reverseProxySaved'), state.error ? 'error' : 'success');
+      proxyFeedback.showNotice(state.error || st('reverseProxySaved'), state.error ? 'error' : 'success');
       return !state.error;
     } catch (error) {
-      const pathErrors = reverseProxyPathErrors(error);
-      const localizedError = localizedOwnError('reverseProxyTls', error, locale);
-      if (pathErrors.certPath) pathErrors.certPath = localizedError;
-      if (pathErrors.keyPath) pathErrors.keyPath = localizedError;
-      setProxyFieldErrors(prev => ({ ...prev, ...pathErrors }));
-      proxyFeedback.showNotice(localizedError, 'error');
+      setProxyFieldErrors(prev => ({ ...prev, ...reverseProxyPathErrors(error) }));
+      proxyFeedback.showNotice(String(error), 'error');
       try {
         setProxyState(await getReverseProxyState());
         setBackendNotReady(false);
@@ -2329,7 +2324,7 @@ export function ConfigPanelPage() {
 
               {proxyState?.error ? (
                 <Notice tone="error" className="config-reverse-proxy-error">
-                  {localizedOwnError('reverseProxyTls', proxyState.error, locale)}
+                  {proxyState.error}
                 </Notice>
               ) : null}
 
