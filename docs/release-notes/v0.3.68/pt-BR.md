@@ -1,0 +1,5 @@
+- Se você tiver dúvidas ou sugestões sobre o aplicativo, fale conosco pelo [grupo do QQ](https://qm.qq.com/q/3queDaIG) ou pelas [GitHub Issues](https://github.com/router-for-me/EasyCLIProxyAPI/issues). Responderemos o quanto antes.
+
+## Novidades
+
+- **Histórico local de uso de agentes e painel refeito**: os registros de uso de agentes passam a ser gravados num banco SQLite local (`agent_usage.db`), com sincronização incremental rápida e retenção permanente do histórico. O painel de Uso de agentes foi reconstruído com controles de intervalo e granularidade personalizados, filtros de agentes com seleção múltipla, cartões de indicadores de tokens, custo e cache com minigráficos e comparação com o período anterior, gráficos de tendência e de composição dos tokens, um cartão de atividade com calendário de todo o histórico e mapas de calor por hora dos últimos 30 dias, e estatísticas detalhadas de modelos e agentes. Em Gerenciamento de dados, o intervalo de sincronização em segundo plano pode ser configurado (de 5 minutos a 1 hora, ou desativado) (#564).

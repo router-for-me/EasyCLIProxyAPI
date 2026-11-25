@@ -1,0 +1,17 @@
+Se tiver dúvidas ou sugestões sobre o software, entre em contato pelo [grupo no QQ](https://qm.qq.com/q/3queDaIG) ou pelo [GitHub Issues](https://github.com/router-for-me/EasyCLIProxyAPI/issues), e responderemos o mais rápido possível.
+
+## Novidades
+
+- **Acesso ACP (Antigravity)**: a página OAuth ganhou a nova aba Acesso ACP. Entre na CLI do Antigravity com a autorização oficial do Google, salve várias contas e alterne entre elas — todas as contas compartilham a mesma CLI, enquanto o estado de login é armazenado separadamente por conta. Após conectar, você pode enviar uma mensagem de teste para verificar um modelo; ativar o acesso à API registra os modelos da conta como `acp/<model-id>` em um provedor reservado compatível com OpenAI, acessível com o endpoint e a chave do CPA já existentes. A aba também traz atalhos de detecção e instalação da CLI, a identidade da conta em uso e detalhes da conexão.
+- **Níveis de raciocínio para o ACP**: `reasoning_effort`, `reasoning.effort` e `thinking.effort` são resolvidos para a variante de nível correspondente do modelo oficial, com níveis detectados pelos sufixos dos IDs oficiais dos modelos. Um modelo sem níveis declarados, um nível desconhecido ou valores conflitantes retornam um erro explícito em vez de serem ignorados. O provedor ACP não grava declarações de nível de raciocínio automaticamente; os níveis continuam sendo configurados manualmente do modo habitual no CPA.
+- **Conversas em vários turnos para o ACP**: a ponte agora aceita mensagens `system`, `user` e `assistant` e consolida o histórico em um único prompt como blocos `System:` / `User:` / `Assistant:`, pois cada solicitação usa uma sessão separada da CLI oficial. A última mensagem precisa ser do usuário. Uma única mensagem de usuário continua sendo enviada sem alterações.
+
+## Melhorias
+
+- **Layout dos cartões do ACP**: os dois cartões na página de acesso agora têm a mesma altura, e o estado desconectado aparece como um estado bloqueado compacto com ícone e explicação, em vez de uma caixa tracejada dentro de outra caixa. Quando conectado ou com a API ativada, o ícone do título muda para a cor de sucesso, o cartão se eleva levemente ao passar o mouse e os botões quebram de linha em larguras estreitas.
+
+## Correções
+
+- **Limite do teste de verificação de funcionamento**: o limite da solicitação de teste foi aumentado, e o esgotamento do limite de geração agora é relatado como um motivo próprio e distinto, em vez de ser agrupado com outras falhas.
+- **Novos nomes de eventos do Gemini Interactions**: a verificação de funcionamento reconhecia apenas os eventos legados `content.delta` / `interaction.complete` e lia texto somente de `interaction.outputs`, fazendo com que um fluxo válido usando `step.delta` / `interaction.completed` / `steps` fosse relatado como sem primeiro token. Ambas as gerações de eventos agora são aceitas, o texto de conclusão é lido de `steps` ou `outputs`, um status ausente conta como sucesso e status de falha ou cancelamento são rejeitados explicitamente.
+- **Sincronização de aliases com chaves de várias palavras**: atualizações de YAML para aliases e agentes passavam por `yaml_serde_edit`, cujo analisador transitivo truncava mapeamentos em chaves simples de várias palavras sem aspas, fazendo com que edições válidas durante Conectar com um clique fossem relatadas como falha na verificação de compatibilidade. Todos os fluxos relacionados agora usam análise com `serde_norway` e renderização com `yaml-edit`, restaurando a sincronização de chaves de alias com várias palavras.
