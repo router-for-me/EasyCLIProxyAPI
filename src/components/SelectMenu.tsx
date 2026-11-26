@@ -171,9 +171,8 @@ export function SelectMenu({
 
   useEffect(() => {
     if (!open) return;
-    const selectedIndex = options.findIndex((option) => option.value === value);
-    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
-  }, [open, options, value]);
+    setActiveIndex((current) => Math.min(current, Math.max(options.length - 1, 0)));
+  }, [open, options.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -201,10 +200,16 @@ export function SelectMenu({
     }
   };
 
+  const openMenu = () => {
+    const selectedIndex = options.findIndex((option) => option.value === value);
+    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
+    setOpen(true);
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (!open && ['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) {
       event.preventDefault();
-      setOpen(true);
+      openMenu();
       return;
     }
     if (event.key === 'ArrowDown') {
@@ -238,7 +243,7 @@ export function SelectMenu({
         aria-controls={listboxId}
         aria-activedescendant={open && options[activeIndex] ? `${listboxId}-option-${activeIndex}` : undefined}
         disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => (open ? setOpen(false) : openMenu())}
         onKeyDown={handleKeyDown}
       >
         <strong title={selected?.label}>{selected?.label ?? ''}</strong>

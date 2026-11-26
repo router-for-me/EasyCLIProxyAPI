@@ -119,6 +119,26 @@ const translucent = (page, id) => page.evaluate(async id => {
         await page.close();
       }
 
+      if (run('select-menu-live')) {
+        const page = await open('/tests/fixtures/select-menu-live/index.html');
+        const trigger = page.getByRole('combobox', { name: 'Filter', exact: true });
+        await trigger.click();
+        const list = page.locator('.select-menu-list');
+        await list.waitFor();
+        await page.locator('.select-menu-option').nth(60).hover();
+        await page.waitForTimeout(150);
+        const before = await list.evaluate(element => ({ top: element.scrollTop, height: element.scrollHeight }));
+        const active = await trigger.getAttribute('aria-activedescendant');
+        await page.waitForTimeout(3000);
+        const after = await list.evaluate(element => ({ top: element.scrollTop, height: element.scrollHeight }));
+        assert.ok(after.height > before.height, `${engine.name()}: live fixture appends options while open`);
+        assert.equal(after.top, before.top, `${engine.name()}: incoming options keep the dropdown scroll position`);
+        assert.equal(await trigger.getAttribute('aria-activedescendant'), active, `${engine.name()}: incoming options keep the active option`);
+        assert.equal(await page.locator('.select-menu-dropdown').count(), 1, `${engine.name()}: incoming options keep the menu open`);
+        scenarios++;
+        await page.close();
+      }
+
       if (run('translucent')) for (const appearance of ['light', 'dark']) {
         const applied = { theme: appearance, themeId: `mock-glass-${appearance}`, windowMaterial: 'vibrancy' };
         const usage = await open('/?mock=running');
@@ -147,5 +167,5 @@ const translucent = (page, id) => page.evaluate(async id => {
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
   }
-  console.log(`PASS: select controls, ${scenarios} scenarios (SelectMenu active descendant, Space/Enter/Escape, clicks; Select in Dialog; translucent dropdown surfaces).`);
+  console.log(`PASS: select controls, ${scenarios} scenarios (SelectMenu active descendant, Space/Enter/Escape, clicks; live option updates keep scroll; Select in Dialog; translucent dropdown surfaces).`);
 })().catch(error => { console.error(error); process.exitCode = 1; });
