@@ -42,15 +42,123 @@ describe('quota API compatibility', () => {
     });
     expect(result).toMatchObject({ status: 'success', plan: 'pro', creditBalance: '12.5', creditsUnlimited: false, resetCredits: 2, resetCreditsApplicable: 0, resetCreditsError: 'HTTP 403: credits forbidden' });
     expect(result.subscriptionActiveUntil).toBe('2030-01-01T00:00:00Z');
-    expect(calls).toHaveLength(3);
-    for (const call of calls.filter((call) => !call.url.startsWith('https://chatgpt.com/backend-api/subscriptions'))) {
+    expect(calls).toHaveLength(4);
+    for (const call of calls.filter((call) => !call.url.includes('/backend-api/subscriptions') && !call.url.includes('/backend-api/accounts/check/'))) {
       expect(call.header['Chatgpt-Account-Id']).toBe('account-test');
       expect(call.header['User-Agent']).toContain('codex-tui/0.149.1');
       expect(call.authIndex).toBe('1');
       expect(call.header.Authorization).toBe('Bearer $TOKEN$');
     }
+    const accountCheckCall = calls.find((call) => call.url.includes('/backend-api/accounts/check/v4-2023-04-27'));
+    const subscriptionCall = calls.find((call) => call.url.startsWith('https://chatgpt.com/backend-api/subscriptions?'));
+    expect(accountCheckCall?.header).toMatchObject({
+      Authorization: 'Bearer $TOKEN$',
+      Accept: 'application/json',
+      Referer: 'https://chatgpt.com/',
+      'x-openai-target-path': '/backend-api/accounts/check/v4-2023-04-27',
+      'x-openai-target-route': '/backend-api/accounts/check/v4-2023-04-27',
+    });
+    expect(accountCheckCall?.header['User-Agent']).toContain('Chrome/147.0.0.0');
+    expect(accountCheckCall?.header['Content-Type']).toBeUndefined();
+    expect(subscriptionCall?.url).toBe('https://chatgpt.com/backend-api/subscriptions?account_id=account-test');
+    expect(subscriptionCall?.header).toMatchObject({
+      Authorization: 'Bearer $TOKEN$',
+      Accept: 'application/json',
+      Referer: 'https://chatgpt.com/',
+      'x-openai-target-path': '/backend-api/subscriptions',
+      'x-openai-target-route': '/backend-api/subscriptions',
+    });
+    expect(subscriptionCall?.header['User-Agent']).toContain('Chrome/147.0.0.0');
+    expect(subscriptionCall?.header['Content-Type']).toBeUndefined();
     const creditCallIndex = calls.findIndex((call) => call.url.endsWith('/rate-limit-reset-credits'));
     expect(post.mock.calls[creditCallIndex][2]).toEqual({ timeoutMs: 8000 });
+  });
+
+  it('Codex 续费后通过 accounts/check 与 subscriptions 更新到期时间，覆盖凭据旧时间', async () => {
+    handler = (request) => {
+      if (request.url.endsWith('/usage')) return success({ ...codexUsage, plan_type: 'pro' });
+      if (request.url.endsWith('/rate-limit-reset-credits')) return success({ available_count: 2, credits: [] });
+      if (request.url.includes('/backend-api/accounts/check/v4-2023-04-27')) {
+        return success({
+          accounts: {
+            'org-main': {
+              account: { account_id: 'account-renewed', plan_type: 'pro', is_default: true },
+              entitlement: { subscription_plan: 'pro', expires_at: '2026-12-10T00:00:00Z' },
+            },
+          },
+        });
+      }
+      if (request.url.startsWith('https://chatgpt.com/backend-api/subscriptions?account_id=account-renewed')) {
+        return success({ subscription_plan: 'pro', active_until: '2026-12-08T02:43:00Z' });
+      }
+      throw new Error(`Unexpected URL: ${request.url}`);
+    };
+    const result = await loadQuota({
+      ...codexFile,
+      metadata: {
+        id_token: {
+          chatgpt_account_id: 'account-renewed',
+          plan_type: 'pro',
+          chatgpt_subscription_active_until: '2026-11-08T02:43:00Z',
+        },
+      },
+    });
+    expect(result.status).toBe('success');
+    expect(result.plan).toBe('pro');
+    expect(result.subscriptionActiveUntil).toBe('2026-12-08T02:43:00.000Z');
+    expect(result.subscriptionSyncedAt).toBeDefined();
+    expect(result.subscriptionConfirmedFree).toBeUndefined();
+  });
+
+  it('Codex 凭据缺少 account_id 时通过 accounts/check 或 usage 发现账号并查询订阅到期时间', async () => {
+    handler = (request) => {
+      if (request.url.endsWith('/usage')) return success({ ...codexUsage, plan_type: 'plus', account_id: 'from-usage' });
+      if (request.url.endsWith('/rate-limit-reset-credits')) return success({ available_count: 0, credits: [] });
+      if (request.url.includes('/backend-api/accounts/check/v4-2023-04-27')) {
+        return { status_code: 403, body: 'blocked' };
+      }
+      if (request.url === 'https://chatgpt.com/backend-api/subscriptions?account_id=from-usage') {
+        return success({ plan_type: 'plus', expires_at: '2027-03-15T12:00:00Z' });
+      }
+      throw new Error(`Unexpected URL: ${request.url}`);
+    };
+    const result = await loadQuota(codexFile);
+    expect(result.status).toBe('success');
+    expect(result.subscriptionActiveUntil).toBe('2027-03-15T12:00:00.000Z');
+    expect(result.codexAccountId).toBe('from-usage');
+  });
+
+  it('Codex 确认为免费账号时清空旧到期时间且不请求 subscriptions', async () => {
+    handler = (request) => {
+      if (request.url.endsWith('/usage')) return success({ ...codexUsage, plan_type: 'free' });
+      if (request.url.endsWith('/rate-limit-reset-credits')) return success({ available_count: 0, credits: [] });
+      if (request.url.includes('/backend-api/accounts/check/v4-2023-04-27')) {
+        return success({
+          accounts: {
+            personal: {
+              account: { account_id: 'account-free', plan_type: 'free', is_default: true },
+              entitlement: { subscription_plan: 'plus', expires_at: '2020-01-01T00:00:00Z' },
+            },
+          },
+        });
+      }
+      throw new Error(`Should not call: ${request.url}`);
+    };
+    const result = await loadQuota({
+      ...codexFile,
+      metadata: {
+        id_token: {
+          chatgpt_account_id: 'account-free',
+          plan_type: 'plus',
+          chatgpt_subscription_active_until: '2020-01-01T00:00:00Z',
+        },
+      },
+    });
+    expect(result.status).toBe('success');
+    expect(result.plan).toBe('free');
+    expect(result.subscriptionActiveUntil).toBeUndefined();
+    expect(result.subscriptionConfirmedFree).toBe(true);
+    expect(calls.some((call) => call.url.includes('/backend-api/subscriptions'))).toBe(false);
   });
 
   it('Codex 保留零次数，usage 的适用次数优先于详情，并优先使用用量接口套餐', async () => {
@@ -230,7 +338,7 @@ describe('quota request synchronization', () => {
     expect(second).toBe(first);
     release();
     await Promise.all([first, second]);
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
   });
 
   it('重置期间刷新等待重置结果，连续点击只消费一次且随后重查用量', async () => {
@@ -253,7 +361,7 @@ describe('quota request synchronization', () => {
     const consumes = calls.filter((request) => request.url.endsWith('/consume'));
     expect(consumes).toHaveLength(1);
     expect(JSON.parse(consumes[0].data!).redeem_request_id).toMatch(/^[0-9a-f-]{36}$/);
-    expect(calls.map((request) => request.method)).toEqual(['POST', 'GET', 'GET']);
+    expect(calls.map((request) => request.method)).toEqual(['POST', 'GET', 'GET', 'GET']);
   });
 
   it('已有刷新结束后才消费重置积分，避免把旧请求结果当成重置后的额度', async () => {
@@ -269,7 +377,7 @@ describe('quota request synchronization', () => {
     expect(calls.some((request) => request.url.endsWith('/consume'))).toBe(false);
     release();
     await Promise.all([refresh, reset]);
-    expect(calls.map((request) => request.method)).toEqual(['GET', 'GET', 'POST', 'GET', 'GET']);
+    expect(calls.map((request) => request.method)).toEqual(['GET', 'GET', 'GET', 'POST', 'GET', 'GET', 'GET']);
   });
 
   it('重置失败后释放锁，允许重新刷新', async () => {

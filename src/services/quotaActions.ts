@@ -7,6 +7,7 @@ import {
   updateQuotaCache,
 } from './quotaCache';
 import { normalizeAuthIndex, readBoolean } from './managementApi';
+import { persistVerifiedCodexSubscription } from './quotaEnrichment';
 import {
   consumeClaudeResetCredit, consumeCodexResetCredit, idleQuota, providerForFile, quotaKey,
   type AuthFile, type QuotaState,
@@ -50,7 +51,16 @@ async function runConfirmedQuotaAction(
       commit({ ...previous, actionResult: { action, status, error: result.error } });
       return status;
     }
-    commit({ ...result, actionResult: { action, status: 'success' } });
+    const next = { ...result, actionResult: { action, status: 'success' as const } };
+    let applied = false;
+    commitQuotaCacheIfCurrent(generation, () => {
+      updateQuotaCache((current) => {
+        if (current[key] !== pending) return current;
+        applied = true;
+        return { ...current, [key]: next };
+      });
+    });
+    if (applied) persistVerifiedCodexSubscription(file, next);
     return 'success';
   } catch (error) {
     if (!pending) throw error;

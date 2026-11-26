@@ -65,6 +65,18 @@ export function createQuotaMock() {
       available_count: remaining, applicable_available_count: remaining,
       credits: Array.from({ length: remaining }, (_, index) => ({ id: `mock-credit-${index + used}`, reset_type: 'codex_rate_limits', status: 'available', expires_at: future(24 * (index + 1)) })),
     });
+    if (path.endsWith('/accounts/check/v4-2023-04-27')) return success({
+      accounts: {
+        default: {
+          account: { account_id: 'mock-account-0', plan_type: 'pro', is_default: true },
+          entitlement: { subscription_plan: 'pro', expires_at: future(24 * 30) },
+        },
+      },
+    });
+    if (path.endsWith('/backend-api/subscriptions')) return success({
+      subscription_plan: 'pro',
+      active_until: future(24 * 30),
+    });
     if (path.endsWith('/wham/usage')) return success({
       plan_type: 'pro', credits: { balance: '12.50', unlimited: false },
       rate_limit_reset_credits: { available_count: remaining },
