@@ -1,0 +1,64 @@
+/* Performance-first overrides for Raspberry Pi / Linux ARM (WebKitGTK).
+ * Eliminates expensive backdrop-filter blurs, transitions, view animations,
+ * and multi-layer shadows so WebKitGTK can composite flat opaque surfaces
+ * cleanly at high frame rates.
+ */
+
+:root[data-perf-mode='lite'] *,
+:root[data-perf-mode='lite'] *::before,
+:root[data-perf-mode='lite'] *::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  transition-duration: 0ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* Disable view/dialog/notice entrance animations while keeping essential
+ * functional spinners lightweight. */
+:root[data-perf-mode='lite'] .content > :not([hidden]),
+:root[data-perf-mode='lite'] [role='tabpanel']:not([hidden]),
+:root[data-perf-mode='lite'] .app-dialog,
+:root[data-perf-mode='lite'] .app-notice-entry,
+:root[data-perf-mode='lite'] .app-notice-entry[data-closing='true'] {
+  animation: none !important;
+}
+
+/* Replace translucent blurred surfaces with fast opaque fills. */
+:root[data-perf-mode='lite'] .config-dialog-backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+:root[data-perf-mode='lite'] .usage-events-table th,
+:root[data-perf-mode='lite'] .usage-pricing-table th,
+:root[data-perf-mode='lite'] .api-provider-dialog :is(.config-dialog-heading, .config-dialog-actions) {
+  background: var(--color-surface, var(--bg-card));
+}
+
+:root[data-perf-mode='lite'] .app-notice-entry .notice.notice-box,
+:root[data-perf-mode='lite'] .app-notice-entry .notice-box {
+  background: var(--notice-background, var(--color-surface, var(--bg-card)));
+}
+
+:root[data-perf-mode='lite'] .sidebar {
+  background: var(--sidebar-bg, var(--bg-sidebar, var(--color-surface)));
+}
+
+/* Simplify heavy box-shadows on cards and panels to reduce repaint cost. */
+:root[data-perf-mode='lite'] :is(
+  .card,
+  .panel,
+  .usage-stat-card,
+  .routing-card,
+  .plugin-card,
+  .auth-file-card,
+  .agent-card
+) {
+  box-shadow: none !important;
+}
+
+/* Native compositor-accelerated scrollbars in lite mode. */
+:root[data-perf-mode='lite'] .workspace {
+  scrollbar-width: thin;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}

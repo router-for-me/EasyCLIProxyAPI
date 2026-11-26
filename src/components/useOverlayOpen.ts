@@ -10,8 +10,13 @@ const isVisible = (element: Element): boolean => {
   return style.visibility !== 'hidden' && style.display !== 'none';
 };
 
-const isOverlayOpen = (selector: string): boolean =>
-  Array.from(document.querySelectorAll(selector)).some(isVisible);
+const isOverlayOpen = (selector: string): boolean => {
+  const nodes = document.querySelectorAll(selector);
+  for (let index = 0; index < nodes.length; index += 1) {
+    if (isVisible(nodes[index])) return true;
+  }
+  return false;
+};
 
 export function useOverlayOpen(kind: 'all' | 'modal' = 'all'): boolean {
   const selector = kind === 'modal' ? MODAL_SELECTOR : OVERLAY_SELECTOR;

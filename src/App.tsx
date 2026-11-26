@@ -39,19 +39,8 @@ import {
 import appLogo from './assets/logo.jpg';
 import { CoreRuntimeProvider, useCoreRuntime } from './coreRuntime';
 import { CoreUpdateProvider, useCoreUpdate } from './coreUpdate';
-import { ConfigPanelPage } from './pages/ConfigPanel';
-import { ApiAccessPage } from './pages/ApiAccessPage';
 import { KernelPage } from './pages/Kernel';
-import { VersionManagementPage } from './pages/VersionManagementPage';
-import { OAuthManagementPage } from './pages/ManagementPages';
-import { QuotaPage } from './pages/QuotaPage';
-import { AgentsPage } from './pages/AgentsPage';
-import { EasyModePage } from './pages/EasyModePage';
-import { UsageRecordsPage } from './pages/UsageRecordsPage';
-import { RoutingPage } from './pages/routing/RoutingPage';
-import { PluginsPage } from './pages/PluginsPage';
-import { McpSkillsPage } from './pages/McpSkillsPage';
-import { PluginResourcePage } from './pages/PluginResourcePage';
+import { isLitePerformanceMode } from './services/performanceMode';
 import { PluginNavChildren, PluginNavToggle } from './components/SidebarPluginNav';
 import { usePluginNavLayout } from './components/usePluginNavLayout';
 import { usePluginNavEntries } from './usePluginNavEntries';
@@ -78,6 +67,18 @@ import { isTauri } from './services/platform';
 
 const QQ_CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
 const DISCORD_SERVER_URL = 'https://discord.gg/PxvX4D9kgs';
+const ConfigPanelPage = lazy(() => import('./pages/ConfigPanel').then((m) => ({ default: m.ConfigPanelPage })));
+const ApiAccessPage = lazy(() => import('./pages/ApiAccessPage').then((m) => ({ default: m.ApiAccessPage })));
+const VersionManagementPage = lazy(() => import('./pages/VersionManagementPage').then((m) => ({ default: m.VersionManagementPage })));
+const OAuthManagementPage = lazy(() => import('./pages/ManagementPages').then((m) => ({ default: m.OAuthManagementPage })));
+const QuotaPage = lazy(() => import('./pages/QuotaPage').then((m) => ({ default: m.QuotaPage })));
+const AgentsPage = lazy(() => import('./pages/AgentsPage').then((m) => ({ default: m.AgentsPage })));
+const EasyModePage = lazy(() => import('./pages/EasyModePage').then((m) => ({ default: m.EasyModePage })));
+const UsageRecordsPage = lazy(() => import('./pages/UsageRecordsPage').then((m) => ({ default: m.UsageRecordsPage })));
+const RoutingPage = lazy(() => import('./pages/routing/RoutingPage').then((m) => ({ default: m.RoutingPage })));
+const PluginsPage = lazy(() => import('./pages/PluginsPage').then((m) => ({ default: m.PluginsPage })));
+const McpSkillsPage = lazy(() => import('./pages/McpSkillsPage').then((m) => ({ default: m.McpSkillsPage })));
+const PluginResourcePage = lazy(() => import('./pages/PluginResourcePage').then((m) => ({ default: m.PluginResourcePage })));
 const ConfigManagementPage = lazy(() => import('./pages/configManagement/ConfigManagementPage'));
 
 const pages = [
@@ -558,43 +559,48 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
           </aside>
         ) : null}
 
-        <div id="app-workspace" className="workspace" ref={workspaceRef} data-overlay-scrollbars>
+        <div
+          id="app-workspace"
+          className="workspace"
+          ref={workspaceRef}
+          data-overlay-scrollbars={isLitePerformanceMode() ? undefined : ''}
+        >
           <main className="content" key={`${connection.remoteActive}:${connection.revision}`}>
-            {active === 'config-management' && configManagementAvailable ? (
-              <Suspense fallback={<p role="status">{t('common.loading')}</p>}>
+            <Suspense fallback={<p role="status">{t('common.loading')}</p>}>
+              {active === 'config-management' && configManagementAvailable ? (
                 <ConfigManagementPage revision={connection.revision} remote={remote || connection.remoteSelected || connection.needsRepair} preview={browserMockEnabled}
                   reconnect={() => openConnection(connection.endpoint ?? '')} />
-              </Suspense>
-            ) : connection.needsRepair ? <p role="alert">{t('remote.error.profileInvalid')}</p> : !canOpenAppPage(active, coreReady) ? (
-              <CoreLockedPage />
-            ) : pluginEntry ? (
-              <PluginResourcePage key={pluginEntry.route} entry={pluginEntry} reloadToken={pluginReload} />
-            ) : ActivePage ? (
-              active === 'easy' ? (
-                <EasyModePage
-                  onExit={() => select('home')}
-                  theme={theme}
-                  setTheme={setTheme}
-                  locale={locale}
-                  setLocale={setLocale}
-                />
-              ) : active === 'versions' ? (
-                <VersionManagementPage displaySeries={appVersionDisplay} />
-              ) : ActivePage === PluginsPage ? (
-                <PluginsPage
-                  discoveredPlugins={installedPluginList}
-                  discoveredUpdates={pluginUpdates}
-                  onPluginUpdatesResolved={forgetUpdatedPlugins}
-                />
-              ) : (
-                <ActivePage />
-              )
-            ) : null}
+              ) : connection.needsRepair ? <p role="alert">{t('remote.error.profileInvalid')}</p> : !canOpenAppPage(active, coreReady) ? (
+                <CoreLockedPage />
+              ) : pluginEntry ? (
+                <PluginResourcePage key={pluginEntry.route} entry={pluginEntry} reloadToken={pluginReload} />
+              ) : ActivePage ? (
+                active === 'easy' ? (
+                  <EasyModePage
+                    onExit={() => select('home')}
+                    theme={theme}
+                    setTheme={setTheme}
+                    locale={locale}
+                    setLocale={setLocale}
+                  />
+                ) : active === 'versions' ? (
+                  <VersionManagementPage displaySeries={appVersionDisplay} />
+                ) : ActivePage === PluginsPage ? (
+                  <PluginsPage
+                    discoveredPlugins={installedPluginList}
+                    discoveredUpdates={pluginUpdates}
+                    onPluginUpdatesResolved={forgetUpdatedPlugins}
+                  />
+                ) : (
+                  <ActivePage />
+                )
+              ) : null}
+            </Suspense>
           </main>
         </div>
       </div>
 
-      <WorkspaceScrollbars viewportRef={workspaceRef} viewportId="app-workspace" />
+      {!isLitePerformanceMode() ? <WorkspaceScrollbars viewportRef={workspaceRef} viewportId="app-workspace" /> : null}
       <AppUpdateDialog />
     </>
   );

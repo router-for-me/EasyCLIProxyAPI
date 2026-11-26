@@ -2891,16 +2891,22 @@ fn main() {
             });
 
             let agent_status_app = app.handle().clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                let gui_config_state = agent_status_app.state::<GuiConfigState>();
-                let cache = agent_status_app.state::<AgentConfigStatusCache>();
-                if let Err(error) = refresh_agent_config_status_cache(
-                    &agent_status_app,
-                    gui_config_state.inner(),
-                    cache.inner(),
-                ) {
-                    eprintln!("Failed to refresh agent configuration status in the background: {error}");
-                }
+            tauri::async_runtime::spawn(async move {
+                // Defer non-critical agent filesystem discovery slightly so it does not
+                // compete with initial WebView paint and core startup on low-core devices.
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    let gui_config_state = agent_status_app.state::<GuiConfigState>();
+                    let cache = agent_status_app.state::<AgentConfigStatusCache>();
+                    if let Err(error) = refresh_agent_config_status_cache(
+                        &agent_status_app,
+                        gui_config_state.inner(),
+                        cache.inner(),
+                    ) {
+                        eprintln!("Failed to refresh agent configuration status in the background: {error}");
+                    }
+                })
+                .await;
             });
 
             let core_app = app.handle().clone();

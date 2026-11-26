@@ -11,6 +11,9 @@ import { initializeUsagePreferences } from './services/usagePreferences';
 import { initializePrivacyMode } from './privacy';
 import './styles/index.css';
 import { initializeWindowActivity } from './services/windowActivity';
+import { initializePerformanceMode } from './services/performanceMode';
+
+initializePerformanceMode();
 
 async function bootstrap() {
   const connection = await getCpaConnection().catch(() => undefined);

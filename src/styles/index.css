@@ -24,3 +24,4 @@
 @import './theme-surfaces.css' layer(theme);
 @import './theme-backdrop.css' layer(theme);
 @import './theme-window-material.css' layer(theme);
+@import './rpi-performance.css';

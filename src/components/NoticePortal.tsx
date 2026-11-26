@@ -10,8 +10,17 @@ function acquireHost(doc: Document) {
     const element = doc.createElement('div');
     element.className = 'app-notice-stack';
     let observedDialog: Element | undefined;
-    const resizeObserver = new ResizeObserver(() => placeHost());
+    let frame = 0;
+    const resizeObserver = new ResizeObserver(() => schedulePlaceHost());
     const placeHost = () => {
+      frame = 0;
+      if (element.childElementCount === 0) {
+        if (observedDialog) {
+          resizeObserver.unobserve(observedDialog);
+          observedDialog = undefined;
+        }
+        return;
+      }
       const dialogs = Array.from(doc.querySelectorAll('[role="dialog"], [role="alertdialog"]'))
         .filter(dialog => dialog.getBoundingClientRect().height > 0);
       const dialog = dialogs[dialogs.length - 1];
@@ -40,20 +49,30 @@ function acquireHost(doc: Document) {
         element.style.setProperty('--notice-bottom', value);
       }
     };
-    const onDialogAnimationEnd = (event: AnimationEvent) => {
-      if (event.target === observedDialog) placeHost();
+    const schedulePlaceHost = () => {
+      if (element.childElementCount === 0) return;
+      const view = doc.defaultView;
+      if (!view) {
+        placeHost();
+        return;
+      }
+      if (!frame) frame = view.requestAnimationFrame(placeHost);
     };
-    const observer = new MutationObserver(placeHost);
+    const onDialogAnimationEnd = (event: AnimationEvent) => {
+      if (event.target === observedDialog) schedulePlaceHost();
+    };
+    const observer = new MutationObserver(schedulePlaceHost);
     placeHost();
     observer.observe(doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['open', 'class', 'hidden'] });
     resizeObserver.observe(element);
-    doc.defaultView?.addEventListener('resize', placeHost);
+    doc.defaultView?.addEventListener('resize', schedulePlaceHost);
     doc.addEventListener('animationend', onDialogAnimationEnd, true);
     host = { element, users: 0, dispose() {
       observer.disconnect();
       resizeObserver.disconnect();
-      doc.defaultView?.removeEventListener('resize', placeHost);
+      doc.defaultView?.removeEventListener('resize', schedulePlaceHost);
       doc.removeEventListener('animationend', onDialogAnimationEnd, true);
+      if (frame) doc.defaultView?.cancelAnimationFrame(frame);
       element.remove();
     } };
     hosts.set(doc, host);

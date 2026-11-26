@@ -1,0 +1,129 @@
+name: Build Raspberry Pi 4 (aarch64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_cpu:
+        description: 'ARM64 target CPU for rustc (-C target-cpu=...)'
+        required: false
+        default: 'cortex-a72'
+        type: choice
+        options:
+          - cortex-a72
+          - cortex-a76
+          - cortex-a53
+          - generic
+  push:
+    branches:
+      - main
+      - 'perf/rpi4-*'
+
+concurrency:
+  group: rpi4-aarch64-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-rpi4:
+    name: Build Linux aarch64 (${{ inputs.target_cpu || 'cortex-a72' }})
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      TARGET_CPU: ${{ inputs.target_cpu || 'cortex-a72' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - uses: dtolnay/rust-toolchain@1.97.0
+
+      - name: Cache Bun packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-rpi4-aarch64-1.3.14-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-rpi4-aarch64-1.3.14-
+
+      - name: Cache Rust dependencies and build outputs
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: rpi4-${{ env.TARGET_CPU }}-aarch64
+          workspaces: src-tauri -> target
+          cache-workspace-crates: true
+
+      - name: Restore bundled core archive
+        uses: actions/cache@v5
+        with:
+          path: cpa-core
+          key: core-v2-linux-aarch64-${{ hashFiles('core-version.txt') }}
+
+      - name: Install Linux WebKitGTK & build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf mold
+
+      - name: Build frontend
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Resolve package stem
+        id: package
+        run: |
+          APP_VERSION=$(node -e "import('./scripts/version.mjs').then(async m => console.log(await m.readAppVersion()))")
+          echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "stem=EasyCLIProxyAPI-v${APP_VERSION}-Linux-aarch64-rpi4-${TARGET_CPU}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Tauri binary (Cortex-A72 + Fat LTO + Strip)
+        env:
+          RUSTFLAGS: -C target-cpu=${{ env.TARGET_CPU }} -C link-arg=-fuse-ld=mold
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: '3'
+          CARGO_PROFILE_RELEASE_LTO: 'fat'
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '1'
+          CARGO_PROFILE_RELEASE_STRIP: 'true'
+          CARGO_PROFILE_RELEASE_PANIC: 'abort'
+        run: |
+          bunx --package @tauri-apps/cli@2.12.3 tauri build --no-bundle \
+            --config '{"build":{"beforeBuildCommand":""}}'
+
+      - name: Prepare portable Raspberry Pi package
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/portable.mjs \
+            --binary src-tauri/target/release/cpa-gui \
+            --output "release/${{ steps.package.outputs.stem }}" \
+            --os linux \
+            --arch aarch64 \
+            --download true
+
+      - name: Archive Raspberry Pi release
+        run: |
+          tar -czf "${{ steps.package.outputs.stem }}.tar.gz" -C release "${{ steps.package.outputs.stem }}"
+          ls -lh "${{ steps.package.outputs.stem }}.tar.gz"
+
+      - name: Upload Raspberry Pi 4 artifact
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package.outputs.stem }}
+          path: ${{ steps.package.outputs.stem }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Write build summary
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          PACKAGE_NAME: ${{ steps.package.outputs.stem }}
+        run: |
+          echo "### Raspberry Pi 4 (aarch64 / ${{ env.TARGET_CPU }}) Build" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Package: [\`$PACKAGE_NAME.tar.gz\`]($ARTIFACT_URL)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Rust flags: \`-C target-cpu=${{ env.TARGET_CPU }}\`, fat LTO, \`codegen-units=1\`, \`panic=abort\`, stripped" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Graphics: DMA-BUF hardware rendering + native Wayland enabled by default on aarch64 Linux" >> "$GITHUB_STEP_SUMMARY"
+          echo "- UI: Performance-first lite mode enabled automatically on Linux ARM (native scrollbars, no backdrop-filter blurs or animations)" >> "$GITHUB_STEP_SUMMARY"

@@ -33,15 +33,21 @@ pub(super) fn configure_main_window(config: &mut tauri::utils::config::Config) {
 fn defaults(
     get: impl Fn(&str) -> Option<OsString>,
     nvidia_driver: bool,
+    aarch64_linux: bool,
 ) -> Vec<(&'static str, &'static str)> {
     let mut values = Vec::new();
-    if get("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+    // On aarch64 Linux (e.g. Raspberry Pi with Mesa VC4/V3D), disabling DMA-BUF
+    // forces WebKitGTK into slow CPU pixel readback / SHM compositing. Keep
+    // hardware DMA-BUF enabled by default unless the user explicitly overrides it.
+    if !aarch64_linux && get("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
         values.push(("WEBKIT_DISABLE_DMABUF_RENDERER", "1"));
     }
     let wayland_session = get("WAYLAND_DISPLAY").is_some_and(|value| !value.is_empty());
+    // Keep native Wayland on aarch64 Linux (Raspberry Pi OS labwc/Wayfire) to
+    // avoid XWayland double-buffering overhead.
     if get("GDK_BACKEND").is_none()
         && get("DISPLAY").is_some_and(|value| !value.is_empty())
-        && !(wayland_session && nvidia_driver)
+        && !(wayland_session && (nvidia_driver || aarch64_linux))
     {
         values.push(("GDK_BACKEND", "x11,wayland"));
     }
@@ -56,7 +62,8 @@ fn nvidia_driver_loaded() -> bool {
 /// # Safety
 /// Must run on the main thread before any other threads or GUI libraries start.
 pub(super) unsafe fn configure() {
-    for (key, value) in defaults(|key| env::var_os(key), nvidia_driver_loaded()) {
+    let aarch64_linux = cfg!(target_arch = "aarch64");
+    for (key, value) in defaults(|key| env::var_os(key), nvidia_driver_loaded(), aarch64_linux) {
         // SAFETY: the caller guarantees single-threaded startup.
         unsafe { env::set_var(key, value) };
     }
@@ -90,9 +97,10 @@ mod tests {
         assert!(config.app.windows.is_empty());
     }
 
-    fn settings_with(
+    fn settings_with_arch(
         environment: &[(&str, &str)],
         nvidia_driver: bool,
+        aarch64_linux: bool,
     ) -> Vec<(&'static str, &'static str)> {
         defaults(
             |key| {
@@ -102,7 +110,15 @@ mod tests {
                     .map(|(_, value)| OsString::from(value))
             },
             nvidia_driver,
+            aarch64_linux,
         )
+    }
+
+    fn settings_with(
+        environment: &[(&str, &str)],
+        nvidia_driver: bool,
+    ) -> Vec<(&'static str, &'static str)> {
+        settings_with_arch(environment, nvidia_driver, false)
     }
 
     fn settings(environment: &[(&str, &str)]) -> Vec<(&'static str, &'static str)> {
@@ -130,6 +146,26 @@ mod tests {
         assert_eq!(
             settings_with(&[("DISPLAY", ":1"), ("WAYLAND_DISPLAY", "wayland-0")], true),
             vec![("WEBKIT_DISABLE_DMABUF_RENDERER", "1")]
+        );
+    }
+
+    #[test]
+    fn aarch64_wayland_sessions_keep_dmabuf_and_native_wayland() {
+        assert!(
+            settings_with_arch(
+                &[("DISPLAY", ":0"), ("WAYLAND_DISPLAY", "wayland-0")],
+                false,
+                true,
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn aarch64_x11_sessions_keep_dmabuf_and_prefer_x11() {
+        assert_eq!(
+            settings_with_arch(&[("DISPLAY", ":0")], false, true),
+            vec![("GDK_BACKEND", "x11,wayland")]
         );
     }
 
@@ -182,16 +218,19 @@ mod tests {
     #[test]
     fn explicit_overrides_and_inherited_defaults_are_preserved() {
         for nvidia_driver in [false, true] {
-            for (backend, renderer) in [("wayland", "0"), ("x11,wayland", "1"), ("", "")] {
-                assert!(settings_with(
-                    &[
-                        ("DISPLAY", ":0"),
-                        ("GDK_BACKEND", backend),
-                        ("WEBKIT_DISABLE_DMABUF_RENDERER", renderer),
-                    ],
-                    nvidia_driver,
-                )
-                .is_empty());
+            for aarch64_linux in [false, true] {
+                for (backend, renderer) in [("wayland", "0"), ("x11,wayland", "1"), ("", "")] {
+                    assert!(settings_with_arch(
+                        &[
+                            ("DISPLAY", ":0"),
+                            ("GDK_BACKEND", backend),
+                            ("WEBKIT_DISABLE_DMABUF_RENDERER", renderer),
+                        ],
+                        nvidia_driver,
+                        aarch64_linux,
+                    )
+                    .is_empty());
+                }
             }
         }
     }
