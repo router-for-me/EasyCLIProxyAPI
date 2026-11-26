@@ -1,0 +1,7 @@
+Se tiver dúvidas ou sugestões sobre o software, relate-as pelo [grupo no QQ](https://qm.qq.com/q/3queDaIG) ou pelo [GitHub Issues](https://github.com/router-for-me/EasyCLIProxyAPI/issues), e trataremos o mais rápido possível.
+
+## Correções
+
+- **Modelos fornecidos por plugins agora podem ser usados como origens de mapeamento**: o mapeamento de modelos só procurava a origem do modelo original entre os canais OAuth integrados, fazendo com que modelos fornecidos por um provedor de plugin (por exemplo, Doubao) nunca correspondessem e o cartão informasse que nenhuma origem de acesso válida foi encontrada. O mapeamento agora também consulta credenciais ativas e provedores declarados por plugins ativados, resolvendo corretamente os modelos de plugins.
+- **Ações nos cartões de credenciais não são mais cortadas**: quando a linha de ações era mais larga que o cartão, botões como Excluir ficavam cortados pela borda do cartão. Ambos os grupos de botões agora quebram de linha dentro da largura disponível do cartão, inclusive no estado expandido e em layouts de colunas estreitas.
+- **Nomes de modelos das sessões do Antigravity são recuperados**: os registros do Antigravity não contêm um campo de modelo, fazendo com que essas sessões aparecessem como modelo desconhecido nas estatísticas de uso. O modelo real agora é recuperado a partir do texto de alteração de configurações da sessão, recorrendo à transcrição da sessão quando um arquivo de bloco não traz essa informação.

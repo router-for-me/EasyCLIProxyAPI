@@ -39,7 +39,8 @@
               "zh-TW",
               "ja",
               "en",
-              "ru"
+              "ru",
+              "pt-BR"
             ]
           },
           "additionalProperties": {
@@ -66,7 +67,8 @@
               "zh-TW",
               "ja",
               "en",
-              "ru"
+              "ru",
+              "pt-BR"
             ]
           },
           "additionalProperties": {

@@ -288,6 +288,8 @@ fn normalize_app_locale(locale: &str) -> &'static str {
         "ja"
     } else if normalized.starts_with("ru") {
         "ru"
+    } else if matches!(normalized.as_str(), "pt" | "pt-br" | "pt_br") {
+        "pt-BR"
     } else if normalized == "zh-tw"
         || normalized == "zh-hk"
         || normalized == "zh-mo"

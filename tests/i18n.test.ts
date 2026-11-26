@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { languageOptions, normalizeLocale, supportedLocales, translate } from '../src/i18n';
-import { en, ja, ru, zhCN, zhTW, type MessageKey } from '../src/i18n/resources';
+import { en, ja, ptBR, ru, zhCN, zhTW, type MessageKey } from '../src/i18n/resources';
 import { jaOverrides } from '../src/i18n/ja';
 import { mcpSkillsText } from '../src/i18n/mcpSkills';
 import { pluginConfigText } from '../src/i18n/pluginConfig';
@@ -150,6 +150,10 @@ describe('i18n', () => {
     expect(normalizeLocale('zh-Hant-HK')).toBe('zh-TW');
     expect(normalizeLocale('ja-JP')).toBe('ja');
     expect(normalizeLocale('unsupported')).toBe('en');
+    expect(normalizeLocale('pt-BR')).toBe('pt-BR');
+    expect(normalizeLocale('pt_BR')).toBe('pt-BR');
+    expect(normalizeLocale('pt')).toBe('pt-BR');
+    expect(normalizeLocale('pt-PT')).toBe('en');
   });
 
   it('translates messages and interpolates variables', () => {
@@ -177,6 +181,7 @@ describe('i18n', () => {
       { value: 'ja', nativeLabel: '日本語' },
       { value: 'en', nativeLabel: 'English' },
       { value: 'ru', nativeLabel: 'Русский' },
+      { value: 'pt-BR', nativeLabel: 'Português (Brasil)' },
     ]);
   });
 
@@ -186,6 +191,96 @@ describe('i18n', () => {
     expect(Object.keys(ja).sort()).toEqual(Object.keys(zhCN).sort());
     expect(Object.keys(jaOverrides).sort()).toEqual(Object.keys(zhCN).sort());
     expect(ja).toBe(jaOverrides);
+  });
+
+  it('keeps PT-BR optional: known keys only, matching variables, English fallback', () => {
+    const variables = (message: string) =>
+      [...message.matchAll(/\{(\w+)\}/g)].map((match) => match[1]).sort();
+    expect(Object.keys(ptBR).filter((key) => !(key in zhCN))).toEqual([]);
+    for (const key of Object.keys(ptBR) as MessageKey[]) {
+      expect(ptBR[key].trim(), key).not.toBe('');
+      expect(variables(ptBR[key]), key).toEqual(variables(zhCN[key]));
+    }
+    const missingKey = 'app.nav.plugins' as MessageKey;
+    const translated = ptBR[missingKey];
+    delete (ptBR as Record<string, string>)[missingKey];
+    try {
+      expect(translate('pt-BR', missingKey)).toBe(en[missingKey]);
+    } finally {
+      ptBR[missingKey] = translated;
+    }
+  });
+
+  it('preserves only reviewed exact matches with English in PT-BR', () => {
+    // Brand and technical names, units, configuration examples and text shared by both languages.
+    const intentionallyIdentical = new Set<MessageKey>([
+      'acp.provider',
+      'routing.unlimited',
+      'routing.oauth',
+      'routing.familyDetail',
+      'routing.prefixDetail',
+      'routing.weightTotal',
+      'routing.weightPlaceholder',
+      'routing.changeDetail',
+      'app.nav.plugins',
+      'oauth.vertex.locationPlaceholder',
+      'home.health.status',
+      'easyMode.api.platformName.deepseek',
+      'authFiles.settings.websockets',
+      'authFiles.settings.aliasItem',
+      'authFiles.settings.fingerprint_profile.claude-code-cli',
+      'authFiles.settings.fingerprint_profile.oauth-cli',
+      'authFiles.health.seconds',
+      'authFiles.health.minutes',
+      'apiAccess.provider.deepseek',
+      'apiAccess.provider.zai',
+      'apiAccess.provider.claude',
+      'apiAccess.provider.gemini',
+      'apiAccess.field.baseUrl',
+      'usage.unit.tokens',
+      'app.theme.anime.name',
+      'app.theme.custom.diagnostics',
+      'app.nav.oauth',
+      'easyMode.api.apiKey',
+      'usage.stat.tps',
+      'usage.stat.rpm',
+      'usage.pricing.statusManual',
+      'usage.pricing.perMillion',
+      'usage.pricing.rateHint',
+      'usage.dataManagement.storageUnit',
+      'usage.analysis.categoryCountOne',
+      'usage.speedMode.fast',
+      'usage.latency.ttft',
+      'usage.column.cache',
+      'usage.column.total',
+      'aliases.ultrafast.title',
+      'speedAliases.fast.title',
+      'config.sensitiveWords.antigravity',
+      'config.sensitiveWords.devin',
+      'config.unit.seconds',
+      'config.unit.mb',
+      'authFiles.models.rulesPlaceholder',
+      'agents.deepseekLaunch.web.trustedHostsPlaceholder',
+      'agents.deepseekLaunch.patchesPlaceholder',
+      'agents.sessions.progressCount',
+      'agents.claudeDesktopMapping.fable',
+      'agents.claudeDesktopMapping.opus',
+      'agents.claudeDesktopMapping.sonnet',
+      'agents.claudeDesktopMapping.haiku',
+      'agents.claudeMapping.context1m',
+      'apiAccess.health.description',
+      'apiAccess.health.firstTokenInline',
+      'apiAccess.field.key',
+      'kernel.access.apiUrl',
+      'easyMode.api.baseUrl',
+      'management.error.upstreamHttpDetail',
+    ]);
+    const unexpected = (Object.keys(en) as MessageKey[]).filter((key) =>
+      ptBR[key] === en[key]
+      && !intentionallyIdentical.has(key)
+      && !(key.startsWith('agents.harness.field.') && en[key] === key.split('.').at(-1)),
+    );
+    expect(unexpected).toEqual([]);
   });
 
   it('preserves interpolation variables and nonempty messages in every locale', () => {

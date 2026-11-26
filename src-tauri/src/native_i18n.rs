@@ -97,6 +97,25 @@ pub(crate) fn native_text(locale: &str, text: NativeText) -> &'static str {
             NativeText::TooltipCoreOperationFailed => "EasyCLIProxyAPI · Сбой операции с ядром",
             NativeText::OperationFailed => "Операция не удалась",
         },
+        "pt-BR" => match text {
+            NativeText::OpenMainWindow => "Abrir janela principal",
+            NativeText::Quit => "Sair",
+            NativeText::CoreStatusWorking => "Status do núcleo: processando",
+            NativeText::CoreStatusNotInstalled => "Status do núcleo: não instalado",
+            NativeText::CoreStatusRunning => "Status do núcleo: em execução",
+            NativeText::CoreStatusStopped => "Status do núcleo: parado",
+            NativeText::CoreStatusChecking => "Status do núcleo: verificando",
+            NativeText::Working => "Processando...",
+            NativeText::StopCore => "Parar núcleo",
+            NativeText::StartCore => "Iniciar núcleo",
+            NativeText::RestartCore => "Reiniciar núcleo",
+            NativeText::TooltipCoreWorking => "EasyCLIProxyAPI · Núcleo processando",
+            NativeText::TooltipCoreNotInstalled => "EasyCLIProxyAPI · Núcleo não instalado",
+            NativeText::TooltipCoreRunning => "EasyCLIProxyAPI · Núcleo em execução",
+            NativeText::TooltipCoreStopped => "EasyCLIProxyAPI · Núcleo parado",
+            NativeText::TooltipCoreOperationFailed => "EasyCLIProxyAPI · Falha na operação do núcleo",
+            NativeText::OperationFailed => "Falha na operação",
+        },
         _ => match text {
             NativeText::OpenMainWindow => "Open Main Window",
             NativeText::Quit => "Quit",
@@ -120,7 +139,7 @@ pub(crate) fn native_text(locale: &str, text: NativeText) -> &'static str {
 }
 
 pub(crate) fn native_operation_failed(locale: &str, summary: &str) -> String {
-    let separator = if super::normalize_app_locale(locale) == "en" {
+    let separator = if matches!(super::normalize_app_locale(locale), "en" | "pt-BR") {
         ": "
     } else {
         "："

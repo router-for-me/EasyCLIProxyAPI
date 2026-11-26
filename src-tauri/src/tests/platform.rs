@@ -49,6 +49,10 @@ fn windows_tray_presentation_tracks_core_state_and_busy_actions() {
     let japanese = windows_tray_presentation(&status, false, "ja-JP");
     assert_eq!(japanese.status_text, "コア状態：実行中");
     assert_eq!(japanese.toggle_text, "コアを停止");
+
+    let portuguese = windows_tray_presentation(&status, false, "pt-BR");
+    assert_eq!(portuguese.status_text, "Status do núcleo: em execução");
+    assert_eq!(portuguese.toggle_text, "Parar núcleo");
 }
 
 #[test]
@@ -57,6 +61,9 @@ fn app_locale_normalization_has_a_stable_english_fallback() {
     assert_eq!(normalize_app_locale("en-US"), "en");
     assert_eq!(normalize_app_locale("ja-JP"), "ja");
     assert_eq!(normalize_app_locale("ru-RU"), "ru");
+    assert_eq!(normalize_app_locale("pt"), "pt-BR");
+    assert_eq!(normalize_app_locale(" PT_br "), "pt-BR");
+    assert_eq!(normalize_app_locale("pt-PT"), "en");
     assert_eq!(normalize_app_locale("zh-TW"), "zh-TW");
     assert_eq!(normalize_app_locale("zh-Hant-HK"), "zh-TW");
     assert_eq!(normalize_app_locale("unsupported"), "en");

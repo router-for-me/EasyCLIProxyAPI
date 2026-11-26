@@ -53,6 +53,59 @@ const messages = {
   invalid: ['配置值无效，请检查标注字段：', 'Invalid configuration; check field: ', '設定値が無効です。確認する項目: '],
   modelHint: ['字段关闭时保留默认行为；已启用字段中的 false、0 和空列表会明确覆盖默认值。', 'Unset fields use defaults; explicit false, 0 and empty lists override defaults.', '未設定は既定動作。false、0、空のリストは既定値を明示的に上書きします。'],
 } as const;
+export const providerTemplatePtBR: Partial<Record<keyof typeof messages, string>> = {
+  modelRules: "Regras de modelos",
+  connectionRouting: "Conexão e roteamento",
+  requestBehavior: "Comportamento das requisições",
+  inherit: "Herdar / padrão",
+  configure: "Configurar",
+  enabled: "Ativado",
+  disabled: "Desativado",
+  options: "Capacidades e compatibilidade do modelo",
+  retry: "Rodadas adicionais de novas tentativas",
+  retryHint: "0 desativa rodadas adicionais. Valores ausentes ou negativos herdam a configuração global.",
+  errors: "Regras para erros de requisição",
+  errorsHint: "Compare o status HTTP e padrões do corpo da resposta. Uma lista vazia limpa as regras herdadas.",
+  addRule: "Adicionar regra",
+  remove: "Remover",
+  status: "Status HTTP",
+  match: "O corpo contém (um item por linha)",
+  regex: "Expressões regulares (uma por linha)",
+  action: "Ação",
+  stop: "Retornar erro sem período de espera",
+  'stop-and-cooldown': "Retornar erro e aplicar período de espera",
+  continue: "Tentar a próxima credencial sem período de espera",
+  'continue-and-cooldown': "Tentar a próxima credencial e aplicar período de espera",
+  display: "Nome de exibição",
+  context: "Janela de contexto",
+  force: "Mapear o modelo da resposta de volta para o alias",
+  compat: "Ativar compatibilidade com o serviço de origem",
+  configuration: "Aceitar configuration_update",
+  image: "Ativar endpoints de geração e edição de imagens",
+  imageHint: "Somente /v1/images/*; a entrada de imagens no chat segue as modalidades de entrada.",
+  input: "Modalidades de entrada",
+  output: "Modalidades de saída",
+  completion: "Usar max_completion_tokens",
+  thinking: "Capacidades de raciocínio",
+  levels: "Níveis de raciocínio aceitos",
+  min: "Orçamento mínimo de raciocínio",
+  max: "Orçamento máximo de raciocínio",
+  zero: "Permitir orçamento zero",
+  dynamic: "Permitir orçamento dinâmico",
+  linesHint: "Um item por linha. Um campo ativado sem itens representa uma lista vazia.",
+  headersHint: "Valores que começam com $ copiam o cabeçalho indicado da requisição recebida, como $X-Session.",
+  promptCache: "Derivar prompt_cache_key",
+  noCloak: "Desativar o mascaramento de requisições do Codex",
+  alpha: "Ativar Alpha Search",
+  rebuild: "Mover mensagens de sistema no meio da conversa para o prompt de sistema",
+  fingerprint: "Identificador da requisição",
+  caller: "Preservar o identificador do cliente",
+  cch: "Compatibilidade com assinaturas CCH antigas",
+  deprecated: "Obsoleto. As versões atuais do núcleo geram assinaturas CCH automaticamente.",
+  invalid: "Configuração inválida. Verifique o campo: ",
+  modelHint: "Campos não preenchidos usam os padrões. Valores explícitos como false, 0 e listas vazias substituem os padrões.",
+};
+
 const ruMessages: Record<keyof typeof messages, string> = {
   modelRules: 'Правила моделей',
   connectionRouting: 'Подключение и маршрутизация',
@@ -108,6 +161,6 @@ const ruMessages: Record<keyof typeof messages, string> = {
 
 export type ProviderTemplateMessage = keyof typeof messages;
 export function providerText(key: ProviderTemplateMessage, locale: AppLocale = getCurrentLocale()): string {
-  const value = locale === 'ru' ? ruMessages[key] : messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
+  const value = locale === 'pt-BR' ? providerTemplatePtBR[key] ?? messages[key][1] : locale === 'ru' ? ruMessages[key] : messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
   return locale === 'zh-TW' ? createTraditionalMessages({ text: value }).text : value;
 }

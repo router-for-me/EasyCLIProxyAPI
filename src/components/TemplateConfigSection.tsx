@@ -30,9 +30,9 @@ import { SettingsHelp } from './SettingsHelp';
 import { Select } from './Select';
 import '../styles/template-config.css';
 
-const restartHint = { zh: '需重启内核', en: 'Core restart required', ja: 'コアの再起動が必要' } satisfies TemplateText;
-const collapseLabel = { zh: '收起', en: 'Collapse', ja: '閉じる' } satisfies TemplateText;
-const emptyStructuredLabel = { zh: '未配置', en: 'Not configured', ja: '未設定' } satisfies TemplateText;
+const restartHint = { zh: '需重启内核', en: 'Core restart required', ptBR: "É necessário reiniciar o núcleo", ja: 'コアの再起動が必要' } satisfies TemplateText;
+const collapseLabel = { zh: '收起', en: 'Collapse', ptBR: "Recolher", ja: '閉じる' } satisfies TemplateText;
+const emptyStructuredLabel = { zh: '未配置', en: 'Not configured', ptBR: "Não configurado", ja: '未設定' } satisfies TemplateText;
 
 function countStructuredItems(value: unknown): number {
   if (Array.isArray(value)) return value.length;
@@ -284,6 +284,7 @@ export const TemplateConfigSection = forwardRef<TemplateConfigSectionHandle, Tem
   const formatConfiguredCount = (count: number) => {
     if (count <= 0) return templateText(emptyStructuredLabel, locale);
     if (locale === 'en') return `${count} configured`;
+    if (locale === 'pt-BR') return count === 1 ? '1 configurado' : `${count} configurados`;
     if (locale === 'ja') return `${count} 件設定済み`;
     return `已配置 ${count} 项`;
   };

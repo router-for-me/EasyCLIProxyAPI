@@ -1,11 +1,12 @@
 import { useCallback } from 'react';
 import { useI18n } from '../../i18n';
 import en from './en.json';
+import ptBR from './pt-BR.json';
 import ru from './ru.json';
 import zhCN from './zh-CN.json';
 import zhTW from './zh-TW.json';
 
-const messages = { en, ja: en, ru, 'zh-CN': zhCN, 'zh-TW': zhTW };
+const messages = { en, ja: en, ru, 'zh-CN': zhCN, 'zh-TW': zhTW, 'pt-BR': ptBR };
 
 function readMessage(root: unknown, path: string): string | undefined {
   const value = path.split('.').reduce<unknown>((parent, part) =>
