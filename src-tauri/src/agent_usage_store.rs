@@ -8,13 +8,14 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::agent_usage::{
     antigravity_covered_steps, antigravity_session_database, antigravity_session_id,
-    proxy_codex_delta, read_usage_file, source_files, FileDelta, UsageCounter, SOURCE_NAMES,
+    build_source_context, logical_file_key, proxy_codex_delta, read_usage_file_with_context,
+    source_files, source_uses_cross_file_dedup, FileDelta, UsageCounter, SOURCE_NAMES,
 };
 use crate::usage::{load_agent_usage_prices, resolve_agent_usage_price, ModelPrice};
 
 const STORE_DIRECTORY: &str = "agent-usage";
 const STORE_DATABASE: &str = "agent_usage.db";
-const STORE_SCHEMA_VERSION: i64 = 1;
+const STORE_SCHEMA_VERSION: i64 = 2;
 const HOURLY_RETENTION_DAYS: i64 = 30;
 const PROXY_FILE_KEY: &str = "codex:proxy-usage-db";
 const SYNC_BATCH_FILES: usize = 32;
@@ -227,7 +228,38 @@ pub(crate) fn open_store_at(path: &Path) -> Result<Connection, String> {
     Ok(connection)
 }
 
+fn ensure_column_exists(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), String> {
+    let mut statement = connection
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|error| format!("Failed to inspect agent usage table {table}: {error}"))?;
+    let existing = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("Failed to read columns of {table}: {error}"))?
+        .flatten()
+        .any(|name| name.eq_ignore_ascii_case(column));
+    if !existing {
+        connection
+            .execute(
+                &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+                [],
+            )
+            .map_err(|error| {
+                format!("Failed to add column {column} to agent usage table {table}: {error}")
+            })?;
+    }
+    Ok(())
+}
+
 fn initialize_schema(connection: &Connection) -> Result<(), String> {
+    let prev_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap_or(0);
+
     connection
         .execute_batch(
             r#"
@@ -268,6 +300,9 @@ fn initialize_schema(connection: &Connection) -> Result<(), String> {
                 reasoning_tokens INTEGER NOT NULL,
                 total_tokens INTEGER NOT NULL,
                 samples INTEGER NOT NULL,
+                cache_creation_1h_tokens INTEGER NOT NULL DEFAULT 0,
+                reported_cost_usd REAL NOT NULL DEFAULT 0,
+                reported_samples INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (file_key, day, model)
             ) WITHOUT ROWID;
             CREATE INDEX IF NOT EXISTS idx_agent_usage_daily_source_day
@@ -286,16 +321,156 @@ fn initialize_schema(connection: &Connection) -> Result<(), String> {
                 reasoning_tokens INTEGER NOT NULL,
                 total_tokens INTEGER NOT NULL,
                 samples INTEGER NOT NULL,
+                cache_creation_1h_tokens INTEGER NOT NULL DEFAULT 0,
+                reported_cost_usd REAL NOT NULL DEFAULT 0,
+                reported_samples INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (file_key, day, hour, model)
             ) WITHOUT ROWID;
             CREATE INDEX IF NOT EXISTS idx_agent_usage_hourly_day
                 ON agent_usage_hourly(day);
+
+            CREATE TABLE IF NOT EXISTS agent_usage_seen_ids (
+                source TEXT NOT NULL,
+                msg_id TEXT NOT NULL,
+                owner_file_key TEXT NOT NULL,
+                PRIMARY KEY (source, msg_id)
+            ) WITHOUT ROWID;
+            CREATE INDEX IF NOT EXISTS idx_agent_usage_seen_ids_owner
+                ON agent_usage_seen_ids(source, owner_file_key);
             "#,
         )
         .map_err(|error| format!("Failed to initialize agent usage schema: {error}"))?;
+
+    if prev_version > 0 && prev_version < STORE_SCHEMA_VERSION {
+        for table in ["agent_usage_daily", "agent_usage_hourly"] {
+            ensure_column_exists(
+                connection,
+                table,
+                "cache_creation_1h_tokens",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+            ensure_column_exists(
+                connection,
+                table,
+                "reported_cost_usd",
+                "REAL NOT NULL DEFAULT 0",
+            )?;
+            ensure_column_exists(
+                connection,
+                table,
+                "reported_samples",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
+        migrate_v1_keys_and_retire_duplicates(connection)?;
+        // Invalidate stamps of live files so upgraded parsers re-read and replace v1 rows
+        // while keeping archived (`present = 0`) history untouched.
+        connection
+            .execute(
+                "UPDATE agent_usage_files SET size = -1, mtime_ns = -1 WHERE present = 1",
+                [],
+            )
+            .map_err(|error| format!("Failed to schedule v2 agent usage rescan: {error}"))?;
+    }
+
     connection
         .pragma_update(None, "user_version", STORE_SCHEMA_VERSION)
         .map_err(|error| format!("Failed to update agent usage schema version: {error}"))
+}
+
+fn migrate_v1_keys_and_retire_duplicates(connection: &Connection) -> Result<(), String> {
+    // On Windows, v1 stored mixed `/` and `\` path separators in `file_key` for sources
+    // like `pi`, `omp`, and `gemini`. Normalize them to `\` so v2 scans replace existing
+    // rows in place instead of creating duplicates alongside `present = 0` ghosts.
+    #[cfg(windows)]
+    {
+        connection
+            .execute_batch(
+                r#"
+                DELETE FROM agent_usage_daily
+                 WHERE instr(file_key, '/') > 0
+                   AND EXISTS (
+                       SELECT 1 FROM agent_usage_daily d2
+                        WHERE d2.file_key = replace(agent_usage_daily.file_key, '/', '\')
+                          AND d2.day = agent_usage_daily.day
+                          AND d2.model = agent_usage_daily.model
+                   );
+                UPDATE agent_usage_daily
+                   SET file_key = replace(file_key, '/', '\')
+                 WHERE instr(file_key, '/') > 0;
+
+                DELETE FROM agent_usage_hourly
+                 WHERE instr(file_key, '/') > 0
+                   AND EXISTS (
+                       SELECT 1 FROM agent_usage_hourly h2
+                        WHERE h2.file_key = replace(agent_usage_hourly.file_key, '/', '\')
+                          AND h2.day = agent_usage_hourly.day
+                          AND h2.hour = agent_usage_hourly.hour
+                          AND h2.model = agent_usage_hourly.model
+                   );
+                UPDATE agent_usage_hourly
+                   SET file_key = replace(file_key, '/', '\')
+                 WHERE instr(file_key, '/') > 0;
+
+                DELETE FROM agent_usage_files
+                 WHERE instr(file_key, '/') > 0
+                   AND EXISTS (
+                       SELECT 1 FROM agent_usage_files f2
+                        WHERE f2.file_key = replace(agent_usage_files.file_key, '/', '\')
+                   );
+                UPDATE agent_usage_files
+                   SET file_key = replace(file_key, '/', '\'),
+                       path = replace(path, '/', '\')
+                 WHERE instr(file_key, '/') > 0 OR instr(path, '/') > 0;
+                "#,
+            )
+            .map_err(|error| format!("Failed to normalize v1 agent usage file keys: {error}"))?;
+    }
+
+    // In v1, OpenCode scanned individual JSON files under storage/message and storage/part
+    // alongside `opencode.db`, duplicating database rows. When `opencode.db` is present,
+    // retire those legacy JSON rows so v2's SQLite scan does not double-count them.
+    let has_opencode_db: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM agent_usage_files WHERE source = 'opencode' AND lower(file_key) LIKE '%.db')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+    if has_opencode_db {
+        connection
+            .execute_batch(
+                r#"
+                DELETE FROM agent_usage_daily
+                 WHERE source = 'opencode' AND lower(file_key) LIKE '%.json';
+                DELETE FROM agent_usage_hourly
+                 WHERE source = 'opencode' AND lower(file_key) LIKE '%.json';
+                DELETE FROM agent_usage_files
+                 WHERE source = 'opencode' AND lower(file_key) LIKE '%.json';
+                "#,
+            )
+            .map_err(|error| format!("Failed to retire v1 opencode json rows: {error}"))?;
+    }
+
+    // Drop empty legacy non-v2 Antigravity metadata files (e.g. argv.json, settings.json).
+    connection
+        .execute(
+            "DELETE FROM agent_usage_files
+              WHERE source = 'antigravity'
+                AND file_key NOT LIKE 'antigravity:v2:%'
+                AND NOT EXISTS (
+                    SELECT 1 FROM agent_usage_daily
+                     WHERE agent_usage_daily.file_key = agent_usage_files.file_key
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM agent_usage_hourly
+                     WHERE agent_usage_hourly.file_key = agent_usage_files.file_key
+                )",
+            [],
+        )
+        .map_err(|error| format!("Failed to clean legacy antigravity file rows: {error}"))?;
+
+    Ok(())
 }
 
 fn now_millis() -> i64 {
@@ -312,20 +487,34 @@ fn millis_to_rfc3339(value: i64) -> String {
 }
 
 fn file_key(source: &str, path: &Path) -> String {
-    if source == "antigravity" {
-        return format!("{source}:v2:{}", path.to_string_lossy());
-    }
-    if source == "codex" {
-        if let Some(name) = path.file_name() {
-            return format!("{source}:{}", name.to_string_lossy());
-        }
-    }
-    format!("{source}:{}", path.to_string_lossy())
+    logical_file_key(source, path)
 }
 
 fn antigravity_key_path(key: &str) -> Option<&str> {
     key.strip_prefix("antigravity:v2:")
         .or_else(|| key.strip_prefix("antigravity:"))
+}
+
+fn normalized_key_path(path: &str) -> String {
+    #[cfg(windows)]
+    {
+        path.replace('/', "\\")
+    }
+    #[cfg(not(windows))]
+    {
+        path.to_string()
+    }
+}
+
+fn same_key_path(left: &str, right: &str) -> bool {
+    #[cfg(windows)]
+    {
+        normalized_key_path(left).eq_ignore_ascii_case(&normalized_key_path(right))
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
 }
 
 /// Drops rows only when better evidence replaces them. A file whose read failed keeps
@@ -341,7 +530,7 @@ fn skipped_mirror_is_covered(
 ) -> bool {
     if seen
         .iter()
-        .any(|key| antigravity_key_path(key) == Some(path))
+        .any(|key| antigravity_key_path(key).is_some_and(|p| same_key_path(p, path)))
     {
         return false;
     }
@@ -378,7 +567,9 @@ fn readable_key_for_path<'a>(
     failed: &BTreeSet<String>,
 ) -> Option<&'a String> {
     seen.iter().find(|key| {
-        antigravity_key_path(key) == Some(path) && ready.contains(*key) && !failed.contains(*key)
+        antigravity_key_path(key).is_some_and(|p| same_key_path(p, path))
+            && ready.contains(*key)
+            && !failed.contains(*key)
     })
 }
 
@@ -482,7 +673,7 @@ fn remove_antigravity_duplicate_rows(
             let Some(path) = antigravity_key_path(key) else {
                 continue;
             };
-            if !seen_paths.insert(path.to_string()) {
+            if !seen_paths.insert(normalized_key_path(path)) {
                 retire_legacy_key(transaction, key)?;
                 continue;
             }
@@ -494,10 +685,10 @@ fn remove_antigravity_duplicate_rows(
         }
         // A chunk-only session is one transcript split over several files: a single
         // chunk holds just part of it, so it must never become the sole survivor.
-        if keys
-            .iter()
-            .all(|key| antigravity_key_path(key).is_some_and(|path| path.contains("/chunks/")))
-        {
+        if keys.iter().all(|key| {
+            antigravity_key_path(key)
+                .is_some_and(|path| path.contains("/chunks/") || path.contains("\\chunks\\"))
+        }) {
             continue;
         }
         let keeper = keys
@@ -635,6 +826,7 @@ fn save_source(
     connection: &Connection,
     source: &str,
     last_present_at: i64,
+    last_scan_at: i64,
     status: &str,
     error: &str,
 ) -> Result<(), String> {
@@ -647,7 +839,7 @@ fn save_source(
                 last_scan_at = excluded.last_scan_at,
                 status = excluded.status,
                 error = excluded.error",
-            params![source, last_present_at, now_millis(), status, error],
+            params![source, last_present_at, last_scan_at, status, error],
         )
         .map_err(|error| format!("Failed to store agent usage source: {error}"))?;
     Ok(())
@@ -671,8 +863,9 @@ fn replace_file_rows(
                 "INSERT INTO agent_usage_daily (
                     file_key, source, day, model, input_tokens, output_tokens,
                     cache_read_tokens, cache_creation_tokens, reasoning_tokens,
-                    total_tokens, samples
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    total_tokens, samples, cache_creation_1h_tokens,
+                    reported_cost_usd, reported_samples
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             )
             .map_err(|error| format!("Failed to prepare agent usage insert: {error}"))?;
         for ((day, model), counter) in &delta.daily {
@@ -688,7 +881,10 @@ fn replace_file_rows(
                     counter.cache_creation_tokens,
                     counter.reasoning_tokens,
                     counter.total_tokens,
-                    counter.samples
+                    counter.samples,
+                    counter.cache_creation_1h_tokens,
+                    counter.reported_cost_usd,
+                    counter.reported_samples,
                 ])
                 .map_err(|error| format!("Failed to store agent usage row: {error}"))?;
         }
@@ -699,8 +895,9 @@ fn replace_file_rows(
                 "INSERT INTO agent_usage_hourly (
                     file_key, source, day, hour, model, input_tokens, output_tokens,
                     cache_read_tokens, cache_creation_tokens, reasoning_tokens,
-                    total_tokens, samples
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    total_tokens, samples, cache_creation_1h_tokens,
+                    reported_cost_usd, reported_samples
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             )
             .map_err(|error| format!("Failed to prepare agent usage insert: {error}"))?;
         for ((day, hour, model), counter) in &delta.hourly {
@@ -717,7 +914,10 @@ fn replace_file_rows(
                     counter.cache_creation_tokens,
                     counter.reasoning_tokens,
                     counter.total_tokens,
-                    counter.samples
+                    counter.samples,
+                    counter.cache_creation_1h_tokens,
+                    counter.reported_cost_usd,
+                    counter.reported_samples,
                 ])
                 .map_err(|error| format!("Failed to store agent usage row: {error}"))?;
         }
@@ -870,6 +1070,55 @@ fn sync_proxy_codex(
     Ok(true)
 }
 
+fn load_seen_ids(
+    connection: &Connection,
+    source: &str,
+) -> HashMap<String, Vec<String>> {
+    let Ok(mut stmt) = connection.prepare(
+        "SELECT owner_file_key, msg_id FROM agent_usage_seen_ids WHERE source = ?1",
+    ) else {
+        return HashMap::new();
+    };
+    let Ok(rows) = stmt.query_map([source], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    }) else {
+        return HashMap::new();
+    };
+    let mut by_owner: HashMap<String, Vec<String>> = HashMap::new();
+    for (owner, msg_id) in rows.flatten() {
+        by_owner.entry(owner).or_default().push(msg_id);
+    }
+    by_owner
+}
+
+fn replace_seen_ids(
+    transaction: &rusqlite::Transaction<'_>,
+    source: &str,
+    key: &str,
+    claimed_ids: &[String],
+) -> Result<(), String> {
+    transaction
+        .execute(
+            "DELETE FROM agent_usage_seen_ids WHERE source = ?1 AND owner_file_key = ?2",
+            params![source, key],
+        )
+        .map_err(|error| format!("Failed to clear agent usage dedup ids: {error}"))?;
+    if claimed_ids.is_empty() {
+        return Ok(());
+    }
+    let mut stmt = transaction
+        .prepare(
+            "INSERT OR IGNORE INTO agent_usage_seen_ids (source, msg_id, owner_file_key)
+             VALUES (?1, ?2, ?3)",
+        )
+        .map_err(|error| format!("Failed to prepare agent usage dedup insert: {error}"))?;
+    for id in claimed_ids {
+        stmt.execute(params![source, id, key])
+            .map_err(|error| format!("Failed to store agent usage dedup id: {error}"))?;
+    }
+    Ok(())
+}
+
 pub(crate) fn sync(
     connection: &mut Connection,
     home: &Path,
@@ -882,7 +1131,13 @@ pub(crate) fn sync(
     let previous_sources = load_sources(connection);
 
     for source in SOURCE_NAMES {
-        let files = newest_first(source_files(home, source));
+        let mut files = newest_first(source_files(home, source));
+        let cross_file_dedup = source_uses_cross_file_dedup(source);
+        if cross_file_dedup {
+            // Process oldest files first so original/parent sessions claim shared message IDs
+            // before newer forked copies are scanned.
+            files.reverse();
+        }
         let total = files.len() as u64;
         let mut readable = 0u64;
         let existing = {
@@ -891,6 +1146,27 @@ pub(crate) fn sync(
                 .map_err(|error| format!("Failed to start agent usage transaction: {error}"))?;
             existing_files(&transaction, source)
         };
+
+        let any_changed = files.iter().any(|(path, (size, mtime_ns))| {
+            let key = file_key(source, path);
+            !existing.get(&key).is_some_and(|(stored_size, stored_mtime, _)| {
+                stored_size == size && stored_mtime == mtime_ns
+            })
+        });
+        let all_paths: Vec<PathBuf> = files.iter().map(|(path, _)| path.clone()).collect();
+        let mut source_ctx = build_source_context(source, &all_paths, any_changed);
+        let mut seen_by_owner = if cross_file_dedup && any_changed {
+            let map = load_seen_ids(connection, source);
+            for ids in map.values() {
+                for id in ids {
+                    source_ctx.seen_ids.insert(id.clone());
+                }
+            }
+            map
+        } else {
+            HashMap::new()
+        };
+
         let mut seen: BTreeSet<String> = BTreeSet::new();
         let mut ready: BTreeSet<String> = BTreeSet::new();
         let mut failed: BTreeSet<String> = BTreeSet::new();
@@ -919,17 +1195,36 @@ pub(crate) fn sync(
                 readable += 1;
                 continue;
             }
+            let previous_owned = if cross_file_dedup {
+                let owned = seen_by_owner.remove(&key).unwrap_or_default();
+                for id in &owned {
+                    source_ctx.seen_ids.remove(id);
+                }
+                owned
+            } else {
+                Vec::new()
+            };
             let mut delta = FileDelta::default();
-            match read_usage_file(path, source, &mut delta) {
+            match read_usage_file_with_context(path, source, &mut source_ctx, &mut delta) {
                 Ok(()) => {
                     ready.insert(key.clone());
                     readable += 1;
                     replace_file_rows(&transaction, source, &key, &delta)?;
+                    if cross_file_dedup {
+                        replace_seen_ids(&transaction, source, &key, &delta.claimed_ids)?;
+                        seen_by_owner.insert(key.clone(), delta.claimed_ids);
+                    }
                     store_file(&transaction, source, &key, path, *size, *mtime_ns)?;
                     changed_files += 1;
                     pending += 1;
                 }
                 Err(()) => {
+                    if cross_file_dedup && !previous_owned.is_empty() {
+                        for id in &previous_owned {
+                            source_ctx.seen_ids.insert(id.clone());
+                        }
+                        seen_by_owner.insert(key.clone(), previous_owned);
+                    }
                     failed.insert(key.clone());
                 }
             }
@@ -1005,12 +1300,15 @@ pub(crate) fn sync(
             "ok"
         };
         let error = "";
+        // Use a single timestamp for both `last_present_at` and `last_scan_at` so active
+        // sources never get misclassified as archived when the clock ticks between calls.
+        let scan_time = now_millis();
         let last_present_at = if files.is_empty() {
             previous.map(|meta| meta.last_present_at).unwrap_or(0)
         } else {
-            now_millis()
+            scan_time
         };
-        save_source(connection, source, last_present_at, status, error)?;
+        save_source(connection, source, last_present_at, scan_time, status, error)?;
         progress(AgentUsageSyncProgress {
             source: (*source).to_string(),
             scanned: total,
@@ -1085,6 +1383,7 @@ pub(crate) fn clear(connection: &Connection) -> Result<(), String> {
              DELETE FROM agent_usage_files;
              DELETE FROM agent_usage_sources;
              DELETE FROM agent_usage_meta;
+             DELETE FROM agent_usage_seen_ids;
              VACUUM;",
         )
         .map_err(|error| format!("Failed to clear agent usage history: {error}"))
@@ -1093,12 +1392,14 @@ pub(crate) fn clear(connection: &Connection) -> Result<(), String> {
 fn query_rows(connection: &Connection, hourly: bool, start: &str, end: &str) -> Vec<AggregatedRow> {
     let sql = if hourly {
         "SELECT source, day, hour, model, SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens),
-                SUM(cache_creation_tokens), SUM(reasoning_tokens), SUM(total_tokens), SUM(samples)
+                SUM(cache_creation_tokens), SUM(reasoning_tokens), SUM(total_tokens), SUM(samples),
+                SUM(cache_creation_1h_tokens), SUM(reported_cost_usd), SUM(reported_samples)
          FROM agent_usage_hourly WHERE day BETWEEN ?1 AND ?2
          GROUP BY source, day, hour, model"
     } else {
         "SELECT source, day, 0, model, SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens),
-                SUM(cache_creation_tokens), SUM(reasoning_tokens), SUM(total_tokens), SUM(samples)
+                SUM(cache_creation_tokens), SUM(reasoning_tokens), SUM(total_tokens), SUM(samples),
+                SUM(cache_creation_1h_tokens), SUM(reported_cost_usd), SUM(reported_samples)
          FROM agent_usage_daily WHERE day BETWEEN ?1 AND ?2
          GROUP BY source, day, model"
     };
@@ -1107,6 +1408,12 @@ fn query_rows(connection: &Connection, hourly: bool, start: &str, end: &str) -> 
     };
     statement
         .query_map(params![start, end], |row| {
+            let reported_cost = row.get::<_, f64>(12).unwrap_or(0.0);
+            let reported_cost = if reported_cost.is_finite() && reported_cost > 0.0 {
+                reported_cost
+            } else {
+                0.0
+            };
             Ok(AggregatedRow {
                 source: row.get(0)?,
                 day: row.get(1)?,
@@ -1117,9 +1424,12 @@ fn query_rows(connection: &Connection, hourly: bool, start: &str, end: &str) -> 
                     output_tokens: row.get::<_, i64>(5)?.max(0) as u64,
                     cache_read_tokens: row.get::<_, i64>(6)?.max(0) as u64,
                     cache_creation_tokens: row.get::<_, i64>(7)?.max(0) as u64,
+                    cache_creation_1h_tokens: row.get::<_, i64>(11).unwrap_or(0).max(0) as u64,
                     reasoning_tokens: row.get::<_, i64>(8)?.max(0) as u64,
                     total_tokens: row.get::<_, i64>(9)?.max(0) as u64,
                     cost_usd: 0.0,
+                    reported_cost_usd: reported_cost,
+                    reported_samples: row.get::<_, i64>(13).unwrap_or(0).max(0) as u64,
                     samples: row.get::<_, i64>(10)?.max(0) as u64,
                 },
             })
@@ -1134,11 +1444,26 @@ fn query_rows(connection: &Connection, hourly: bool, start: &str, end: &str) -> 
 
 fn normalize_model(value: &str) -> String {
     let tail = crate::usage::normalized_model_tail(value);
+    let stripped_colon = if let Some((prefix, rest)) = tail.split_once(':') {
+        if (matches!(prefix, "global" | "us" | "eu" | "ap" | "cn") || prefix.starts_with("custom-"))
+            && !rest.trim().is_empty()
+        {
+            rest.trim().to_string()
+        } else {
+            tail
+        }
+    } else {
+        tail
+    };
     MODEL_ROUTE_PREFIXES
         .iter()
-        .find_map(|prefix| tail.strip_prefix(prefix).filter(|rest| !rest.is_empty()))
+        .find_map(|prefix| {
+            stripped_colon
+                .strip_prefix(prefix)
+                .filter(|rest| !rest.is_empty())
+        })
         .map(str::to_string)
-        .unwrap_or(tail)
+        .unwrap_or(stripped_colon)
 }
 
 fn parse_day(value: &str) -> Option<NaiveDate> {
@@ -1161,16 +1486,18 @@ fn bucket_key(day: &str, hour: u8, kind: &str) -> String {
 }
 
 fn cost_for(counter: &UsageCounter, price: Option<&ModelPrice>) -> f64 {
-    let Some(price) = price else {
-        return 0.0;
-    };
-    cost_for_tokens(
-        counter,
-        price.prompt,
-        price.completion,
-        price.cache_read,
-        price.cache_creation,
-    )
+    let catalog = price
+        .map(|p| cost_for_tokens(counter, p.prompt, p.completion, p.cache_read, p.cache_creation))
+        .unwrap_or(0.0);
+    if counter.reported_cost_usd > 0.0 {
+        if counter.samples == 0 || counter.reported_samples >= counter.samples {
+            return counter.reported_cost_usd;
+        }
+        let unreported_ratio =
+            counter.samples.saturating_sub(counter.reported_samples) as f64 / counter.samples as f64;
+        return counter.reported_cost_usd + catalog * unreported_ratio;
+    }
+    catalog
 }
 
 fn cost_for_tokens(
@@ -1180,10 +1507,14 @@ fn cost_for_tokens(
     cache_read: f64,
     cache_creation: f64,
 ) -> f64 {
+    let cc_1h = counter
+        .cache_creation_1h_tokens
+        .min(counter.cache_creation_tokens);
+    let cc_5m = counter.cache_creation_tokens.saturating_sub(cc_1h);
     (counter.input_tokens as f64 * prompt
         + counter.output_tokens as f64 * completion
         + counter.cache_read_tokens as f64 * cache_read
-        + counter.cache_creation_tokens as f64 * cache_creation)
+        + (cc_5m as f64 + cc_1h as f64 * 1.6) * cache_creation)
         / 1_000_000.0
 }
 
@@ -1392,10 +1723,17 @@ fn add_counter(target: &mut UsageCounter, counter: &UsageCounter, cost: f64) {
     target.cache_creation_tokens = target
         .cache_creation_tokens
         .saturating_add(counter.cache_creation_tokens);
+    target.cache_creation_1h_tokens = target
+        .cache_creation_1h_tokens
+        .saturating_add(counter.cache_creation_1h_tokens);
     target.reasoning_tokens = target
         .reasoning_tokens
         .saturating_add(counter.reasoning_tokens);
     target.total_tokens = target.total_tokens.saturating_add(counter.total_tokens);
+    target.reported_cost_usd += counter.reported_cost_usd;
+    target.reported_samples = target
+        .reported_samples
+        .saturating_add(counter.reported_samples);
     target.samples = target.samples.saturating_add(counter.samples);
     target.cost_usd += cost;
 }
@@ -1579,7 +1917,7 @@ pub(crate) fn report(
                         reasoning_tokens: counter.reasoning_tokens,
                         total_tokens: counter.total_tokens,
                         cost_usd: counter.cost_usd,
-                        priced: price.is_some(),
+                        priced: price.is_some() || counter.reported_cost_usd > 0.0,
                         prompt: price.as_ref().map(|price| price.prompt),
                         completion: price.as_ref().map(|price| price.completion),
                         cache_read: price.as_ref().map(|price| price.cache_read),
@@ -1654,13 +1992,28 @@ mod tests {
     use serde_json::json;
     use std::io::Write;
 
-    fn test_root(name: &str) -> PathBuf {
+    struct TestRoot(PathBuf);
+
+    impl std::ops::Deref for TestRoot {
+        type Target = Path;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn test_root(name: &str) -> TestRoot {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("target/test-tmp")
             .join(format!("cpa-agent-store-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).unwrap();
-        path
+        TestRoot(path)
     }
 
     fn local_timestamp(year: i32, month: u32, day: u32, hour: u32) -> String {
@@ -1727,7 +2080,7 @@ mod tests {
         assert_eq!(pi.totals.input_tokens, 105);
         assert_eq!(pi.totals.output_tokens, 11);
         assert_eq!(pi.totals.samples, 2);
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     fn probe_seed(connection: &Connection, keys: &[(String, i64)]) {
@@ -1798,7 +2151,7 @@ mod tests {
             total >= 60,
             "unreadable chunk lost its cached usage: total={total}"
         );
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -1832,7 +2185,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(total, 44, "legacy row was counted twice after migration");
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -1864,7 +2217,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(total, 30, "archived chunk usage was partially dropped");
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -1908,7 +2261,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(total, 100, "archived history must survive as one copy");
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -1951,7 +2304,7 @@ mod tests {
             40 * 11,
             "a mid-sync batch must not drop sessions it has not scanned yet"
         );
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -2057,7 +2410,7 @@ mod tests {
         }
 
         sync(&mut connection, &home, None, |_| {}).unwrap();
-        let canonical_key = format!("antigravity:v2:{}", transcript.display());
+        let canonical_key = file_key("antigravity", &transcript);
         let canonical: (i64, i64, i64) = connection
             .query_row(
                 "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
@@ -2095,7 +2448,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(archived, (1, 10));
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -2168,8 +2521,8 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(attributed, ("gemini-pro-orchestrator".to_string(), 100));
-        fs::remove_dir_all(root).unwrap();
+        assert_eq!(attributed, ("gemini-4-carbon".to_string(), 100));
+        let _ = &root;
     }
 
     #[test]
@@ -2195,7 +2548,7 @@ mod tests {
         assert_eq!(pi.status, "archived");
         assert!(!pi.archived_at.is_empty());
         assert_eq!(pi.totals.total_tokens, 44);
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -2223,7 +2576,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(remaining, 0);
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -2259,7 +2612,7 @@ mod tests {
             report(&connection, &filtered).unwrap().totals.total_tokens,
             0
         );
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -2284,7 +2637,7 @@ mod tests {
             .hourly
             .iter()
             .any(|row| row.weekday == weekday && row.hour == 9 && row.total_tokens == 15));
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -2333,7 +2686,7 @@ mod tests {
         let filtered = report(&connection, &other).unwrap();
         assert!(filtered.calendar.is_empty());
         assert!(filtered.hourly.is_empty());
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     fn insert_daily(connection: &Connection, key: &str, source: &str, day: &str, tokens: i64) {
@@ -2364,7 +2717,7 @@ mod tests {
             .unwrap();
         assert!(pi["totals"].get("costUSD").is_some());
         assert!(pi["models"][0].get("costUSD").is_some());
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -2397,14 +2750,14 @@ mod tests {
             .find(|source| source.source == "pi")
             .unwrap();
         assert_eq!(pi.totals.days, 2);
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
     fn keeps_the_timeline_day_level_when_grouping_by_model() {
         let root = test_root("grouped-timeline");
         let connection = open_store_at(&root.join("agent_usage.db")).unwrap();
-        for (index, day) in ["2026-10-28", "2026-10-29"].iter().enumerate() {
+        for (index, day) in [day_offset(2), day_offset(1)].iter().enumerate() {
             insert_daily(&connection, &format!("f{index}"), "pi", day, 10);
         }
         let mut grouped = query("30d");
@@ -2425,7 +2778,7 @@ mod tests {
             .iter()
             .flat_map(|source| &source.series)
             .any(|row| row.bucket.contains('|')));
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -2449,7 +2802,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(present, 1);
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -2468,7 +2821,7 @@ mod tests {
         let storage = storage(&connection, &root.join("agent_usage.db")).unwrap();
         assert_eq!(storage.daily_rows, 0);
         assert_eq!(storage.file_rows, 0);
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     fn insert_model_row(
@@ -2530,7 +2883,7 @@ mod tests {
                 ("qwen3.8-27b".to_string(), 5)
             ]
         );
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -2551,7 +2904,7 @@ mod tests {
                 .count(),
             5
         );
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -2584,7 +2937,7 @@ mod tests {
             report_hours.timeline.len() as u32,
             6 * 24 + Local::now().hour() + 1
         );
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -2617,7 +2970,7 @@ mod tests {
         future.start = day_offset(3);
         future.end = day_offset(-5);
         assert_eq!(report(&connection, &future).unwrap().timeline.len(), 4);
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -2641,7 +2994,7 @@ mod tests {
         assert_eq!(claude.totals.total_tokens, 40);
         assert!(claude.models.is_empty());
         assert!(report_all_previous_is_none(&connection));
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     fn report_all_previous_is_none(connection: &Connection) -> bool {
@@ -2685,7 +3038,7 @@ mod tests {
                 .total_tokens,
             before
         );
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -2706,7 +3059,7 @@ mod tests {
             .unwrap()
             .timestamp_millis();
         let insert = |input: u64| {
-            let value = json!({"modelID": "model", "time": {"created": created},
+            let value = json!({"role": "assistant", "modelID": "model", "time": {"created": created, "completed": created + 100},
                 "tokens": {"input": input, "output": 1, "reasoning": 0, "cache": {"read": 0, "write": 0}}});
             writer
                 .execute("INSERT INTO message VALUES (?1)", [value.to_string()])
@@ -2735,7 +3088,7 @@ mod tests {
             32
         );
         drop(writer);
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -2760,7 +3113,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![newer, older]
         );
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
     }
 
     #[test]
@@ -2830,6 +3183,206 @@ mod tests {
         assert_eq!(copilot_after.error, "");
         assert_eq!(copilot_after.totals.total_tokens, 150);
 
-        fs::remove_dir_all(root).unwrap();
+        let _ = &root;
+    }
+
+    #[test]
+    fn preserves_native_reported_cost_and_1h_cache_creation_pricing() {
+        let root = test_root("native-cost-1h");
+        let connection = open_store_at(&root.join("agent_usage.db")).unwrap();
+        let today = day_offset(0);
+        // Unpriced custom model with authoritative native reported cost
+        connection
+            .execute(
+                "INSERT INTO agent_usage_daily (file_key, source, day, model, input_tokens,
+                    output_tokens, cache_read_tokens, cache_creation_tokens, reasoning_tokens,
+                    total_tokens, samples, cache_creation_1h_tokens, reported_cost_usd, reported_samples)
+                 VALUES ('f1', 'opencode', ?1, 'unlisted-custom-model', 1000, 500, 0, 0, 0, 1500, 1, 0, 0.42, 1)",
+                [&today],
+            )
+            .unwrap();
+        // Claude Opus 4.6 with 400k 5m writes ($6.25/1M -> $2.50) + 600k 1h writes ($10.00/1M -> $6.00) = $8.50
+        connection
+            .execute(
+                "INSERT INTO agent_usage_daily (file_key, source, day, model, input_tokens,
+                    output_tokens, cache_read_tokens, cache_creation_tokens, reasoning_tokens,
+                    total_tokens, samples, cache_creation_1h_tokens, reported_cost_usd, reported_samples)
+                 VALUES ('f2', 'claude', ?1, 'claude-opus-4-6', 0, 0, 0, 1000000, 0, 1000000, 1, 600000, 0.0, 0)",
+                [&today],
+            )
+            .unwrap();
+
+        let rep = report(&connection, &query("7d")).unwrap();
+        let opencode = rep.sources.iter().find(|s| s.source == "opencode").unwrap();
+        assert_eq!(opencode.models.len(), 1);
+        assert!(opencode.models[0].priced);
+        assert!((opencode.models[0].cost_usd - 0.42).abs() < 1e-9);
+
+        let claude = rep.sources.iter().find(|s| s.source == "claude").unwrap();
+        assert_eq!(claude.models.len(), 1);
+        assert!(claude.models[0].priced);
+        assert!((claude.models[0].cost_usd - 8.50).abs() < 1e-6);
+        let _ = &root;
+    }
+
+    #[test]
+    fn migrates_v1_database_and_rescans_present_files_preserving_archived() {
+        let root = test_root("v1-to-v2");
+        let home = root.join("home");
+        let db_path = root.join("agent_usage.db");
+        let live_file = home.join(".pi/agent/sessions/live.jsonl");
+        fs::create_dir_all(live_file.parent().unwrap()).unwrap();
+        write_sample(&live_file, 100, 20);
+        let (size, mtime) = file_stamp(&live_file).unwrap();
+
+        // Build a synthetic v1 database with stale inflated live row + archived row
+        let raw = Connection::open(&db_path).unwrap();
+        raw.execute_batch(
+            "CREATE TABLE agent_usage_meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
+             CREATE TABLE agent_usage_sources (source TEXT PRIMARY KEY NOT NULL, last_present_at INTEGER NOT NULL DEFAULT 0, last_scan_at INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'empty', error TEXT NOT NULL DEFAULT '');
+             CREATE TABLE agent_usage_files (file_key TEXT PRIMARY KEY NOT NULL, source TEXT NOT NULL, path TEXT NOT NULL, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL, scanned_at INTEGER NOT NULL, present INTEGER NOT NULL DEFAULT 1);
+             CREATE TABLE agent_usage_daily (file_key TEXT NOT NULL, source TEXT NOT NULL, day TEXT NOT NULL, model TEXT NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL, cache_creation_tokens INTEGER NOT NULL, reasoning_tokens INTEGER NOT NULL, total_tokens INTEGER NOT NULL, samples INTEGER NOT NULL, PRIMARY KEY (file_key, day, model)) WITHOUT ROWID;
+             CREATE TABLE agent_usage_hourly (file_key TEXT NOT NULL, source TEXT NOT NULL, day TEXT NOT NULL, hour INTEGER NOT NULL, model TEXT NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL, cache_creation_tokens INTEGER NOT NULL, reasoning_tokens INTEGER NOT NULL, total_tokens INTEGER NOT NULL, samples INTEGER NOT NULL, PRIMARY KEY (file_key, day, hour, model)) WITHOUT ROWID;
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
+        // Simulate v1 mixed-slash key (e.g. `.pi/agent/sessions\live.jsonl` on Windows)
+        let live_key = format!("pi:{}", live_file.to_string_lossy().replace('\\', "/"));
+        raw.execute(
+            "INSERT INTO agent_usage_files VALUES (?1, 'pi', ?2, ?3, ?4, 1, 1)",
+            params![live_key, live_file.to_string_lossy().to_string(), size, mtime],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO agent_usage_daily VALUES (?1, 'pi', '2026-10-29', 'model-a', 9999, 0, 0, 0, 0, 9999, 1)",
+            [&live_key],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO agent_usage_files VALUES ('pi:archived', 'pi', 'archived', 1, 1, 1, 0)",
+            [],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO agent_usage_daily VALUES ('pi:archived', 'pi', '2026-10-28', 'model-a', 50, 0, 0, 0, 0, 50, 1)",
+            [],
+        )
+        .unwrap();
+        // Simulate v1 OpenCode DB + duplicate legacy storage JSON file
+        raw.execute(
+            "INSERT INTO agent_usage_files VALUES ('opencode:db.db', 'opencode', 'db.db', 1, 1, 1, 1)",
+            [],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO agent_usage_files VALUES ('opencode:storage/msg.json', 'opencode', 'storage/msg.json', 1, 1, 1, 1)",
+            [],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO agent_usage_daily VALUES ('opencode:storage/msg.json', 'opencode', '2026-10-29', 'gpt-5', 777, 0, 0, 0, 0, 777, 1)",
+            [],
+        )
+        .unwrap();
+        drop(raw);
+
+        // Opening upgrades schema to v2, normalizes keys, retires v1 opencode JSON duplicates,
+        // and invalidates live file stamps.
+        let mut connection = open_store_at(&db_path).unwrap();
+        let res = sync(&mut connection, &home, None, |_| {}).unwrap();
+        assert_eq!(res.changed_files, 1);
+
+        let rep = report(&connection, &query("all")).unwrap();
+        let pi = rep.sources.iter().find(|s| s.source == "pi").unwrap();
+        // Live row rebuilt (120) + archived row preserved (50) = 170 (no mixed-slash duplication)
+        assert_eq!(pi.totals.total_tokens, 170);
+        assert_eq!(pi.status, "ok");
+        let opencode = rep.sources.iter().find(|s| s.source == "opencode").unwrap();
+        // Duplicate v1 opencode storage JSON row was retired on migration
+        assert_eq!(opencode.totals.total_tokens, 0);
+        let _ = &root;
+    }
+
+    #[test]
+    fn deduplicates_shared_message_ids_across_forked_sessions() {
+        let root = test_root("cross-file-dedup");
+        let home = root.join("home");
+        let proj = home.join(".claude/projects/myproj");
+        fs::create_dir_all(&proj).unwrap();
+        let ts = local_timestamp(2026, 10, 29, 12);
+
+        let parent = proj.join("parent.jsonl");
+        let fork = proj.join("fork.jsonl");
+        let shared = json!({
+            "type": "assistant",
+            "timestamp": ts,
+            "message": {
+                "id": "msg-shared-1",
+                "model": "claude-sonnet-4-6",
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 100, "output_tokens": 20}
+            }
+        });
+        let fork_only = json!({
+            "type": "assistant",
+            "timestamp": ts,
+            "message": {
+                "id": "msg-fork-2",
+                "model": "claude-sonnet-4-6",
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 50, "output_tokens": 10}
+            }
+        });
+        fs::write(&parent, format!("{shared}\n")).unwrap();
+        fs::write(&fork, format!("{shared}\n{fork_only}\n")).unwrap();
+
+        let mut connection = open_store_at(&root.join("agent_usage.db")).unwrap();
+        sync(&mut connection, &home, None, |_| {}).unwrap();
+        let rep = report(&connection, &query("all")).unwrap();
+        let claude = rep.sources.iter().find(|s| s.source == "claude").unwrap();
+        assert_eq!(claude.totals.samples, 2);
+        assert_eq!(claude.totals.total_tokens, 180); // 120 + 60, not 120 + 120 + 60
+        assert_eq!(claude.status, "ok");
+        let _ = &root;
+    }
+
+    #[test]
+    fn resolves_agent_usage_prices_for_variants_and_suffixes() {
+        let prices = load_agent_usage_prices();
+        for model in [
+            "gemini-4-carbon",
+            "gemini-4-argon-high",
+            "gemini-4-neon-xhigh",
+            "gemini-4-hydrogen-tiered",
+            "gemini-flash-worker-agy",
+            "gemini-pro-orchestrator",
+            "gemini-3.8-flash-tiered",
+            "claude-opus-4-6-thinking",
+            "claude-opus-4.6",
+            "claude-sonnet-5-5-max",
+            "claude-opus-5-5@default",
+            "claude-sonnet-4-6[1m]",
+            "anthropic.claude-sonnet-4-5-20250929-v1",
+            "gpt-5.4-high",
+            "gpt-5.1-codex-max",
+            "global:deepseek-v4.1-flash",
+            "custom-local:deepseek-flash",
+            "workbuddyglobal-deepseek-v4.1-flash",
+            "grok-4.6-build",
+            "kimi-k3.1-pro",
+            "minimax-m2.7",
+            "glm-5.3",
+            "qwen4-max",
+        ] {
+            assert!(
+                resolve_agent_usage_price(&prices, model).is_some(),
+                "expected pricing match for model `{model}`"
+            );
+        }
+        // Distinct pricing preserved for real `-max` models
+        let qwen_max = resolve_agent_usage_price(&prices, "qwen4-max").unwrap();
+        assert!((qwen_max.prompt - 1.5).abs() < 1e-9);
+        let codex_max = resolve_agent_usage_price(&prices, "gpt-5.1-codex-max").unwrap();
+        assert!((codex_max.prompt - 1.25).abs() < 1e-9);
     }
 }

@@ -13,11 +13,14 @@ import pi from '../assets/icons/pi-logo-on-light.svg';
 import vertex from '../assets/icons/vertex.svg';
 import devin from '../assets/icons/devin.svg';
 import meta from '../assets/icons/meta.svg';
+import workbuddy from '../assets/icons/workbuddy.png';
+import grok from '../assets/icons/grok.svg';
 
 const brands: [RegExp, string][] = [
   [/codex|mcode/i, codex], [/claude|anthropic/i, claude], [/gemini/i, gemini],
-  [/deepseek/i, deepseek], [/kimi/i, kimi], [/antigravity/i, antigravity],
-  [/copilot/i, copilot], [/zcode/i, zcode], [/opencode/i, opencode],
+  [/deepseek|\bdsh\b/i, deepseek], [/kimi/i, kimi], [/antigravity/i, antigravity],
+  [/copilot/i, copilot], [/workbuddy|codebuddy/i, workbuddy], [/grok/i, grok],
+  [/zcode/i, zcode], [/opencode/i, opencode],
   [/\b(pi|omp)\b/i, pi], [/vertex/i, vertex], [/devin/i, devin],
   [/meta|llama/i, meta], [/openai|gpt|\bo[134]\b/i, openai],
 ];

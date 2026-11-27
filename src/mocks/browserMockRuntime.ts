@@ -990,7 +990,7 @@ const ERROR_SCENARIO_COMMANDS = new Set([
 ]);
 
 
-const MOCK_AGENT_SOURCES = ['claude', 'codex', 'mcode', 'opencode', 'omp', 'pi', 'copilot', 'gemini', 'antigravity', 'kimi', 'zcode'];
+const MOCK_AGENT_SOURCES = ['claude', 'codex', 'mcode', 'opencode', 'omp', 'pi', 'copilot', 'gemini', 'antigravity', 'kimi', 'workbuddy', 'codebuddy', 'dsh', 'grokbuild', 'zcode'];
 
 type MockAgentCounter = {
   inputTokens: number;

@@ -45,6 +45,7 @@ toml = "0.8"
 toml_edit = "0.20"
 yaml-edit = "0.3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+zstd = "0.13"
 
 [dev-dependencies]
 tauri = { version = "~2.12.4", features = ["test"] }

@@ -5476,7 +5476,358 @@ pub(crate) fn resolve_agent_usage_price<'a>(
     prices: &'a HashMap<String, ModelPrice>,
     model: &str,
 ) -> Option<&'a ModelPrice> {
-    find_model_price(prices, model)
+    resolve_agent_usage_price_inner(prices, model)
+}
+
+#[derive(Clone)]
+struct AgentPriceCandidate {
+    model_id: String,
+    allow_prefix_match: bool,
+}
+
+fn clean_agent_model_id_for_pricing(model_id: &str) -> String {
+    let trimmed = model_id.trim();
+    let after_slash = trimmed
+        .rsplit('/')
+        .find(|part| !part.trim().is_empty() && !part.eq_ignore_ascii_case("models"))
+        .unwrap_or(trimmed)
+        .trim();
+    // Handle both `<route>:<model>` (e.g. `global:deepseek-v4.1-flash`, `custom-local:deepseek-flash`)
+    // and `<model>:<variant>` (e.g. `claude-opus-4-6:thinking` or Bedrock `:0`).
+    let without_colon = if let Some((left, right)) = after_slash.split_once(':') {
+        let left_lower = left.to_ascii_lowercase();
+        if matches!(left_lower.as_str(), "global" | "us" | "eu" | "ap" | "cn")
+            || left_lower.starts_with("custom")
+            || left_lower.starts_with("route")
+        {
+            right
+        } else {
+            left
+        }
+    } else {
+        after_slash
+    };
+    let lower = without_colon
+        .trim()
+        .to_ascii_lowercase();
+    let without_at = if let Some((head, tail)) = lower.split_once('@') {
+        if tail == "default" || tail == "latest" {
+            head.to_string()
+        } else {
+            lower.replace('@', "-")
+        }
+    } else {
+        lower
+    };
+    without_at
+        .trim_end_matches("[1m]")
+        .trim()
+        .to_string()
+}
+
+fn strip_agent_known_namespace(model_id: &str) -> Option<String> {
+    if let Some(pos) = model_id.rfind("claude-") {
+        if pos > 0 {
+            return Some(model_id[pos..].to_string());
+        }
+    }
+    for prefix in [
+        "openai.",
+        "anthropic.",
+        "google.",
+        "moonshot.",
+        "moonshotai.",
+        "bedrock.",
+        "global.",
+        "workbuddyglobal-",
+    ] {
+        if let Some(stripped) = model_id.strip_prefix(prefix) {
+            if !stripped.is_empty() {
+                return Some(stripped.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn strip_agent_non_anthropic_claude_prefix(model_id: &str) -> Option<String> {
+    const NON_ANTHROPIC: &[&str] = &[
+        "abab", "ark-code", "arctic", "astron", "codex", "command-r", "deepseek",
+        "doubao", "ernie", "gemini", "gemma", "glm", "gpt", "grok", "hermes",
+        "hy3", "hunyuan", "jamba", "kimi", "lfm", "llama", "longcat", "mercury",
+        "mimo", "minimax", "mistral", "mixtral", "moonshot", "nemotron", "nova-",
+        "openai", "qianfan", "qwen", "seed-", "solar", "stepfun",
+    ];
+    let rest = model_id.strip_prefix("claude-")?;
+    NON_ANTHROPIC
+        .iter()
+        .any(|marker| rest.starts_with(marker))
+        .then(|| rest.to_string())
+}
+
+fn strip_agent_bedrock_version(model_id: &str) -> Option<String> {
+    let (base, suffix) = model_id.rsplit_once("-v")?;
+    (!base.is_empty() && !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
+        .then(|| base.to_string())
+}
+
+fn strip_agent_date_suffix(model_id: &str) -> Option<String> {
+    let bytes = model_id.as_bytes();
+    if bytes.len() > 11 {
+        let start = bytes.len() - 11;
+        let s = &bytes[start..];
+        if s[0] == b'-'
+            && s[1..5].iter().all(|b| b.is_ascii_digit())
+            && s[5] == b'-'
+            && s[6..8].iter().all(|b| b.is_ascii_digit())
+            && s[8] == b'-'
+            && s[9..11].iter().all(|b| b.is_ascii_digit())
+        {
+            return Some(model_id[..start].to_string());
+        }
+    }
+    let (base, suffix) = model_id.rsplit_once('-')?;
+    if base.is_empty() || !suffix.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if suffix.len() == 8 {
+        return Some(base.to_string());
+    }
+    if suffix.len() == 6 {
+        let month: u32 = suffix[2..4].parse().unwrap_or(0);
+        let day: u32 = suffix[4..6].parse().unwrap_or(0);
+        if (1..=12).contains(&month) && (1..=31).contains(&day) {
+            return Some(base.to_string());
+        }
+    }
+    None
+}
+
+fn strip_agent_effort_suffix(model_id: &str) -> Option<String> {
+    for suffix in ["-minimal", "-low", "-medium", "-high", "-xhigh"] {
+        if let Some(base) = model_id.strip_suffix(suffix) {
+            if !base.is_empty() {
+                return Some(base.to_string());
+            }
+        }
+    }
+    // Strip `-max` only for Claude/Gemini effort tiers (avoid stripping `gpt-5.1-codex-max` or `qwen4-max`).
+    if (model_id.starts_with("claude-") || model_id.starts_with("gemini-"))
+        && model_id.ends_with("-max")
+    {
+        let base = &model_id[..model_id.len() - 4];
+        if !base.is_empty() {
+            return Some(base.to_string());
+        }
+    }
+    None
+}
+
+fn strip_agent_gemini_flash_tiered(model_id: &str) -> Option<String> {
+    let version = model_id
+        .strip_prefix("gemini-")?
+        .strip_suffix("-flash-tiered")?;
+    (!version.is_empty()
+        && version
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())))
+    .then(|| format!("gemini-{version}-flash"))
+}
+
+fn strip_agent_claude_thinking(model_id: &str) -> Option<String> {
+    if !model_id.starts_with("claude-")
+        || strip_agent_non_anthropic_claude_prefix(model_id).is_some()
+    {
+        return None;
+    }
+    let base = model_id.strip_suffix("-thinking")?;
+    (base.len() > "claude-".len()).then(|| base.to_string())
+}
+
+fn agent_should_try_prefix_match(model_id: &str) -> bool {
+    if matches!(
+        model_id,
+        "gemini-4-hydrogen-tiered"
+            | "gemini-4-hydrogen-orchestrator"
+            | "gemini-flash-worker-agy"
+    ) || strip_agent_gemini_flash_tiered(model_id).is_some()
+    {
+        return false;
+    }
+    let dash_count = model_id.matches('-').count();
+    if model_id.starts_with("claude-") {
+        return dash_count >= 3;
+    }
+    if ["o1", "o3", "o4", "o5"]
+        .iter()
+        .any(|prefix| model_id.starts_with(prefix))
+    {
+        return dash_count >= 1;
+    }
+    [
+        "gpt-",
+        "gemini-",
+        "deepseek-",
+        "qwen-",
+        "glm-",
+        "kimi-",
+        "minimax-",
+    ]
+    .iter()
+    .any(|prefix| model_id.starts_with(prefix))
+        && dash_count >= 2
+}
+
+fn build_agent_price_candidates(model: &str) -> Vec<AgentPriceCandidate> {
+    let cleaned = clean_agent_model_id_for_pricing(model);
+    if cleaned.is_empty() || matches!(cleaned.as_str(), "unknown" | "null" | "none") {
+        return Vec::new();
+    }
+    let mut candidates: Vec<AgentPriceCandidate> = Vec::new();
+    let mut queue = std::collections::VecDeque::from([AgentPriceCandidate {
+        model_id: cleaned,
+        allow_prefix_match: true,
+    }]);
+
+    let push_unique = |list: &mut Vec<AgentPriceCandidate>, item: AgentPriceCandidate| -> bool {
+        if item.model_id.is_empty() {
+            return false;
+        }
+        if let Some(existing) = list.iter_mut().find(|entry| entry.model_id == item.model_id) {
+            if !existing.allow_prefix_match && item.allow_prefix_match {
+                existing.allow_prefix_match = true;
+                return true;
+            }
+            return false;
+        }
+        list.push(item);
+        true
+    };
+
+    while let Some(candidate) = queue.pop_front() {
+        let allow_prefix_match = candidate.allow_prefix_match;
+        if !push_unique(&mut candidates, candidate.clone()) {
+            continue;
+        }
+        let id = candidate.model_id;
+        let push_derived = |q: &mut std::collections::VecDeque<AgentPriceCandidate>, next: String| {
+            q.push_back(AgentPriceCandidate {
+                model_id: next,
+                allow_prefix_match,
+            });
+        };
+        if let Some(stripped) = strip_agent_known_namespace(&id) {
+            push_derived(&mut queue, stripped);
+        }
+        if let Some(stripped) = strip_agent_non_anthropic_claude_prefix(&id) {
+            push_derived(&mut queue, stripped);
+        }
+        if let Some(stripped) = strip_agent_bedrock_version(&id) {
+            push_derived(&mut queue, stripped);
+        }
+        if id.starts_with("claude-")
+            && id.contains('.')
+            && strip_agent_non_anthropic_claude_prefix(&id).is_none()
+        {
+            push_derived(&mut queue, id.replace('.', "-"));
+        }
+        if let Some(stripped) = strip_agent_date_suffix(&id) {
+            push_derived(&mut queue, stripped);
+        }
+        if let Some(stripped) = strip_agent_effort_suffix(&id) {
+            push_derived(&mut queue, stripped);
+        }
+        if let Some(stripped) = strip_agent_gemini_flash_tiered(&id) {
+            queue.push_back(AgentPriceCandidate {
+                model_id: stripped,
+                allow_prefix_match: false,
+            });
+        }
+        if let Some(mapped) = match id.as_str() {
+            "gemini-4-hydrogen-tiered"
+            | "gemini-4-hydrogen-orchestrator"
+            | "gemini-flash-worker-agy" => Some("gemini-4-hydrogen"),
+            "gemini-pro-orchestrator" | "orchestrator-carbon" => Some("gemini-4-carbon"),
+            "gemini-pro-orchestrator-argon"
+            | "gemini-pro-orchestrator-g1-pro"
+            | "orchestrator-argon" => Some("gemini-4-argon"),
+            "gemini-pro-orchestrator-neon" | "orchestrator-neon" => Some("gemini-4-neon"),
+            _ => None,
+        } {
+            queue.push_back(AgentPriceCandidate {
+                model_id: mapped.to_string(),
+                allow_prefix_match: false,
+            });
+        }
+        if let Some(stripped) = strip_agent_claude_thinking(&id) {
+            push_derived(&mut queue, stripped);
+        }
+    }
+    candidates
+}
+
+fn resolve_agent_usage_price_inner<'a>(
+    prices: &'a HashMap<String, ModelPrice>,
+    model: &str,
+) -> Option<&'a ModelPrice> {
+    if let Some(price) = find_exact_model_price(prices, model, |_| true) {
+        return Some(price);
+    }
+    let candidates = build_agent_price_candidates(model);
+    if candidates.is_empty() {
+        return None;
+    }
+    // 1. Exact case-insensitive match across normalized candidates.
+    for candidate in &candidates {
+        if let Some(price) = prices.get(&candidate.model_id) {
+            return Some(price);
+        }
+        if let Some((_, price)) = prices
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(&candidate.model_id))
+        {
+            return Some(price);
+        }
+    }
+    // 2. Prefix match where a catalog entry starts with `<candidate>-` (e.g. dated catalog row).
+    for candidate in &candidates {
+        if !candidate.allow_prefix_match || !agent_should_try_prefix_match(&candidate.model_id) {
+            continue;
+        }
+        let prefix = format!("{}-", candidate.model_id);
+        if let Some(price) = prices
+            .iter()
+            .filter(|(key, _)| key.to_ascii_lowercase().starts_with(&prefix))
+            .min_by_key(|(key, _)| key.len())
+            .map(|(_, price)| price)
+        {
+            return Some(price);
+        }
+    }
+    // 3. Longest base catalog entry matching `<key>-` prefix of a candidate.
+    for candidate in &candidates {
+        if !candidate.allow_prefix_match {
+            continue;
+        }
+        if let Some(price) = prices
+            .iter()
+            .filter_map(|(key, price)| {
+                let key_lower = normalized_model_tail(key);
+                if key_lower.is_empty() {
+                    return None;
+                }
+                candidate
+                    .model_id
+                    .starts_with(&format!("{key_lower}-"))
+                    .then_some((key_lower.len(), price))
+            })
+            .max_by_key(|(length, _)| *length)
+            .map(|(_, price)| price)
+        {
+            return Some(price);
+        }
+    }
+    None
 }
 
 fn record_local_hour(record: &UsageRecord) -> String {
