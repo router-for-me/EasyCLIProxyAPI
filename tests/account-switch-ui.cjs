@@ -42,12 +42,16 @@ const path = require('node:path');
     await stoppedPage.goto(`${base}?mock=stopped`, { waitUntil: 'domcontentloaded' });
     await stoppedPage.locator('.app-shell').waitFor();
 
-    // 1. Sidebar separates Proxy vs Local & Tools cleanly with zero noisy badges and standalone Version Management.
+    // 1. Sidebar follows CPA Management Center style: static section labels, zero accordion toggles/badges,
+    // Proxy vs Local separation, and unclipped standalone Version Management at 1280x800.
     const proxyGroup = stoppedPage.locator('[data-nav-group="proxy"]');
     const localGroup = stoppedPage.locator('[data-nav-group="local"]');
     assert.equal(await proxyGroup.count(), 1);
     assert.equal(await localGroup.count(), 1);
     assert.equal(await stoppedPage.locator('.nav-group-badge').count(), 0);
+    assert.equal(await stoppedPage.locator('.nav-group-toggle').count(), 0);
+    assert.equal(await proxyGroup.locator('.nav-group-label').innerText(), '反代服务');
+    assert.equal(await localGroup.locator('.nav-group-label').innerText(), '本地与扩展');
     assert.equal(await proxyGroup.getByRole('button', { name: '使用记录', exact: true }).count(), 1);
     assert.equal(await localGroup.getByRole('button', { name: '使用记录', exact: true }).count(), 0);
     assert.equal(await proxyGroup.getByRole('button', { name: '插件', exact: true }).count(), 1);
@@ -60,10 +64,6 @@ const path = require('node:path');
     assert.equal(await agentUsageBtn.count(), 1);
     await agentUsageBtn.click();
     await stoppedPage.locator('.agent-usage-standalone-page').waitFor();
-
-    const proxyToggle = proxyGroup.locator('.nav-group-toggle');
-    await proxyToggle.click();
-    assert.equal(await proxyToggle.getAttribute('aria-expanded'), 'false');
 
     // 2. Open Account Switching -> Overview + Persistent Native Pill Platform Strip + Cross-Platform "全部账号"
     await localGroup.getByRole('button', { name: '账号切换', exact: true }).click();
@@ -269,17 +269,36 @@ const path = require('node:path');
     await stoppedPage.getByRole('button', { name: '卡片视图' }).click();
     assert.equal(await stoppedPage.locator('.fd-account-card').count(), 3);
 
-    // Sidebar collapse & 64px rail
-    const localToggle = localGroup.locator('.nav-group-toggle');
-    await localToggle.click();
-    assert.equal(await localGroup.locator('.nav-group-active-pill').count(), 1);
-    await localToggle.click();
-
-    const railToggle = stoppedPage.locator('.sidebar-rail-toggle');
+    // Floating edge collapse toggle -> 60px rail + restore to 220px + unclipped 1280x800 nav check
+    const railToggle = stoppedPage.locator('.sidebar-rail-toggle.sidebar-toggle-floating');
+    assert.equal(await railToggle.count(), 1);
     await railToggle.click();
     const collapsedWidth = await stoppedPage.locator('.sidebar').evaluate((el) => el.getBoundingClientRect().width);
-    assert.ok(collapsedWidth <= 70, `Collapsed sidebar width should be ~64px, got ${collapsedWidth}`);
+    assert.ok(collapsedWidth <= 64, `Collapsed sidebar width should be ~60px, got ${collapsedWidth}`);
     await railToggle.click();
+    const expandedWidth = await stoppedPage.locator('.sidebar').evaluate((el) => el.getBoundingClientRect().width);
+    assert.ok(expandedWidth >= 216 && expandedWidth <= 224, `Expanded sidebar width should be ~220px, got ${expandedWidth}`);
+
+    await stoppedPage.setViewportSize({ width: 1280, height: 800 });
+    const navClipCheck = await stoppedPage.evaluate(() => {
+      const nav = document.querySelector('.nav-section');
+      const versionsBtn = Array.from(document.querySelectorAll('.nav-section button')).find((b) =>
+        b.textContent && b.textContent.includes('版本管理'),
+      );
+      const navRect = nav ? nav.getBoundingClientRect() : null;
+      const btnRect = versionsBtn ? versionsBtn.getBoundingClientRect() : null;
+      return {
+        navScrollH: nav ? nav.scrollHeight : 0,
+        navClientH: nav ? nav.clientHeight : 0,
+        btnBottom: btnRect ? btnRect.bottom : 9999,
+        navBottom: navRect ? navRect.bottom : 0,
+      };
+    });
+    assert.ok(
+      navClipCheck.btnBottom <= navClipCheck.navBottom + 1 && navClipCheck.navScrollH <= navClipCheck.navClientH + 2,
+      `All sidebar nav items including 版本管理 must fit unclipped at 1280x800 (${JSON.stringify(navClipCheck)})`,
+    );
+    await stoppedPage.setViewportSize({ width: 1366, height: 860 });
 
     // 10. Import CPA OAuth credentials
     await stoppedPage.getByRole('button', { name: '导入 CPA 凭证' }).click();

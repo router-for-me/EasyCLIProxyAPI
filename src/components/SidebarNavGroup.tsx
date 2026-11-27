@@ -11,75 +11,26 @@ export const ACCOUNT_SWITCH_CHILDREN_ID = 'nav-account-switch-children';
 
 type SidebarNavGroupProps = {
   group: SidebarGroupDefinition;
-  collapsed: boolean;
-  hasActiveChild: boolean;
-  activeChildLabel?: string;
-  hasUpdateIndicator?: boolean;
-  updateIndicatorTone?: 'attention' | 'processing' | 'available';
-  onToggle: () => void;
+  showDivider?: boolean;
   children: ReactNode;
 };
 
 export function SidebarNavGroup({
   group,
-  collapsed,
-  hasActiveChild,
-  activeChildLabel,
-  hasUpdateIndicator,
-  updateIndicatorTone,
-  onToggle,
+  showDivider = true,
   children,
 }: SidebarNavGroupProps) {
   const { t } = useI18n();
   const groupLabel = t(group.labelKey);
-  const bodyId = `nav-group-body-${group.id}`;
-  const toggleTitle = t(collapsed ? 'app.nav.groupExpand' : 'app.nav.groupCollapse', {
-    name: groupLabel,
-  });
 
   return (
     <div
-      className={[
-        'nav-group',
-        `nav-group-${group.tone}`,
-        collapsed ? 'collapsed' : 'expanded',
-        hasActiveChild && collapsed ? 'has-collapsed-active' : '',
-      ]
-        .filter(Boolean)
-        .join(' ')}
+      className={`nav-group nav-group-${group.tone}`}
       data-nav-group={group.id}
     >
-      <button
-        type="button"
-        className="nav-group-toggle"
-        aria-expanded={!collapsed}
-        aria-controls={bodyId}
-        title={toggleTitle}
-        onClick={onToggle}
-      >
-        <span className="nav-group-title">{groupLabel}</span>
-        <span className="nav-group-meta">
-          {collapsed && hasActiveChild && activeChildLabel ? (
-            <span className="nav-group-active-pill">{activeChildLabel}</span>
-          ) : null}
-          {collapsed && hasUpdateIndicator ? (
-            <i
-              className={['nav-update-indicator', updateIndicatorTone ?? ''].filter(Boolean).join(' ')}
-              aria-hidden="true"
-            />
-          ) : null}
-          <ChevronRight
-            size={12}
-            strokeWidth={2}
-            className="nav-group-chevron"
-            aria-hidden="true"
-          />
-        </span>
-      </button>
-
-      <div id={bodyId} className="nav-group-body" aria-hidden={collapsed || undefined}>
-        <div className="nav-group-items">{children}</div>
-      </div>
+      <div className="nav-group-label">{groupLabel}</div>
+      {showDivider ? <div className="nav-group-divider" aria-hidden="true" /> : null}
+      <div className="nav-group-items">{children}</div>
     </div>
   );
 }

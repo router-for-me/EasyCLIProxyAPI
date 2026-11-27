@@ -18,7 +18,7 @@ export function usePluginNavLayout(
       setState((current) => (current.layout === 'expanded' && !current.compact ? current : { layout: 'expanded', compact: false }));
       return undefined;
     }
-    const brand = sidebar.querySelector<HTMLElement>('.sidebar-brand');
+    const brand = sidebar.querySelector<HTMLElement>('.sidebar-header, .sidebar-brand');
     const switcher = sidebar.querySelector<HTMLElement>('.cpa-target-switcher');
     const bottom = sidebar.querySelector<HTMLElement>('.sidebar-bottom');
     const media = window.matchMedia(COMPACT_QUERY);
@@ -28,7 +28,7 @@ export function usePluginNavLayout(
       );
       const groups = Array.from(nav.querySelectorAll<HTMLElement>('.nav-group'));
       const groupOverhead = groups.reduce((total, group) => {
-        const header = group.querySelector<HTMLElement>('.nav-group-toggle');
+        const header = group.querySelector<HTMLElement>('.nav-group-label, .nav-group-toggle');
         const groupStyle = getComputedStyle(group);
         const headerStyle = header ? getComputedStyle(header) : null;
         return total

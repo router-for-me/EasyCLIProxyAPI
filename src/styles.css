@@ -179,7 +179,7 @@ textarea:focus-visible {
 
 /* Sidebar width shared by the app layout. */
 :root {
-  --app-sidebar-width: 240px;
+  --app-sidebar-width: 220px;
 }
 
 .app-shell {

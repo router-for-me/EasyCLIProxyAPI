@@ -10,14 +10,15 @@ import { closePluginWebview } from './services/pluginWebview';
 import { WindowFrame } from './components/WindowFrame';
 import { MessageNotice } from './appNotice';
 import { ThemeSelector } from './components/ThemeSelector';
-import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type SyntheticEvent } from 'react';
 import {
   Activity,
   ArrowLeftRight,
   Bot,
   Check,
+  ChevronLeft,
+  ChevronRight,
   ChevronsUpDown,
-  ExternalLink,
   Eye,
   EyeOff,
   FileSliders,
@@ -31,8 +32,6 @@ import {
   MessageCircle,
   Network,
   PackageOpen,
-  PanelLeftClose,
-  PanelLeftOpen,
   Blocks,
   Puzzle,
   ServerCog,
@@ -61,14 +60,9 @@ import { PluginResourcePage } from './pages/PluginResourcePage';
 import { PluginNavChildren, PluginNavToggle } from './components/SidebarPluginNav';
 import { SidebarNavGroup } from './components/SidebarNavGroup';
 import {
-  findGroupForPage,
-  readCollapsedGroups,
   readSidebarRailCollapsed,
   SIDEBAR_NAV_GROUPS,
-  writeCollapsedGroups,
   writeSidebarRailCollapsed,
-  type CollapsedGroupsMap,
-  type SidebarGroupId,
 } from './components/SidebarNavConfig';
 import { usePluginNavLayout } from './components/usePluginNavLayout';
 import { usePluginNavEntries } from './usePluginNavEntries';
@@ -95,7 +89,7 @@ import { WorkspaceScrollbars } from './components/WorkspaceScrollbars';
 import { EmptyState } from './components/EmptyState';
 import { CpaConnectionDialog, CpaWorkspaceTarget } from './pages/RemoteCpaPage';
 import { getCpaConnection, type CpaConnection } from './services/remoteCpa';
-import { hasBackend, isWebUi } from './services/platform';
+import { hasBackend } from './services/platform';
 import { WebAccountControls } from './components/WebLoginScreen';
 import { ServerPathPickerHost } from './components/ServerPathPickerModal';
 
@@ -259,21 +253,39 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
   const logoLabel = t(appVersionDisplay === 'stable' ? 'appUpdate.logoShowPreview' : 'appUpdate.logoShowStable');
   const { latest: coreLatest, hasUpdate: coreHasUpdate } = useCoreUpdate();
   const [active, setActive] = useState<AppPageId>('home');
-  const [collapsedGroups, setCollapsedGroups] = useState<CollapsedGroupsMap>(readCollapsedGroups);
   const [sidebarRailCollapsed, setSidebarRailCollapsed] = useState<boolean>(
     readSidebarRailCollapsed,
   );
+  const [railTooltip, setRailTooltip] = useState<{
+    targetId: string;
+    label: string;
+    meta?: string;
+    top: number;
+  } | null>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
 
-  const toggleNavGroup = useCallback((groupId: SidebarGroupId) => {
-    setCollapsedGroups((current) => {
-      const next = { ...current, [groupId]: !current[groupId] };
-      writeCollapsedGroups(next);
-      return next;
-    });
+  const isMac = useMemo(() => {
+    if (typeof navigator === 'undefined') return false;
+    return /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform || navigator.userAgent || '');
   }, []);
+  const sidebarShortcutLabel = isMac ? '⌘B' : 'Ctrl+B';
+
+  const hideRailTooltip = useCallback(() => setRailTooltip(null), []);
+  const showRailTooltip = useCallback(
+    (event: SyntheticEvent<HTMLElement>, targetId: string, label: string, meta?: string) => {
+      const rect = event.currentTarget.getBoundingClientRect();
+      setRailTooltip({
+        targetId,
+        label,
+        meta,
+        top: Math.max(24, Math.min(window.innerHeight - 24, rect.top + rect.height / 2)),
+      });
+    },
+    [],
+  );
 
   const toggleSidebarRail = useCallback(() => {
+    setRailTooltip(null);
     setSidebarRailCollapsed((current) => {
       const next = !current;
       writeSidebarRailCollapsed(next);
@@ -281,17 +293,20 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
     });
   }, []);
 
-  // Automatically expand a collapsed group whenever navigation enters one of its pages.
   useEffect(() => {
-    const groupId = findGroupForPage(active);
-    if (!groupId) return;
-    setCollapsedGroups((current) => {
-      if (!current[groupId]) return current;
-      const next = { ...current, [groupId]: false };
-      writeCollapsedGroups(next);
-      return next;
-    });
-  }, [active]);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey || event.shiftKey || !(event.ctrlKey || event.metaKey)) return;
+      if (event.key.toLowerCase() !== 'b') return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
+        return;
+      }
+      event.preventDefault();
+      toggleSidebarRail();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [toggleSidebarRail]);
   useLayoutEffect(() => {
     // Reset only committed page changes, before the destination is painted.
     workspaceRef.current?.scrollTo({ top: 0, left: 0, behavior: 'instant' });
@@ -446,6 +461,8 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
             ? `${t('plugins.updateAvailable')} (${Object.keys(pluginUpdates).length})`
             : ''
           : availableUpdateLabel;
+    const labelText = t(page.labelKey);
+    const lockedHint = locked ? t('app.nav.lockedHint') : undefined;
     const row = (
       <button
         key={page.id}
@@ -453,11 +470,26 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
         className={[isActive ? 'active' : '', locked ? 'locked' : ''].filter(Boolean).join(' ')}
         aria-current={page.id === active ? 'page' : undefined}
         disabled={locked}
-        title={locked ? `${t(page.labelKey)} — ${t('app.nav.lockedHint')}` : t(page.labelKey)}
-        onClick={() => select(page.id)}
+        title={sidebarRailCollapsed ? undefined : locked ? `${labelText} — ${lockedHint}` : labelText}
+        onClick={() => {
+          hideRailTooltip();
+          select(page.id);
+        }}
+        onMouseEnter={
+          sidebarRailCollapsed
+            ? (event) => showRailTooltip(event, `nav-${page.id}`, labelText, lockedHint)
+            : undefined
+        }
+        onMouseLeave={sidebarRailCollapsed ? hideRailTooltip : undefined}
+        onFocus={
+          sidebarRailCollapsed
+            ? (event) => showRailTooltip(event, `nav-${page.id}`, labelText, lockedHint)
+            : undefined
+        }
+        onBlur={sidebarRailCollapsed ? hideRailTooltip : undefined}
       >
         <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
-        <span>{t(page.labelKey)}</span>
+        <span>{labelText}</span>
         {locked ? (
           <Lock size={12} strokeWidth={1.75} className="nav-lock-icon" aria-hidden="true" />
         ) : updateIndicator ? (
@@ -507,6 +539,7 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
 
   const homePageEntry = navPages.find((page) => page.id === 'home');
   const versionsPageEntry = navPages.find((page) => page.id === 'versions');
+  const sidebarToggleLabel = t(sidebarRailCollapsed ? 'app.nav.sidebarExpand' : 'app.nav.sidebarCollapse');
 
   return (
     <>
@@ -519,29 +552,24 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
           .filter(Boolean)
           .join(' ')}
       >
-        {active !== "easy" ? (
+        {active !== 'easy' ? (
+          <>
           <aside className="sidebar">
-            <div className="sidebar-brand" title={t('app.desktopConsole')}>
-              <button type="button" className="brand-logo-button" aria-label={logoLabel} title={logoLabel}
-                onClick={() => setAppVersionDisplay(current => current === 'stable' ? 'preview' : 'stable')}>
-                <img src={appLogo} alt="" className="brand-mark brand-logo" />
-              </button>
-              <div className="sidebar-brand-text">
-                <strong>EasyCLIProxyAPI</strong>
-                <span>{isWebUi() ? (locale.startsWith('zh') ? 'Web 控制台' : 'Web Console') : t('app.desktopConsole')}</span>
+            <div className="sidebar-header">
+              <div className="sidebar-brand" title="EasyCLIProxyAPI">
+                <button
+                  type="button"
+                  className="brand-logo-button"
+                  aria-label={logoLabel}
+                  title={logoLabel}
+                  onClick={() => setAppVersionDisplay(current => current === 'stable' ? 'preview' : 'stable')}
+                >
+                  <img src={appLogo} alt="" className="brand-mark brand-logo" />
+                </button>
+                <div className="sidebar-brand-text">
+                  <strong>EasyCLIProxyAPI</strong>
+                </div>
               </div>
-              <button
-                type="button"
-                className="sidebar-rail-toggle"
-                aria-label={t(sidebarRailCollapsed ? 'app.nav.sidebarExpand' : 'app.nav.sidebarCollapse')}
-                title={t(sidebarRailCollapsed ? 'app.nav.sidebarExpand' : 'app.nav.sidebarCollapse')}
-                aria-pressed={sidebarRailCollapsed}
-                onClick={toggleSidebarRail}
-              >
-                {sidebarRailCollapsed
-                  ? <PanelLeftOpen size={15} strokeWidth={1.75} aria-hidden="true" />
-                  : <PanelLeftClose size={15} strokeWidth={1.75} aria-hidden="true" />}
-              </button>
             </div>
 
             {switcher}
@@ -558,32 +586,9 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
                   .map((id) => navPages.find((page) => page.id === id))
                   .filter((page): page is (typeof navPages)[number] => Boolean(page));
                 if (groupPages.length === 0) return null;
-                const isCollapsed = Boolean(collapsedGroups[group.id]);
-                const activeInGroup =
-                  groupPages.some((page) => page.id === active)
-                  || (group.id === 'proxy' && pluginChildActive);
-                const activeChildLabel = activeInGroup
-                  ? activePage
-                    ? t(activePage.labelKey)
-                    : pluginEntry?.label
-                  : undefined;
-                const proxyHasSignInAlert = group.id === 'proxy' && signInAlerts.length > 0;
-                const groupHasUpdate =
-                  proxyHasSignInAlert
-                  || (group.id === 'proxy' && Boolean(pluginUpdateIndicatorState(pluginUpdates)));
-                const groupUpdateTone = proxyHasSignInAlert ? 'attention' : undefined;
 
                 return (
-                  <SidebarNavGroup
-                    key={group.id}
-                    group={group}
-                    collapsed={isCollapsed}
-                    hasActiveChild={activeInGroup}
-                    activeChildLabel={activeChildLabel}
-                    hasUpdateIndicator={groupHasUpdate}
-                    updateIndicatorTone={groupUpdateTone}
-                    onToggle={() => toggleNavGroup(group.id)}
-                  >
+                  <SidebarNavGroup key={group.id} group={group}>
                     {groupPages.map((page) => renderNavPageRow(page))}
                   </SidebarNavGroup>
                 );
@@ -601,21 +606,47 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
                 <button
                   type="button"
                   className="sidebar-link sidebar-easy-entry"
-                  title={t('app.nav.easy')}
-                  onClick={() => select('easy')}
+                  title={sidebarRailCollapsed ? undefined : t('app.nav.easy')}
+                  onClick={() => {
+                    hideRailTooltip();
+                    select('easy');
+                  }}
+                  onMouseEnter={
+                    sidebarRailCollapsed
+                      ? (event) => showRailTooltip(event, 'footer-easy', t('app.nav.easy'))
+                      : undefined
+                  }
+                  onMouseLeave={sidebarRailCollapsed ? hideRailTooltip : undefined}
+                  onFocus={
+                    sidebarRailCollapsed
+                      ? (event) => showRailTooltip(event, 'footer-easy', t('app.nav.easy'))
+                      : undefined
+                  }
+                  onBlur={sidebarRailCollapsed ? hideRailTooltip : undefined}
                 >
-                  <Sprout size={16} strokeWidth={1.75} aria-hidden="true" />
+                  <Sprout size={14} strokeWidth={1.75} aria-hidden="true" />
                   <span>{t('app.nav.easy')}</span>
                 </button>
                 <button
                   type="button"
                   className="sidebar-link sidebar-contact"
-                  title={t('app.contact.title')}
+                  title={sidebarRailCollapsed ? undefined : t('app.contact.title')}
                   onClick={() => void openContact()}
+                  onMouseEnter={
+                    sidebarRailCollapsed
+                      ? (event) => showRailTooltip(event, 'footer-contact', t('app.contact.label'))
+                      : undefined
+                  }
+                  onMouseLeave={sidebarRailCollapsed ? hideRailTooltip : undefined}
+                  onFocus={
+                    sidebarRailCollapsed
+                      ? (event) => showRailTooltip(event, 'footer-contact', t('app.contact.label'))
+                      : undefined
+                  }
+                  onBlur={sidebarRailCollapsed ? hideRailTooltip : undefined}
                 >
-                  <MessageCircle size={16} strokeWidth={1.75} aria-hidden="true" />
+                  <MessageCircle size={14} strokeWidth={1.75} aria-hidden="true" />
                   <span>{t('app.contact.label')}</span>
-                  <ExternalLink size={12} strokeWidth={1.75} aria-hidden="true" />
                 </button>
                 <WebAccountControls />
               </div>
@@ -643,7 +674,7 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
                       });
                     }}
                   >
-                    <Languages size={16} strokeWidth={1.75} aria-hidden="true" />
+                    <Languages size={15} strokeWidth={1.75} aria-hidden="true" />
                     <span lang={selectedLanguage.value}>{selectedLanguage.nativeLabel}</span>
                     <ChevronsUpDown size={12} strokeWidth={1.75} aria-hidden="true" />
                   </button>
@@ -699,6 +730,32 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
               </div>
             </div>
           </aside>
+          <button
+            type="button"
+            className="sidebar-rail-toggle sidebar-toggle-floating"
+            aria-label={`${sidebarToggleLabel} (${sidebarShortcutLabel})`}
+            aria-pressed={sidebarRailCollapsed}
+            onClick={toggleSidebarRail}
+            onMouseEnter={(event) => showRailTooltip(event, 'sidebar-toggle', sidebarToggleLabel, sidebarShortcutLabel)}
+            onMouseLeave={hideRailTooltip}
+            onFocus={(event) => showRailTooltip(event, 'sidebar-toggle', sidebarToggleLabel, sidebarShortcutLabel)}
+            onBlur={hideRailTooltip}
+          >
+            {sidebarRailCollapsed
+              ? <ChevronRight size={14} strokeWidth={2} aria-hidden="true" />
+              : <ChevronLeft size={14} strokeWidth={2} aria-hidden="true" />}
+          </button>
+          {railTooltip ? (
+            <div
+              className="nav-tooltip"
+              role="tooltip"
+              style={{ top: railTooltip.top }}
+            >
+              <span className="nav-tooltip-label">{railTooltip.label}</span>
+              {railTooltip.meta ? <span className="nav-tooltip-meta">{railTooltip.meta}</span> : null}
+            </div>
+          ) : null}
+          </>
         ) : null}
 
         <div id="app-workspace" className="workspace" ref={workspaceRef} data-overlay-scrollbars>
