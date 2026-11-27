@@ -80,5 +80,20 @@ export async function loadPluginCredentialQuota(file: AuthFile): Promise<QuotaSt
     const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
     if (!plugin || !authIndex || file.disabled === true) throw new Error('Plugin quota is unavailable for this credential');
     return parsePluginCredentialQuota(await managementApi.post(`/plugins/${encodeURIComponent(plugin)}/quota`, { auth_index: authIndex }));
-  } catch (reason) { return { status: 'error', rows: [], error: reason instanceof Error ? reason.message : String(reason) }; }
+  } catch (reason) {
+    const statusCode = reason && typeof reason === 'object'
+      ? (reason as { statusCode?: unknown; status_code?: unknown }).statusCode
+        ?? (reason as { status_code?: unknown }).status_code
+      : undefined;
+    const errorStatus = typeof statusCode === 'number' && Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599
+      ? statusCode
+      : undefined;
+    return {
+      status: 'error',
+      rows: [],
+      error: reason instanceof Error ? reason.message : String(reason),
+      ...(errorStatus !== undefined ? { errorStatus } : {}),
+      failedAtMs: Date.now(),
+    };
+  }
 }

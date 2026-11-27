@@ -435,7 +435,6 @@
 .auth-signin-strip > svg { flex: none; }
 .auth-signin-strip > span { flex: 1 1 220px; min-width: 0; color: var(--text-secondary); }
 .auth-signin-strip > button { flex: none; }
-.auth-signin-strip.replaced { background: var(--bg-card); color: var(--text-secondary); }
 .auth-signin-banner { margin-bottom: 12px; }
 .oauth-subpage-alert {
   display: inline-grid;

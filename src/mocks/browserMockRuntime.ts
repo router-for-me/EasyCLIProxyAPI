@@ -2017,9 +2017,10 @@ export function createBrowserMockRuntime(
       ];
       case 'start_oauth_login': {
         const provider = readString(payload.provider) || 'codex';
+        const browser = readString(payload.browser);
         const session = `mock-oauth-${provider}-${Date.now()}`;
         state.oauthSessions.set(session, provider);
-        return { url: `https://example.com/mock-oauth/${provider}?state=${session}`, state: session, opened: true, openError: null };
+        return { url: `https://example.com/mock-oauth/${provider}?state=${session}`, state: session, opened: browser !== 'none', openError: null };
       }
       case 'get_oauth_status': {
         const session = readString(payload.state);

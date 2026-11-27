@@ -7,7 +7,7 @@ import { EmptyState } from '../components/EmptyState';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { commitFetchedQuota } from '../services/quotaEnrichment';
 import { ResetCreditExpiries } from '../components/ResetCreditExpiries';
-import { MessageNotice } from '../appNotice';
+import { FloatingNotice, MessageNotice, useAppNotice } from '../appNotice';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Check, ChevronDown, ChevronLeft, ChevronRight, Gauge, ListRestart, LoaderCircle, LogIn, Pencil, RefreshCw, Search, X } from 'lucide-react';
 import { SelectMenu } from '../components/SelectMenu';
@@ -24,7 +24,8 @@ import { QuotaActionFeedback } from '../components/QuotaActionFeedback';
 import { canResetQuota, hasPendingClaudeReset } from '../services/quotaActions';
 import { useQuotaReset } from '../components/useQuotaReset';
 import { useCredentialReauth } from '../components/useCredentialSignIn';
-import { canReauthenticate, credentialSignInState, observeCredentialSignIn } from '../services/credentialSignIn';
+import { getCredentialReauthSnapshot } from '../services/credentialReauth';
+import { canReauthenticate, credentialsNeedingSignIn, observeCredentialSignIn } from '../services/credentialSignIn';
 import antigravityIcon from '../assets/icons/antigravity.svg';
 import claudeIcon from '../assets/icons/claude.svg';
 import codexIcon from '../assets/icons/codex.svg';
@@ -108,12 +109,21 @@ const quotaColumns: StackedColumns = { stacked: { minWidth: 300, gap: 12 }, comp
 
 export function QuotaPage() {
   const { t } = useI18n();
+  const privacy = usePrivacyMask();
   const { askConfirmation, confirmationDialog } = useConfirmation();
+  const [allCredentials, setAllCredentials] = useState<AuthFile[]>([]);
   const [files, setFiles] = useState<AuthFile[]>([]);
   const quotas = useQuotaCache();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const feedback = useAppNotice();
+  const { showNotice } = feedback;
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const [storedQuotaUi] = useState(readStoredQuotaUi);
   const [category, setCategory] = useState<'all' | QuotaDisplayProvider>(storedQuotaUi.category ?? 'all');
   const [sortMode, setSortMode] = useState<QuotaSortMode>(storedQuotaUi.sortMode ?? 'default');
@@ -149,6 +159,7 @@ export function QuotaPage() {
       ]);
       const listed = dedupeAuthFiles(responseList(payload, 'files'));
       observeCredentialSignIn(listed);
+      setAllCredentials(listed);
       const listedIndexes = new Set(listed.map((file) => normalizeAuthIndex(file.auth_index ?? file.authIndex)).filter(Boolean));
       const allFiles = sortAuthFilesByPriority([
         ...listed,
@@ -191,12 +202,49 @@ export function QuotaPage() {
 
   const resetQuota = useQuotaReset(askConfirmation, setError);
   const reauth = useCredentialReauth();
+  const lastReauthRevision = useRef(reauth.completedRevision);
+  useEffect(() => {
+    if (reauth.completedRevision === lastReauthRevision.current) return;
+    lastReauthRevision.current = reauth.completedRevision;
+    void loadFiles();
+  }, [loadFiles, reauth.completedRevision]);
+
+  const signInRequiredKeys = useMemo(
+    () => new Set(credentialsNeedingSignIn(allCredentials, quotas).map(quotaKey)),
+    [allCredentials, quotas],
+  );
+
   const signInAgain = useCallback(async (file: AuthFile) => {
+    if (reauth.pending) return;
+    const name = privacy.credentialName(file);
+    feedback.clearNotice();
     setError('');
-    const result = await reauth.signInAgain(readString(file, 'name'), String(file.provider ?? file.type ?? '').toLowerCase());
-    if (result.status === 'success') await loadFiles();
-    else if (result.status === 'error') setError(t('authFiles.signIn.failed', { name: readString(file, 'name'), error: result.error || t('oauth.authFailed') }));
-  }, [loadFiles, reauth, t]);
+    const result = await reauth.signInAgain(file, allCredentials);
+    if (!mountedRef.current || result.status === 'cancelled') return;
+    lastReauthRevision.current = getCredentialReauthSnapshot().completedRevision;
+    if (result.status === 'success') {
+      showNotice({ key: result.replacedFile ? 'authFiles.signIn.successReplaced' : 'authFiles.signIn.success', variables: { name } }, 'success');
+      await loadFiles();
+    } else if (result.status === 'identity-changed') {
+      setError(t('authFiles.signIn.identityChanged', { name, observed: privacy.text(result.observedAccount, [result.observedAccount]) }));
+      await loadFiles();
+    } else if (result.status === 'ambiguous') {
+      setError(t('authFiles.signIn.ambiguous', { name }));
+      await loadFiles();
+    } else if (result.status === 'unconfirmed') {
+      setError(t('authFiles.signIn.unconfirmed', { name }));
+      await loadFiles();
+    } else {
+      setError(t('authFiles.signIn.failed', { name, error: result.error || t('oauth.authFailed') }));
+    }
+  }, [allCredentials, feedback, loadFiles, privacy, reauth, showNotice, t]);
+
+  const copySignInLink = useCallback((url: string) => {
+    void navigator.clipboard.writeText(url).then(
+      () => showNotice({ key: 'oauth.linkCopied' }, 'success'),
+      () => setError(t('common.copyFailed')),
+    );
+  }, [showNotice, t]);
 
   const refreshAll = useCallback(async () => {
     if (Object.values(getQuotaCacheSnapshot()).some((quota) => quota.status === 'loading')) return;
@@ -246,19 +294,25 @@ export function QuotaPage() {
   );
   const pageItems = listedItems.pageItems;
   const glance = (file: AuthFile) => layout === 'compact' && !expanded.has(quotaKey(file));
-  const cards = pageItems.map(({ provider, file, quota }) => <QuotaCard key={quotaKey(file)} file={file} quota={quota} onRefresh={() => void refreshOne(file)} onReset={provider === 'codex' || provider === 'claude' ? () => void resetQuota(file, quota) : undefined}
-    glance={layout === 'compact' ? glance(file) : undefined} onToggleGlance={() => toggleExpanded(quotaKey(file))} onSaveNote={(nextNote) => saveCredentialNote(file, nextNote)}
-    signIn={credentialSignInState(file, files) === 'required' ? {
-      pending: reauth.pending === readString(file, 'name'),
-      busy: Boolean(reauth.pending),
-      onSignIn: canReauthenticate(file) ? () => void signInAgain(file) : undefined,
-      onCancel: reauth.cancel,
-    } : undefined} />);
+  const cards = pageItems.map(({ provider, file, quota }) => {
+    const fileName = readString(file, 'name');
+    const copyUrl = reauth.openFailure?.name === fileName ? reauth.openFailure.url : undefined;
+    return <QuotaCard key={quotaKey(file)} file={file} quota={quota} onRefresh={() => void refreshOne(file)} onReset={provider === 'codex' || provider === 'claude' ? () => void resetQuota(file, quota) : undefined}
+      glance={layout === 'compact' ? glance(file) : undefined} onToggleGlance={() => toggleExpanded(quotaKey(file))} onSaveNote={(nextNote) => saveCredentialNote(file, nextNote)}
+      signIn={signInRequiredKeys.has(quotaKey(file)) ? {
+        pending: reauth.pending === fileName,
+        busy: Boolean(reauth.pending),
+        onSignIn: canReauthenticate(file) ? () => void signInAgain(file) : undefined,
+        onCancel: reauth.cancel,
+        ...(copyUrl ? { copyUrl, onCopyLink: () => copySignInLink(copyUrl) } : {}),
+      } : undefined} />;
+  });
 
   return (
     <section className="page management-page quota-page" aria-label={t('quota.title')}>
       {confirmationDialog}
-      {error ? <MessageNotice message={error} /> : null}
+      {error ? <MessageNotice message={error} onDismiss={() => setError('')} /> : null}
+      <FloatingNotice key={feedback.revision} notice={feedback.notice} onDismiss={feedback.clearNotice} />
       <OAuthPageToolbar
         icon={<Gauge size={18} />}
         summary={t(files.length === 1 ? 'quota.queryableCredentials.one' : 'quota.queryableCredentials.other', { count: files.length })}
@@ -355,7 +409,7 @@ export function QuotaCard({
   onToggleGlance?: () => void;
   onSaveNote?: (note: string) => Promise<void> | void;
   /** Set when the credential's login expired and it must sign in again (#724). */
-  signIn?: { pending: boolean; busy: boolean; onSignIn?: () => void; onCancel: () => void };
+  signIn?: { pending: boolean; busy: boolean; onSignIn?: () => void; onCancel: () => void; copyUrl?: string; onCopyLink?: () => void };
 }) {
   const { locale, t } = useI18n();
   const now = useQuotaClock() + (quota.serverTimeOffsetMs ?? 0);
@@ -485,7 +539,10 @@ export function QuotaCard({
       {signIn ? <Notice tone="error" variant="text" className="quota-card-error quota-card-signin" icon={<LogIn size={18} />}
         title={t('authFiles.signIn.required')}
         action={signIn.pending
-          ? <button type="button" className="secondary-button tiny-button" onClick={signIn.onCancel}>{t('common.cancel')}</button>
+          ? <div className="quota-card-signin-actions">
+            {signIn.copyUrl && signIn.onCopyLink ? <button type="button" className="secondary-button tiny-button" onClick={signIn.onCopyLink}>{t('authFiles.signIn.copyLink')}</button> : null}
+            <button type="button" className="secondary-button tiny-button" onClick={signIn.onCancel}>{t('common.cancel')}</button>
+          </div>
           : signIn.onSignIn ? <button type="button" className="primary-button tiny-button" disabled={signIn.busy} onClick={signIn.onSignIn}>{t('authFiles.signIn.action')}</button> : null}>
         <small>{t(signIn.pending ? 'authFiles.signIn.waiting' : 'authFiles.signIn.hint')}</small>
       </Notice> : null}

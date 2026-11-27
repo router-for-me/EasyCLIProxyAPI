@@ -57,6 +57,8 @@ export type QuotaState = {
   status: QuotaStatus;
   rows: QuotaRow[];
   error?: string;
+  errorStatus?: number;
+  failedAtMs?: number;
   plan?: string;
   creditBalance?: string;
   creditsUnlimited?: boolean;
@@ -77,6 +79,28 @@ export type QuotaState = {
 };
 
 export const idleQuota = (): QuotaState => ({ status: 'idle', rows: [] });
+
+export class QuotaRequestError extends Error {
+  readonly statusCode?: number;
+
+  constructor(message: string, statusCode?: number) {
+    super(message);
+    this.name = 'QuotaRequestError';
+    if (typeof statusCode === 'number' && Number.isInteger(statusCode) && statusCode >= 100 && statusCode <= 599) {
+      this.statusCode = statusCode;
+    }
+  }
+}
+
+export const readQuotaErrorStatus = (error: unknown): number | undefined => {
+  if (!error || typeof error !== 'object') return undefined;
+  const candidate = (error as { statusCode?: unknown; status_code?: unknown }).statusCode
+    ?? (error as { status_code?: unknown }).status_code;
+  if (typeof candidate === 'number' && Number.isInteger(candidate) && candidate >= 100 && candidate <= 599) {
+    return candidate;
+  }
+  return undefined;
+};
 
 const endpointByProvider: Record<QuotaProvider, string> = {
   meta: 'https://api.meta.ai/muse-code/key',
@@ -808,7 +832,7 @@ const requestQuotaPayload = async (
   }, { timeoutMs });
   const status = Number(response.status_code ?? response.statusCode ?? 0);
   if (status < 200 || status >= 300) {
-    throw new Error(apiCallErrorMessage(response));
+    throw new QuotaRequestError(apiCallErrorMessage(response), status);
   }
   if (responseClock) {
     const header = isRecord(response.header) ? response.header : {};
@@ -1004,6 +1028,7 @@ async function callUpstreamQuota(
     ? [endpointByProvider.antigravity, 'https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary', 'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary']
     : [endpointByProvider[provider]];
   let lastError = '';
+  let lastErrorStatus: number | undefined;
   let hadSuccessfulResponse = false;
   for (const url of urls) {
     try {
@@ -1020,21 +1045,22 @@ async function callUpstreamQuota(
         hadSuccessfulResponse = true;
         if (quotaRowsFor('antigravity', payload).length === 0) {
           lastError = quotaText('quota.service.error.antigravityEmpty');
+          lastErrorStatus = undefined;
           continue;
         }
       }
       return payload;
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
+      lastErrorStatus = readQuotaErrorStatus(error);
     }
   }
-  throw new Error(
-    lastError || quotaText(
-      hadSuccessfulResponse
-        ? 'quota.service.error.upstreamEmpty'
-        : 'quota.service.error.noResponse',
-    ),
+  const message = lastError || quotaText(
+    hadSuccessfulResponse
+      ? 'quota.service.error.upstreamEmpty'
+      : 'quota.service.error.noResponse',
   );
+  throw lastErrorStatus !== undefined ? new QuotaRequestError(message, lastErrorStatus) : new Error(message);
 }
 
 const callCodexResetCredits = async (
@@ -1155,7 +1181,10 @@ async function callMetaQuota(file: AuthFile): Promise<QuotaState> {
   assertCurrent();
   const status = Number(response.status_code ?? response.statusCode ?? 0);
   if (!(status >= 200 && status < 300)) {
-    throw new Error(`${quotaText('quota.service.meta.requestFailed')} (${Number.isFinite(status) ? status : 0})`);
+    throw new QuotaRequestError(
+      `${quotaText('quota.service.meta.requestFailed')} (${Number.isFinite(status) ? status : 0})`,
+      Number.isFinite(status) ? status : undefined,
+    );
   }
   const quota = parseMetaQuotaPayload(response.body ?? response.bodyText);
   if (!quota) throw new Error(quotaText('quota.service.meta.invalidResponse'));
@@ -1280,10 +1309,13 @@ async function loadQuotaSnapshot(file: AuthFile, locale: AppLocale = getCurrentL
       fetchedAt,
     };
   } catch (error) {
+    const errorStatus = readQuotaErrorStatus(error);
     return {
       status: 'error',
       rows: [],
       error: error instanceof Error ? error.message : String(error),
+      ...(errorStatus !== undefined ? { errorStatus } : {}),
+      failedAtMs: Date.now(),
     };
   }
 }
@@ -1325,9 +1357,16 @@ const quotaMutationRequests = new Map<string, Promise<QuotaState>>();
 export function loadQuota(file: AuthFile, locale: AppLocale = getCurrentLocale()): Promise<QuotaState> {
   const key = quotaKey(file);
   const reset = quotaMutationRequests.get(key);
-  if (reset) return reset.catch((error): QuotaState => ({
-    status: 'error', rows: [], error: error instanceof Error ? error.message : String(error),
-  }));
+  if (reset) return reset.catch((error): QuotaState => {
+    const errorStatus = readQuotaErrorStatus(error);
+    return {
+      status: 'error',
+      rows: [],
+      error: error instanceof Error ? error.message : String(error),
+      ...(errorStatus !== undefined ? { errorStatus } : {}),
+      failedAtMs: Date.now(),
+    };
+  });
   const existing = quotaRequests.get(key);
   if (existing) return existing;
   const request = loadQuotaSnapshot(file, locale).finally(() => {
