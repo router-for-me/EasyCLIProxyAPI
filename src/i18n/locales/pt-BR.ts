@@ -9,11 +9,13 @@ import { themeDiyPtBR } from '../themeDiy';
 
 import { acpPtBR } from '../acp';
 import { agentSystemPromptsPtBR } from '../agentSystemPrompts';
+import { accountSwitchPtBR } from '../accountSwitch';
 export const ptBR: Record<MessageKey, string> = {
   ...remoteCpaPtBR,
   ...autoUpdatePtBR,
   ...acpPtBR,
   ...agentSystemPromptsPtBR,
+  ...accountSwitchPtBR,
   'agents.responseLanguage.label': "Idioma das respostas",
   'agents.responseLanguage.unmanaged': "Manter a configuração atual (sem gerenciar)",
   'agents.responseLanguage.default': "Padrão do Claude (remover substituição)",

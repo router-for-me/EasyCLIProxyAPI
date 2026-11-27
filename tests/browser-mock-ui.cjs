@@ -24,7 +24,7 @@ const path = require('node:path');
     await page.addInitScript(() => localStorage.setItem('easy-cli-proxy-api.locale', 'en'));
     await page.goto(`${base}/?mock=running&mockDelay=5`);
     await page.locator('.app-shell').waitFor();
-    await page.locator('.nav-section button').nth(2).click();
+    await page.locator('.nav-section button:not(.nav-group-toggle)').nth(2).click();
     await page.getByRole('tab', { name: 'Authentication Files', exact: true }).click();
     await page.locator('.auth-file-card').first().waitFor();
     assert.equal(await page.locator('.auth-file-card').count(), 10);

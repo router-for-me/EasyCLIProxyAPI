@@ -6,8 +6,12 @@ authors.workspace = true
 description = "Shared headless-capable core backend for EasyCLIProxyAPI"
 
 [dependencies]
+aes.workspace = true
+aes-gcm.workspace = true
 base64.workspace = true
+cbc.workspace = true
 chrono.workspace = true
+dirs.workspace = true
 ecpa-macros = { path = "../ecpa-macros" }
 flate2.workspace = true
 futures-util.workspace = true
@@ -18,6 +22,7 @@ hyper-rustls.workspace = true
 hyper-util.workspace = true
 json5.workspace = true
 notify.workspace = true
+pbkdf2.workspace = true
 regex.workspace = true
 reqwest.workspace = true
 rusqlite.workspace = true
@@ -28,14 +33,18 @@ serde.workspace = true
 serde_json.workspace = true
 serde_norway.workspace = true
 serde_yaml.workspace = true
+sha1.workspace = true
 sha2.workspace = true
 shlex.workspace = true
+sysinfo.workspace = true
 tar.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true
 tokio-util.workspace = true
 toml.workspace = true
 toml_edit.workspace = true
+url.workspace = true
+uuid.workspace = true
 yaml-edit.workspace = true
 zip.workspace = true
 zstd.workspace = true
@@ -43,5 +52,13 @@ zstd.workspace = true
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3.6", features = ["async-secret-service", "async-io", "crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6", features = ["apple-native"] }
+
 [target.'cfg(windows)'.dependencies]
+age = { version = "0.11", default-features = false }
+keyring = { version = "3.6", features = ["windows-native"] }
 windows-sys.workspace = true

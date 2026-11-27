@@ -27,9 +27,9 @@ const path = require('node:path');
 
     assert.equal(await page.getByRole('heading', { level: 1, name: '首页' }).count(), 0);
 
-    await page.locator('.nav-section').getByRole('button', { name: '使用记录' }).click();
+    await page.locator('.nav-section').getByRole('button', { name: '使用记录', exact: true }).click();
     const tabs = page.getByRole('tab');
-    assert.equal(await tabs.count(), 7);
+    assert.equal(await tabs.count(), 6);
     assert.deepEqual(await tabs.evaluateAll((elements) => elements
       .map((element) => element.getAttribute('aria-controls'))
       .filter((id) => !id || !document.getElementById(id))), []);

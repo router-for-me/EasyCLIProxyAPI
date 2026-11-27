@@ -20,7 +20,7 @@ const { mkdirSync } = require('node:fs');
     await page.addInitScript(() => localStorage.setItem('easy-cli-proxy-api.locale', 'en'));
     await page.goto(`${base}/?mock=running&mockDelay=5`);
     await page.locator('.app-shell').waitFor();
-    await page.locator('.nav-section button').nth(2).click();
+    await page.locator('.nav-section button:not(.nav-group-toggle)').nth(2).click();
     const card = page.locator('.vertex-login-card');
     const opener = card.getByRole('button', { name: 'Import Vertex Credential', exact: true });
     const cardHeight = (await card.boundingBox()).height;

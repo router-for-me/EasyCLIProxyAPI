@@ -26,7 +26,7 @@ const path = require('node:path');
       await page.goto(base + '/?mock=running&mockDelay=25', { waitUntil: 'domcontentloaded', timeout: 60000 });
       await page.locator('.app-shell').waitFor();
       await page.addStyleTag({ content: '#browser-mock-toolbar { display:none; }' });
-      await page.locator('.nav-section button').nth(2).click();
+      await page.locator('.nav-section button:not(.nav-group-toggle)').nth(2).click();
       const tab = page.locator('#oauth-subpage-tab-acp');
       await tab.click();
       const idle = () => page.waitForFunction(() => document.querySelector('.acp-access-page')?.getAttribute('aria-busy') === 'false');

@@ -4,6 +4,7 @@ import { defaultAutoUpdateSettings, validateAutoUpdateSettings, type AutoUpdateS
 import { applyTemplateChanges, readTemplatePath, sameTemplateValue, type TemplateConfigChange } from '../services/templateConfig';
 import { requestBucketRangeLabel } from '../services/authFileRequests';
 import { createPluginMock, type PluginWebviewMockState } from './pluginMock';
+import { createAccountSwitchMock } from './accountSwitchMock';
 import { createQuotaMock, createQuotaMockFiles } from './quotaMock';
 import { normalizeAuthFileTags } from '../services/authFiles';
 import { hasDeepSeekArgumentConflict, parseAgentLaunchArguments } from '../services/agentLaunchArguments';
@@ -1430,6 +1431,8 @@ export function createBrowserMockRuntime(
     },
   ];
 
+  const accountSwitchMock = createAccountSwitchMock();
+
   const invoke = async (command: string, rawPayload?: unknown): Promise<unknown> => {
     await sleep(delayMs);
     const payload = asObject(rawPayload);
@@ -1439,6 +1442,9 @@ export function createBrowserMockRuntime(
 
     const pluginResponse = pluginMock.handle(command, payload);
     if (pluginResponse.handled) return pluginResponse.value;
+
+    const accountSwitchResponse = accountSwitchMock.handle(command, payload);
+    if (accountSwitchResponse !== undefined) return accountSwitchResponse;
 
     switch (command) {
       case 'plugin:app|version': return '0.2.97-mock';

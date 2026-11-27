@@ -3,6 +3,7 @@ import { createTraditionalMessages } from './traditional';
 import { themeDiyZhTW } from './themeDiy';
 import { agentSystemPromptsZhTW } from './agentSystemPrompts';
 import { authFileTagsZhTW } from './authFileList';
+import { accountSwitchZhTW } from './accountSwitch';
 import { jaOverrides } from './ja';
 import { en } from './locales/en';
 import { zhCN, type MessageKey } from './locales/zh-CN';
@@ -40,6 +41,7 @@ export const zhTW: Record<MessageKey, string> = {
   ...themeDiyZhTW,
   ...agentSystemPromptsZhTW,
   ...authFileTagsZhTW,
+  ...accountSwitchZhTW,
   'app.nav.mcpSkills': 'MCP 與技能',
   'quota.service.cloud.label': '雲端工作階段額度',
   'quota.service.cloud.used': '已用 {value}',

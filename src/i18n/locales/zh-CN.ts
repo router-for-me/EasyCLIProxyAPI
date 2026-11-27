@@ -8,11 +8,13 @@ import { themeDiyZhCN } from '../themeDiy';
 
 import { acpZhCN } from '../acp';
 import { agentSystemPromptsZhCN } from '../agentSystemPrompts';
+import { accountSwitchZhCN } from '../accountSwitch';
 export const zhCN: Record<string, string> = {
   ...remoteCpaZhCN,
   ...autoUpdateZhCN,
   ...acpZhCN,
   ...agentSystemPromptsZhCN,
+  ...accountSwitchZhCN,
   'agents.responseLanguage.label': '回复语言',
   'agents.responseLanguage.unmanaged': '保留现有设置（不管理）',
   'agents.responseLanguage.default': 'Claude 默认（移除覆盖）',

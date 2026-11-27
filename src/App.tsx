@@ -12,6 +12,8 @@ import { MessageNotice } from './appNotice';
 import { ThemeSelector } from './components/ThemeSelector';
 import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
+  Activity,
+  ArrowLeftRight,
   Bot,
   Check,
   ChevronsUpDown,
@@ -29,6 +31,8 @@ import {
   MessageCircle,
   Network,
   PackageOpen,
+  PanelLeftClose,
+  PanelLeftOpen,
   Blocks,
   Puzzle,
   ServerCog,
@@ -46,6 +50,8 @@ import { VersionManagementPage } from './pages/VersionManagementPage';
 import { OAuthManagementPage } from './pages/ManagementPages';
 import { QuotaPage } from './pages/QuotaPage';
 import { AgentsPage } from './pages/AgentsPage';
+import { AccountSwitchPage } from './pages/AccountSwitchPage';
+import { AgentUsagePage } from './pages/AgentUsagePage';
 import { EasyModePage } from './pages/EasyModePage';
 import { UsageRecordsPage } from './pages/UsageRecordsPage';
 import { RoutingPage } from './pages/routing/RoutingPage';
@@ -53,6 +59,17 @@ import { PluginsPage } from './pages/PluginsPage';
 import { McpSkillsPage } from './pages/McpSkillsPage';
 import { PluginResourcePage } from './pages/PluginResourcePage';
 import { PluginNavChildren, PluginNavToggle } from './components/SidebarPluginNav';
+import { SidebarNavGroup } from './components/SidebarNavGroup';
+import {
+  findGroupForPage,
+  readCollapsedGroups,
+  readSidebarRailCollapsed,
+  SIDEBAR_NAV_GROUPS,
+  writeCollapsedGroups,
+  writeSidebarRailCollapsed,
+  type CollapsedGroupsMap,
+  type SidebarGroupId,
+} from './components/SidebarNavConfig';
 import { usePluginNavLayout } from './components/usePluginNavLayout';
 import { usePluginNavEntries } from './usePluginNavEntries';
 import { useCredentialSignInWatch, useSignInAlerts } from './components/useCredentialSignIn';
@@ -67,7 +84,10 @@ import type { AppVersionSeries } from './services/appUpdates';
 import { AppUpdateDialog, AppUpdateProvider, useAppUpdate } from './appUpdate';
 import { appUpdateIndicatorState } from './appUpdateModel';
 import { forgetUpdatedPlugins, pluginUpdateIndicatorState } from './pluginUpdateModel';
-import { canOpenAppPage, requestAppNavigation } from './navigation';
+import {
+  canOpenAppPage,
+  requestAppNavigation,
+} from './navigation';
 import { useThemePreference } from './theme';
 import { usePrivacyMode } from './privacy';
 import { Dialog } from './components/Dialog';
@@ -127,10 +147,22 @@ const pages = [
     component: AgentsPage,
   },
   {
+    id: 'account-switching',
+    labelKey: 'app.nav.accountSwitching',
+    icon: ArrowLeftRight,
+    component: AccountSwitchPage,
+  },
+  {
     id: 'usage-records',
     labelKey: 'app.nav.usageRecords',
     icon: History,
     component: UsageRecordsPage,
+  },
+  {
+    id: 'agent-usage',
+    labelKey: 'app.nav.agentUsage',
+    icon: Activity,
+    component: AgentUsagePage,
   },
   {
     id: 'config',
@@ -227,7 +259,39 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
   const logoLabel = t(appVersionDisplay === 'stable' ? 'appUpdate.logoShowPreview' : 'appUpdate.logoShowStable');
   const { latest: coreLatest, hasUpdate: coreHasUpdate } = useCoreUpdate();
   const [active, setActive] = useState<AppPageId>('home');
+  const [collapsedGroups, setCollapsedGroups] = useState<CollapsedGroupsMap>(readCollapsedGroups);
+  const [sidebarRailCollapsed, setSidebarRailCollapsed] = useState<boolean>(
+    readSidebarRailCollapsed,
+  );
   const workspaceRef = useRef<HTMLDivElement>(null);
+
+  const toggleNavGroup = useCallback((groupId: SidebarGroupId) => {
+    setCollapsedGroups((current) => {
+      const next = { ...current, [groupId]: !current[groupId] };
+      writeCollapsedGroups(next);
+      return next;
+    });
+  }, []);
+
+  const toggleSidebarRail = useCallback(() => {
+    setSidebarRailCollapsed((current) => {
+      const next = !current;
+      writeSidebarRailCollapsed(next);
+      return next;
+    });
+  }, []);
+
+  // Automatically expand a collapsed group whenever navigation enters one of its pages.
+  useEffect(() => {
+    const groupId = findGroupForPage(active);
+    if (!groupId) return;
+    setCollapsedGroups((current) => {
+      if (!current[groupId]) return current;
+      const next = { ...current, [groupId]: false };
+      writeCollapsedGroups(next);
+      return next;
+    });
+  }, [active]);
   useLayoutEffect(() => {
     // Reset only committed page changes, before the destination is painted.
     workspaceRef.current?.scrollTo({ top: 0, left: 0, behavior: 'instant' });
@@ -360,9 +424,100 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
     }
   };
 
+  const renderNavPageRow = (page: (typeof navPages)[number]) => {
+    const Icon = page.icon;
+    const hasPluginChildren = page.id === 'plugins' && pluginEntries.length > 0;
+    const isActive =
+      page.id === active || (hasPluginChildren && !pluginNavExpanded && pluginChildActive);
+    const locked = !canOpenAppPage(page.id, coreReady);
+    const updateIndicator =
+      page.id === 'versions'
+        ? appUpdateIndicatorState(hasUpdate, coreHasUpdate, appUpdateProcessing)
+        : page.id === 'plugins'
+          ? pluginUpdateIndicatorState(pluginUpdates)
+          : page.id === 'oauth' && signInAlerts.length > 0
+            ? 'attention'
+            : null;
+    const updateIndicatorLabel =
+      page.id === 'oauth'
+        ? t('authFiles.signIn.badge', { count: signInAlerts.length })
+        : page.id === 'plugins'
+          ? Object.keys(pluginUpdates).length > 0
+            ? `${t('plugins.updateAvailable')} (${Object.keys(pluginUpdates).length})`
+            : ''
+          : availableUpdateLabel;
+    const row = (
+      <button
+        key={page.id}
+        type="button"
+        className={[isActive ? 'active' : '', locked ? 'locked' : ''].filter(Boolean).join(' ')}
+        aria-current={page.id === active ? 'page' : undefined}
+        disabled={locked}
+        title={locked ? `${t(page.labelKey)} — ${t('app.nav.lockedHint')}` : t(page.labelKey)}
+        onClick={() => select(page.id)}
+      >
+        <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
+        <span>{t(page.labelKey)}</span>
+        {locked ? (
+          <Lock size={12} strokeWidth={1.75} className="nav-lock-icon" aria-hidden="true" />
+        ) : updateIndicator ? (
+          <i
+            className={`nav-update-indicator ${updateIndicator}`}
+            title={
+              updateIndicator === 'processing'
+                ? t('appUpdate.progressTitle')
+                : updateIndicatorLabel
+            }
+            aria-label={
+              updateIndicator === 'processing'
+                ? t('appUpdate.progressTitle')
+                : updateIndicatorLabel
+            }
+          />
+        ) : null}
+      </button>
+    );
+    if (!hasPluginChildren) return row;
+    return (
+      <Fragment key={page.id}>
+        <div className="nav-plugin-parent">
+          {row}
+          <PluginNavToggle
+            expanded={pluginNavExpanded}
+            onToggle={() =>
+              setPluginNavOverride({
+                layout: pluginNavExpanded ? 'collapsed' : 'expanded',
+                auto: autoPluginLayout,
+                count: pluginEntries.length,
+              })
+            }
+          />
+        </div>
+        {pluginNavExpanded ? (
+          <PluginNavChildren
+            entries={pluginEntries}
+            active={active}
+            locked={!coreReady}
+            onSelect={(route) => select(route as AppPageId)}
+          />
+        ) : null}
+      </Fragment>
+    );
+  };
+
+  const homePageEntry = navPages.find((page) => page.id === 'home');
+
   return (
     <>
-      <div className={`app-shell${active === "easy" ? " app-shell-easy-mode" : ""}`}>
+      <div
+        className={[
+          'app-shell',
+          active === 'easy' ? 'app-shell-easy-mode' : '',
+          sidebarRailCollapsed ? 'app-shell-sidebar-collapsed' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+      >
         {active !== "easy" ? (
           <aside className="sidebar">
             <div className="sidebar-brand" title={t('app.desktopConsole')}>
@@ -374,6 +529,18 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
                 <strong>EasyCLIProxyAPI</strong>
                 <span>{isWebUi() ? (locale.startsWith('zh') ? 'Web 控制台' : 'Web Console') : t('app.desktopConsole')}</span>
               </div>
+              <button
+                type="button"
+                className="sidebar-rail-toggle"
+                aria-label={t(sidebarRailCollapsed ? 'app.nav.sidebarExpand' : 'app.nav.sidebarCollapse')}
+                title={t(sidebarRailCollapsed ? 'app.nav.sidebarExpand' : 'app.nav.sidebarCollapse')}
+                aria-pressed={sidebarRailCollapsed}
+                onClick={toggleSidebarRail}
+              >
+                {sidebarRailCollapsed
+                  ? <PanelLeftOpen size={15} strokeWidth={1.75} aria-hidden="true" />
+                  : <PanelLeftClose size={15} strokeWidth={1.75} aria-hidden="true" />}
+              </button>
             </div>
 
             {switcher}
@@ -384,81 +551,58 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
               aria-label={t('app.navigation')}
               data-plugin-layout={pluginEntries.length ? pluginNavLayout : undefined}
             >
-              {navPages.map((page) => {
-                const Icon = page.icon;
-                const hasPluginChildren = page.id === 'plugins' && pluginEntries.length > 0;
-                const isActive = page.id === active
-                  || (hasPluginChildren && !pluginNavExpanded && pluginChildActive);
-                const locked = !canOpenAppPage(page.id, coreReady);
-                const updateIndicator = page.id === 'versions'
-                  ? appUpdateIndicatorState(hasUpdate, coreHasUpdate, appUpdateProcessing)
-                  : page.id === 'plugins'
-                    ? pluginUpdateIndicatorState(pluginUpdates)
-                    : page.id === 'oauth' && signInAlerts.length > 0
-                      ? 'attention'
-                      : null;
-                const updateIndicatorLabel = page.id === 'oauth'
-                  ? t('authFiles.signIn.badge', { count: signInAlerts.length })
-                  : page.id === 'plugins'
-                  ? Object.keys(pluginUpdates).length > 0
-                    ? `${t('plugins.updateAvailable')} (${Object.keys(pluginUpdates).length})`
-                    : ''
-                  : availableUpdateLabel;
-                const row = (
-                  <button
-                    key={page.id}
-                    type="button"
-                    className={[
-                      isActive ? 'active' : '',
-                      locked ? 'locked' : '',
-                    ]
-                      .filter(Boolean)
-                      .join(' ')}
-                    aria-current={page.id === active ? 'page' : undefined}
-                    disabled={locked}
-                    title={locked ? `${t(page.labelKey)} — ${t('app.nav.lockedHint')}` : t(page.labelKey)}
-                    onClick={() => select(page.id)}
-                  >
-                    <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
-                    <span>{t(page.labelKey)}</span>
-                    {locked ? (
-                      <Lock size={12} strokeWidth={1.75} className="nav-lock-icon" aria-hidden="true" />
-                    ) : updateIndicator ? (
-                      <i
-                        className={`nav-update-indicator ${updateIndicator}`}
-                        title={updateIndicator === 'processing'
-                          ? t('appUpdate.progressTitle')
-                          : updateIndicatorLabel}
-                        aria-label={updateIndicator === 'processing'
-                          ? t('appUpdate.progressTitle')
-                          : updateIndicatorLabel}
-                      />
-                    ) : null}
-                  </button>
-                );
-                if (!hasPluginChildren) return row;
+              {homePageEntry ? renderNavPageRow(homePageEntry) : null}
+              {SIDEBAR_NAV_GROUPS.map((group) => {
+                const groupPages = group.pageIds
+                  .map((id) => navPages.find((page) => page.id === id))
+                  .filter((page): page is (typeof navPages)[number] => Boolean(page));
+                if (groupPages.length === 0) return null;
+                const isCollapsed = Boolean(collapsedGroups[group.id]);
+                const activeInGroup =
+                  groupPages.some((page) => page.id === active)
+                  || (group.id === 'extensions' && pluginChildActive);
+                const activeChildLabel = activeInGroup
+                  ? activePage
+                    ? t(activePage.labelKey)
+                    : pluginEntry?.label
+                  : undefined;
+                const proxyHasSignInAlert = group.id === 'proxy' && signInAlerts.length > 0;
+                const groupHasUpdate =
+                  proxyHasSignInAlert
+                  || (group.id === 'system'
+                    && Boolean(appUpdateIndicatorState(hasUpdate, coreHasUpdate, appUpdateProcessing)))
+                  || (group.id === 'extensions' && Boolean(pluginUpdateIndicatorState(pluginUpdates)));
+                const groupUpdateTone = proxyHasSignInAlert ? 'attention' : undefined;
+                const badgeText =
+                  group.id === 'proxy'
+                    ? t(coreReady ? 'app.nav.badge.proxyRunning' : 'app.nav.badge.proxyStopped')
+                    : group.id === 'direct'
+                      ? t('app.nav.badge.direct')
+                      : undefined;
+                const badgeTone =
+                  group.id === 'proxy'
+                    ? coreReady
+                      ? 'proxy-running'
+                      : 'proxy-stopped'
+                    : group.id === 'direct'
+                      ? 'direct'
+                      : undefined;
+
                 return (
-                  <Fragment key={page.id}>
-                    <div className="nav-plugin-parent">
-                      {row}
-                      <PluginNavToggle
-                        expanded={pluginNavExpanded}
-                        onToggle={() => setPluginNavOverride({
-                          layout: pluginNavExpanded ? 'collapsed' : 'expanded',
-                          auto: autoPluginLayout,
-                          count: pluginEntries.length,
-                        })}
-                      />
-                    </div>
-                    {pluginNavExpanded ? (
-                      <PluginNavChildren
-                        entries={pluginEntries}
-                        active={active}
-                        locked={!coreReady}
-                        onSelect={(route) => select(route as AppPageId)}
-                      />
-                    ) : null}
-                  </Fragment>
+                  <SidebarNavGroup
+                    key={group.id}
+                    group={group}
+                    collapsed={isCollapsed}
+                    hasActiveChild={activeInGroup}
+                    activeChildLabel={activeChildLabel}
+                    badgeText={badgeText}
+                    badgeTone={badgeTone}
+                    hasUpdateIndicator={groupHasUpdate}
+                    updateIndicatorTone={groupUpdateTone}
+                    onToggle={() => toggleNavGroup(group.id)}
+                  >
+                    {groupPages.map((page) => renderNavPageRow(page))}
+                  </SidebarNavGroup>
                 );
               })}
             </nav>
@@ -588,6 +732,8 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
                   locale={locale}
                   setLocale={setLocale}
                 />
+              ) : active === 'account-switching' ? (
+                <AccountSwitchPage remoteCpaActive={remote} />
               ) : active === 'versions' ? (
                 <VersionManagementPage displaySeries={appVersionDisplay} />
               ) : ActivePage === PluginsPage ? (

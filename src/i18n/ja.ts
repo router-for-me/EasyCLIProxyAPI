@@ -6,10 +6,12 @@ import { authFileListJa } from './authFileList';
 import { autoUpdateJa } from './autoUpdate';
 import { themeDiyJa } from './themeDiy';
 import { agentSystemPromptsJa } from './agentSystemPrompts';
+import { accountSwitchJa } from './accountSwitch';
 
 export const jaOverrides = {
   ...autoUpdateJa,
   ...agentSystemPromptsJa,
+  ...accountSwitchJa,
   'agents.responseLanguage.label': '応答言語',
   'agents.responseLanguage.unmanaged': '既存の設定を保持（管理しない）',
   'agents.responseLanguage.default': 'Claude の既定（上書きを削除）',

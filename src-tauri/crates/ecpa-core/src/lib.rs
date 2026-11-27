@@ -1,3 +1,4 @@
+pub mod account_switch;
 pub mod acp;
 mod agent_skills;
 pub mod agent_usage;

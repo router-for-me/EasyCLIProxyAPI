@@ -22,13 +22,21 @@ export function usePluginNavLayout(
     const bottom = sidebar.querySelector<HTMLElement>('.sidebar-bottom');
     const media = window.matchMedia(COMPACT_QUERY);
     const measure = () => {
-      const row = nav.querySelector<HTMLElement>('button:not(.nav-plugin-entry, .nav-plugin-toggle)');
+      const row = nav.querySelector<HTMLElement>(
+        'button:not(.nav-plugin-entry, .nav-plugin-toggle, .nav-group-toggle, .nav-sub-entry)',
+      );
+      const groupHeaders = Array.from(nav.querySelectorAll<HTMLElement>('.nav-group-toggle'));
+      const groupOverhead = groupHeaders.reduce(
+        (total, header) => total + (header.offsetHeight || 0),
+        0,
+      );
       const sidebarStyle = getComputedStyle(sidebar);
       const navStyle = getComputedStyle(nav);
       const available = sidebar.clientHeight
         - px(sidebarStyle.paddingTop) - px(sidebarStyle.paddingBottom)
         - (brand ? brand.offsetHeight + px(getComputedStyle(brand).marginBottom) : 0)
-        - (bottom?.offsetHeight ?? 0);
+        - (bottom?.offsetHeight ?? 0)
+        - groupOverhead;
       const layout = pluginNavLayout({
         available,
         rowHeight: row?.offsetHeight ?? 0,

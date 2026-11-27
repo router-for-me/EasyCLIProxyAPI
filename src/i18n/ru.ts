@@ -1,10 +1,12 @@
 import type { MessageKey } from './locales/zh-CN';
 import { autoUpdateRu } from './autoUpdate';
 import { agentSystemPromptsRu } from './agentSystemPrompts';
+import { accountSwitchRu } from './accountSwitch';
 
 export const ru: Record<MessageKey, string> = {
   ...autoUpdateRu,
   ...agentSystemPromptsRu,
+  ...accountSwitchRu,
   'config.sensitiveWords.replacements': 'Замена чувствительных слов',
   'config.sensitiveWords.replacementsHint': 'Только для системных промптов. Буквальное сопоставление без учёта регистра. Пустая замена удаляет совпавший текст; пробелы и переносы строк в замене сохраняются.',
   'config.sensitiveWords.target': 'Исходный текст',

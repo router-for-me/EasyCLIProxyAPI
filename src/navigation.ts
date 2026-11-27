@@ -1,5 +1,17 @@
-const alwaysAvailablePages = new Set(['easy', 'home', 'versions', 'config', 'config-management', 'usage-records', 'agents']);
+const alwaysAvailablePages = new Set([
+  'easy',
+  'home',
+  'versions',
+  'config',
+  'config-management',
+  'usage-records',
+  'agent-usage',
+  'agents',
+  'account-switching',
+]);
 const coreRequiredPages = new Set(['routing']);
+
+export type AccountSwitchCategoryFilter = 'all' | 'official-cli' | 'ai-ide';
 
 export function isAlwaysAvailablePage(pageId: string) {
   return alwaysAvailablePages.has(pageId);
