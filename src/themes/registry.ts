@@ -77,8 +77,8 @@ export function themePreview(theme: ThemeDefinition): ThemePreview {
     background: theme.backdropImage
       ? `${themeBackdropImage(theme)} ${themeImagePosition(theme)} / cover no-repeat ${theme.tokens.workspaceBackground ?? theme.windowBackground}`
       : `${theme.backdrop ? `${backdropImage(theme.backdrop)}, ` : ''}${theme.tokens.workspaceBackground ?? theme.windowBackground}`,
-    sidebar: theme.backdrop?.sidebar ?? theme.tokens.sidebarBackground ?? (dark ? '#0f1218' : '#f7f8fa'),
-    surface: theme.backdrop?.panel ?? theme.tokens.surface ?? (dark ? '#141720' : '#ffffff'),
-    accent: theme.tokens.accent ?? (dark ? '#f5f5f5' : '#222222'),
+    sidebar: theme.backdrop?.sidebar ?? theme.tokens.sidebarBackground ?? (dark ? '#1d1b18' : '#f0eee8'),
+    surface: theme.backdrop?.panel ?? theme.tokens.surface ?? (dark ? '#262320' : '#fffdf9'),
+    accent: theme.tokens.accent ?? (dark ? '#f6f4f1' : '#2d2a26'),
   };
 }

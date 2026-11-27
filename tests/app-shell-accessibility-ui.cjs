@@ -44,8 +44,8 @@ const path = require('node:path');
       const status = page?.querySelector('.usage-collector-state');
       return { row: cell ? getComputedStyle(cell).backgroundColor : '', status: status ? getComputedStyle(status).backgroundColor : '' };
     });
-    assert.equal(usageSurfaces.row, 'rgb(255, 255, 255)', 'light usage rows stay pure white');
-    assert.equal(usageSurfaces.status, 'rgb(255, 255, 255)', 'light usage status stays pure white');
+    assert.equal(usageSurfaces.row, 'rgb(255, 253, 249)', 'light usage rows use warm ivory surface');
+    assert.equal(usageSurfaces.status, 'rgb(255, 253, 249)', 'light usage status uses warm ivory surface');
     const shellSurfaces = await page.evaluate(() => {
       const shell = document.querySelector('.app-shell');
       const content = document.querySelector('.content');
@@ -54,8 +54,8 @@ const path = require('node:path');
         content: content ? getComputedStyle(content).backgroundColor : '',
       };
     });
-    assert.equal(shellSurfaces.shell, 'rgb(255, 255, 255)', 'light app shell stays pure white');
-    assert.equal(shellSurfaces.content, 'rgb(255, 255, 255)', 'light content stays pure white');
+    assert.equal(shellSurfaces.shell, 'rgb(250, 249, 245)', 'light app shell uses warm paper canvas');
+    assert.equal(shellSurfaces.content, 'rgb(250, 249, 245)', 'light content uses warm paper canvas');
     await page.getByRole('tab', { name: /数据管理/ }).click();
     assert.equal(await page.locator('.usage-filter-panel').count(), 0);
 
