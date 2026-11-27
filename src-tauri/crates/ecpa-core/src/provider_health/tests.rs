@@ -274,3 +274,28 @@ async fn core_health_probe_rejects_connection_failure() {
     let error = probe_core_model(&probe_config(port), "test-model", Some(2_000)).await.err().unwrap();
     assert!(error.contains("Health check request failed"));
 }
+
+#[tokio::test]
+async fn core_health_probe_reports_timeout_reason_on_stalled_response() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        let Ok((mut socket, _)) = listener.accept().await else {
+            return;
+        };
+        let mut buf = [0u8; 2048];
+        let _ = socket.read(&mut buf).await;
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    });
+    let error = probe_core_model(&probe_config(port), "slow-model", Some(1_000))
+        .await
+        .err()
+        .unwrap();
+    server.abort();
+    assert!(error.contains("Health check request failed"), "unexpected error: {error}");
+    let lower = error.to_ascii_lowercase();
+    assert!(
+        lower.contains("timed out") || lower.contains("timeout"),
+        "timeout error should preserve timeout cause: {error}"
+    );
+}
