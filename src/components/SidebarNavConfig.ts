@@ -15,7 +15,7 @@ export const SIDEBAR_NAV_GROUPS: readonly SidebarGroupDefinition[] = [
     id: 'proxy',
     labelKey: 'app.nav.group.proxy',
     tone: 'proxy',
-    pageIds: ['api', 'oauth', 'quota', 'routing', 'agents', 'plugins', 'config', 'config-management'],
+    pageIds: ['api', 'oauth', 'quota', 'routing', 'agents', 'usage-records', 'plugins', 'config', 'config-management'],
   },
   {
     id: 'direct',
@@ -27,7 +27,7 @@ export const SIDEBAR_NAV_GROUPS: readonly SidebarGroupDefinition[] = [
     id: 'extensions',
     labelKey: 'app.nav.group.extensions',
     tone: 'neutral',
-    pageIds: ['usage-records', 'agent-usage', 'mcp-skills'],
+    pageIds: ['agent-usage', 'mcp-skills'],
   },
   {
     id: 'system',

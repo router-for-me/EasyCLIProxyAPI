@@ -51,6 +51,8 @@ const path = require('node:path');
     assert.equal(await directGroup.count(), 1);
     assert.ok((await proxyGroup.locator('.nav-group-badge').innerText()).includes('反代未启动'));
     assert.ok((await directGroup.locator('.nav-group-badge').innerText()).includes('不反代'));
+    assert.equal(await proxyGroup.getByRole('button', { name: '使用记录', exact: true }).count(), 1);
+    assert.equal(await extGroup.getByRole('button', { name: '使用记录', exact: true }).count(), 0);
     assert.equal(await proxyGroup.getByRole('button', { name: '插件', exact: true }).count(), 1);
     assert.equal(await extGroup.getByRole('button', { name: '插件', exact: true }).count(), 0);
     assert.equal(await proxyGroup.getByRole('button', { name: '快捷配置', exact: true }).count(), 1);
