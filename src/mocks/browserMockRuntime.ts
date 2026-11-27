@@ -2017,18 +2017,23 @@ export function createBrowserMockRuntime(
       ];
       case 'start_oauth_login': {
         const provider = readString(payload.provider) || 'codex';
+        const browser = readString(payload.browser);
         const session = `mock-oauth-${provider}-${Date.now()}`;
         state.oauthSessions.set(session, provider);
-        return { url: `https://example.com/mock-oauth/${provider}?state=${session}`, state: session, opened: true, openError: null };
+        return { url: `https://example.com/mock-oauth/${provider}?state=${session}`, state: session, opened: browser !== 'none', openError: null };
       }
       case 'get_oauth_status': {
         const session = readString(payload.state);
         const provider = state.oauthSessions.get(session);
         if (!provider) return { status: 'error', error: 'Unknown or canceled mock OAuth session' };
         if (provider && !state.authFiles.some((file) => file.name === `${provider}-mock-login.json`)) {
+          // Like the core, a re-login can land in a new file for the same account
+          // (Codex names files after the plan), next to the expired one.
+          const expired = state.authFiles.find((file) => file.provider === provider && file.status === 'error');
           state.authFiles.push({
             name: `${provider}-mock-login.json`, provider, type: provider, source: 'file',
             auth_index: `mock-${provider}-${state.authFiles.length + 1}`, priority: 0, disabled: false, modtime: Date.now(),
+            ...(expired ? { email: expired.email, account_id: expired.account_id, status: 'active' } : {}),
           });
         }
         return { status: 'ok', error: null };

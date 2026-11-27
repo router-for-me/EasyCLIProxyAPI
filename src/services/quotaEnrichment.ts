@@ -1,4 +1,5 @@
 import { saveCodexSubscription, syncCodexSubscriptionToCredentialFile } from './codexSubscription';
+import { refreshObservedCredentialSignIn } from './credentialSignIn';
 import { enrichXaiQuotaPlan, providerForFile, quotaKey, type AuthFile, type QuotaState } from './quotaService';
 import { commitQuotaCacheIfCurrent, getQuotaCacheSnapshot, updateQuotaCache } from './quotaCache';
 
@@ -22,7 +23,10 @@ export function commitFetchedQuota(generation: number, file: AuthFile, quota: Qu
   const committed = commitQuotaCacheIfCurrent(generation, () => {
     updateQuotaCache((current) => ({ ...current, [key]: quota }));
   });
-  if (committed) persistVerifiedCodexSubscription(file, quota);
+  if (committed) {
+    persistVerifiedCodexSubscription(file, quota);
+    refreshObservedCredentialSignIn();
+  }
   if (committed && quota.status === 'success' && providerForFile(file) === 'xai') {
     void enrichXaiQuotaPlan(file, quota).then((enriched) => {
       if (enriched === quota || getQuotaCacheSnapshot()[key] !== quota) return;

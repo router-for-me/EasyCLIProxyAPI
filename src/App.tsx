@@ -55,6 +55,7 @@ import { PluginResourcePage } from './pages/PluginResourcePage';
 import { PluginNavChildren, PluginNavToggle } from './components/SidebarPluginNav';
 import { usePluginNavLayout } from './components/usePluginNavLayout';
 import { usePluginNavEntries } from './usePluginNavEntries';
+import { useCredentialSignInWatch, useSignInAlerts } from './components/useCredentialSignIn';
 import {
   findPluginNavEntry,
   isPluginRoute,
@@ -237,6 +238,8 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
   const languageButtonRef = useRef<HTMLButtonElement>(null);
   const { status } = useCoreRuntime();
   const coreReady = remote || Boolean(status?.ready);
+  useCredentialSignInWatch(coreReady, remote ? connection.revision : undefined);
+  const signInAlerts = useSignInAlerts();
   const [navElement, setNavElement] = useState<HTMLElement | null>(null);
   const { entries: pluginEntries, plugins: installedPluginList, fetched: pluginEntriesFetched, pluginUpdates } = usePluginNavEntries(coreReady, remote ? connection.revision : undefined);
   const pluginEntry = findPluginNavEntry(pluginEntries, active);
@@ -389,8 +392,12 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
                   ? appUpdateIndicatorState(hasUpdate, coreHasUpdate, appUpdateProcessing)
                   : page.id === 'plugins'
                     ? pluginUpdateIndicatorState(pluginUpdates)
-                    : null;
-                const updateIndicatorLabel = page.id === 'plugins'
+                    : page.id === 'oauth' && signInAlerts.length > 0
+                      ? 'attention'
+                      : null;
+                const updateIndicatorLabel = page.id === 'oauth'
+                  ? t('authFiles.signIn.badge', { count: signInAlerts.length })
+                  : page.id === 'plugins'
                   ? Object.keys(pluginUpdates).length > 0
                     ? `${t('plugins.updateAvailable')} (${Object.keys(pluginUpdates).length})`
                     : ''

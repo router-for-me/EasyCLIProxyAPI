@@ -210,7 +210,11 @@ const requestJson = async (authIndex: string, url: string): Promise<unknown> => 
     header: { Authorization: 'Bearer $TOKEN$', Accept: 'application/json' },
   });
   const status = Number(response.status_code ?? response.statusCode ?? 0);
-  if (status < 200 || status >= 300) throw new Error(apiCallErrorMessage(response));
+  if (status < 200 || status >= 300) {
+    const error = new Error(apiCallErrorMessage(response)) as Error & { statusCode?: number };
+    if (Number.isInteger(status) && status >= 100 && status <= 599) error.statusCode = status;
+    throw error;
+  }
   return parseBody(response.body ?? response.bodyText);
 };
 

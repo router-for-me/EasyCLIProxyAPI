@@ -213,6 +213,10 @@
   background: var(--amber-color);
 }
 
+.nav-update-indicator.attention {
+  background: var(--color-danger);
+}
+
 .nav-update-indicator.processing {
   background: var(--ui-accent);
   animation: sidebar-indicator-pulse 1.6s ease-in-out infinite;

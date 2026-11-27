@@ -41,6 +41,7 @@ import { open } from '../services/platform';
 import {
   AlertCircle,
   ArrowRight,
+  Bell,
   Search,
   ChevronRight,
   Bug,
@@ -70,6 +71,7 @@ import {
   X,
 } from 'lucide-react';
 import { useCoreRuntime } from '../coreRuntime';
+import { useSignInNotificationsPreference } from '../components/useCredentialSignIn';
 import { useI18n } from '../i18n';
 import { MessageNotice, FloatingNotice, useAppNotice } from '../appNotice';
 import { webUiManagementUrl } from '../services/clientAccess';
@@ -198,6 +200,7 @@ export function ConfigPanelPage() {
   const [softwareValues, setSoftwareValues] = useState<SoftwarePreferenceValues>(DEFAULT_SOFTWARE_PREFERENCES);
   const [softwareSaving, setSoftwareSaving] = useState(false);
   const [softwareSavedStatusVisible, setSoftwareSavedStatusVisible] = useState(false);
+  const [signInNotifications, setSignInNotifications] = useSignInNotificationsPreference();
   const [tlsSettings, setTlsSettings] = useState<CoreTlsSettings | null>(null);
   const [tlsSettingsLoading, setTlsSettingsLoading] = useState(true);
   const [tlsEnabledDraft, setTlsEnabledDraft] = useState(false);
@@ -1498,7 +1501,7 @@ export function ConfigPanelPage() {
     { category: 'routing', target: 'config-native-routing', title: st('nativeRouting'), context: '', keywords: [t('config.network.sessionAffinity'), t('config.network.sessionTtl'), t('config.routing.title'), 'session affinity ttl routing strategy round-robin 会话 粘性 加权 轮询'].join(' ') },
     { category: 'routing', target: 'config-native-retry', title: st('nativeRetry'), context: '', keywords: [t('config.network.enableCooling'), t('config.network.disableCooling'), t('config.network.requestRetry'), t('config.network.maxRetryCredentials'), t('config.network.maxRetryInterval'), t('config.network.streamingBootstrapRetries'), 'retry retries cooldown 重试 冷却 流式 失败 fallback'].join(' ') },
     { category: 'diagnostics', target: 'config-native-logging', title: t('config.diagnostics.title'), context: '', keywords: [t('config.diagnostics.debug.title'), t('config.diagnostics.commercial.title'), t('config.diagnostics.fileLogging.title'), t('config.diagnostics.usage.title'), t('config.diagnostics.maxSize.title'), t('config.diagnostics.errorFiles.title'), t('config.diagnostics.redisRetention.title'), 'debug commercial-mode logging logs usage statistics redis retention 日志 调试 商业模式 用量 统计 留存 文件 容量'].join(' ') },
-    { category: 'software', target: 'config-native-software', title: t('config.software.title'), context: '', keywords: [t('config.software.autostart'), t('config.software.startCoreOnLaunch'), t('config.software.silentStart'), t('config.software.closeBehavior'), t('config.software.defaultTerminal'), 'startup autostart silent tray close terminal 软件 自启动 启动 静默 托盘 关闭 终端'].join(' ') },
+    { category: 'software', target: 'config-native-software', title: t('config.software.title'), context: '', keywords: [t('config.software.autostart'), t('config.software.startCoreOnLaunch'), t('config.software.silentStart'), t('config.software.signInNotifications'), t('config.software.closeBehavior'), t('config.software.defaultTerminal'), 'startup autostart silent tray close terminal notification sign-in 软件 自启动 启动 静默 托盘 关闭 终端 通知 登录'].join(' ') },
     { category: 'aliases', target: 'config-native-aliases', title: t('app.nav.thinkingAliases'), context: '', keywords: 'thinking reasoning speed aliases effort 思考 推理 速度 别名 模型' },
     { category: 'sensitiveWords', target: 'config-native-sensitive-words', title: t('config.sensitiveWords.title'), context: t('config.sensitiveWords.replacements'), keywords: 'sensitive words replacements filters antigravity devin 敏感词 内容 过滤 替换' },
   ];
@@ -3020,6 +3023,25 @@ export function ConfigPanelPage() {
                     checked={softwareValues.silentStartEnabled}
                     disabled={softwareControlsDisabled}
                     onChange={(event) => updateSoftwarePreference({ silentStartEnabled: event.currentTarget.checked })}
+                  />
+                </div>
+                <div className="config-software-setting-row">
+                  <label className="config-software-setting-copy" htmlFor="config-software-sign-in-notifications">
+                    <span className="config-software-setting-icon" aria-hidden="true">
+                      <Bell size={17} />
+                    </span>
+                    <div>
+                      <strong>{t('config.software.signInNotifications')}</strong>
+                      <small>{t('config.software.signInNotificationsDescription')}</small>
+                    </div>
+                  </label>
+                  {/* Applies immediately: a local preference, not part of the saved software settings. */}
+                  <Switch
+                    id="config-software-sign-in-notifications"
+                    title={t('config.software.signInNotifications')}
+                    aria-label={t('config.software.signInNotifications')}
+                    checked={signInNotifications}
+                    onChange={(event) => setSignInNotifications(event.currentTarget.checked)}
                   />
                 </div>
                 <div className={`config-software-setting-row config-software-close-row${softwareControlsDisabled ? ' is-disabled' : ''}`}>

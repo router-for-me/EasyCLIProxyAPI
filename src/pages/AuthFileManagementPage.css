@@ -419,4 +419,36 @@
   max-width: 100%;
 }
 
+/* A credential whose login can no longer be refreshed: say so plainly and offer the fix in place (#724). */
+.auth-signin-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--auth-border, var(--border-color));
+  background: color-mix(in srgb, var(--failure-badge-text) 5%, var(--bg-card));
+  color: var(--failure-badge-text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.auth-signin-strip > svg { flex: none; }
+.auth-signin-strip > span { flex: 1 1 220px; min-width: 0; color: var(--text-secondary); }
+.auth-signin-strip > button { flex: none; }
+.auth-signin-banner { margin-bottom: 12px; }
+.oauth-subpage-alert {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--color-danger);
+  color: var(--color-text-on-accent);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 }
