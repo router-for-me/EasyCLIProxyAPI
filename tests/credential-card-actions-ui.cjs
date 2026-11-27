@@ -2,6 +2,7 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { openNav } = require('./support/sidebarNav.cjs');
 (async () => {
   const { createServer } = await import('vite');
   const react = (await import('@vitejs/plugin-react')).default;
@@ -22,7 +23,7 @@ const path = require('node:path');
       await page.goto(`${base}/?mock=running&mockDelay=25`);
       await page.locator('.app-shell').waitFor();
       await page.addStyleTag({ content: '#browser-mock-toolbar { display:none; }' });
-      await page.locator('.nav-section button').filter({ has: page.getByText('OAuth', { exact: true }) }).click();
+      await openNav(page, 'OAuth');
       await page.getByRole('tab', { name: zh ? '凭证文件' : 'Authentication Files', exact: true }).click();
       const card = page.locator('.auth-file-card').first();
       await card.waitFor();

@@ -1,6 +1,7 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 const viewports = [
   { width: 640, height: 600 },
@@ -41,7 +42,7 @@ const viewports = [
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     });
     const open = async (label, ready) => {
-      await page.locator('.nav-section button').filter({ has: page.getByText(label, { exact: true }) }).click();
+      await openNav(page, label);
       await page.locator(ready).first().waitFor();
       await settle();
     };

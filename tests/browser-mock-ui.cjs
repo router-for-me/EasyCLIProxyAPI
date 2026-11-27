@@ -1,6 +1,7 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 (async () => {
   const { createServer } = await import('vite');
@@ -49,7 +50,7 @@ const path = require('node:path');
     await page.getByRole('alertdialog').getByRole('button', { name: 'Clear cooldown', exact: true }).click();
     await cooling.locator('.auth-file-health-compact').waitFor({ state: 'hidden' });
     await page.screenshot({ path: 'bin-work/browser-mock-credentials.png', fullPage: true });
-    await page.getByRole('button', { name: 'Quota Lookup', exact: true }).click();
+    await openNav(page, 'Quota Lookup');
     await page.getByRole('radio', { name: /^Claude,/ }).click();
     await page.locator('header').getByRole('button', { name: 'Refresh Quota', exact: true }).click();
     await page.getByText('Used $23.50 · Limit $100.00 · Remaining $76.50', { exact: true }).first().waitFor();

@@ -2,6 +2,7 @@ const { chromium, webkit } = require(process.env.PLAYWRIGHT_MODULE || 'playwrigh
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { createServer: createPortProbe } = require('node:net');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 (async () => {
   const { createServer } = await import('vite');
@@ -33,7 +34,7 @@ const { createServer: createPortProbe } = require('node:net');
             const { builtinThemes } = await import('/src/themes/registry.ts');
             createThemeApplicator(document)(builtinThemes.find(item => item.id === theme));
           }, theme);
-          const navigate = name => page.locator('.nav-section').getByRole('button', { name, exact: true }).click();
+          const navigate = name => openNav(page, name);
           const checkSearch = async (selector, height = 38) => {
             const wrapper = page.locator(selector).first();
             const input = wrapper.locator('input');

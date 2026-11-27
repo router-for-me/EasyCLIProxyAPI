@@ -15,6 +15,8 @@ import {
   Activity,
   ArrowLeftRight,
   Bot,
+  Cable,
+  ChartColumn,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -26,6 +28,7 @@ import {
   GitBranch,
   History,
   House,
+  KeyRound,
   Languages,
   Lock,
   LogIn,
@@ -36,8 +39,10 @@ import {
   Puzzle,
   ServerCog,
   Settings,
+  Settings2,
   Sprout,
   X,
+  type LucideIcon,
 } from 'lucide-react';
 import appLogo from './assets/logo.jpg';
 import { CoreRuntimeProvider, useCoreRuntime } from './coreRuntime';
@@ -58,11 +63,12 @@ import { PluginsPage } from './pages/PluginsPage';
 import { McpSkillsPage } from './pages/McpSkillsPage';
 import { PluginResourcePage } from './pages/PluginResourcePage';
 import { PluginNavChildren, PluginNavToggle } from './components/SidebarPluginNav';
-import { SidebarNavGroup } from './components/SidebarNavGroup';
 import {
+  findHubForPage,
   readSidebarRailCollapsed,
-  SIDEBAR_NAV_GROUPS,
+  SIDEBAR_HUBS,
   writeSidebarRailCollapsed,
+  type SidebarHubId,
 } from './components/SidebarNavConfig';
 import { usePluginNavLayout } from './components/usePluginNavLayout';
 import { usePluginNavEntries } from './usePluginNavEntries';
@@ -192,6 +198,14 @@ const pages = [
 
 type PageId = (typeof pages)[number]['id'];
 type AppPageId = PageId | `/plugin-pages/${string}`;
+
+const HUB_ICONS: Partial<Record<SidebarHubId, LucideIcon>> = {
+  access: Cable,
+  credentials: KeyRound,
+  agents: Bot,
+  usage: ChartColumn,
+  settings: Settings2,
+};
 
 type WindowsClosePrompt = {
   resolvingAction: WindowsCloseAction | null;
@@ -326,7 +340,20 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
   const pluginEntry = findPluginNavEntry(pluginEntries, active);
   const configManagementAvailable = hasBackend() || browserMockEnabled;
   const navPages = pages.filter((page) => page.id !== 'easy' && (page.id !== 'config-management' || configManagementAvailable));
-  const { layout: autoPluginLayout, compact: navCompact } = usePluginNavLayout(navElement, navPages.length, pluginEntries.length);
+  type NavPage = (typeof navPages)[number];
+  const hubEntries = SIDEBAR_HUBS.map((hub) => ({
+    hub,
+    pages: hub.pageIds
+      .map((id) => navPages.find((page) => page.id === id))
+      .filter((page): page is NavPage => Boolean(page)),
+  })).filter((entry) => entry.pages.length > 0);
+  const activeHubId = findHubForPage(active)?.id;
+  // Rows the sidebar shows right now: one per hub, plus the pages of the open hub.
+  const visibleNavRows = hubEntries.reduce(
+    (total, entry) => total + 1 + (entry.hub.id === activeHubId && entry.pages.length > 1 ? entry.pages.length : 0),
+    0,
+  );
+  const { layout: autoPluginLayout, compact: navCompact } = usePluginNavLayout(navElement, visibleNavRows, pluginEntries.length);
   const [pluginReload, setPluginReload] = useState(0);
   const [pluginNavOverride, setPluginNavOverride] = useState<PluginNavOverride | null>(null);
   useEffect(() => setPluginNavOverride(null), [autoPluginLayout, pluginEntries.length]);
@@ -439,74 +466,85 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
     }
   };
 
-  const renderNavPageRow = (page: (typeof navPages)[number]) => {
+  const pageIndicator = (pageId: string) => {
+    const state =
+      pageId === 'versions'
+        ? appUpdateIndicatorState(hasUpdate, coreHasUpdate, appUpdateProcessing)
+        : pageId === 'plugins'
+          ? pluginUpdateIndicatorState(pluginUpdates)
+          : pageId === 'oauth' && signInAlerts.length > 0
+            ? 'attention'
+            : null;
+    const pluginUpdateCount = Object.keys(pluginUpdates).length;
+    const label =
+      state === 'processing'
+        ? t('appUpdate.progressTitle')
+        : pageId === 'oauth'
+          ? t('authFiles.signIn.badge', { count: signInAlerts.length })
+          : pageId === 'plugins'
+            ? pluginUpdateCount > 0
+              ? `${t('plugins.updateAvailable')} (${pluginUpdateCount})`
+              : ''
+            : availableUpdateLabel;
+    return { state, label };
+  };
+
+  // The dot is decorative for assistive tech: rows keep their plain label as accessible
+  // name, and the dot's meaning is appended to the row's title instead.
+  const renderIndicator = (indicator: ReturnType<typeof pageIndicator>) =>
+    indicator.state ? (
+      <i className={`nav-update-indicator ${indicator.state}`} aria-hidden="true" />
+    ) : null;
+
+  const rowTitle = (label: string, lockedHint?: string, indicator?: ReturnType<typeof pageIndicator>) =>
+    sidebarRailCollapsed
+      ? undefined
+      : lockedHint
+        ? `${label} — ${lockedHint}`
+        : indicator?.state && indicator.label
+          ? `${label} · ${indicator.label}`
+          : label;
+
+  const railTooltipHandlers = (targetId: string, label: string, meta?: string) =>
+    sidebarRailCollapsed
+      ? {
+          onMouseEnter: (event: SyntheticEvent<HTMLElement>) => showRailTooltip(event, targetId, label, meta),
+          onMouseLeave: hideRailTooltip,
+          onFocus: (event: SyntheticEvent<HTMLElement>) => showRailTooltip(event, targetId, label, meta),
+          onBlur: hideRailTooltip,
+        }
+      : {};
+
+  const renderNavPageRow = (page: NavPage, extraClass?: string) => {
     const Icon = page.icon;
     const hasPluginChildren = page.id === 'plugins' && pluginEntries.length > 0;
     const isActive =
       page.id === active || (hasPluginChildren && !pluginNavExpanded && pluginChildActive);
     const locked = !canOpenAppPage(page.id, coreReady);
-    const updateIndicator =
-      page.id === 'versions'
-        ? appUpdateIndicatorState(hasUpdate, coreHasUpdate, appUpdateProcessing)
-        : page.id === 'plugins'
-          ? pluginUpdateIndicatorState(pluginUpdates)
-          : page.id === 'oauth' && signInAlerts.length > 0
-            ? 'attention'
-            : null;
-    const updateIndicatorLabel =
-      page.id === 'oauth'
-        ? t('authFiles.signIn.badge', { count: signInAlerts.length })
-        : page.id === 'plugins'
-          ? Object.keys(pluginUpdates).length > 0
-            ? `${t('plugins.updateAvailable')} (${Object.keys(pluginUpdates).length})`
-            : ''
-          : availableUpdateLabel;
     const labelText = t(page.labelKey);
     const lockedHint = locked ? t('app.nav.lockedHint') : undefined;
+    const indicator = pageIndicator(page.id);
     const row = (
       <button
         key={page.id}
         type="button"
-        className={[isActive ? 'active' : '', locked ? 'locked' : ''].filter(Boolean).join(' ')}
+        className={[extraClass ?? '', isActive ? 'active' : '', locked ? 'locked' : ''].filter(Boolean).join(' ')}
         aria-current={page.id === active ? 'page' : undefined}
         disabled={locked}
-        title={sidebarRailCollapsed ? undefined : locked ? `${labelText} — ${lockedHint}` : labelText}
+        title={rowTitle(labelText, lockedHint, indicator)}
         onClick={() => {
           hideRailTooltip();
           select(page.id);
         }}
-        onMouseEnter={
-          sidebarRailCollapsed
-            ? (event) => showRailTooltip(event, `nav-${page.id}`, labelText, lockedHint)
-            : undefined
-        }
-        onMouseLeave={sidebarRailCollapsed ? hideRailTooltip : undefined}
-        onFocus={
-          sidebarRailCollapsed
-            ? (event) => showRailTooltip(event, `nav-${page.id}`, labelText, lockedHint)
-            : undefined
-        }
-        onBlur={sidebarRailCollapsed ? hideRailTooltip : undefined}
+        {...railTooltipHandlers(`nav-${page.id}`, labelText, lockedHint ?? (indicator.state ? indicator.label : undefined))}
       >
         <Icon size={16} strokeWidth={1.75} aria-hidden="true" />
         <span>{labelText}</span>
         {locked ? (
           <Lock size={12} strokeWidth={1.75} className="nav-lock-icon" aria-hidden="true" />
-        ) : updateIndicator ? (
-          <i
-            className={`nav-update-indicator ${updateIndicator}`}
-            title={
-              updateIndicator === 'processing'
-                ? t('appUpdate.progressTitle')
-                : updateIndicatorLabel
-            }
-            aria-label={
-              updateIndicator === 'processing'
-                ? t('appUpdate.progressTitle')
-                : updateIndicatorLabel
-            }
-          />
-        ) : null}
+        ) : (
+          renderIndicator(indicator)
+        )}
       </button>
     );
     if (!hasPluginChildren) return row;
@@ -537,8 +575,63 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
     );
   };
 
-  const homePageEntry = navPages.find((page) => page.id === 'home');
-  const versionsPageEntry = navPages.find((page) => page.id === 'versions');
+  const openHub = (hubPages: NavPage[]) => {
+    const target = hubPages.find((page) => canOpenAppPage(page.id, coreReady));
+    if (target) select(target.id);
+  };
+
+  const renderHub = ({ hub, pages: hubPages }: (typeof hubEntries)[number]) => {
+    if (hubPages.length === 1 || !hub.labelKey) return renderNavPageRow(hubPages[0]);
+    const HubIcon = HUB_ICONS[hub.id] ?? hubPages[0].icon;
+    const label = t(hub.labelKey);
+    const expanded = hub.id === activeHubId;
+    const locked = hubPages.every((page) => !canOpenAppPage(page.id, coreReady));
+    const lockedHint = locked ? t('app.nav.lockedHint') : undefined;
+    const indicator = expanded
+      ? undefined
+      : hubPages.map((page) => pageIndicator(page.id)).find((item) => item.state);
+    const childrenId = `nav-hub-children-${hub.id}`;
+    const tooltipMeta = lockedHint ?? hubPages.map((page) => t(page.labelKey)).join(' · ');
+    return (
+      <Fragment key={hub.id}>
+        <button
+          type="button"
+          className={['nav-hub-toggle', expanded ? 'has-active-child' : '', locked ? 'locked' : '']
+            .filter(Boolean)
+            .join(' ')}
+          data-nav-hub={hub.id}
+          aria-expanded={expanded}
+          aria-controls={expanded ? childrenId : undefined}
+          disabled={locked}
+          title={rowTitle(label, lockedHint, indicator)}
+          onClick={() => {
+            hideRailTooltip();
+            openHub(hubPages);
+          }}
+          {...railTooltipHandlers(`hub-${hub.id}`, label, tooltipMeta)}
+        >
+          <HubIcon size={16} strokeWidth={1.75} aria-hidden="true" />
+          <span>{label}</span>
+          {locked ? (
+            <Lock size={12} strokeWidth={1.75} className="nav-lock-icon" aria-hidden="true" />
+          ) : (
+            <>
+              {indicator ? renderIndicator(indicator) : null}
+              <ChevronRight size={13} strokeWidth={2} className="nav-hub-chevron" aria-hidden="true" />
+            </>
+          )}
+        </button>
+        {expanded ? (
+          <div id={childrenId} className="nav-hub-children" role="group" aria-label={label} data-nav-hub-children={hub.id}>
+            {hubPages.map((page) => renderNavPageRow(page, 'nav-hub-entry'))}
+          </div>
+        ) : null}
+      </Fragment>
+    );
+  };
+
+  const mainHubEntries = hubEntries.filter((entry) => !entry.hub.footer);
+  const footerHubEntries = hubEntries.filter((entry) => entry.hub.footer);
   const sidebarToggleLabel = t(sidebarRailCollapsed ? 'app.nav.sidebarExpand' : 'app.nav.sidebarCollapse');
 
   return (
@@ -580,23 +673,11 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
               aria-label={t('app.navigation')}
               data-plugin-layout={pluginEntries.length ? pluginNavLayout : undefined}
             >
-              {homePageEntry ? renderNavPageRow(homePageEntry) : null}
-              {SIDEBAR_NAV_GROUPS.map((group) => {
-                const groupPages = group.pageIds
-                  .map((id) => navPages.find((page) => page.id === id))
-                  .filter((page): page is (typeof navPages)[number] => Boolean(page));
-                if (groupPages.length === 0) return null;
-
-                return (
-                  <SidebarNavGroup key={group.id} group={group}>
-                    {groupPages.map((page) => renderNavPageRow(page))}
-                  </SidebarNavGroup>
-                );
-              })}
-              {versionsPageEntry ? (
+              {mainHubEntries.map(renderHub)}
+              {footerHubEntries.length > 0 ? (
                 <>
                   <div className="nav-section-divider" aria-hidden="true" />
-                  {renderNavPageRow(versionsPageEntry)}
+                  {footerHubEntries.map(renderHub)}
                 </>
               ) : null}
             </nav>

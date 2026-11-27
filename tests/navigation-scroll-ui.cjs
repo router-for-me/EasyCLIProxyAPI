@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 (async () => {
   const { createServer } = await import('vite');
@@ -27,7 +28,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       await page.addStyleTag({ content: '#browser-mock-toolbar { display: none; }' });
       const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       const nav = async name => {
-        await page.locator('.nav-section').getByRole('button', { name, exact: true }).click();
+        await openNav(page, name);
         await settle();
       };
       const offset = () => page.locator('.workspace').evaluate(element => element.scrollTop);

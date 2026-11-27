@@ -1,101 +1,51 @@
-import type { AccountSwitchCategoryFilter } from '../navigation';
 import type { MessageKey } from '../i18n/resources';
 
-export type SidebarGroupId = 'proxy' | 'local';
+export type SidebarHubId =
+  | 'home'
+  | 'access'
+  | 'credentials'
+  | 'account-switching'
+  | 'agents'
+  | 'usage'
+  | 'plugins'
+  | 'settings';
 
-export type SidebarGroupDefinition = {
-  id: SidebarGroupId;
-  labelKey: MessageKey;
-  tone: 'proxy' | 'neutral';
+/**
+ * A sidebar entry. Single-page hubs render as a plain row; multi-page hubs
+ * render as one row that opens its first available page and reveals its
+ * pages inline while one of them is active.
+ */
+export type SidebarHubDefinition = {
+  id: SidebarHubId;
+  /** Only multi-page hubs need their own label; single-page hubs use the page label. */
+  labelKey?: MessageKey;
   pageIds: readonly string[];
+  /** Pinned below a divider at the bottom of the list. */
+  footer?: boolean;
 };
 
-export const SIDEBAR_NAV_GROUPS: readonly SidebarGroupDefinition[] = [
+export const SIDEBAR_HUBS: readonly SidebarHubDefinition[] = [
+  { id: 'home', pageIds: ['home'] },
+  { id: 'access', labelKey: 'app.nav.hub.access', pageIds: ['api', 'routing'] },
+  { id: 'credentials', labelKey: 'app.nav.hub.credentials', pageIds: ['oauth', 'quota'] },
+  { id: 'account-switching', pageIds: ['account-switching'] },
+  { id: 'agents', labelKey: 'app.nav.hub.agents', pageIds: ['agents', 'mcp-skills'] },
+  { id: 'usage', labelKey: 'app.nav.hub.usage', pageIds: ['usage-records', 'agent-usage'] },
+  { id: 'plugins', pageIds: ['plugins'] },
   {
-    id: 'proxy',
-    labelKey: 'app.nav.group.proxy',
-    tone: 'proxy',
-    pageIds: ['api', 'oauth', 'quota', 'routing', 'agents', 'usage-records', 'plugins', 'config', 'config-management'],
-  },
-  {
-    id: 'local',
-    labelKey: 'app.nav.group.local',
-    tone: 'neutral',
-    pageIds: ['account-switching', 'agent-usage', 'mcp-skills'],
+    id: 'settings',
+    labelKey: 'app.nav.hub.settings',
+    pageIds: ['config', 'config-management', 'versions'],
+    footer: true,
   },
 ] as const;
 
-export type AccountSwitchSubpageItem = {
-  category: Exclude<AccountSwitchCategoryFilter, 'all'>;
-  labelKey: MessageKey;
-};
+export function findHubForPage(pageId: string): SidebarHubDefinition | undefined {
+  if (pageId.startsWith('/plugin-pages/')) return SIDEBAR_HUBS.find((hub) => hub.id === 'plugins');
+  return SIDEBAR_HUBS.find((hub) => hub.pageIds.includes(pageId));
+}
 
-export const ACCOUNT_SWITCH_SUBPAGES: readonly AccountSwitchSubpageItem[] = [
-  {
-    category: 'official-cli',
-    labelKey: 'app.nav.accountSwitching.officialCli',
-  },
-  {
-    category: 'ai-ide',
-    labelKey: 'app.nav.accountSwitching.aiIde',
-  },
-] as const;
-
-const COLLAPSED_GROUPS_KEY = 'cpa-gui.sidebar-nav-groups.v1';
-const SUBPAGES_EXPANDED_KEY = 'cpa-gui.sidebar-as-subpages.v1';
 const SIDEBAR_RAIL_KEY = 'cpa-gui.sidebar-rail.v1';
-
-export type CollapsedGroupsMap = Partial<Record<SidebarGroupId, boolean>>;
-
-export function findGroupForPage(pageId: string): SidebarGroupId | null {
-  if (pageId.startsWith('/plugin-pages/')) return 'proxy';
-  const match = SIDEBAR_NAV_GROUPS.find((group) => group.pageIds.includes(pageId));
-  return match?.id ?? null;
-}
-
-export function readCollapsedGroups(): CollapsedGroupsMap {
-  try {
-    const raw = window.localStorage.getItem(COLLAPSED_GROUPS_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    const result: CollapsedGroupsMap = {};
-    for (const group of SIDEBAR_NAV_GROUPS) {
-      if ((parsed as Record<string, unknown>)[group.id] === true) {
-        result[group.id] = true;
-      }
-    }
-    return result;
-  } catch {
-    return {};
-  }
-}
-
-export function writeCollapsedGroups(map: CollapsedGroupsMap): void {
-  try {
-    window.localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify(map));
-  } catch {
-    /* ignore storage failures */
-  }
-}
-
-export function readAccountSwitchSubpagesExpanded(): boolean {
-  try {
-    const raw = window.localStorage.getItem(SUBPAGES_EXPANDED_KEY);
-    if (raw === 'false') return false;
-    return true;
-  } catch {
-    return true;
-  }
-}
-
-export function writeAccountSwitchSubpagesExpanded(expanded: boolean): void {
-  try {
-    window.localStorage.setItem(SUBPAGES_EXPANDED_KEY, String(expanded));
-  } catch {
-    /* ignore storage failures */
-  }
-}
 
 export function readSidebarRailCollapsed(): boolean {
   try {

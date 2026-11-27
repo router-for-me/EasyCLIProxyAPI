@@ -1,6 +1,7 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 (async () => {
   let server;
@@ -27,7 +28,7 @@ const path = require('node:path');
 
     assert.equal(await page.getByRole('heading', { level: 1, name: '首页' }).count(), 0);
 
-    await page.locator('.nav-section').getByRole('button', { name: '使用记录', exact: true }).click();
+    await openNav(page, '使用记录');
     const tabs = page.getByRole('tab');
     assert.equal(await tabs.count(), 6);
     assert.deepEqual(await tabs.evaluateAll((elements) => elements
@@ -59,7 +60,7 @@ const path = require('node:path');
     await page.getByRole('tab', { name: /数据管理/ }).click();
     assert.equal(await page.locator('.usage-filter-panel').count(), 0);
 
-    await page.locator('.nav-section').getByRole('button', { name: '快捷配置' }).click();
+    await openNav(page, '快捷配置');
     assert.equal(await page.locator('.config-page').getAttribute('aria-label'), '高级设置');
     const configTabs = page.locator('.config-subpage-tabs').getByRole('tab');
     assert.equal(await page.locator('.config-subpage-tabs').getAttribute('aria-orientation'), 'horizontal');
@@ -126,7 +127,7 @@ const path = require('node:path');
     assert.equal(await createAlias.evaluate((element) => document.activeElement === element), true);
 
     await page.setViewportSize({ width: 640, height: 600 });
-    await page.locator('.nav-section').getByRole('button', { name: '首页' }).click();
+    await openNav(page, '首页');
     const sidebarHeight = await page.locator('.sidebar').evaluate((element) => element.getBoundingClientRect().height);
     assert.ok(sidebarHeight < 150, `compact sidebar is too tall: ${sidebarHeight}px`);
 

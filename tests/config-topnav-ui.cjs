@@ -2,6 +2,7 @@ const { chromium, webkit } = require(process.env.PLAYWRIGHT_MODULE || 'playwrigh
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { createServer: createPortProbe } = require('node:net');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 const shotDir = process.env.CONFIG_TOPNAV_SHOTS || '';
 
@@ -70,20 +71,16 @@ const shotDir = process.env.CONFIG_TOPNAV_SHOTS || '';
         await page.addStyleTag({ content: '#browser-mock-toolbar { display: none; }' });
 
         const openAdvanced = async () => {
-          await page.locator('.nav-section').getByRole('button', {
-            name: locale === 'en' ? 'Quick Configuration' : '快捷配置', exact: true,
-          }).click();
+          await openNav(page, locale === 'en' ? 'Quick Configuration' : '快捷配置');
           await page.locator('#config-subpage-panel').waitFor();
         };
         const openUsage = async () => {
-          await page.locator('.nav-section').getByRole('button', {
-            name: locale === 'en' ? 'Usage' : '使用记录', exact: true,
-          }).click();
+          await openNav(page, locale === 'en' ? 'Usage' : '使用记录');
           await page.locator('#usage-tab-panel').waitFor();
         };
 
         const openOAuth = async () => {
-          await page.locator('.nav-section').getByRole('button', { name: 'OAuth', exact: true }).click();
+          await openNav(page, 'OAuth');
           await page.locator('#oauth-subpage-panel').waitFor();
         };
         const navigationSnapshot = async selector => {

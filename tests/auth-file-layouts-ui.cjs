@@ -4,6 +4,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const net = require('node:net');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 // [width, height, deviceScaleFactor]: phones, tablets, laptops, desktops, ultrawide, portrait monitor and a short window.
 const displays = [
@@ -45,7 +46,7 @@ const openPage = async (page, base) => {
   await page.goto(`${base}/?mock=running`);
   await page.locator('.app-shell').waitFor();
   await page.locator('#browser-mock-toolbar').evaluate(element => { element.style.display = 'none'; });
-  await page.locator('.nav-section button').filter({ has: page.getByText('OAuth', { exact: true }) }).click();
+  await openNav(page, 'OAuth');
   await page.getByRole('tab', { name: 'Authentication Files' }).click();
   await page.locator('.auth-file-card').first().waitFor();
 };

@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { createServer: createPortProbe } = require('node:net');
 const { chromium, webkit } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 (async () => {
   const { createServer } = await import('vite');
@@ -27,7 +28,7 @@ const { chromium, webkit } = require(process.env.PLAYWRIGHT_MODULE || 'playwrigh
         const errors = [];
         page.on('pageerror', error => errors.push(String(error)));
         await page.goto(`${base}?mock=running`);
-        await page.locator('.nav-section').getByRole('button', { name: 'Quick Configuration', exact: true }).click();
+        await openNav(page, 'Quick Configuration');
         await page.locator('#config-system-proxy').waitFor();
         await page.addStyleTag({ content: '#browser-mock-toolbar { display: none; }' });
         await page.evaluate(() => {
@@ -64,7 +65,7 @@ const { chromium, webkit } = require(process.env.PLAYWRIGHT_MODULE || 'playwrigh
         cases++;
 
         for (const section of ['OAuth', 'Usage']) {
-          await page.locator('.nav-section').getByRole('button', { name: section, exact: true }).click();
+          await openNav(page, section);
           await page.waitForTimeout(200);
           assert.deepEqual(errors, [], `${engine.name()} ${section}: no page errors`);
           assert.equal(await page.locator('.app-shell').count(), 1, `${section}: shell stays mounted: ${await page.locator('.app-error-boundary').allTextContents()}`);
@@ -99,7 +100,7 @@ const { chromium, webkit } = require(process.env.PLAYWRIGHT_MODULE || 'playwrigh
           }
         }
         await page.setViewportSize({ width: 1280, height: 800 });
-        await page.locator('.nav-section').getByRole('button', { name: 'Usage', exact: true }).click();
+        await openNav(page, 'Usage');
         const tabs = page.locator('.usage-tabs');
         for (const button of await tabs.getByRole('tab').all()) {
           await button.hover();

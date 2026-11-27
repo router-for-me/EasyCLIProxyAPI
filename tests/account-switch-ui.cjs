@@ -42,31 +42,45 @@ const path = require('node:path');
     await stoppedPage.goto(`${base}?mock=stopped`, { waitUntil: 'domcontentloaded' });
     await stoppedPage.locator('.app-shell').waitFor();
 
-    // 1. Sidebar follows CPA Management Center style: static section labels, zero accordion toggles/badges,
-    // Proxy vs Local separation, and unclipped standalone Version Management at 1280x800.
-    const proxyGroup = stoppedPage.locator('[data-nav-group="proxy"]');
-    const localGroup = stoppedPage.locator('[data-nav-group="local"]');
-    assert.equal(await proxyGroup.count(), 1);
-    assert.equal(await localGroup.count(), 1);
-    assert.equal(await stoppedPage.locator('.nav-group-badge').count(), 0);
-    assert.equal(await stoppedPage.locator('.nav-group-toggle').count(), 0);
-    assert.equal(await proxyGroup.locator('.nav-group-label').innerText(), '反代服务');
-    assert.equal(await localGroup.locator('.nav-group-label').innerText(), '本地与扩展');
-    assert.equal(await proxyGroup.getByRole('button', { name: '使用记录', exact: true }).count(), 1);
-    assert.equal(await localGroup.getByRole('button', { name: '使用记录', exact: true }).count(), 0);
-    assert.equal(await proxyGroup.getByRole('button', { name: '插件', exact: true }).count(), 1);
-    assert.equal(await localGroup.getByRole('button', { name: '插件', exact: true }).count(), 0);
-    assert.equal(await proxyGroup.getByRole('button', { name: '快捷配置', exact: true }).count(), 1);
-    assert.equal(await proxyGroup.getByRole('button', { name: '配置面板', exact: true }).count(), 1);
-    assert.equal(await stoppedPage.locator('.nav-section').getByRole('button', { name: /版本管理/ }).count(), 1);
+    // 1. Sidebar is a short, flat list of 8 entries. Related pages live under one entry and only
+    // appear beneath it while one of them is open — no group labels, accordions or badges.
+    const nav = stoppedPage.locator('.nav-section');
+    const topLevel = await nav.evaluate((el) =>
+      Array.from(el.children)
+        .filter((child) => child.tagName === 'BUTTON' || child.classList.contains('nav-plugin-parent'))
+        .map((child) => (child.tagName === 'BUTTON' ? child : child.querySelector('button')).textContent.trim()),
+    );
+    assert.deepEqual(
+      topLevel,
+      ['首页', '接入与路由', '凭证与额度', '账号切换', '智能体', '用量统计', '插件', '设置'],
+      `Sidebar must expose exactly 8 top-level entries (${topLevel.join('|')})`,
+    );
+    assert.equal(await stoppedPage.locator('.nav-group, .nav-group-label, .nav-group-toggle, .nav-group-badge').count(), 0);
+    assert.equal(await stoppedPage.locator('.nav-hub-children').count(), 0, 'No hub is expanded on the home page');
 
-    const agentUsageBtn = localGroup.getByRole('button', { name: 'Agent 使用记录', exact: true });
-    assert.equal(await agentUsageBtn.count(), 1);
-    await agentUsageBtn.click();
+    // Locked hubs (core stopped) stay disabled; available hubs open their first page and reveal their pages.
+    assert.equal(await nav.getByRole('button', { name: '凭证与额度', exact: true }).isDisabled(), true);
+    assert.equal(await nav.getByRole('button', { name: '接入与路由', exact: true }).isDisabled(), true);
+    const usageHub = nav.getByRole('button', { name: '用量统计', exact: true });
+    await usageHub.click();
+    await stoppedPage.locator('.usage-records-page').waitFor();
+    assert.equal(await usageHub.getAttribute('aria-expanded'), 'true');
+    const usageChildren = stoppedPage.locator('[data-nav-hub-children="usage"] button');
+    assert.deepEqual(await usageChildren.allInnerTexts(), ['使用记录', 'Agent 使用记录']);
+    await usageChildren.filter({ hasText: 'Agent 使用记录' }).click();
     await stoppedPage.locator('.agent-usage-standalone-page').waitFor();
+    assert.equal(await stoppedPage.locator('.nav-section button.active').innerText(), 'Agent 使用记录');
+
+    const settingsHub = nav.getByRole('button', { name: '设置', exact: true });
+    await settingsHub.click();
+    assert.equal(await stoppedPage.locator('.nav-hub-children').count(), 1, 'Only the open hub shows its pages');
+    assert.deepEqual(
+      await stoppedPage.locator('[data-nav-hub-children="settings"] button').allInnerTexts(),
+      ['快捷配置', '配置面板', '版本管理'],
+    );
 
     // 2. Open Account Switching -> Overview + Persistent Native Pill Platform Strip + Cross-Platform "全部账号"
-    await localGroup.getByRole('button', { name: '账号切换', exact: true }).click();
+    await nav.getByRole('button', { name: '账号切换', exact: true }).click();
     await stoppedPage.locator('.account-switch-page').waitFor();
     await stoppedPage.locator('.fd-deck-card[data-overview-card="codex"]').waitFor();
     assert.equal(await stoppedPage.locator('.fd-deck-card').count(), 5);
@@ -282,11 +296,9 @@ const path = require('node:path');
     await stoppedPage.setViewportSize({ width: 1280, height: 800 });
     const navClipCheck = await stoppedPage.evaluate(() => {
       const nav = document.querySelector('.nav-section');
-      const versionsBtn = Array.from(document.querySelectorAll('.nav-section button')).find((b) =>
-        b.textContent && b.textContent.includes('版本管理'),
-      );
+      const settingsBtn = document.querySelector('.nav-section [data-nav-hub="settings"]');
       const navRect = nav ? nav.getBoundingClientRect() : null;
-      const btnRect = versionsBtn ? versionsBtn.getBoundingClientRect() : null;
+      const btnRect = settingsBtn ? settingsBtn.getBoundingClientRect() : null;
       return {
         navScrollH: nav ? nav.scrollHeight : 0,
         navClientH: nav ? nav.clientHeight : 0,
@@ -296,7 +308,7 @@ const path = require('node:path');
     });
     assert.ok(
       navClipCheck.btnBottom <= navClipCheck.navBottom + 1 && navClipCheck.navScrollH <= navClipCheck.navClientH + 2,
-      `All sidebar nav items including 版本管理 must fit unclipped at 1280x800 (${JSON.stringify(navClipCheck)})`,
+      `All sidebar entries including 设置 must fit unclipped at 1280x800 (${JSON.stringify(navClipCheck)})`,
     );
     await stoppedPage.setViewportSize({ width: 1366, height: 860 });
 
@@ -319,7 +331,7 @@ const path = require('node:path');
     await enPage.addInitScript(() => localStorage.setItem('easy-cli-proxy-api.locale', 'en'));
     await enPage.goto(`${base}?mock=stopped`, { waitUntil: 'domcontentloaded' });
     await enPage.locator('.app-shell').waitFor();
-    await enPage.locator('[data-nav-group="local"]').getByRole('button', { name: 'Account Switch', exact: true }).click();
+    await enPage.locator('.nav-section').getByRole('button', { name: 'Account Switch', exact: true }).click();
     await enPage.locator('.as-platform-strip [data-platform-id="codex"]').click();
     await enPage.locator('[data-account-id="codex-1"]').waitFor();
     const enCardText = await enPage.locator('[data-account-id="codex-1"]').innerText();

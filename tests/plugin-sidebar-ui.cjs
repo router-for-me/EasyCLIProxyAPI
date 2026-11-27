@@ -1,6 +1,7 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 (async () => {
   const { createServer } = await import('vite');
@@ -46,7 +47,7 @@ const path = require('node:path');
     assert.equal(await children(page).nth(0).getAttribute('data-plugin-route'), '/plugin-pages/request-inspector/0');
     assert.equal(await children(page).nth(1).getAttribute('data-plugin-route'), '/plugin-pages/request-inspector/1');
     const order = await section(page).locator('button:not(.nav-plugin-toggle, .nav-plugin-drag)').evaluateAll((buttons) => buttons.map((button) => button.textContent.trim()));
-    assert.deepEqual(order.slice(-4), ['版本管理', '插件', 'Inspector status', 'Sampled requests'], order.join('|'));
+    assert.deepEqual(order.slice(-4), ['插件', 'Inspector status', 'Sampled requests', '设置'], order.join('|'));
 
     const originalRoutes = await children(page).evaluateAll(rows => rows.map(row => row.dataset.pluginRoute));
     const handle = page.locator('.nav-plugin-drag').first();
@@ -135,11 +136,12 @@ const path = require('node:path');
     await parent(page).click();
     await page.getByRole('heading', { level: 1, name: '插件' }).waitFor();
 
-    await section(page).getByRole('button', { name: '首页' }).click();
+    await openNav(page, '首页');
     await page.locator('.home-runtime-stop').click();
     await page.waitForFunction((hint) => document.querySelector(`.nav-section button[title="${hint}"]`), HINT);
-    const quota = section(page).getByRole('button', { name: '额度查询' });
-    assert.equal(await quota.isDisabled(), true);
+    const credentialsHub = section(page).getByRole('button', { name: '凭证与额度', exact: true });
+    assert.equal(await credentialsHub.isDisabled(), true);
+    assert.equal(await credentialsHub.evaluate((element) => element.classList.contains('locked')), true);
     assert.equal(await parent(page).isDisabled(), true);
     assert.equal(await parent(page).evaluate((element) => element.classList.contains('locked')), true);
     assert.equal(await parent(page).getAttribute('title'), HINT);

@@ -2,6 +2,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { createServer: createPortProbe } = require('node:net');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 (async () => {
   const { createServer } = await import('vite');
@@ -33,7 +34,7 @@ const { createServer: createPortProbe } = require('node:net');
     await page.locator('.app-shell').waitFor();
     await page.addStyleTag({ content: '#browser-mock-toolbar { display: none; }' });
 
-    const nav = name => page.locator('.nav-section').getByRole('button', { name, exact: true }).click();
+    const nav = name => openNav(page, name);
     const collector = page.locator('.usage-collector-state strong');
 
     await nav('Usage');

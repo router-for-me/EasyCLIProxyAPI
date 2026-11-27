@@ -2,6 +2,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { openNav } = require('./support/sidebarNav.cjs');
 const base = process.env.THEME_TEST_URL || 'http://127.0.0.1:1422';
 const shots = path.resolve(__dirname, '../agent_docs/plans/shots/1.2');
 fs.mkdirSync(shots, { recursive: true });
@@ -101,7 +102,7 @@ const capturedPaint = {
       localStorage.setItem('cpa-gui.agent-selected-client.v1', 'codex');
     });
     await page.goto(`${base}/?mock=running`);
-    await page.locator('.nav-section').getByRole('button', { name: 'Agent Configuration', exact: true }).click();
+    await openNav(page, 'Agent Configuration');
     await page.locator('#agent-subpage-tab-sessions').click();
     const sessions = page.locator('.codex-sessions-page');
     await sessions.locator('.codex-session-row').first().waitFor();
@@ -233,7 +234,7 @@ const capturedPaint = {
     fs.writeFileSync(path.join(shots, 'after-computed.json'), JSON.stringify(paint, null, 2));
     await page.evaluate(() => localStorage.setItem('easy-cli-proxy-api.locale', 'zh-CN'));
     await page.goto(`${base}/?mock=running`);
-    await page.getByRole('button', { name: '快捷配置', exact: true }).click();
+    await openNav(page, '快捷配置');
     await page.locator('.switch-control').first().waitFor();
     for (const id of ['light', 'dark', 'sakura-light']) {
       await page.evaluate(async id => {

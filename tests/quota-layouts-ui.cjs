@@ -3,6 +3,7 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 // [width, height, deviceScaleFactor]: phones, tablets, laptops, desktops, ultrawide, portrait monitor and a short window.
 const displays = [
@@ -37,7 +38,7 @@ const layouts = [['even', 'Even rows'], ['stacked', 'Stacked'], ['compact', 'Com
       await page.goto(`${base}/?mock=running`);
       await page.locator('.app-shell').waitFor();
       await page.locator('#browser-mock-toolbar').evaluate(element => { element.style.display = 'none'; });
-      await page.locator('.nav-section button').filter({ has: page.getByText('Quota Lookup', { exact: true }) }).click();
+      await openNav(page, 'Quota Lookup');
       await page.locator('.quota-page .real-quota-card').first().waitFor();
       await page.locator('.quota-page').getByRole('button', { name: 'Refresh Quota', exact: true }).first().click();
       await page.waitForFunction(() => !document.querySelector('.quota-page .spin'), null, { timeout: 30000 });
@@ -123,12 +124,12 @@ const layouts = [['even', 'Even rows'], ['stacked', 'Stacked'], ['compact', 'Com
     const page = await context.newPage();
     await page.route('**/*', route => route.request().url().startsWith(`${base}/`) ? route.continue() : route.abort());
     await page.goto(`${base}/?mock=running`);
-    await page.locator('.nav-section button').filter({ has: page.getByText('Quota Lookup', { exact: true }) }).click();
+    await openNav(page, 'Quota Lookup');
     await page.locator('.quota-page .real-quota-card').first().waitFor();
     // Choose a layout, reload, and the choice is still selected: covers the save as well as the read.
     await page.getByRole('radio', { name: 'Stacked', exact: true }).click();
     await page.goto(`${base}/?mock=running`);
-    await page.locator('.nav-section button').filter({ has: page.getByText('Quota Lookup', { exact: true }) }).click();
+    await openNav(page, 'Quota Lookup');
     await page.locator('.quota-page .real-quota-card').first().waitFor();
     assert.equal(await page.getByRole('radio', { name: 'Stacked', exact: true }).getAttribute('aria-checked'), 'true', 'a chosen layout survives a reload');
     await context.close();

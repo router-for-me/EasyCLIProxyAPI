@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { createServer: createPortProbe } = require('node:net');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 (async () => {
   const { createServer } = await import('vite');
@@ -29,7 +30,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       await page.addInitScript(() => localStorage.setItem('easy-cli-proxy-api.locale', 'en'));
       await page.goto(`${base}/?mock=running`);
       await page.addStyleTag({ content: '#browser-mock-toolbar { display: none; }' });
-      await page.locator('.nav-section').getByRole('button', { name: 'Configuration Management', exact: true }).click();
+      await openNav(page, 'Configuration Management');
       await page.locator('[data-mock-config-management]').waitFor();
       return page;
     };
@@ -171,7 +172,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       const workspace = document.querySelector('#app-workspace').getBoundingClientRect();
       return Math.abs(rail.right - workspace.right) < 1 && Math.abs(rail.bottom - workspace.bottom) < 1;
     });
-    await page.locator('.nav-section').getByRole('button', { name: 'Home', exact: true }).click();
+    await openNav(page, 'Home');
     await waitTop(0);
     await page.close();
 

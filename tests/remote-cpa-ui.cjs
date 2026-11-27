@@ -1,5 +1,6 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 async function assertConnectionBounds(page, dialog, { width, height }, mustScroll) {
   await page.setViewportSize({ width, height });
@@ -101,11 +102,11 @@ async function assertMenuBounds(page, menu) {
     await opener.press('Enter');
     await page.keyboard.press('Tab');
     assert.equal(await menu.count(), 0);
-    await page.locator('.nav-section').getByRole('button', { name: 'Version Management' }).click();
+    await openNav(page, 'Version Management');
     await opener.click();
     await connectItem.waitFor();
     await page.keyboard.press('Escape');
-    await page.locator('.nav-section').getByRole('button', { name: 'Home', exact: true }).click();
+    await openNav(page, 'Home');
     await openConnect();
     const dialog = page.getByRole('dialog', { name: 'Add external CPA' });
     const endpoint = dialog.getByLabel('CPA server URL');
@@ -159,12 +160,12 @@ async function assertMenuBounds(page, menu) {
     await page.evaluate(() => { window.remoteTestControls.offline = false; });
     await runtime.getByRole('button', { name: 'Check connection' }).click();
     await runtime.getByText('Management API reachable', { exact: true }).waitFor();
-    await nav.getByRole('button', { name: 'Usage', exact: true }).click();
+    await openNav(page, 'Usage');
     await page.waitForFunction(() => window.remoteTestCalls.includes('get_usage_collector_status'));
     await page.getByRole('tab', { name: 'Live routing', exact: true }).click();
     await page.getByRole('heading', { name: 'Live routing', exact: true }).waitFor();
     assert.equal(await page.getByText(/External dispatch rejected|stale usage target revision/).count(), 0);
-    await nav.getByRole('button', { name: 'Agent Configuration', exact: true }).click();
+    await openNav(page, 'Agent Configuration');
     await page.locator('.agents-page').waitFor();
     await page.getByRole('button', { name: /OpenCode/ }).click();
     await page.getByRole('button', { name: 'Update Configuration', exact: true }).click();
@@ -175,7 +176,7 @@ async function assertMenuBounds(page, menu) {
     await page.evaluate(() => { window.remoteTestControls.failRefresh = true; });
     await page.getByRole('button', { name: 'Update Configuration', exact: true }).click();
     await page.getByText(/Configuration saved, but client status could not be refreshed:.*Fixture refresh failure/).waitFor();
-    await nav.getByRole('button', { name: 'Quick Configuration', exact: true }).click();
+    await openNav(page, 'Quick Configuration');
     await page.locator('#config-subpage-tab-proxy').click();
     await page.locator('#config-native-reverse-proxy').getByText('This feature is not supported for external CPA instances.').waitFor();
     assert.equal(await page.locator('#config-native-reverse-proxy button').count(), 0);
@@ -186,11 +187,11 @@ async function assertMenuBounds(page, menu) {
     await page.getByRole('dialog').getByText(/^fixture log: http:\/\/127/).waitFor();
     await page.keyboard.press('Escape');
     assert.ok(await page.evaluate(() => !['reverse_proxy_get_state','get_lan_ipv4','open_core_logs_directory','restart_core_process'].some(cmd => window.remoteTestCalls.includes(cmd))));
-    await nav.getByRole('button', { name: 'OAuth Management', exact: true }).click();
+    await openNav(page, 'OAuth');
     await page.locator('#oauth-subpage-tab-acp').click();
     await page.locator('.acp-access-page').getByText('ACP access is not supported for external CPA instances. Switch back to Built-in CPA to use it.').waitFor();
     assert.ok(!await page.evaluate(() => window.remoteTestCalls.includes('get_acp_status')));
-    await nav.getByRole('button', { name: 'Quick Configuration', exact: true }).click();
+    await openNav(page, 'Quick Configuration');
     await page.locator('#config-subpage-tab-general').click();
     const add = page.getByRole('button', {name:'Add Authentication Key', exact:true});
     await add.click();
@@ -207,7 +208,7 @@ async function assertMenuBounds(page, menu) {
     assert.ok(await page.evaluate(() => window.remoteTestControls.localRunning));
     await add.waitFor();
     assert.ok(await page.evaluate(() => window.originalShell === document.querySelector('.app-shell')));
-    await nav.getByRole('button', { name: 'OAuth Management', exact: true }).click();
+    await openNav(page, 'OAuth');
     await page.locator('#oauth-subpage-tab-acp').click();
     await page.locator('.acp-access-page #acp-provider-title').waitFor();
     await page.waitForFunction(() => window.remoteTestCalls.includes('get_acp_status'));
@@ -227,7 +228,7 @@ async function assertMenuBounds(page, menu) {
     await switchDialog.getByRole('button', {name:'Verify and switch'}).click();
     await page.getByRole('button', {name:'External CPA: 127.0.0.1:8888'}).waitFor();
     await page.evaluate(() => { window.remoteTestCalls.length = 0; });
-    await nav.getByRole('button', {name:'Version Management'}).click();
+    await openNav(page, 'Version Management');
     await page.getByText(/Update this external kernel on its host/).waitFor();
     const calls = await page.evaluate(() => window.remoteTestCalls);
     assert.ok(calls.includes('check_app_version_display'));

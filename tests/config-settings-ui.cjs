@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { createServer: createPortProbe } = require('node:net');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 (async () => {
   const { createServer } = await import('vite');
@@ -25,8 +26,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
       await page.addInitScript(language => localStorage.setItem('easy-cli-proxy-api.locale', language), locale);
       await page.goto(`${base}/?mock=running`);
       await page.addStyleTag({ content: '#browser-mock-toolbar { display: none; }' });
-      const quick = page.locator('.nav-section').getByRole('button', { name: locale === 'en' ? 'Quick Configuration' : '快捷配置', exact: true });
-      await quick.click();
+      await openNav(page, locale === 'en' ? 'Quick Configuration' : '快捷配置');
       const panel = page.locator('#config-subpage-panel');
       const tab = id => page.locator(`#config-subpage-tab-${id}`);
       const group = id => panel.locator(`#config-group-${id}`);

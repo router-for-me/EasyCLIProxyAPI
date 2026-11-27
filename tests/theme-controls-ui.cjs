@@ -1,6 +1,7 @@
 // Run Vite on port 1422, then node tests/theme-controls-ui.cjs.
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 const base = process.env.THEME_TEST_URL || 'http://127.0.0.1:1422';
 const luminance = color => {
@@ -48,14 +49,14 @@ const settlePaint = locator => locator.evaluate(async element => {
       }
       await page.mouse.move(0, 0);
     };
-    await page.getByRole('button', { name: '额度查询', exact: true }).click();
+    await openNav(page, '额度查询');
     await assertButtonContrast(page.locator('.oauth-page-toolbar-actions > .primary-button:not(:disabled)'), 'quota refresh');
-    await page.getByRole('button', { name: '首页', exact: true }).click();
+    await openNav(page, '首页');
     await page.getByRole('button', { name: '模型健康监测', exact: true }).click();
     await assertButtonContrast(page.locator('.core-health-actions .primary-button:not(:disabled)'), 'model health');
     await page.keyboard.press('Escape');
 
-    await page.getByRole('button', { name: '使用记录', exact: true }).click();
+    await openNav(page, '使用记录');
     await page.evaluate(async () => {
       const { initializeTheme } = await import('/src/theme.ts');
       const controller = initializeTheme();
@@ -89,7 +90,7 @@ const settlePaint = locator => locator.evaluate(async element => {
     await page.waitForFunction(() => document.querySelector('.select-menu-theme-scope').style.getPropertyValue('--theme-primary-button-text') === '');
     await page.keyboard.press('Escape');
 
-    await page.getByRole('button', { name: '快捷配置', exact: true }).click();
+    await openNav(page, '快捷配置');
     const remote = page.getByRole('switch', { name: '允许远程管理', exact: true });
     await remote.waitFor();
     for (const activeThumb of [null, '#6A3554']) {

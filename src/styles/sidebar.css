@@ -187,7 +187,7 @@
   flex: 1 1 auto;
   min-height: 0;
   flex-direction: column;
-  gap: 10px;
+  gap: 2px;
   margin: 0 -2px;
   padding: 2px 2px 6px;
   overflow-x: hidden;
@@ -199,42 +199,45 @@
   display: none;
 }
 
-.nav-group {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+/* A hub row opens its first page; its pages appear beneath it while one is active. */
+.nav-hub-chevron {
+  flex: none;
+  margin-left: auto;
+  color: color-mix(in srgb, var(--sidebar-text-strong) 40%, transparent);
+  transition: transform 160ms var(--sidebar-ease-out), color 140ms ease;
 }
 
-.nav-group-label {
-  padding: 0 10px 2px;
-  color: color-mix(in srgb, var(--sidebar-text-strong) 42%, transparent);
-  font-size: 10.5px;
-  font-weight: 700;
-  line-height: 15px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  user-select: none;
+.nav-section button.nav-hub-toggle[aria-expanded='true'] .nav-hub-chevron {
+  transform: rotate(90deg);
 }
 
-.nav-group-divider {
-  display: none;
-  width: 24px;
-  height: 1px;
-  margin: 4px auto;
-  background: color-mix(in srgb, var(--color-border-default) 85%, transparent);
+.nav-section button.nav-hub-toggle.has-active-child > svg:first-child {
+  color: var(--ui-accent);
 }
 
-.nav-group-items {
+.nav-hub-children {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-height: 0;
+  margin: 0 0 4px 18px;
+  padding-left: 10px;
+  border-left: 1px solid color-mix(in srgb, var(--color-border-default) 78%, transparent);
+}
+
+.nav-section .nav-hub-children button {
+  height: 28px;
+  font-size: 12.5px;
+  font-weight: var(--font-weight-medium);
+}
+
+.nav-section .nav-hub-children button.active {
+  font-weight: var(--font-weight-semibold);
 }
 
 .nav-section-divider {
   flex: none;
   height: 1px;
-  margin: 0 10px;
+  margin: 6px 10px;
   background: color-mix(in srgb, var(--color-border-default) 72%, transparent);
 }
 
@@ -471,31 +474,6 @@
 .nav-section .nav-plugin-row.dragging .nav-plugin-drag {
   cursor: grabbing;
   opacity: 1;
-}
-
-/* Account Switching sub-category links (preserved if rendered) */
-.nav-sub-children {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-top: 2px;
-}
-
-.nav-section button.nav-sub-entry {
-  height: 28px;
-  padding-left: 34px;
-  font-size: 12.5px;
-  color: var(--sidebar-text-subtle);
-}
-
-.nav-section button.nav-sub-entry.sub-active {
-  background: color-mix(in srgb, var(--ui-accent) 12%, transparent);
-  color: var(--ui-accent);
-  font-weight: var(--font-weight-semibold);
-}
-
-.nav-section button.nav-sub-entry.sub-active > svg:first-child {
-  color: var(--ui-accent);
 }
 
 /* ---------- Footer ---------- */
@@ -790,29 +768,16 @@
     white-space: nowrap;
   }
 
-  .app-shell.app-shell-sidebar-collapsed .nav-section {
-    gap: 6px;
-  }
-
-  .app-shell.app-shell-sidebar-collapsed .nav-group {
-    gap: 2px;
-  }
-
-  .app-shell.app-shell-sidebar-collapsed .nav-group-label,
-  .app-shell.app-shell-sidebar-collapsed .nav-sub-children,
+  .app-shell.app-shell-sidebar-collapsed .nav-hub-chevron,
   .app-shell.app-shell-sidebar-collapsed .nav-section button.nav-plugin-toggle,
   .app-shell.app-shell-sidebar-collapsed .nav-section .nav-plugin-row .nav-plugin-drag,
   .app-shell.app-shell-sidebar-collapsed .sidebar-language-trigger > svg:last-child {
     display: none;
   }
 
-  .app-shell.app-shell-sidebar-collapsed .nav-group-divider {
-    display: block;
-  }
-
   .app-shell.app-shell-sidebar-collapsed .nav-section-divider {
     width: 24px;
-    margin: 2px auto;
+    margin: 4px auto;
   }
 
   .app-shell.app-shell-sidebar-collapsed .nav-section button,
@@ -867,8 +832,9 @@
     white-space: nowrap;
   }
 
-  .app-shell.app-shell-sidebar-collapsed .nav-plugin-children {
-    margin: 2px 0 0;
+  .app-shell.app-shell-sidebar-collapsed .nav-plugin-children,
+  .app-shell.app-shell-sidebar-collapsed .nav-hub-children {
+    margin: 2px 0;
     padding: 2px 0 0;
     border-left: 0;
     border-top: 1px solid color-mix(in srgb, var(--color-border-default) 72%, transparent);
@@ -902,8 +868,7 @@
 
   .sidebar-toggle-floating,
   .nav-tooltip,
-  .nav-group-label,
-  .nav-sub-children,
+  .nav-hub-chevron,
   .sidebar .nav-section button.nav-plugin-toggle,
   .sidebar .nav-section .nav-plugin-row .nav-plugin-drag,
   .sidebar-language-trigger > svg:last-child {
@@ -938,17 +903,9 @@
     white-space: nowrap;
   }
 
-  .nav-section {
-    gap: 6px;
-  }
-
-  .nav-group-divider {
-    display: block;
-  }
-
   .nav-section-divider {
     width: 24px;
-    margin: 2px auto;
+    margin: 4px auto;
   }
 
   .nav-section button,
@@ -983,8 +940,9 @@
     margin: 0;
   }
 
-  .nav-plugin-children {
-    margin: 2px 0 0;
+  .nav-plugin-children,
+  .nav-hub-children {
+    margin: 2px 0;
     padding: 2px 0 0;
     border-left: 0;
     border-top: 1px solid color-mix(in srgb, var(--color-border-default) 72%, transparent);
@@ -1027,10 +985,8 @@
 @media (max-width: 900px) {
   .sidebar-toggle-floating,
   .nav-tooltip,
-  .nav-group-label,
-  .nav-group-divider,
-  .nav-section-divider,
-  .nav-sub-children {
+  .nav-hub-chevron,
+  .nav-section-divider {
     display: none;
   }
 
@@ -1133,8 +1089,7 @@
     scrollbar-width: none;
   }
 
-  .nav-group,
-  .nav-group-items {
+  .nav-hub-children {
     display: contents;
   }
 

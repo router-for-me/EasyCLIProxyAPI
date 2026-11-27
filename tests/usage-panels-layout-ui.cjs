@@ -4,6 +4,7 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 // [width, height]: the 640px window minimum, widths either side of the 760px breakpoint, laptop, desktop and full-HD windows.
 const displays = [[640, 800], [700, 800], [768, 1024], [1024, 768], [1440, 900], [1920, 1080]];
@@ -13,7 +14,7 @@ const openUsage = async (page, base) => {
   await page.goto(`${base}/?mock=running`);
   await page.locator('.app-shell').waitFor();
   await page.locator('#browser-mock-toolbar').evaluate(element => { element.style.display = 'none'; });
-  await page.locator('.nav-section button').filter({ has: page.getByText('Usage', { exact: true }) }).first().click();
+  await openNav(page, 'Usage');
 };
 const frames = page => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 

@@ -43,8 +43,8 @@ async function click(selector) {
     if (process.platform !== 'win32') assert.deepEqual(environments.distributions, []);
     await execute("localStorage.setItem('easy-cli-proxy-api.locale', 'en')");
     await request(`/session/${session}/refresh`, {});
-    await waitFor('return !!document.querySelector(\'.nav-section button[title="Agent Configuration"]\')');
-    await click('.nav-section button[title="Agent Configuration"]');
+    await waitFor('return !!document.querySelector(\'.nav-section button[title="Agents"]\')');
+    await click('.nav-section button[title="Agents"]');
     await waitFor('return [...document.querySelectorAll("[role=tab]")].some(element => element.textContent === "Configuration management")');
     const tabs = await execute('return [...document.querySelectorAll("[role=tab]")].map(element => element.textContent)');
     await click(`[role="tab"]:nth-child(${tabs.indexOf('Configuration management') + 1})`);

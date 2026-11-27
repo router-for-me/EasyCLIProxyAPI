@@ -1,6 +1,7 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 (async () => {
   const { createServer } = await import('vite');
@@ -42,11 +43,11 @@ const path = require('node:path');
       return page;
     };
     const agents = async (page, tab) => {
-      await page.locator('.nav-section').getByRole('button', { name: 'Agent Configuration', exact: true }).click();
+      await openNav(page, 'Agent Configuration');
       if (tab) await page.locator(`#agent-subpage-tab-${tab}`).click();
       return page.locator('main');
     };
-    const nav = (page, name) => page.locator('.nav-section button', { hasText: name }).first().click();
+    const nav = (page, name) => openNav(page, name);
     const button = (scope, name) => scope.getByRole('button', { name, exact: true }).first();
     const authFiles = async (page) => {
       await nav(page, 'OAuth');

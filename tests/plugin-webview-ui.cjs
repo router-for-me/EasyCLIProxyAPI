@@ -1,6 +1,7 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 (async () => {
   const { createServer } = await import('vite');
@@ -110,7 +111,7 @@ const path = require('node:path');
     const sidebar = await page.locator('aside.sidebar').boundingBox();
     assert.equal(Math.abs(narrow.y - (sidebar.y + sidebar.height)) <= 2, true, 'the host starts right below the top bar');
     assert.equal(Math.abs(narrow.y + narrow.height - 700) <= 2, true, 'the host fills the rest of the window');
-    await page.locator('.nav-section').getByRole('button', { name: '首页' }).click();
+    await openNav(page, '首页');
     await hidden();
     const homeSidebar = await page.locator('aside.sidebar').boundingBox();
     assert.equal(Math.abs(sidebar.height - homeSidebar.height) <= 2, true, `top bar height on a plugin page (${sidebar.height}) matches Home (${homeSidebar.height})`);
@@ -172,7 +173,7 @@ const path = require('node:path');
     assert.equal(await pluginPage.locator('h1').textContent(), 'Inspector status');
     await aligned();
 
-    await page.locator('.nav-section').getByRole('button', { name: '首页' }).click();
+    await openNav(page, '首页');
     await page.locator('.home-runtime-stop').click();
     await page.locator('.nav-section button[title="请先在首页启动内核服务"]').first().waitFor();
     await hidden();

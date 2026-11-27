@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { createServer: createPortProbe } = require('node:net');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 (async () => {
   const { createServer } = await import('vite');
@@ -22,7 +23,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     await page.addInitScript(() => localStorage.setItem('easy-cli-proxy-api.locale', 'en'));
     await page.goto(`${base}/?mock=running`);
     await page.addStyleTag({ content: '#browser-mock-toolbar { display: none; }' });
-    await page.locator('.nav-section').getByRole('button', { name: 'Configuration Management', exact: true }).click();
+    await openNav(page, 'Configuration Management');
     const config = page.locator('[data-config-management]');
     await config.locator('#mock-config-tab-advanced').click();
     const addRules = config.getByRole('button', { name: 'Add latest cloud rules' });

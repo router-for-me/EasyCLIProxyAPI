@@ -2,6 +2,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { mkdirSync } = require('node:fs');
+const { openNav } = require('./support/sidebarNav.cjs');
 
 const screenshots = path.resolve(__dirname, '..', 'output', 'playwright');
 mkdirSync(screenshots, { recursive: true });
@@ -41,7 +42,7 @@ mkdirSync(screenshots, { recursive: true });
         return invoke(command, args, options);
       };
     });
-    await page.locator('.nav-section').getByRole('button', { name: 'Agent Configuration', exact: true }).click();
+    await openNav(page, 'Agent Configuration');
     await page.locator('#agent-subpage-tab-sessions').click();
     await page.locator('.codex-sessions-page').waitFor();
 
