@@ -560,7 +560,7 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
                 const isCollapsed = Boolean(collapsedGroups[group.id]);
                 const activeInGroup =
                   groupPages.some((page) => page.id === active)
-                  || (group.id === 'extensions' && pluginChildActive);
+                  || (group.id === 'proxy' && pluginChildActive);
                 const activeChildLabel = activeInGroup
                   ? activePage
                     ? t(activePage.labelKey)
@@ -569,9 +569,9 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
                 const proxyHasSignInAlert = group.id === 'proxy' && signInAlerts.length > 0;
                 const groupHasUpdate =
                   proxyHasSignInAlert
+                  || (group.id === 'proxy' && Boolean(pluginUpdateIndicatorState(pluginUpdates)))
                   || (group.id === 'system'
-                    && Boolean(appUpdateIndicatorState(hasUpdate, coreHasUpdate, appUpdateProcessing)))
-                  || (group.id === 'extensions' && Boolean(pluginUpdateIndicatorState(pluginUpdates)));
+                    && Boolean(appUpdateIndicatorState(hasUpdate, coreHasUpdate, appUpdateProcessing)));
                 const groupUpdateTone = proxyHasSignInAlert ? 'attention' : undefined;
                 const badgeText =
                   group.id === 'proxy'

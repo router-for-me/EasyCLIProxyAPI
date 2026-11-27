@@ -15,7 +15,7 @@ export const SIDEBAR_NAV_GROUPS: readonly SidebarGroupDefinition[] = [
     id: 'proxy',
     labelKey: 'app.nav.group.proxy',
     tone: 'proxy',
-    pageIds: ['api', 'oauth', 'quota', 'routing', 'agents', 'config', 'config-management'],
+    pageIds: ['api', 'oauth', 'quota', 'routing', 'agents', 'plugins', 'config', 'config-management'],
   },
   {
     id: 'direct',
@@ -27,7 +27,7 @@ export const SIDEBAR_NAV_GROUPS: readonly SidebarGroupDefinition[] = [
     id: 'extensions',
     labelKey: 'app.nav.group.extensions',
     tone: 'neutral',
-    pageIds: ['usage-records', 'agent-usage', 'plugins', 'mcp-skills'],
+    pageIds: ['usage-records', 'agent-usage', 'mcp-skills'],
   },
   {
     id: 'system',
@@ -60,7 +60,7 @@ const SIDEBAR_RAIL_KEY = 'cpa-gui.sidebar-rail.v1';
 export type CollapsedGroupsMap = Partial<Record<SidebarGroupId, boolean>>;
 
 export function findGroupForPage(pageId: string): SidebarGroupId | null {
-  if (pageId.startsWith('/plugin-pages/')) return 'extensions';
+  if (pageId.startsWith('/plugin-pages/')) return 'proxy';
   const match = SIDEBAR_NAV_GROUPS.find((group) => group.pageIds.includes(pageId));
   return match?.id ?? null;
 }
