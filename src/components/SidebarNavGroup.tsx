@@ -14,8 +14,6 @@ type SidebarNavGroupProps = {
   collapsed: boolean;
   hasActiveChild: boolean;
   activeChildLabel?: string;
-  badgeText?: string;
-  badgeTone?: 'proxy-running' | 'proxy-stopped' | 'direct';
   hasUpdateIndicator?: boolean;
   updateIndicatorTone?: 'attention' | 'processing' | 'available';
   onToggle: () => void;
@@ -27,8 +25,6 @@ export function SidebarNavGroup({
   collapsed,
   hasActiveChild,
   activeChildLabel,
-  badgeText,
-  badgeTone,
   hasUpdateIndicator,
   updateIndicatorTone,
   onToggle,
@@ -65,17 +61,6 @@ export function SidebarNavGroup({
         <span className="nav-group-meta">
           {collapsed && hasActiveChild && activeChildLabel ? (
             <span className="nav-group-active-pill">{activeChildLabel}</span>
-          ) : badgeText ? (
-            <span
-              className={[
-                'nav-group-badge',
-                badgeTone ? `nav-group-badge-${badgeTone}` : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
-            >
-              {badgeText}
-            </span>
           ) : null}
           {collapsed && hasUpdateIndicator ? (
             <i
@@ -84,7 +69,7 @@ export function SidebarNavGroup({
             />
           ) : null}
           <ChevronRight
-            size={13}
+            size={12}
             strokeWidth={2}
             className="nav-group-chevron"
             aria-hidden="true"

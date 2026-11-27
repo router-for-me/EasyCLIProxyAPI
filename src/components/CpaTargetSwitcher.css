@@ -70,8 +70,8 @@
 
   /* The local selector belongs to the sidebar, not the workspace card palette. */
   .sidebar .cpa-target-trigger {
-    min-height: 36px;
-    padding: 0 12px;
+    min-height: 32px;
+    padding: 0 10px;
     border-color: var(--sidebar-edge);
     border-radius: var(--radius-md);
     background: transparent;
@@ -106,7 +106,7 @@
   }
   .sidebar .cpa-target-menu > button:is(:hover,:focus-visible) { background: var(--sidebar-hover-bg); color: var(--sidebar-text-strong); }
   .sidebar .cpa-target-menu > button:active { background: var(--sidebar-press-bg); }
-  .sidebar > .cpa-target-switcher { flex-shrink: 0; margin-bottom: 12px; }
+  .sidebar > .cpa-target-switcher { flex-shrink: 0; margin-bottom: 10px; }
   .cpa-remote-header > .cpa-target-switcher { max-width: min(300px, 100%); margin-inline-start: auto; }
   .cpa-remote-header .cpa-target-menu { inset-inline: auto 0; }
   @media (min-width: 901px) and (max-width: 1100px) {

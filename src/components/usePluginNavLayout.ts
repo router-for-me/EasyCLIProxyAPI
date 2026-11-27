@@ -38,6 +38,11 @@ export function usePluginNavLayout(
           + px(groupStyle.paddingTop)
           + px(groupStyle.marginBottom);
       }, 0);
+      const dividers = Array.from(nav.querySelectorAll<HTMLElement>('.nav-section-divider'));
+      const dividerOverhead = dividers.reduce((total, divider) => {
+        const dividerStyle = getComputedStyle(divider);
+        return total + divider.offsetHeight + px(dividerStyle.marginTop) + px(dividerStyle.marginBottom);
+      }, 0);
       const sidebarStyle = getComputedStyle(sidebar);
       const navStyle = getComputedStyle(nav);
       const switcherHeight = switcher
@@ -48,7 +53,9 @@ export function usePluginNavLayout(
         - (brand ? brand.offsetHeight + px(getComputedStyle(brand).marginBottom) : 0)
         - switcherHeight
         - (bottom?.offsetHeight ?? 0)
-        - groupOverhead;
+        - groupOverhead
+        - dividerOverhead
+        - 8;
       const layout = pluginNavLayout({
         available,
         rowHeight: row?.offsetHeight ?? 0,

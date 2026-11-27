@@ -1,12 +1,12 @@
 import type { AccountSwitchCategoryFilter } from '../navigation';
 import type { MessageKey } from '../i18n/resources';
 
-export type SidebarGroupId = 'proxy' | 'direct' | 'extensions' | 'system';
+export type SidebarGroupId = 'proxy' | 'local';
 
 export type SidebarGroupDefinition = {
   id: SidebarGroupId;
   labelKey: MessageKey;
-  tone: 'proxy' | 'direct' | 'neutral';
+  tone: 'proxy' | 'neutral';
   pageIds: readonly string[];
 };
 
@@ -18,22 +18,10 @@ export const SIDEBAR_NAV_GROUPS: readonly SidebarGroupDefinition[] = [
     pageIds: ['api', 'oauth', 'quota', 'routing', 'agents', 'usage-records', 'plugins', 'config', 'config-management'],
   },
   {
-    id: 'direct',
-    labelKey: 'app.nav.group.direct',
-    tone: 'direct',
-    pageIds: ['account-switching'],
-  },
-  {
-    id: 'extensions',
-    labelKey: 'app.nav.group.extensions',
+    id: 'local',
+    labelKey: 'app.nav.group.local',
     tone: 'neutral',
-    pageIds: ['agent-usage', 'mcp-skills'],
-  },
-  {
-    id: 'system',
-    labelKey: 'app.nav.group.system',
-    tone: 'neutral',
-    pageIds: ['versions'],
+    pageIds: ['account-switching', 'agent-usage', 'mcp-skills'],
   },
 ] as const;
 

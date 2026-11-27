@@ -506,6 +506,7 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
   };
 
   const homePageEntry = navPages.find((page) => page.id === 'home');
+  const versionsPageEntry = navPages.find((page) => page.id === 'versions');
 
   return (
     <>
@@ -569,24 +570,8 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
                 const proxyHasSignInAlert = group.id === 'proxy' && signInAlerts.length > 0;
                 const groupHasUpdate =
                   proxyHasSignInAlert
-                  || (group.id === 'proxy' && Boolean(pluginUpdateIndicatorState(pluginUpdates)))
-                  || (group.id === 'system'
-                    && Boolean(appUpdateIndicatorState(hasUpdate, coreHasUpdate, appUpdateProcessing)));
+                  || (group.id === 'proxy' && Boolean(pluginUpdateIndicatorState(pluginUpdates)));
                 const groupUpdateTone = proxyHasSignInAlert ? 'attention' : undefined;
-                const badgeText =
-                  group.id === 'proxy'
-                    ? t(coreReady ? 'app.nav.badge.proxyRunning' : 'app.nav.badge.proxyStopped')
-                    : group.id === 'direct'
-                      ? t('app.nav.badge.direct')
-                      : undefined;
-                const badgeTone =
-                  group.id === 'proxy'
-                    ? coreReady
-                      ? 'proxy-running'
-                      : 'proxy-stopped'
-                    : group.id === 'direct'
-                      ? 'direct'
-                      : undefined;
 
                 return (
                   <SidebarNavGroup
@@ -595,8 +580,6 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
                     collapsed={isCollapsed}
                     hasActiveChild={activeInGroup}
                     activeChildLabel={activeChildLabel}
-                    badgeText={badgeText}
-                    badgeTone={badgeTone}
                     hasUpdateIndicator={groupHasUpdate}
                     updateIndicatorTone={groupUpdateTone}
                     onToggle={() => toggleNavGroup(group.id)}
@@ -605,6 +588,12 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
                   </SidebarNavGroup>
                 );
               })}
+              {versionsPageEntry ? (
+                <>
+                  <div className="nav-section-divider" aria-hidden="true" />
+                  {renderNavPageRow(versionsPageEntry)}
+                </>
+              ) : null}
             </nav>
 
             <div className="sidebar-bottom">

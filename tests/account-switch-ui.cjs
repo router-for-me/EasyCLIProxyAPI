@@ -42,25 +42,21 @@ const path = require('node:path');
     await stoppedPage.goto(`${base}?mock=stopped`, { waitUntil: 'domcontentloaded' });
     await stoppedPage.locator('.app-shell').waitFor();
 
-    // 1. Sidebar separates Proxy vs Direct & places standalone Agent Usage under Data & Extensions.
+    // 1. Sidebar separates Proxy vs Local & Tools cleanly with zero noisy badges and standalone Version Management.
     const proxyGroup = stoppedPage.locator('[data-nav-group="proxy"]');
-    const directGroup = stoppedPage.locator('[data-nav-group="direct"]');
-    const extGroup = stoppedPage.locator('[data-nav-group="extensions"]');
-    const sysGroup = stoppedPage.locator('[data-nav-group="system"]');
+    const localGroup = stoppedPage.locator('[data-nav-group="local"]');
     assert.equal(await proxyGroup.count(), 1);
-    assert.equal(await directGroup.count(), 1);
-    assert.ok((await proxyGroup.locator('.nav-group-badge').innerText()).includes('反代未启动'));
-    assert.ok((await directGroup.locator('.nav-group-badge').innerText()).includes('不反代'));
+    assert.equal(await localGroup.count(), 1);
+    assert.equal(await stoppedPage.locator('.nav-group-badge').count(), 0);
     assert.equal(await proxyGroup.getByRole('button', { name: '使用记录', exact: true }).count(), 1);
-    assert.equal(await extGroup.getByRole('button', { name: '使用记录', exact: true }).count(), 0);
+    assert.equal(await localGroup.getByRole('button', { name: '使用记录', exact: true }).count(), 0);
     assert.equal(await proxyGroup.getByRole('button', { name: '插件', exact: true }).count(), 1);
-    assert.equal(await extGroup.getByRole('button', { name: '插件', exact: true }).count(), 0);
+    assert.equal(await localGroup.getByRole('button', { name: '插件', exact: true }).count(), 0);
     assert.equal(await proxyGroup.getByRole('button', { name: '快捷配置', exact: true }).count(), 1);
     assert.equal(await proxyGroup.getByRole('button', { name: '配置面板', exact: true }).count(), 1);
-    assert.equal(await sysGroup.getByRole('button', { name: '快捷配置', exact: true }).count(), 0);
-    assert.equal(await sysGroup.getByRole('button', { name: /版本管理/ }).count(), 1);
+    assert.equal(await stoppedPage.locator('.nav-section').getByRole('button', { name: /版本管理/ }).count(), 1);
 
-    const agentUsageBtn = extGroup.getByRole('button', { name: 'Agent 使用记录', exact: true });
+    const agentUsageBtn = localGroup.getByRole('button', { name: 'Agent 使用记录', exact: true });
     assert.equal(await agentUsageBtn.count(), 1);
     await agentUsageBtn.click();
     await stoppedPage.locator('.agent-usage-standalone-page').waitFor();
@@ -70,7 +66,7 @@ const path = require('node:path');
     assert.equal(await proxyToggle.getAttribute('aria-expanded'), 'false');
 
     // 2. Open Account Switching -> Overview + Persistent Native Pill Platform Strip + Cross-Platform "全部账号"
-    await directGroup.getByRole('button', { name: '账号切换', exact: true }).click();
+    await localGroup.getByRole('button', { name: '账号切换', exact: true }).click();
     await stoppedPage.locator('.account-switch-page').waitFor();
     await stoppedPage.locator('.fd-deck-card[data-overview-card="codex"]').waitFor();
     assert.equal(await stoppedPage.locator('.fd-deck-card').count(), 5);
@@ -274,10 +270,10 @@ const path = require('node:path');
     assert.equal(await stoppedPage.locator('.fd-account-card').count(), 3);
 
     // Sidebar collapse & 64px rail
-    const directToggle = directGroup.locator('.nav-group-toggle');
-    await directToggle.click();
-    assert.equal(await directGroup.locator('.nav-group-active-pill').count(), 1);
-    await directToggle.click();
+    const localToggle = localGroup.locator('.nav-group-toggle');
+    await localToggle.click();
+    assert.equal(await localGroup.locator('.nav-group-active-pill').count(), 1);
+    await localToggle.click();
 
     const railToggle = stoppedPage.locator('.sidebar-rail-toggle');
     await railToggle.click();
@@ -304,7 +300,7 @@ const path = require('node:path');
     await enPage.addInitScript(() => localStorage.setItem('easy-cli-proxy-api.locale', 'en'));
     await enPage.goto(`${base}?mock=stopped`, { waitUntil: 'domcontentloaded' });
     await enPage.locator('.app-shell').waitFor();
-    await enPage.locator('[data-nav-group="direct"]').getByRole('button', { name: 'Account Switch', exact: true }).click();
+    await enPage.locator('[data-nav-group="local"]').getByRole('button', { name: 'Account Switch', exact: true }).click();
     await enPage.locator('.as-platform-strip [data-platform-id="codex"]').click();
     await enPage.locator('[data-account-id="codex-1"]').waitFor();
     const enCardText = await enPage.locator('[data-account-id="codex-1"]').innerText();
