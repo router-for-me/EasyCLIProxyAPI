@@ -61,33 +61,35 @@ export function SidebarNavGroup({
         title={toggleTitle}
         onClick={onToggle}
       >
-        <ChevronRight
-          size={12}
-          strokeWidth={2}
-          className="nav-group-chevron"
-          aria-hidden="true"
-        />
         <span className="nav-group-title">{groupLabel}</span>
-        {collapsed && hasActiveChild && activeChildLabel ? (
-          <span className="nav-group-active-pill">{activeChildLabel}</span>
-        ) : badgeText ? (
-          <span
-            className={[
-              'nav-group-badge',
-              badgeTone ? `nav-group-badge-${badgeTone}` : '',
-            ]
-              .filter(Boolean)
-              .join(' ')}
-          >
-            {badgeText}
-          </span>
-        ) : null}
-        {collapsed && hasUpdateIndicator ? (
-          <i
-            className={['nav-update-indicator', updateIndicatorTone ?? ''].filter(Boolean).join(' ')}
+        <span className="nav-group-meta">
+          {collapsed && hasActiveChild && activeChildLabel ? (
+            <span className="nav-group-active-pill">{activeChildLabel}</span>
+          ) : badgeText ? (
+            <span
+              className={[
+                'nav-group-badge',
+                badgeTone ? `nav-group-badge-${badgeTone}` : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+            >
+              {badgeText}
+            </span>
+          ) : null}
+          {collapsed && hasUpdateIndicator ? (
+            <i
+              className={['nav-update-indicator', updateIndicatorTone ?? ''].filter(Boolean).join(' ')}
+              aria-hidden="true"
+            />
+          ) : null}
+          <ChevronRight
+            size={13}
+            strokeWidth={2}
+            className="nav-group-chevron"
             aria-hidden="true"
           />
-        ) : null}
+        </span>
       </button>
 
       <div id={bodyId} className="nav-group-body" aria-hidden={collapsed || undefined}>

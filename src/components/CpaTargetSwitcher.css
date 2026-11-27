@@ -70,12 +70,25 @@
 
   /* The local selector belongs to the sidebar, not the workspace card palette. */
   .sidebar .cpa-target-trigger {
-    border-color: var(--sidebar-edge);
-    background: transparent;
-    color: var(--sidebar-text);
+    min-height: 36px;
+    padding: 0 12px;
+    border-color: color-mix(in srgb, var(--sidebar-edge) 135%, transparent);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--sidebar-selected-bg) 76%, transparent);
+    color: var(--sidebar-text-strong);
+    font-weight: var(--font-weight-medium);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--sidebar-text-strong) 4%, transparent);
+    transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, color 150ms ease;
   }
+  .sidebar .cpa-target-trigger > svg:first-child { color: var(--sidebar-icon); }
+  .sidebar .cpa-target-trigger > svg:last-child { color: var(--sidebar-icon); opacity: 0.78; }
   .sidebar .cpa-target-trigger-text small { color: var(--sidebar-text-subtle); }
-  .sidebar .cpa-target-trigger:hover:not(:disabled) { background: var(--sidebar-hover-bg); color: var(--sidebar-text-strong); }
+  .sidebar .cpa-target-trigger:hover:not(:disabled) {
+    background: var(--sidebar-selected-bg);
+    border-color: color-mix(in srgb, var(--sidebar-text-strong) 14%, transparent);
+    color: var(--sidebar-text-strong);
+    box-shadow: var(--sidebar-selected-shadow);
+  }
   .sidebar .cpa-target-trigger[aria-expanded='true'] {
     background: var(--sidebar-selected-bg);
     color: var(--sidebar-text-strong);
@@ -96,7 +109,7 @@
   }
   .sidebar .cpa-target-menu > button:is(:hover,:focus-visible) { background: var(--sidebar-hover-bg); color: var(--sidebar-text-strong); }
   .sidebar .cpa-target-menu > button:active { background: var(--sidebar-press-bg); }
-  .sidebar > .cpa-target-switcher { flex-shrink: 0; margin-bottom: 10px; }
+  .sidebar > .cpa-target-switcher { flex-shrink: 0; margin-bottom: 12px; }
   .cpa-remote-header > .cpa-target-switcher { max-width: min(300px, 100%); margin-inline-start: auto; }
   .cpa-remote-header .cpa-target-menu { inset-inline: auto 0; }
   @media (min-width: 901px) and (max-width: 1100px) {

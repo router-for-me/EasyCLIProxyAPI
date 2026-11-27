@@ -19,22 +19,34 @@ export function usePluginNavLayout(
       return undefined;
     }
     const brand = sidebar.querySelector<HTMLElement>('.sidebar-brand');
+    const switcher = sidebar.querySelector<HTMLElement>('.cpa-target-switcher');
     const bottom = sidebar.querySelector<HTMLElement>('.sidebar-bottom');
     const media = window.matchMedia(COMPACT_QUERY);
     const measure = () => {
       const row = nav.querySelector<HTMLElement>(
         'button:not(.nav-plugin-entry, .nav-plugin-toggle, .nav-group-toggle, .nav-sub-entry)',
       );
-      const groupHeaders = Array.from(nav.querySelectorAll<HTMLElement>('.nav-group-toggle'));
-      const groupOverhead = groupHeaders.reduce(
-        (total, header) => total + (header.offsetHeight || 0),
-        0,
-      );
+      const groups = Array.from(nav.querySelectorAll<HTMLElement>('.nav-group'));
+      const groupOverhead = groups.reduce((total, group) => {
+        const header = group.querySelector<HTMLElement>('.nav-group-toggle');
+        const groupStyle = getComputedStyle(group);
+        const headerStyle = header ? getComputedStyle(header) : null;
+        return total
+          + (header ? header.offsetHeight : 0)
+          + (headerStyle ? px(headerStyle.marginTop) + px(headerStyle.marginBottom) : 0)
+          + px(groupStyle.marginTop)
+          + px(groupStyle.paddingTop)
+          + px(groupStyle.marginBottom);
+      }, 0);
       const sidebarStyle = getComputedStyle(sidebar);
       const navStyle = getComputedStyle(nav);
+      const switcherHeight = switcher
+        ? switcher.offsetHeight + px(getComputedStyle(switcher).marginBottom)
+        : 0;
       const available = sidebar.clientHeight
         - px(sidebarStyle.paddingTop) - px(sidebarStyle.paddingBottom)
         - (brand ? brand.offsetHeight + px(getComputedStyle(brand).marginBottom) : 0)
+        - switcherHeight
         - (bottom?.offsetHeight ?? 0)
         - groupOverhead;
       const layout = pluginNavLayout({
