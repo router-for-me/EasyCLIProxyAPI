@@ -1,5 +1,5 @@
 import { remoteTargetRevision } from './remoteCpa';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './platform';
 import { isRecord, managementApi } from './managementApi';
 
 export type PluginConfigFieldType =

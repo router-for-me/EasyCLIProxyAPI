@@ -31,6 +31,7 @@ import {
   X,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { useRuntimeCapabilities } from '../services/platform';
 import { Dialog } from '../components/Dialog';
 import { APP_NAVIGATION_REQUEST_EVENT, type AppNavigationRequest } from '../navigation';
 import type {
@@ -65,6 +66,7 @@ function formatBytes(bytes: number): string {
 
 export function CodexSessionContextEditor({ sessionId, onBack, onSessionUpdated }: Props) {
   const { formatDate, t } = useI18n();
+  const capabilities = useRuntimeCapabilities();
   const displayDate = (value: string | number) => Number.isFinite(new Date(value).getTime()) ? formatDate(value) : String(value);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -476,6 +478,7 @@ export function CodexSessionContextEditor({ sessionId, onBack, onSessionUpdated 
                 <Download size={14} />
                 <span>{t('agents.sessions.context.exportJsonl')}</span>
               </button>
+              {capabilities.canOpenFileManager ? (
               <button type="button" className="secondary-button compact-button"
                 disabled={loading || saving || opening || isDirty || !detail?.rolloutPath}
                 onClick={async () => {
@@ -491,6 +494,7 @@ export function CodexSessionContextEditor({ sessionId, onBack, onSessionUpdated 
                 <ExternalLink size={15} />
                 <span>{t('agents.sessions.context.openRaw')}</span>
               </button>
+              ) : null}
             </div>
             <p className="context-edit-safety">{t('agents.sessions.context.externalEditNotice')}</p>
           </div>

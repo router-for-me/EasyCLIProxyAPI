@@ -1,0 +1,117 @@
+@layer components {
+.server-path-picker-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(620px, 100%);
+  max-height: calc(100dvh - 48px);
+  padding: 20px;
+  color: var(--color-text-primary);
+}
+
+.server-path-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.server-path-picker-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.server-path-picker-bar {
+  display: flex;
+  gap: 8px;
+}
+
+.server-path-picker-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  border: var(--border-width) solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-meta);
+}
+
+.server-path-picker-list {
+  flex: 1 1 auto;
+  min-height: 220px;
+  max-height: 360px;
+  overflow-y: auto;
+  border: var(--border-width) solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+  padding: 4px;
+}
+
+.server-path-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-primary);
+  text-align: left;
+  font: inherit;
+  font-size: var(--font-size-meta);
+  cursor: pointer;
+}
+
+.server-path-picker-item:hover {
+  background: var(--color-surface-hover);
+}
+
+.server-path-picker-item.selected {
+  background: var(--color-accent-soft);
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.server-path-picker-item-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-path-picker-empty {
+  margin: 0;
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-meta);
+}
+
+.server-path-picker-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.server-path-picker-selected {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-meta);
+  color: var(--color-text-secondary);
+}
+
+.server-path-picker-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+}

@@ -7,6 +7,20 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
+    proxy: {
+      '/api': {
+        target: process.env.VITE_ECPA_WEB_URL || 'http://127.0.0.1:9317',
+        changeOrigin: false,
+      },
+      '/v0': {
+        target: process.env.VITE_ECPA_WEB_URL || 'http://127.0.0.1:9317',
+        changeOrigin: false,
+      },
+      '/v8': {
+        target: process.env.VITE_ECPA_WEB_URL || 'http://127.0.0.1:9317',
+        changeOrigin: false,
+      },
+    },
   },
   build: {
     target: 'es2020',

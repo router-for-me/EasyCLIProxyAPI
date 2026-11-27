@@ -5,7 +5,7 @@ import { getUsageEvents, saveUsageEventsExport } from '../services/usage';
 import type { UsageEventPage, UsageRecord, UsageEventQuery } from '../services/usage';
 import { usagePreferences } from '../services/usagePreferences';
 import { Fragment, useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { save } from '../services/platform';
+import { save, useRuntimeCapabilities } from '../services/platform';
 import { ArrowDown, ArrowUp, Brain, ChevronLeft, ChevronRight, Columns3, Copy, Database, DatabaseZap, Download, RotateCcw, TriangleAlert, X } from 'lucide-react';
 import { FloatingNotice, useAppNotice } from '../appNotice';
 import { getCurrentLocale, useI18n } from '../i18n';
@@ -673,16 +673,21 @@ export function EventsView({
   const startRecordNum = events.total > 0 ? (events.page - 1) * pageSize + 1 : 0;
   const endRecordNum = Math.min(events.page * pageSize, events.total);
 
+  const capabilities = useRuntimeCapabilities();
   const exportFilteredEvents = async () => {
     if (exporting || events.total === 0) return;
     setExporting(true);
     try {
-      const path = await save({
-        title: t('usage.events.exportDialogTitle'),
-        defaultPath: usageEventsExportName(),
-        filters: [{ name: t('usage.events.exportFileType'), extensions: ['csv'] }],
-      });
-      if (!path) return;
+      const exportFileName = usageEventsExportName();
+      let path: string | null = null;
+      if (capabilities.supportsNativeDialog) {
+        path = await save({
+          title: t('usage.events.exportDialogTitle'),
+          defaultPath: exportFileName,
+          filters: [{ name: t('usage.events.exportFileType'), extensions: ['csv'] }],
+        });
+        if (!path) return;
+      }
       const items: UsageRecord[] = [];
       const pageSize = 5000;
       for (let page = 1; ; page += 1) {
@@ -693,7 +698,20 @@ export function EventsView({
         items.push(...exported.items);
         if (items.length >= exported.total || page >= exported.totalPages) break;
       }
-      await saveUsageEventsExport({ path, contents: usageEventsCsv(items) });
+      const csv = usageEventsCsv(items);
+      if (capabilities.supportsNativeDialog && path) {
+        await saveUsageEventsExport({ path, contents: csv });
+      } else {
+        const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = exportFileName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
     } catch (error) {
       feedback.showNotice(String(error), 'error');
     } finally {

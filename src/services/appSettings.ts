@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { getRuntimeCapabilities, invoke, isWebUi } from './platform';
 import type { AppLocale } from '../i18n/index';
 
 export type GuiSettings = {
@@ -14,8 +14,15 @@ export type WindowsCloseAction = 'exit' | 'minimize-to-tray';
 export const setAppLocale = (args: { locale: AppLocale; }): Promise<string> =>
   invoke<string>('set_app_locale', args);
 
-export const openExternalUrl = (args: { url: string; }): Promise<void> =>
-  invoke<void>('open_external_url', args);
+export const openExternalUrl = async (args: { url: string; }): Promise<void> => {
+  if (isWebUi() || !getRuntimeCapabilities().canOpenLocalBrowser) {
+    if (typeof window !== 'undefined' && /^https?:\/\//i.test(args.url.trim())) {
+      window.open(args.url.trim(), '_blank', 'noopener,noreferrer');
+      return;
+    }
+  }
+  await invoke<void>('open_external_url', args);
+};
 
 export const getGuiSettings = (): Promise<GuiSettings> =>
   invoke<GuiSettings>('get_gui_settings');

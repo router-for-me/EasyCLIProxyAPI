@@ -2550,6 +2550,45 @@ export function createBrowserMockRuntime(
         if (skill) skill.enabled = Boolean(payload.enabled);
         return null;
       }
+      case 'get_runtime_capabilities':
+        return {
+          mode: 'desktop',
+          canOpenLocalBrowser: true,
+          canOpenFileManager: true,
+          canLaunchDesktopApps: true,
+          canSelfUpdate: true,
+          supportsNativePluginWebview: true,
+          supportsNativeDialog: true,
+          supportsTray: true,
+          supportsAutostart: true,
+          supportsWindowMaterial: true,
+          appVersion: '0.0.0-mock',
+          dataDir: '/mock/data',
+        };
+      case 'browse_server_path':
+        return {
+          currentPath: readString(payload.path) || '/mock/data',
+          parentPath: '/mock',
+          entries: [
+            { name: 'certs', path: '/mock/data/certs', isDir: true, size: null },
+            { name: 'config.yaml', path: '/mock/data/config.yaml', isDir: false, size: 1024 },
+          ],
+        };
+      case 'resolve_plugin_entry_path':
+        return `/v0/resource/plugins/${encodeURIComponent(readString(payload.pluginId) || 'demo')}/index.html`;
+      case 'submit_acp_account_authorization':
+        return null;
+      case 'remote_core_settings':
+        return null;
+      case 'forget_cpa_instance':
+        return {
+          remoteActive: false,
+          remoteSelected: false,
+          endpoint: null,
+          savedEndpoints: [],
+          needsRepair: false,
+          revision: 0,
+        };
       default:
         if (command.startsWith('plugin:window|') || command.startsWith('plugin:webview|')) return null;
         console.warn(`[Browser Mock] Command not implemented: ${command}`, rawPayload);

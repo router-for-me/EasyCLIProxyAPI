@@ -22,6 +22,7 @@ import { Notice, type NoticeLevel } from '../components/Notice';
 import { EmptyState } from '../components/EmptyState';
 import { Dialog } from '../components/Dialog';
 import { useI18n } from '../i18n';
+import { useRuntimeCapabilities } from '../services/platform';
 import { mcpSkillsText, type McpSkillsMessageKey } from '../i18n/mcpSkills';
 import {
   createEmptyMcpServer,
@@ -290,6 +291,7 @@ function MarkdownProse({ content }: { content: string }) {
 
 export function McpSkillsPage() {
   const { locale } = useI18n();
+  const capabilities = useRuntimeCapabilities();
   const t = (key: McpSkillsMessageKey, vars?: Record<string, string | number>) =>
     mcpSkillsText(key, locale, vars);
 
@@ -1106,7 +1108,7 @@ export function McpSkillsPage() {
                     <span>{t('more')}</span>
                     <ChevronDown size={13} aria-hidden="true" />
                   </button>
-                  {moreOpen && (
+                  {moreOpen && capabilities.canOpenFileManager && (
                     <div className="mcp-more-dropdown surface-panel" role="menu">
                       <button
                         type="button"
@@ -1619,6 +1621,7 @@ export function McpSkillsPage() {
               </div>
 
               <div className="skills-toolbar-right">
+                {capabilities.canOpenFileManager ? (
                 <button
                   type="button"
                   className="secondary-button ghost"
@@ -1627,6 +1630,7 @@ export function McpSkillsPage() {
                   <FolderOpen size={14} aria-hidden="true" />
                   <span>{t('openFolder')}</span>
                 </button>
+                ) : null}
                 {skills.length > 0 && (
                   <>
                     <span className="skills-count-text">
@@ -1686,6 +1690,7 @@ export function McpSkillsPage() {
                         icon={<Sparkles size={36} />}
                         title={t('noSkills')}
                         action={
+                          capabilities.canOpenFileManager ? (
                           <button
                             type="button"
                             className="primary-button"
@@ -1694,6 +1699,7 @@ export function McpSkillsPage() {
                             <FolderOpen size={14} aria-hidden="true" />
                             <span>{t('openFolder')}</span>
                           </button>
+                          ) : undefined
                         }
                       >
                         {t('noSkillsHint')}

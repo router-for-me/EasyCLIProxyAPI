@@ -28,6 +28,7 @@ import devinIcon from '../assets/icons/devin.svg';
 import kimiIcon from '../assets/icons/kimi-light.svg';
 import metaIcon from '../assets/icons/meta.svg';
 import { useI18n } from '../i18n';
+import { useRuntimeCapabilities } from '../services/platform';
 import { usePrivacyMask } from '../privacy';
 import { FloatingNotice, useAppNotice } from '../appNotice';
 import { oauthSubpages, type OAuthSubpage } from '../oauthNavigation';
@@ -144,7 +145,7 @@ export function OAuthManagementPage() {
 }
 
 export function OAuthLoginPage({ onOpenAuthFiles }: { onOpenAuthFiles?: (provider?: string) => void } = {}) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const privacy = usePrivacyMask();
   const [accounts, setAccounts] = useState<Map<string, OAuthAccountSummary[]> | null>(null);
   const [states, setStates] = useState<Partial<Record<OAuthProviderId, OAuthProviderState>>>(
@@ -152,8 +153,10 @@ export function OAuthLoginPage({ onOpenAuthFiles }: { onOpenAuthFiles?: (provide
   );
   const feedback = useAppNotice();
   const { showNotice } = feedback;
+  const capabilities = useRuntimeCapabilities();
+  const canPickLocalBrowser = capabilities.canOpenLocalBrowser;
   const [browsers, setBrowsers] = useState<OAuthBrowserOption[]>([]);
-  const [browsersLoading, setBrowsersLoading] = useState(true);
+  const [browsersLoading, setBrowsersLoading] = useState(canPickLocalBrowser);
   const [selectedBrowser, setSelectedBrowser] = useState(loadOAuthBrowserPreference);
   const pollingTimers = useRef<Partial<Record<OAuthProviderId, number>>>({});
   const pollingRequests = useRef<Partial<Record<OAuthProviderId, boolean>>>({});
@@ -161,6 +164,10 @@ export function OAuthLoginPage({ onOpenAuthFiles }: { onOpenAuthFiles?: (provide
   const credentialSnapshots = useRef<Partial<Record<OAuthProviderId, AuthFileSnapshot>>>({});
 
   useEffect(() => {
+    if (!canPickLocalBrowser) {
+      setBrowsersLoading(false);
+      return;
+    }
     let active = true;
     void listOAuthBrowsers()
       .then((available) => {
@@ -179,7 +186,7 @@ export function OAuthLoginPage({ onOpenAuthFiles }: { onOpenAuthFiles?: (provide
         if (active) setBrowsersLoading(false);
       });
     return () => { active = false; };
-  }, []);
+  }, [canPickLocalBrowser]);
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -352,7 +359,7 @@ export function OAuthLoginPage({ onOpenAuthFiles }: { onOpenAuthFiles?: (provide
       await captureCredentialSnapshot(provider);
       const result = await startOAuthLogin({
         provider,
-        browser: selectedBrowser,
+        browser: canPickLocalBrowser ? selectedBrowser : NO_AUTO_OPEN_BROWSER_ID,
       });
       if (!result.state) {
         updateProviderState(provider, {
@@ -375,7 +382,9 @@ export function OAuthLoginPage({ onOpenAuthFiles }: { onOpenAuthFiles?: (provide
       });
       startPolling(provider, result.state);
 
-      if (!result.opened) {
+      if (!canPickLocalBrowser && result.url) {
+        window.open(result.url, '_blank', 'noopener,noreferrer');
+      } else if (!result.opened) {
         showNotice(
           result.openError
             ? t('oauth.openFailedDetail', { error: result.openError })
@@ -504,23 +513,25 @@ export function OAuthLoginPage({ onOpenAuthFiles }: { onOpenAuthFiles?: (provide
   return (
     <section className="page management-page oauth-login-page">
       <header className="management-header">
-        <label className="oauth-browser-picker">
-          <span>{t('oauth.browser.label')}</span>
-          <Select
-            value={selectedBrowser}
-            onChange={(event) => setSelectedBrowser(event.currentTarget.value)}
-            aria-label={t('oauth.browser.label')}
-            disabled={browsersLoading}
-          >
-            {browsersLoading ? <option value="">{t('oauth.browser.detecting')}</option> : null}
-            {browsers.map((browser) => (
-              <option value={browser.id} key={browser.id}>
-                {browser.id === 'default' ? t('oauth.browser.systemDefault') : browser.label}
-              </option>
-            ))}
-            <option value={NO_AUTO_OPEN_BROWSER_ID}>{t('oauth.browser.noAutoOpen')}</option>
-          </Select>
-        </label>
+        {canPickLocalBrowser ? (
+          <label className="oauth-browser-picker">
+            <span>{t('oauth.browser.label')}</span>
+            <Select
+              value={selectedBrowser}
+              onChange={(event) => setSelectedBrowser(event.currentTarget.value)}
+              aria-label={t('oauth.browser.label')}
+              disabled={browsersLoading}
+            >
+              {browsersLoading ? <option value="">{t('oauth.browser.detecting')}</option> : null}
+              {browsers.map((browser) => (
+                <option value={browser.id} key={browser.id}>
+                  {browser.id === 'default' ? t('oauth.browser.systemDefault') : browser.label}
+                </option>
+              ))}
+              <option value={NO_AUTO_OPEN_BROWSER_ID}>{t('oauth.browser.noAutoOpen')}</option>
+            </Select>
+          </label>
+        ) : null}
         <button type="button" className="secondary-button" onClick={notifyPluginResourcesChanged}>
           <RefreshCw size={16} aria-hidden="true" />{t('common.refresh')}
         </button>
@@ -540,6 +551,13 @@ export function OAuthLoginPage({ onOpenAuthFiles }: { onOpenAuthFiles?: (provide
         ) : null}
       >
         <p>{t('oauth.intro.body')}</p>
+        {!canPickLocalBrowser ? (
+          <p>
+            {locale.startsWith('zh')
+              ? '当前处于无头 WebUI 模式：授权链接将在您本机浏览器的新标签页中打开；若登录完成后浏览器跳转到无法访问的 localhost 回调地址，请直接复制地址栏中的完整回调 URL 粘贴到下方回调输入框提交。'
+              : 'Headless WebUI mode: authorization links open in a new tab of your browser. If the final redirect points to an unreachable localhost callback, copy the full callback URL from your browser address bar and submit it below.'}
+          </p>
+        ) : null}
       </Notice>
       <div className="oauth-grid">
         {oauthProviders.map((provider) => {

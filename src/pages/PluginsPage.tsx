@@ -2,7 +2,7 @@ import { Notice } from "../components/Notice";
 import { EmptyState } from "../components/EmptyState";
 import { Tabs } from "../components/Tabs";
 import { Switch } from "../components/Switch";
-import { open } from "../services/platform";
+import { open, pickBrowserFile, uploadTempFile, useRuntimeCapabilities } from "../services/platform";
 import { restartCoreProcess } from "../services/coreLifecycle";
 import { openExternalUrl } from "../services/appSettings";
 import { openCoreLogsDirectory } from "../services/coreSettings";
@@ -401,14 +401,27 @@ export function PluginsPage({ discoveredPlugins = [], discoveredUpdates = {}, on
       if (installed) onPluginUpdatesResolved?.([plugin.id]);
     }, pt(installed ? "removed" : "removedConfig"));
   };
+  const capabilities = useRuntimeCapabilities();
   const installLocal = async () => {
     if (pending.current) return;
     pending.current = true; setBusy(true);
     try {
-      const selected = await open({ directory: false, title: pt("localInstall"), filters: [{ name: pt("localBinary"), extensions: ["dll", "so", "dylib"] }] });
-      if (!selected || !mounted.current) return;
-      const filename = selected.split(/[\\/]/).pop() || selected;
-      if (!await askConfirmation({ title: pt("localInstall"), message: `${filename}\n\n${pt("localTrust")}`, confirmText: pt("install") }) || !mounted.current) return;
+      let selected: string | null = null;
+      let filename = "";
+      if (capabilities.supportsNativeDialog) {
+        selected = await open({ directory: false, title: pt("localInstall"), filters: [{ name: pt("localBinary"), extensions: ["dll", "so", "dylib"] }] });
+        if (!selected || !mounted.current) return;
+        filename = selected.split(/[\\/]/).pop() || selected;
+        if (!await askConfirmation({ title: pt("localInstall"), message: `${filename}\n\n${pt("localTrust")}`, confirmText: pt("install") }) || !mounted.current) return;
+      } else {
+        const file = await pickBrowserFile(".so,.dll,.dylib");
+        if (!file || !mounted.current) return;
+        filename = file.name;
+        if (!await askConfirmation({ title: pt("localInstall"), message: `${filename}\n\n${pt("localTrust")}`, confirmText: pt("install") }) || !mounted.current) return;
+        const uploaded = await uploadTempFile(file);
+        if (!mounted.current) return;
+        selected = uploaded.path;
+      }
       const path = await installLocalPlugin(selected);
       if (!mounted.current) return;
       setRestartRequired(true);
@@ -524,7 +537,7 @@ export function PluginsPage({ discoveredPlugins = [], discoveredUpdates = {}, on
               {plugin.effectiveEnabled && plugin.supportsOAuth && plugin.oauthProvider && <button className="secondary-button compact-button" disabled={locked} onClick={() => setOAuthPlugin(plugin)}><LogIn size={15} />{pt("oauth")}</button>}
               {installed ? <button className="secondary-button compact-button" disabled={locked} onClick={() => void toggle(plugin)}>{pt(plugin.enabled ? "disabled" : "enabled")}</button> : <button className="secondary-button compact-button" disabled={locked} onClick={() => { setSearch(plugin.id); setFilter("all"); setTab("store"); }}><Download size={15} />{pt("findInStore")}</button>}
               <button className="secondary-button compact-button" disabled={locked} onClick={() => setConfigPlugin(plugin)}><Settings2 size={15} />{pt("configure")}</button>
-              {status === "notLoaded" && <button className="secondary-button compact-button" disabled={locked} onClick={() => void openCoreLogsDirectory().catch(reason => { if (mounted.current) setError(message(reason)); })}><Folder size={15} />{pt("openLogs")}</button>}
+              {status === "notLoaded" && capabilities.canOpenFileManager && <button className="secondary-button compact-button" disabled={locked} onClick={() => void openCoreLogsDirectory().catch(reason => { if (mounted.current) setError(message(reason)); })}><Folder size={15} />{pt("openLogs")}</button>}
               <button className="icon-button danger plugin-delete" disabled={locked} aria-label={removeLabel} title={removeLabel} onClick={() => void remove(plugin)}><Trash2 size={16} /></button>
             </div>
           </article>; })}</div> : <>

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, isWebUi } from './platform';
 
 export type WebviewBounds = { x: number; y: number; width: number; height: number; viewportHeight: number };
 
@@ -28,13 +28,16 @@ export const newWebviewToken = (): number => {
 };
 
 export const hidePluginWebview = (args: { token: number; }): Promise<void> =>
-  invoke<void>('hide_plugin_webview', args);
+  isWebUi() ? Promise.resolve() : invoke<void>('hide_plugin_webview', args);
 
 export const showPluginWebview = (args: { pluginId: string; menuIndex: number; bounds: WebviewBounds; labels: { back: string; reload: string; openExternal: string; move: string; }; reload: boolean; token: number; }): Promise<string> =>
   invoke<string>('show_plugin_webview', args);
 
 export const setPluginWebviewBounds = (args: { bounds: WebviewBounds; token: number; }): Promise<void> =>
-  invoke<void>('set_plugin_webview_bounds', args);
+  isWebUi() ? Promise.resolve() : invoke<void>('set_plugin_webview_bounds', args);
 
 export const closePluginWebview = (): Promise<void> =>
-  invoke<void>('close_plugin_webview');
+  isWebUi() ? Promise.resolve() : invoke<void>('close_plugin_webview');
+
+export const resolvePluginEntryPath = (args: { pluginId: string; menuIndex: number }): Promise<string> =>
+  invoke<string>('resolve_plugin_entry_path', args);

@@ -1,4 +1,5 @@
-import { Channel, invoke } from '@tauri-apps/api/core';
+import { Channel } from '@tauri-apps/api/core';
+import { invoke, isWebUi, listen } from './platform';
 
 export type AcpRoutingStrategy = 'round_robin' | 'least_busy' | 'fill_first' | 'weighted';
 export type AcpPromptProfile = 'append' | 'first_turn_context';
@@ -103,7 +104,23 @@ export const acpApi = {
   status: () => invoke<AcpStatus>('get_acp_status'),
   connect: (login: boolean) => invoke<AcpStatus>('acp_connect', { login }),
   switchAccount: (accountId: string) => invoke<AcpStatus>('switch_acp_account', { accountId }),
-  addAccount: (label: string, receive: (link: AcpAuthorizationLink) => void, replace?: string) => {
+  addAccount: async (label: string, receive: (link: AcpAuthorizationLink) => void, replace?: string) => {
+    if (isWebUi()) {
+      const channelId = `acp-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const unlisten = await listen<{ channelId?: string | null; attempt: string; url: string }>(
+        'acp-auth-link',
+        ({ payload }) => {
+          if (payload && (!payload.channelId || payload.channelId === channelId)) {
+            receive({ attempt: payload.attempt, url: payload.url });
+          }
+        },
+      );
+      try {
+        return await invoke<AcpStatus>('add_acp_account', { label, replace, channelId });
+      } finally {
+        unlisten();
+      }
+    }
     const onLink = new Channel<AcpAuthorizationLink>();
     onLink.onmessage = receive;
     return invoke<AcpStatus>('add_acp_account', { label, onLink, replace });

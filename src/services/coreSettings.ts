@@ -1,4 +1,4 @@
-import { invoke as nativeInvoke } from '@tauri-apps/api/core';
+import { invoke as nativeInvoke } from './platform';
 import { remoteTargetRevision } from './remoteCpa';
 
 export function invokeCoreSetting<Result>(operation: string, args: Record<string, unknown> = {}): Promise<Result> {

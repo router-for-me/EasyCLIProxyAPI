@@ -37,7 +37,7 @@ import {
 } from '../services/reverseProxy';
 import { CoolingToggle } from '../components/settings/CoolingToggle';
 import { FormEvent, useEffect, useRef, useState } from 'react';
-import { open } from '../services/platform';
+import { open, useRuntimeCapabilities } from '../services/platform';
 import {
   AlertCircle,
   ArrowRight,
@@ -973,11 +973,12 @@ export function ConfigPanelPage() {
     }
   };
 
+  const capabilities = useRuntimeCapabilities();
   const handleOpenCoreLogsDirectory = async () => {
     if (busyAction !== null) return;
     setBusyAction('open-logs');
     try {
-      if (external) {
+      if (external || !capabilities.canOpenFileManager) {
         const result = await managementApi.get<{ lines: string[] }>('/observability/logs', { limit: 200 });
         if (!Array.isArray(result?.lines) || !result.lines.every(line => typeof line === 'string')) throw new Error(t('remote.error.invalidResponse'));
         setServerLogs(result.lines);
@@ -2763,12 +2764,12 @@ export function ConfigPanelPage() {
               <button
                 type="button"
                 className="secondary-button compact-button"
-                disabled={diagnosticsControlsDisabled || (external && !settings?.loggingToFile)}
-                title={external && !settings?.loggingToFile ? st('enableFileLogs') : undefined}
+                disabled={diagnosticsControlsDisabled || ((external || !capabilities.canOpenFileManager) && !settings?.loggingToFile)}
+                title={(external || !capabilities.canOpenFileManager) && !settings?.loggingToFile ? st('enableFileLogs') : undefined}
                 onClick={() => void handleOpenCoreLogsDirectory()}
               >
                 <FolderOpen size={15} aria-hidden="true" />
-                {external ? st('readLogs') : t('config.diagnostics.openLogs')}
+                {external || !capabilities.canOpenFileManager ? st('readLogs') : t('config.diagnostics.openLogs')}
               </button>
             </div>
           </div>
@@ -2968,6 +2969,7 @@ export function ConfigPanelPage() {
             {softwareSettingsLoading && softwareSettings === null ? renderNativeSkeleton() : (<>
             <div className="config-software-content">
               <div className="config-software-settings-list">
+                {capabilities.supportsAutostart ? (
                 <div className={`config-software-setting-row${softwareControlsDisabled ? ' is-disabled' : ''}`}>
                   <label className="config-software-setting-copy" htmlFor="config-software-autostart">
                     <span className="config-software-setting-icon" aria-hidden="true">
@@ -2987,6 +2989,7 @@ export function ConfigPanelPage() {
                     onChange={(event) => updateSoftwarePreference({ autostartEnabled: event.currentTarget.checked })}
                   />
                 </div>
+                ) : null}
                 <div className={`config-software-setting-row${external || softwareControlsDisabled ? ' is-disabled' : ''}`}>
                   <label className="config-software-setting-copy" htmlFor="config-software-start-core">
                     <span className="config-software-setting-icon" aria-hidden="true">
@@ -3006,6 +3009,7 @@ export function ConfigPanelPage() {
                     onChange={(event) => updateSoftwarePreference({ startCoreOnLaunch: event.currentTarget.checked })}
                   />
                 </div>
+                {capabilities.supportsTray ? (
                 <div className={`config-software-setting-row${softwareControlsDisabled ? ' is-disabled' : ''}`}>
                   <label className="config-software-setting-copy" htmlFor="config-software-silent-start">
                     <span className="config-software-setting-icon" aria-hidden="true">
@@ -3025,6 +3029,8 @@ export function ConfigPanelPage() {
                     onChange={(event) => updateSoftwarePreference({ silentStartEnabled: event.currentTarget.checked })}
                   />
                 </div>
+                ) : null}
+                {capabilities.supportsTray ? (
                 <div className="config-software-setting-row">
                   <label className="config-software-setting-copy" htmlFor="config-software-sign-in-notifications">
                     <span className="config-software-setting-icon" aria-hidden="true">
@@ -3044,6 +3050,8 @@ export function ConfigPanelPage() {
                     onChange={(event) => setSignInNotifications(event.currentTarget.checked)}
                   />
                 </div>
+                ) : null}
+                {capabilities.canLaunchDesktopApps ? (
                 <div className={`config-software-setting-row config-software-close-row${softwareControlsDisabled ? ' is-disabled' : ''}`}>
                   <label className="config-software-setting-copy" htmlFor="config-software-default-terminal">
                     <span className="config-software-setting-icon" aria-hidden="true">
@@ -3071,6 +3079,8 @@ export function ConfigPanelPage() {
                     </Select>
                   </div>
                 </div>
+                ) : null}
+                {capabilities.supportsTray ? (
                 <div className={`config-software-setting-row config-software-close-row${softwareControlsDisabled ? ' is-disabled' : ''}`}>
                   <label className="config-software-setting-copy" htmlFor="config-software-close-behavior">
                     <span className="config-software-setting-icon" aria-hidden="true">
@@ -3096,6 +3106,7 @@ export function ConfigPanelPage() {
                     </Select>
                   </div>
                 </div>
+                ) : null}
               </div>
             </div>
             {renderFeedback(softwareFeedback, !searching && activeSubpage === 'software')}</>)}

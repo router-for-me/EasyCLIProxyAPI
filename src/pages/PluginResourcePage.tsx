@@ -1,6 +1,7 @@
 import { Notice } from '../components/Notice';
 import {
   hidePluginWebview,
+  resolvePluginEntryPath,
   showPluginWebview,
   setPluginWebviewBounds,
   EMPTY_BOUNDS,
@@ -10,14 +11,140 @@ import {
   type WebviewBounds,
 } from '../services/pluginWebview';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ChevronLeft, ExternalLink, RefreshCw } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { pluginText } from '../i18n/plugins';
 import { useOverlayOpen } from '../components/useOverlayOpen';
 import type { PluginNavEntry } from '../services/pluginNavigation';
+import { useRuntimeCapabilities } from '../services/platform';
 
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-export function PluginResourcePage({ entry, reloadToken }: { entry: PluginNavEntry; reloadToken: number }) {
+function WebPluginFramePage({ entry, reloadToken }: { entry: PluginNavEntry; reloadToken: number }) {
+  const { t, locale } = useI18n();
+  const pt = (key: Parameters<typeof pluginText>[0]) => pluginText(key, locale);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [entryPath, setEntryPath] = useState<string>('');
+  const [frameKey, setFrameKey] = useState(0);
+  const [attempt, setAttempt] = useState(0);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoaded(false);
+    setError('');
+    resolvePluginEntryPath({ pluginId: entry.pluginID, menuIndex: entry.menuIndex })
+      .then((path) => {
+        if (!cancelled) {
+          setEntryPath(path);
+          setFrameKey((value) => value + 1);
+        }
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(message(reason));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [entry.pluginID, entry.menuIndex, reloadToken, attempt]);
+
+  const handleBack = () => {
+    try {
+      iframeRef.current?.contentWindow?.history.back();
+    } catch {
+      // Fallback when iframe navigation history is unavailable.
+    }
+  };
+
+  const handleReload = () => {
+    try {
+      iframeRef.current?.contentWindow?.location.reload();
+    } catch {
+      setFrameKey((value) => value + 1);
+    }
+  };
+
+  const handleOpenExternal = () => {
+    if (!entryPath) return;
+    window.open(entryPath, '_blank', 'noopener,noreferrer');
+  };
+
+  return (
+    <section className="page plugin-resource-page">
+      <h1 className="sr-only">{entry.label}</h1>
+      <div className="plugin-resource-host">
+        {error ? (
+          <Notice
+            tone="error"
+            icon={false}
+            className="plugin-error plugin-banner"
+            action={(
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setAttempt((value) => value + 1)}
+              >
+                {pt('retry')}
+              </button>
+            )}
+          >
+            {error}
+          </Notice>
+        ) : (
+          <>
+            {!loaded ? (
+              <p className="plugin-resource-status" role="status">{t('common.loading')}</p>
+            ) : null}
+            {entryPath ? (
+              <iframe
+                key={`${entryPath}:${frameKey}`}
+                ref={iframeRef}
+                className="plugin-resource-iframe"
+                src={entryPath}
+                title={entry.label}
+                onLoad={() => setLoaded(true)}
+              />
+            ) : null}
+            {entryPath ? (
+              <div className="plugin-iframe-toolbar" role="toolbar" aria-label={entry.label}>
+                <button
+                  type="button"
+                  className="plugin-iframe-toolbar-btn"
+                  title={pt('pageBack')}
+                  aria-label={pt('pageBack')}
+                  onClick={handleBack}
+                >
+                  <ChevronLeft size={15} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="plugin-iframe-toolbar-btn"
+                  title={pt('pageReload')}
+                  aria-label={pt('pageReload')}
+                  onClick={handleReload}
+                >
+                  <RefreshCw size={14} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="plugin-iframe-toolbar-btn"
+                  title={pt('openExternal')}
+                  aria-label={pt('openExternal')}
+                  onClick={handleOpenExternal}
+                >
+                  <ExternalLink size={14} aria-hidden="true" />
+                </button>
+              </div>
+            ) : null}
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function DesktopPluginWebviewPage({ entry, reloadToken }: { entry: PluginNavEntry; reloadToken: number }) {
   const { t, locale } = useI18n();
   const pt = (key: Parameters<typeof pluginText>[0]) => pluginText(key, locale);
   const host = useRef<HTMLDivElement>(null);
@@ -94,4 +221,12 @@ export function PluginResourcePage({ entry, reloadToken }: { entry: PluginNavEnt
         : !ready && <p className="plugin-resource-status" role="status">{t('common.loading')}</p>}
     </div>
   </section>;
+}
+
+export function PluginResourcePage({ entry, reloadToken }: { entry: PluginNavEntry; reloadToken: number }) {
+  const capabilities = useRuntimeCapabilities();
+  if (!capabilities.supportsNativePluginWebview) {
+    return <WebPluginFramePage entry={entry} reloadToken={reloadToken} />;
+  }
+  return <DesktopPluginWebviewPage entry={entry} reloadToken={reloadToken} />;
 }

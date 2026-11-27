@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './platform';
 
 import { remoteTargetRevision } from './remoteCpa';
 import { managementApi } from './managementApi';

@@ -1,4 +1,4 @@
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { hasBackend, invoke } from './platform';
 
 type Preferences = Record<string, string>;
 type Backend = {
@@ -60,7 +60,7 @@ export class UsagePreferences {
 export const usagePreferences = new UsagePreferences(() => localStorage);
 
 export async function initializeUsagePreferences() {
-  if (!isTauri()) return;
+  if (!hasBackend()) return;
   try {
     await usagePreferences.initialize({
       load: () => invoke<Preferences>('get_usage_view_preferences'),

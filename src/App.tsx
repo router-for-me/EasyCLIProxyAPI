@@ -75,7 +75,9 @@ import { WorkspaceScrollbars } from './components/WorkspaceScrollbars';
 import { EmptyState } from './components/EmptyState';
 import { CpaConnectionDialog, CpaWorkspaceTarget } from './pages/RemoteCpaPage';
 import { getCpaConnection, type CpaConnection } from './services/remoteCpa';
-import { isTauri } from './services/platform';
+import { hasBackend, isWebUi } from './services/platform';
+import { WebAccountControls } from './components/WebLoginScreen';
+import { ServerPathPickerHost } from './components/ServerPathPickerModal';
 
 const QQ_CONTACT_URL = 'https://qm.qq.com/q/3queDaIG';
 const DISCORD_SERVER_URL = 'https://discord.gg/PxvX4D9kgs';
@@ -243,7 +245,7 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
   const [navElement, setNavElement] = useState<HTMLElement | null>(null);
   const { entries: pluginEntries, plugins: installedPluginList, fetched: pluginEntriesFetched, pluginUpdates } = usePluginNavEntries(coreReady, remote ? connection.revision : undefined);
   const pluginEntry = findPluginNavEntry(pluginEntries, active);
-  const configManagementAvailable = isTauri() || browserMockEnabled;
+  const configManagementAvailable = hasBackend() || browserMockEnabled;
   const navPages = pages.filter((page) => page.id !== 'easy' && (page.id !== 'config-management' || configManagementAvailable));
   const { layout: autoPluginLayout, compact: navCompact } = usePluginNavLayout(navElement, navPages.length, pluginEntries.length);
   const [pluginReload, setPluginReload] = useState(0);
@@ -370,7 +372,7 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
               </button>
               <div className="sidebar-brand-text">
                 <strong>EasyCLIProxyAPI</strong>
-                <span>{t('app.desktopConsole')}</span>
+                <span>{isWebUi() ? (locale.startsWith('zh') ? 'Web 控制台' : 'Web Console') : t('app.desktopConsole')}</span>
               </div>
             </div>
 
@@ -482,6 +484,7 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
                   <span>{t('app.contact.label')}</span>
                   <ExternalLink size={12} strokeWidth={1.75} aria-hidden="true" />
                 </button>
+                <WebAccountControls />
               </div>
 
               <div className="sidebar-utility">
@@ -603,6 +606,7 @@ function AppContent({ connection, switcher, browserMockEnabled, openConnection }
 
       <WorkspaceScrollbars viewportRef={workspaceRef} viewportId="app-workspace" />
       <AppUpdateDialog />
+      <ServerPathPickerHost />
     </>
   );
 }

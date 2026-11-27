@@ -1,5 +1,4 @@
-import { invoke, isTauri } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { invoke, isDesktopApp, listen } from './platform';
 import { startActivePolling } from './activePolling';
 
 let active = false;
@@ -19,7 +18,7 @@ export const pollWhileActive = (refresh: () => void, interval: number, pause?: (
 // One application-lifetime subscription. Native visibility avoids treating an
 // unfocused/occluded window on a second monitor as hidden (#493).
 export async function initializeWindowActivity() {
-  if (!isTauri()) {
+  if (!isDesktopApp()) {
     const update = () => publish(!document.hidden);
     document.addEventListener('visibilitychange', update);
     update();

@@ -2,7 +2,7 @@ import { SegmentedControl } from './SegmentedControl';
 import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
 import { Check, FileArchive, FolderInput, FolderOpen, ImagePlus, Monitor, Moon, Palette, RefreshCw, Search, Sun, SunMoon, Trash2, Upload } from 'lucide-react';
 import { useI18n } from '../i18n';
-import { open as openFileDialog } from '../services/platform';
+import { open as openFileDialog, pickBrowserFile, uploadTempFile, useRuntimeCapabilities } from '../services/platform';
 import {
   getAnimeBackdropInfo, importCustomTheme, openCustomThemesDirectory, reloadCustomThemes, retryThemeSave,
   setAnimeBackdropPreset, setCustomAnimeBackdropImage, setSystemTheme, useAnimeBackdropState,
@@ -69,6 +69,7 @@ export function ThemeSelector({ value, onChange, open, onOpenChange, registry: o
   registry?: ThemeRegistry;
 }) {
   const { t, locale } = useI18n();
+  const capabilities = useRuntimeCapabilities();
   const activeRegistry = useThemeRegistry();
   const registry = override ?? activeRegistry;
   const issue = useThemePreferenceIssue();
@@ -162,21 +163,30 @@ export function ThemeSelector({ value, onChange, open, onOpenChange, registry: o
     setImportMenuOpen(false);
     setOpenFailed(false);
     setImportFeedback(null);
-    let selectedPath: string | null;
+    let selectedPath: string | null = null;
     try {
-      selectedPath = await openFileDialog(kind === 'zip'
-        ? {
-            directory: false,
-            multiple: false,
-            title: t('app.theme.custom.importZipTitle'),
-            filters: [{ name: 'ZIP', extensions: ['zip'] }],
-          }
-        : {
-            directory: true,
-            multiple: false,
-            title: t('app.theme.custom.importFolderTitle'),
-          });
+      if (kind === 'zip' && !capabilities.supportsNativeDialog) {
+        const file = await pickBrowserFile('.zip');
+        if (!file) return;
+        setImporting(true);
+        const uploaded = await uploadTempFile(file);
+        selectedPath = uploaded.path;
+      } else {
+        selectedPath = await openFileDialog(kind === 'zip'
+          ? {
+              directory: false,
+              multiple: false,
+              title: t('app.theme.custom.importZipTitle'),
+              filters: [{ name: 'ZIP', extensions: ['zip'] }],
+            }
+          : {
+              directory: true,
+              multiple: false,
+              title: t('app.theme.custom.importFolderTitle'),
+            });
+      }
     } catch {
+      setImporting(false);
       setImportFeedback({ tone: 'error', text: t('app.theme.custom.importFailed') });
       return;
     }
@@ -455,9 +465,11 @@ export function ThemeSelector({ value, onChange, open, onOpenChange, registry: o
                   </div>
                 ) : null}
               </div>
-              <button type="button" className="secondary-button compact-button" data-action="open-themes" onClick={openDirectory}>
-                <FolderOpen size={15} aria-hidden="true" />{t('app.theme.custom.openFolder')}
-              </button>
+              {capabilities.canOpenFileManager ? (
+                <button type="button" className="secondary-button compact-button" data-action="open-themes" onClick={openDirectory}>
+                  <FolderOpen size={15} aria-hidden="true" />{t('app.theme.custom.openFolder')}
+                </button>
+              ) : null}
               <button type="button" className="secondary-button compact-button" data-action="reload-themes" disabled={importing || custom.loading}
                 onClick={() => { setOpenFailed(false); setImportFeedback(null); void reloadCustomThemes(); }}>
                 <RefreshCw size={15} aria-hidden="true" />{t('app.theme.custom.reload')}

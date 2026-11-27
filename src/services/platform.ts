@@ -1,17 +1,98 @@
-import { isTauri as nativeIsTauri, invoke } from '@tauri-apps/api/core';
 import { getVersion as nativeGetVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow as nativeWindow } from '@tauri-apps/api/window';
 import { getCurrentWebview as nativeWebview } from '@tauri-apps/api/webview';
 import { open as nativeOpen, save as nativeSave } from '@tauri-apps/plugin-dialog';
+import {
+  browseServerPath,
+  getRuntimeCapabilities,
+  getWebAuthSnapshot,
+  hasBackend,
+  initializeRuntimeTransport,
+  invoke,
+  isDesktopApp,
+  isWebUi,
+  listen,
+  loadRuntimeCapabilities,
+  pickBrowserFile,
+  registerServerPathPicker,
+  requestServerPathPicker,
+  subscribeRuntimeCapabilities,
+  subscribeWebAuth,
+  uploadTempFile,
+  useRuntimeCapabilities,
+  useWebAuthStatus,
+  webAuth,
+  type RuntimeCapabilities,
+  type RuntimeMode,
+  type ServerFileFilter,
+  type ServerPathEntry,
+  type ServerPathListing,
+  type ServerPathPickerOptions,
+  type StagedUploadResult,
+  type WebAuthStatus,
+} from './rpc';
 
-export const isTauri = (): boolean => nativeIsTauri();
-export const getVersion = (): Promise<string> => nativeGetVersion();
-export { invoke };
+export const isTauri = (): boolean => isDesktopApp();
+export const getVersion = (): Promise<string> => {
+  if (isWebUi()) {
+    const version = getRuntimeCapabilities().appVersion || getWebAuthSnapshot().version;
+    return Promise.resolve(version);
+  }
+  return nativeGetVersion();
+};
+
+export {
+  browseServerPath,
+  getRuntimeCapabilities,
+  getWebAuthSnapshot,
+  hasBackend,
+  initializeRuntimeTransport,
+  invoke,
+  isDesktopApp,
+  isWebUi,
+  listen,
+  loadRuntimeCapabilities,
+  pickBrowserFile,
+  registerServerPathPicker,
+  subscribeRuntimeCapabilities,
+  subscribeWebAuth,
+  uploadTempFile,
+  useRuntimeCapabilities,
+  useWebAuthStatus,
+  webAuth,
+};
+export type {
+  RuntimeCapabilities,
+  RuntimeMode,
+  ServerFileFilter,
+  ServerPathEntry,
+  ServerPathListing,
+  ServerPathPickerOptions,
+  StagedUploadResult,
+  WebAuthStatus,
+};
 
 type FileFilter = { name: string; extensions: string[] };
 type FileDialogOptions = { title?: string; defaultPath?: string; filters?: FileFilter[] };
-export const open = (options: FileDialogOptions & { directory?: boolean; multiple?: false }): Promise<string | null> => nativeOpen(options);
-export const save = (options: FileDialogOptions): Promise<string | null> => nativeSave(options);
+export const open = (
+  options: FileDialogOptions & { directory?: boolean; multiple?: false },
+): Promise<string | null> => {
+  if (isWebUi()) {
+    return requestServerPathPicker({
+      title: options.title,
+      defaultPath: options.defaultPath,
+      directory: options.directory,
+      filters: options.filters,
+    });
+  }
+  return nativeOpen(options);
+};
+export const save = (options: FileDialogOptions): Promise<string | null> => {
+  if (isWebUi()) {
+    return Promise.resolve(null);
+  }
+  return nativeSave(options);
+};
 
 export function getCurrentWindow() {
   const window = nativeWindow();

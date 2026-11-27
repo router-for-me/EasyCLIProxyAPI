@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './platform';
 import { defaultProviderBaseUrl, providerDefaultHeaders, normalizeBaseUrl, type ModelOption, type ModelProvider } from './modelService';
 
 export const PROVIDER_HEALTH_TIMEOUT_MS = 15_000;

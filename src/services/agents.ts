@@ -1,4 +1,4 @@
-import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { invoke as tauriInvoke } from './platform';
 import { remoteTargetRevision } from './remoteCpa';
 import { readAgentConfigDirectories } from './agentConfigDirectories';
 import type { ClaudeDesktopModelMapping } from './claudeDesktopModels';

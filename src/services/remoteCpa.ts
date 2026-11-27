@@ -1,4 +1,4 @@
-import { invoke, isTauri } from './platform';
+import { hasBackend, invoke } from './platform';
 import { selectCodexSubscriptionStore } from './codexSubscription';
 import { selectCredentialSignInStore } from './credentialSignIn';
 import { resetTargetQuotaCache } from './quotaCache';
@@ -39,7 +39,7 @@ export function useConnectionTarget(connection: CpaConnection) {
   return connection;
 }
 export const getCpaConnection = async () => {
-  const connection = isTauri() ? await invoke<CpaConnection>('get_cpa_connection') : localCpaConnection;
+  const connection = hasBackend() ? await invoke<CpaConnection>('get_cpa_connection') : localCpaConnection;
   return useConnectionTarget(connection);
 };
 export const testRemoteCpa = ({ revision, endpoint, key }: ConnectionDraft) =>

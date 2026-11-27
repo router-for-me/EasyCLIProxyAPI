@@ -58,7 +58,7 @@ import {
   useState,
   type ComponentType,
 } from 'react';
-import { open } from '../services/platform';
+import { open, useRuntimeCapabilities } from '../services/platform';
 import {
   AlertTriangle,
   BadgeCheck,
@@ -572,7 +572,8 @@ type AgentsPageProps = {
 };
 
 export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsPageProps = {}) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const capabilities = useRuntimeCapabilities();
   const scope = selectedRemoteEndpoint() ?? '';
   const drafts = agentDrafts(scope);
   const [selected, setSelected] = useState<AgentClientId>(readSelectedAgentClient);
@@ -2539,14 +2540,24 @@ export function AgentsPage({ embedded = false, onConfigurationApplied }: AgentsP
             onDismiss={() => { setConfigurationError(''); setModelSelectionError(''); setModelError(''); }} />
           <MessageNotice tone="success" message={!configurationErrorMessage ? configurationNotice || clearNotice : null}
             onDismiss={() => { setConfigurationNotice(''); setClearNotice(''); }} />
-          {activeSubpage === 'core' ? <AgentRunControls name={activeDefinition.name} dualTargets={hasIndependentCliAndApp}
-            desktop={hasIndependentCliAndApp || selected === 'claude-desktop' || selected === 'zcode' || selected === 'workbuddy'}
-            cliService={selected === 'codex'} cliServiceRestarting={selected === 'codex' && cliServiceRestarting}
-            targets={activeLaunchTargets} enabled={launchEnabled} busyAction={busyAction}
-            harness={isDeepSeekHarnessClient ? deepSeekHarnessProcessStatus : null}
-            onLaunch={(target) => void launchAgent(target)} onRestart={() => void restartDesktopApp()}
-            onRestartCli={() => void restartCodexCliService()}
-            onStop={() => void stopDeepSeekHarness()} onRestartWeb={() => void restartDeepSeekHarness()} error={launchError} onErrorDismiss={() => setLaunchError('')} /> : null}
+          {activeSubpage === 'core' ? (
+            capabilities.canLaunchDesktopApps || isDeepSeekHarnessClient ? (
+              <AgentRunControls name={activeDefinition.name} dualTargets={hasIndependentCliAndApp}
+                desktop={capabilities.canLaunchDesktopApps && (hasIndependentCliAndApp || selected === 'claude-desktop' || selected === 'zcode' || selected === 'workbuddy')}
+                cliService={selected === 'codex'} cliServiceRestarting={selected === 'codex' && cliServiceRestarting}
+                targets={activeLaunchTargets} enabled={launchEnabled} busyAction={busyAction}
+                harness={isDeepSeekHarnessClient ? deepSeekHarnessProcessStatus : null}
+                onLaunch={(target) => void launchAgent(target)} onRestart={() => void restartDesktopApp()}
+                onRestartCli={() => void restartCodexCliService()}
+                onStop={() => void stopDeepSeekHarness()} onRestartWeb={() => void restartDeepSeekHarness()} error={launchError} onErrorDismiss={() => setLaunchError('')} />
+            ) : (
+              <Notice tone="info">
+                {locale.startsWith('zh')
+                  ? '无头 WebUI 模式下已同步服务端 CLI 配置文件；请在服务器终端或 SSH 会话中直接运行该 CLI 工具。'
+                  : 'Server CLI configuration is synced automatically. Run this CLI agent directly from your server shell or SSH session in headless WebUI mode.'}
+              </Notice>
+            )
+          ) : null}
           </div>
         </section>
       </div>

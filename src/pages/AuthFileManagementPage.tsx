@@ -22,6 +22,7 @@ import { AuthFileHealthStatus } from '../components/AuthFileHealthStatus';
 import { AuthFileUsageSummary } from '../components/AuthFileUsageSummary';
 import { useCredentialReauth } from '../components/useCredentialSignIn';
 import { Notice } from '../components/Notice';
+import { useRuntimeCapabilities } from '../services/platform';
 import { Dialog } from '../components/Dialog';
 import {
   Check,
@@ -146,6 +147,7 @@ const credentialColumns: StackedColumns = { stacked: { minWidth: 420, gap: 12 },
 
 export function AuthFileManagementPage({ initialProvider }: { initialProvider?: string } = {}) {
   const { t } = useI18n();
+  const capabilities = useRuntimeCapabilities();
   const privacy = usePrivacyMask();
   const now = useQuotaClock();
   const { askConfirmation, confirmationDialog } = useConfirmation();
@@ -578,7 +580,9 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
           const provider = oauthModelProviders.find((item) => item.label === providerFilter) ?? oauthModelProviders[0];
           if (provider) void openOauthModelSettings({ ...provider, scope: 'provider' });
         }}><Settings2 size={15} />{t('authFiles.models.toolbarButton')}</button>
+        {capabilities.canOpenFileManager ? (
         <button type="button" className="secondary-button small-button ghost" disabled={busy} onClick={() => void openAuthFilesDirectory()}><FolderOpen size={15} />{t('authFiles.openDirectory')}</button>
+        ) : null}
         <button type="button" className="secondary-button small-button" onClick={() => void loadFiles()} disabled={loading || busy}>
           <RefreshCw size={16} className={loading ? 'spin' : ''} />{t('authFiles.toolbar.refreshList')}
         </button>

@@ -1,13 +1,13 @@
 import { getPrivacyMode, savePrivacyMode, PrivacyPreferences } from './services/privacyPreferences';
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
-import { isTauri } from './services/platform';
+import { hasBackend } from './services/platform';
 import { maskIdentifier, maskSensitiveText } from './services/privacyMask';
 import { authFileIdentities, authFileName, type AuthFileRecord } from './services/authFiles';
 
 const preferences = new PrivacyPreferences(() => window.localStorage);
 
 export async function initializePrivacyMode(): Promise<void> {
-  if (!isTauri()) return;
+  if (!hasBackend()) return;
   try {
     await preferences.initialize({
       load: () => getPrivacyMode(),

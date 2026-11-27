@@ -1,5 +1,5 @@
 import { remoteTargetRevision } from './remoteCpa';
-import { invoke } from '@tauri-apps/api/core';
+import { getRuntimeCapabilities, invoke, isWebUi } from './platform';
 
 export type OAuthStatusResult = {
   status: string;
@@ -27,8 +27,15 @@ export const getOAuthStatus = (args: { state: string; }): Promise<OAuthStatusRes
 export const startOAuthLogin = (args: { provider: string; browser: string; pluginProvider?: boolean }): Promise<OAuthStartResult> =>
   invoke<OAuthStartResult>('start_oauth_login', { ...args, targetRevision: remoteTargetRevision() });
 
-export const openOAuthUrl = (args: { url: string; browser: string; }): Promise<void> =>
-  invoke<void>('open_oauth_url', args);
+export const openOAuthUrl = async (args: { url: string; browser: string; }): Promise<void> => {
+  if (isWebUi() || !getRuntimeCapabilities().canOpenLocalBrowser) {
+    if (typeof window !== 'undefined' && /^https?:\/\//i.test(args.url.trim())) {
+      window.open(args.url.trim(), '_blank', 'noopener,noreferrer');
+      return;
+    }
+  }
+  await invoke<void>('open_oauth_url', args);
+};
 
 export const submitOAuthCallback = (args: { provider: string; redirectUrl: string; pluginProvider?: boolean }): Promise<void> =>
   invoke<void>('submit_oauth_callback', { ...args, targetRevision: remoteTargetRevision() });

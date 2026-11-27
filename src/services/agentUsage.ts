@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './platform';
 import { isRecord, readNumber, readString } from './managementApi';
 
 export type AgentUsageTotals = {

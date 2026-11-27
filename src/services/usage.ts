@@ -1,5 +1,5 @@
 import type { GenerationSpeedMode } from './usageMetrics';
-import { invoke as nativeInvoke } from '@tauri-apps/api/core';
+import { invoke as nativeInvoke } from './platform';
 import { selectedTargetRevision } from './remoteCpa';
 export const invokeUsage = <T>(command: string, args?: Record<string, unknown>) => nativeInvoke<T>(command, { ...args, targetRevision: selectedTargetRevision() });
 const invoke = invokeUsage;

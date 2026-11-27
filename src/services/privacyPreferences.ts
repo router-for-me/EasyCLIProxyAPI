@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './platform';
 const STORAGE_KEY = 'easy-cli-proxy-api.privacy-mode';
 type Backend = {
   load(): Promise<boolean | null>;

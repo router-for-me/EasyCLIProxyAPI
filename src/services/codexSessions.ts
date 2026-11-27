@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './platform';
 import type { CodexSessionContextDetail, SaveCodexSessionContextResult, SaveCodexSessionContextRequest, CodexSessionPage, CodexSessionDeleteBatchResult, CodexSessionRepairResult, SessionIndexCleanupPreview, SessionIndexCleanupResult } from './codexSessionState';
 
 export const getCodexSessionContext = (args: { request: { sessionId: string; }; }): Promise<CodexSessionContextDetail> =>

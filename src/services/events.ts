@@ -1,4 +1,4 @@
-import { listen } from '@tauri-apps/api/event';
+import { listen } from './platform';
 import type { CoreStatus } from './coreLifecycle';
 import type { AppUpdateTask } from './appUpdates';
 import type { CoreInstallTask } from './coreVersions';

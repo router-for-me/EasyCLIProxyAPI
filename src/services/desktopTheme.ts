@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './platform';
 import type { CustomThemeList } from '../themes/customThemes';
 import type { PlatformWindowMaterial, ThemeSelection, ThemeAppearance } from '../themes/types';
 import type { AppTheme } from '../themeController';

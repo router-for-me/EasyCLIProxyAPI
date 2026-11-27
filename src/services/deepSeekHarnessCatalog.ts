@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './platform';
 import schemaSource from './deepSeekHarnessSchema.json';
 
 export type HarnessProfile = Record<string, unknown>;

@@ -10,7 +10,7 @@ import {
   setWindowMaterial,
 } from './services/desktopTheme';
 import { useSyncExternalStore } from 'react';
-import { isTauri, getCurrentWebview, getCurrentWindow } from './services/platform';
+import { hasBackend, isDesktopApp, getCurrentWebview, getCurrentWindow } from './services/platform';
 import { createThemeController, type ThemePreference } from './themeController';
 import { ThemePreferences } from './services/themePreferences';
 import { createThemeApplicator, themeWindowMaterial } from './themes/applyTheme';
@@ -165,11 +165,12 @@ async function loadCustomThemes(): Promise<boolean> {
 }
 
 async function detectWindowMaterial() {
+  if (!isDesktopApp()) return;
   platformMaterial = await readWindowMaterial().catch(() => null);
 }
 
 export async function initializeThemePreferences(): Promise<void> {
-  if (!isTauri()) return;
+  if (!hasBackend()) return;
   await Promise.all([preferences.initialize({
     load: () => getThemeSelection(),
     save: (selection) => saveThemeSelection({ selection }),
@@ -246,7 +247,7 @@ export function initializeTheme(registry: ThemeRegistry = customRegistry) {
         firstPaint(controller?.getRegistry() ?? registry, preferences.get(), preferences.getSystemThemes(), definition));
     },
     async connectNative() {
-      if (!isTauri()) return null;
+      if (!isDesktopApp()) return null;
       const currentWindow = getCurrentWindow();
       const currentWebview = getCurrentWebview();
       const { os } = await detectCorePlatform();
