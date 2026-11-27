@@ -14,7 +14,19 @@ import {
 import { authFileName } from './authFiles';
 import { supportsPluginCredentialQuota, loadPluginCredentialQuota } from './pluginCredentialQuota';
 import { DEVIN_QUOTA_DATA, DEVIN_QUOTA_HEADERS, DEVIN_QUOTA_URL, readDevinQuota } from './devinQuota';
-import { antigravityProjectFor, codexMetadataFor, isPaidXaiFile } from './quotaMetadata';
+import { antigravityProjectFor, codexOrganizationIdFor, isPaidXaiFile } from './quotaMetadata';
+import {
+  CODEX_ACCOUNTS_CHECK_PATH,
+  CODEX_SUBSCRIPTION_PATH,
+  codexAccountsCheckUrl,
+  codexSubscriptionHeaders,
+  codexSubscriptionsUrl,
+  isFreeWithoutActiveSubscription,
+  parseCodexSubscriptionSnapshot,
+  resolveCodexMetadata,
+  resolveCodexSubscriptionStatus,
+  type CodexSubscriptionSnapshot,
+} from './codexSubscription';
 import { quotaResetFor, quotaResetInstant } from './quotaTime';
 import { parseKimiPlanName, parseKimiQuotaUrl } from './kimiQuota';
 import { parseMetaQuotaPayload, type MetaQuotaData } from './metaQuota';
@@ -55,6 +67,9 @@ export type QuotaState = {
   resetCreditsEarliestExpiry?: string;
   resetCreditExpiries?: string[];
   subscriptionActiveUntil?: string;
+  subscriptionSyncedAt?: number;
+  subscriptionConfirmedFree?: boolean;
+  codexAccountId?: string;
   serverTimeOffsetMs?: number;
   fetchedAt?: number;
   pendingAction?: 'reset';
@@ -80,7 +95,6 @@ const CODEX_RESET_CREDITS_URL =
   'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits';
 const CODEX_RESET_CREDITS_CONSUME_URL =
   'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume';
-const CODEX_SUBSCRIPTION_URL = 'https://chatgpt.com/backend-api/subscriptions';
 const ANTIGRAVITY_CODE_ASSIST_URL =
   'https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist';
 
@@ -756,7 +770,7 @@ const resolveProjectId = async (file: AuthFile): Promise<string> => {
   }
 };
 
-const resolveCodexAccountId = (file: AuthFile): string => codexMetadataFor(file).accountId;
+const resolveCodexAccountId = (file: AuthFile): string => resolveCodexMetadata(file).accountId;
 
 const xaiUserIdFromRecord = (record: Record<string, unknown>): string => {
   const nestedRecords = [record, record.metadata, record.attributes]
@@ -1043,16 +1057,37 @@ const callCodexResetCredits = async (
   return codexResetCreditDetailsFor(payload);
 };
 
-const callCodexSubscription = async (authIndex: string, accountId: string, header: Record<string, string>): Promise<string | undefined> => {
-  const payload = await requestQuotaPayload(
+const callCodexAccountCheck = async (authIndex: string): Promise<unknown> =>
+  requestQuotaPayload(
     authIndex,
-    `${CODEX_SUBSCRIPTION_URL}?account_id=${encodeURIComponent(accountId)}`,
-    header, 'GET', undefined, 8_000,
+    codexAccountsCheckUrl(),
+    codexSubscriptionHeaders(CODEX_ACCOUNTS_CHECK_PATH),
+    'GET',
+    undefined,
+    8_000,
   );
-  if (!isRecord(payload)) return undefined;
-  const raw = payload.active_until ?? payload.activeUntil;
-  const ms = quotaResetInstant(raw);
-  return ms === undefined ? undefined : new Date(ms).toISOString();
+
+const callCodexSubscriptions = async (authIndex: string, accountId: string): Promise<unknown> =>
+  requestQuotaPayload(
+    authIndex,
+    codexSubscriptionsUrl(accountId),
+    codexSubscriptionHeaders(CODEX_SUBSCRIPTION_PATH),
+    'GET',
+    undefined,
+    8_000,
+  );
+
+const loadCodexSubscription = async (
+  authIndex: string,
+  accountId: string,
+  organizationId: string,
+): Promise<CodexSubscriptionSnapshot | undefined> => {
+  if (!authIndex) return undefined;
+  return resolveCodexSubscriptionStatus(
+    { accountId, organizationId },
+    () => callCodexAccountCheck(authIndex),
+    (resolvedAccountId) => callCodexSubscriptions(authIndex, resolvedAccountId),
+  );
 };
 
 async function callKimiQuota(file: AuthFile): Promise<{ payload: unknown; plan?: string }> {
@@ -1140,8 +1175,9 @@ async function loadQuotaSnapshot(file: AuthFile, locale: AppLocale = getCurrentL
   try {
     if (booleanValue(file.disabled) === true) throw new Error(quotaText('quota.fileDisabled'));
     if (provider === 'meta') return await callMetaQuota(file);
-    const codexMetadata = provider === 'codex' ? codexMetadataFor(file) : undefined;
+    const codexMetadata = provider === 'codex' ? resolveCodexMetadata(file) : undefined;
     const codexAccountId = codexMetadata?.accountId || '';
+    const codexOrganizationId = provider === 'codex' ? codexOrganizationIdFor(file) : '';
     const responseClock: { serverTimeOffsetMs?: number } = {};
     const kimi = provider === 'kimi' ? await callKimiQuota(file) : undefined;
     const zai = provider === 'zai' ? await callZaiQuota(file, locale) : undefined;
@@ -1165,18 +1201,36 @@ async function loadQuotaSnapshot(file: AuthFile, locale: AppLocale = getCurrentL
         resetCreditsError = quotaText('quota.claude.readError');
         return undefined;
       }) : Promise.resolve(undefined);
-    const subscriptionPromise = provider === 'codex' && codexAccountId
-      ? callCodexSubscription(normalizeAuthIndex(file.auth_index ?? file.authIndex), codexAccountId,
-          { ...headersByProvider.codex, Accept: 'application/json' })
-          .catch(() => undefined)
+    const authIndex = normalizeAuthIndex(file.auth_index ?? file.authIndex);
+    const subscriptionPromise = provider === 'codex'
+      ? loadCodexSubscription(authIndex, codexAccountId, codexOrganizationId).catch(() => undefined)
       : Promise.resolve(undefined);
-    const [payload, detectedPlan, resetCreditDetails, claudeResetGrants, liveSubscription] = await Promise.all([
+    const [payload, detectedPlan, resetCreditDetails, claudeResetGrants, initialLiveSubscription] = await Promise.all([
       payloadPromise,
       planPromise,
       resetCreditsPromise,
       claudeGrantsPromise,
       subscriptionPromise,
     ]);
+    let liveSubscription = initialLiveSubscription;
+    if (provider === 'codex' && !liveSubscription && !codexAccountId && authIndex && isRecord(payload)) {
+      const usageAccountId = readString(payload, 'account_id', 'accountId');
+      if (usageAccountId) {
+        try {
+          const parsed = parseCodexSubscriptionSnapshot(
+            await callCodexSubscriptions(authIndex, usageAccountId),
+            usageAccountId,
+          );
+          if (isFreeWithoutActiveSubscription(parsed)) {
+            liveSubscription = { accountId: usageAccountId, plan: 'free', confirmedFree: true };
+          } else if (parsed.subscriptionActiveUntil || parsed.plan) {
+            liveSubscription = { ...parsed, confirmedFree: false };
+          }
+        } catch {
+          /* Optional subscription fallback must not fail a valid quota snapshot. */
+        }
+      }
+    }
     const rows = quotaRowsFor(provider, payload, locale);
     if (rows.length === 0) {
       return {
@@ -1192,17 +1246,29 @@ async function loadQuotaSnapshot(file: AuthFile, locale: AppLocale = getCurrentL
       ? codexResetCreditDetailsFor(payload.rate_limit_reset_credits ?? payload.rateLimitResetCredits)
       : {};
     const accountCredits = provider === 'codex' ? codexAccountCreditsFor(payload) : { unlimited: false };
+    const liveSubscriptionVerified = Boolean(
+      provider === 'codex'
+      && liveSubscription
+      && (liveSubscription.confirmedFree || liveSubscription.subscriptionActiveUntil),
+    );
+    const resolvedCodexAccountId = liveSubscription?.accountId || codexAccountId;
+    const fetchedAt = Date.now();
     return {
       status: 'success',
       rows,
       plan: (provider === 'devin' ? readDevinQuota(payload).plan : detectedPlan)
         ?? (provider === 'xai' ? xaiBillingPlan(payload) : undefined)
-        ?? (readString(isRecord(payload) ? payload : {}, 'plan_type', 'planType') || codexMetadata?.plan),
+        ?? (readString(isRecord(payload) ? payload : {}, 'plan_type', 'planType') || liveSubscription?.plan || codexMetadata?.plan),
       creditBalance: accountCredits.balance,
       creditsUnlimited: accountCredits.unlimited,
       subscriptionActiveUntil: provider === 'devin'
         ? readDevinQuota(payload).subscriptionActiveUntil
-        : liveSubscription ?? codexMetadata?.subscriptionActiveUntil,
+        : liveSubscription?.confirmedFree
+          ? undefined
+          : liveSubscription?.subscriptionActiveUntil ?? codexMetadata?.subscriptionActiveUntil,
+      ...(liveSubscriptionVerified ? { subscriptionSyncedAt: fetchedAt } : {}),
+      ...(liveSubscription?.confirmedFree ? { subscriptionConfirmedFree: true } : {}),
+      ...(provider === 'codex' && resolvedCodexAccountId ? { codexAccountId: resolvedCodexAccountId } : {}),
       claudeResetGrants,
       resetCreditsError,
       resetCreditsApplicable: provider === 'claude' ? undefined : usageCreditDetails.applicableAvailableCount
@@ -1211,7 +1277,7 @@ async function loadQuotaSnapshot(file: AuthFile, locale: AppLocale = getCurrentL
       resetCreditExpiries: resetCreditDetails?.expiries ?? usageCreditDetails.expiries,
       resetCreditsEarliestExpiry: resetCreditDetails?.earliestExpiry ?? claudeResetGrants?.grants.filter(grant => grant.resetsLeft > 0 && grant.endsAt).map(grant => grant.endsAt!).sort((a, b) => Date.parse(a) - Date.parse(b))[0],
       serverTimeOffsetMs: responseClock.serverTimeOffsetMs,
-      fetchedAt: Date.now(),
+      fetchedAt,
     };
   } catch (error) {
     return {

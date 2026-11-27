@@ -1,7 +1,7 @@
 import { invokeCoreSetting as invoke } from './coreSettings';
 import type { ReactNode } from 'react';
 
-export type TemplateText = string | { zh: string; en: string; ja?: string; ru?: string };
+export type TemplateText = string | { zh: string; en: string; ja?: string; ru?: string; ptBR?: string };
 export type TemplateConfigField = {
   path: readonly string[];
   type: 'boolean' | 'string' | 'number' | 'select' | 'string-list' | 'json' | 'custom';
@@ -88,11 +88,11 @@ export function draftTemplateField(field: TemplateConfigField, config: Record<st
 
 export function templateFieldValidation(field: TemplateConfigField, value: unknown): TemplateText | null {
   if (field.type === 'number' && (typeof value !== 'number' || !Number.isFinite(value) || ((field.step ?? 1) === 1 && !Number.isInteger(value)) || (field.min !== undefined && value < field.min) || (field.max !== undefined && value > field.max))) {
-    return { zh: `请输入有效数值${field.min !== undefined ? `，最小 ${field.min}` : ''}${field.max !== undefined ? `，最大 ${field.max}` : ''}`, en: `Enter a valid number${field.min !== undefined ? `, minimum ${field.min}` : ''}${field.max !== undefined ? `, maximum ${field.max}` : ''}`, ja: `有効な数値を入力してください${field.min !== undefined ? `（最小 ${field.min}）` : ''}${field.max !== undefined ? `（最大 ${field.max}）` : ''}` };
+    return { zh: `请输入有效数值${field.min !== undefined ? `，最小 ${field.min}` : ''}${field.max !== undefined ? `，最大 ${field.max}` : ''}`, en: `Enter a valid number${field.min !== undefined ? `, minimum ${field.min}` : ''}${field.max !== undefined ? `, maximum ${field.max}` : ''}`, ptBR: `Insira um número válido${field.min !== undefined ? `, mínimo ${field.min}` : ''}${field.max !== undefined ? `, máximo ${field.max}` : ''}`, ja: `有効な数値を入力してください${field.min !== undefined ? `（最小 ${field.min}）` : ''}${field.max !== undefined ? `（最大 ${field.max}）` : ''}` };
   }
-  if (field.type === 'select' && !field.options?.some((option) => sameTemplateValue(option.value, value))) return { zh: '请选择有效选项', en: 'Select a valid option', ja: '有効な項目を選択してください' };
+  if (field.type === 'select' && !field.options?.some((option) => sameTemplateValue(option.value, value))) return { zh: '请选择有效选项', en: 'Select a valid option', ptBR: 'Selecione uma opção válida', ja: '有効な項目を選択してください' };
   if (field.type === 'json' && typeof value === 'string') {
-    try { JSON.parse(value); } catch { return { zh: '请输入有效 JSON', en: 'Enter valid JSON', ja: '有効な JSON を入力してください' }; }
+    try { JSON.parse(value); } catch { return { zh: '请输入有效 JSON', en: 'Enter valid JSON', ptBR: 'Insira um JSON válido', ja: '有効な JSON を入力してください' }; }
   }
   return field.validate?.(value) ?? null;
 }

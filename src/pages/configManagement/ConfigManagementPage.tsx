@@ -48,6 +48,7 @@ const previewCopy = {
   'zh-CN': { hint: '仅浏览器预览。修改不会应用到 CPA 实例，刷新页面后恢复示例配置。', validation: '请先修正标记的配置项。', applyError: '无法将表单更改写入当前 YAML 文档。' },
   'zh-TW': { hint: '僅供瀏覽器預覽。修改不會套用至 CPA 執行個體，重新整理後恢復範例設定。', validation: '請先修正標記的設定項目。', applyError: '無法將表單變更寫入目前的 YAML 文件。' },
   ja: { hint: 'ブラウザーでのプレビュー専用です。変更は CPA に反映されず、再読み込みでリセットされます。', validation: 'マークされた設定を修正してください。', applyError: 'フォームの変更を YAML に適用できませんでした。' },
+  'pt-BR': { hint: 'Somente pré-visualização no navegador. As alterações não afetam nenhuma instância CPA e voltam ao original quando você recarrega a página.', validation: 'Corrija as configurações destacadas antes de continuar.', applyError: 'Não foi possível aplicar as alterações do formulário a este documento YAML.' },
   ru: { hint: 'Только предпросмотр. Изменения не влияют на CPA и сбрасываются при обновлении страницы.', validation: 'Исправьте отмеченные параметры.', applyError: 'Не удалось применить изменения формы к документу YAML.' },
 };
 

@@ -57,6 +57,10 @@ const sourceLabels: Record<string, string> = {
   gemini: 'Gemini CLI',
   antigravity: 'Antigravity',
   kimi: 'Kimi',
+  workbuddy: 'WorkBuddy',
+  codebuddy: 'CodeBuddy',
+  dsh: 'DeepSeek Harness',
+  grokbuild: 'Grok Build',
   zcode: 'ZCode',
 };
 
@@ -142,7 +146,10 @@ export function AgentUsageView({ refreshKey, onLoadingChange }: AgentUsageViewPr
     try {
       const result = await syncAgentUsage();
       localSyncRef.current = false;
-      if (result.skipped) return;
+      if (result.skipped) {
+        await loadReport();
+        return;
+      }
       await loadReport();
       finishSync();
     } catch (reason) {

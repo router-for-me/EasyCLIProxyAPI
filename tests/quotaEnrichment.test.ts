@@ -8,7 +8,8 @@ const file = { name: 'grok-fixture.json', provider: 'xai', auth_index: 'fixture'
 const key = quotaKey(file);
 const quota: QuotaState = { status: 'success', rows: [{ label: 'Weekly', remainingPercent: 75 }], plan: 'Paid' };
 let post: ReturnType<typeof spyOn> | undefined;
-afterEach(() => { post?.mockRestore(); updateQuotaCache({}); });
+let patch: ReturnType<typeof spyOn> | undefined;
+afterEach(() => { post?.mockRestore(); patch?.mockRestore(); updateQuotaCache({}); });
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 it('先提交额度，再后台补套餐；两次请求使用短超时和现有用户头', async () => {
@@ -67,4 +68,41 @@ it('套餐接口不阻塞账单结果，并按月额度提供套餐回退', asyn
   });
   expect(await loadQuota(file)).toMatchObject({ status: 'success', plan: 'SuperGrok' });
   expect(post).toHaveBeenCalledTimes(2);
+});
+
+it('Codex 实时订阅校验成功后通过 /credentials/fields 写回凭据文件，未校验回退时不写回', async () => {
+  const codexFile = { name: 'codex-writeback.json', provider: 'codex', auth_index: 'codex-wb', source: 'file' };
+  const calls: Array<{ path: string; body: unknown }> = [];
+  patch = spyOn(managementApi, 'patch').mockImplementation(async (path, body) => {
+    calls.push({ path, body });
+    return { status: 'ok' } as never;
+  });
+
+  // Unverified fallback metadata must not overwrite the credential file.
+  commitFetchedQuota(captureQuotaCacheGeneration(), codexFile, {
+    status: 'success',
+    rows: [{ label: 'Weekly limit', remainingPercent: 50 }],
+    plan: 'pro',
+    subscriptionActiveUntil: '2026-11-08T02:43:00Z',
+  });
+  await flush();
+  expect(calls).toHaveLength(0);
+
+  // Verified live subscription writes back expiry and plan.
+  commitFetchedQuota(captureQuotaCacheGeneration(), codexFile, {
+    status: 'success',
+    rows: [{ label: 'Weekly limit', remainingPercent: 50 }],
+    plan: 'pro',
+    subscriptionActiveUntil: '2026-12-08T02:43:00.000Z',
+    subscriptionSyncedAt: Date.parse('2026-11-26T12:00:00Z'),
+  });
+  await flush();
+  expect(calls).toEqual([{
+    path: '/credentials/fields',
+    body: {
+      name: 'codex-writeback.json',
+      subscription_active_until: '2026-12-08T02:43:00.000Z',
+      chatgpt_plan_type: 'pro',
+    },
+  }]);
 });

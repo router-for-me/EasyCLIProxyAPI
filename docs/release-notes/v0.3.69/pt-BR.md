@@ -1,0 +1,12 @@
+- Se você tiver dúvidas ou sugestões sobre o aplicativo, fale conosco pelo [grupo do QQ](https://qm.qq.com/q/3queDaIG) ou pelas [GitHub Issues](https://github.com/router-for-me/EasyCLIProxyAPI/issues). Responderemos o quanto antes.
+
+## Novidades
+
+- **Canal de prévia e comparação de compilações**: a página Gerenciamento de versões agora tem um interruptor oculto do canal de prévia: toque no logotipo do aplicativo cinco vezes seguidas para alternar entre estável e prévia. A troca verifica atualizações no canal recém-selecionado na hora. Nas compilações de prévia, a página começa pelo horário da compilação e mostra tanto o horário da compilação instalada quanto o da mais recente, para que dê para ver de imediato se vale a pena atualizar. As compilações de prévia também levam um carimbo de data e hora na cadeia de versão, o que distingue lançamentos de prévia sucessivos.
+- **Atualizações no aplicativo para compilações de prévia**: as compilações de prévia não dependem mais de um arquivo marcador local e podem se atualizar pelo atualizador do aplicativo. Reinstalar uma compilação de prévia quando já há uma instalada agora é permitido, sem precisar baixar o pacote à mão a cada vez.
+
+## Correções
+
+- **Colar imagem e anexos no OpenCode**: os modelos de provedor personalizado gerados na configuração do OpenCode agora declaram os metadados `attachment` e `modalities`. Modelos multimodais anunciam entrada de `text`, `image` e `pdf`, e modelos de geração de imagem anunciam também saída de `image`. Antes, sem essas declarações, o OpenCode tratava os modelos de provedor personalizado como somente texto e bloqueava a colagem de imagens da área de transferência e anexos PDF antes de a solicitação chegar ao proxy (#567).
+- **Canal de atualização de prévia**: corrigida a busca, pelas compilações de prévia, dos metadados do lançamento estável mais recente na fonte GitCode; corrigidos os manifestos de atualização de prévia que apontavam nomes de arquivo de artefato sem versão e falhavam na validação; e o backend do atualizador passou a resolver corretamente as tags do canal de prévia.
+- **Gerenciamento da versão do núcleo incluído**: uma versão do núcleo instalada manualmente não é mais sobrescrita pela compilação incluída num reinício a frio. Um novo script de sincronização do núcleo incluído verifica e sincroniza a versão do núcleo incluído (atualmente 8.0.52) antes da compilação de lançamento, para que o núcleo incluído não fique para trás em relação ao upstream.

@@ -86,7 +86,7 @@ import {
 } from '../services/authFiles';
 import { authFileHealth, normalizeAuthFileCooldowns } from '../services/authFileHealth';
 import { canReauthenticate, credentialSignInState, credentialsNeedingSignIn, observeCredentialSignIn } from '../services/credentialSignIn';
-import { codexMetadataFor } from '../services/quotaMetadata';
+import { resolveCodexMetadata } from '../services/codexSubscription';
 import { quotaResetInstant, useQuotaClock } from '../services/quotaTime';
 import {
   modelMatchesRule,
@@ -649,9 +649,9 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
               const note = privacy.text(readString(file, 'note'), identities);
               const quota = quotas[quotaKey(file)] ?? idleQuota();
               const quotaProvider = quotaProviderForFile(file);
-              const metadata = providerKey(file) === 'codex' ? codexMetadataFor(file) : undefined;
+              const metadata = providerKey(file) === 'codex' ? resolveCodexMetadata(file) : undefined;
               const plan = quota.plan || metadata?.plan || readString(file, 'plan_type', 'plan');
-              const expiry = quota.subscriptionActiveUntil || metadata?.subscriptionActiveUntil;
+              const expiry = quota.status === 'success' ? quota.subscriptionActiveUntil : metadata?.subscriptionActiveUntil;
               const expiryMs = quotaResetInstant(expiry);
               const health = authFileHealth(file);
               const cooldownSnapshot = normalizeAuthFileCooldowns(file.cooldowns, receivedAtMs, observedAt);

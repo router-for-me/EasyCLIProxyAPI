@@ -27,9 +27,11 @@ describe('structured configuration forms', () => {
     expect(validateStructuredValue(integer, { count: 1.5 })).toBe('.count: expected an integer ≥ 0');
     expect(validateStructuredValueText(integer, { count: 1.5 })).toEqual({
       en: '.count: expected an integer ≥ 0', zh: '.count: 请输入整数 ≥ 0', ja: '.count: 整数を入力してください ≥ 0',
+      ptBR: '.count: esperava-se um inteiro ≥ 0',
     });
     expect(validateStructuredValueText(credentialAdvancedShape, { timezone: 'Not/AZone' })).toEqual({
       en: 'Enter an IANA timezone such as Asia/Shanghai', zh: '请输入 IANA 时区，例如 Asia/Shanghai', ja: 'Asia/Shanghai などの IANA タイムゾーンを入力してください',
+      ptBR: 'Insira um fuso horário IANA, como America/Sao_Paulo',
     });
     expect(validateStructuredValueText(credentialAdvancedShape, { timezone: 'Asia/Tokyo' })).toBeNull();
   });

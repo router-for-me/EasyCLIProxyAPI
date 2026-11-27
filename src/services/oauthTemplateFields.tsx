@@ -2,7 +2,7 @@ import type { TemplateConfigField, TemplateConfigGroup, TemplateText } from './t
 import { structuredField } from './payloadTemplateFields';
 import { boolShape, configRecord, errorRulesShape, nonemptyText, stringsShape, textShape, type ConfigShape } from './structuredConfig';
 
-const T = (zh: string, en: string, ja?: string): TemplateText => ({ zh, en, ja });
+const T = (zh: string, en: string, ja?: string, ptBR?: string): TemplateText => ({ zh, en, ja, ptBR });
 const providerPath = (provider: string, key: string) => ['oauth', 'providers', provider, ...key.split('.')];
 const flag = (provider: string, key: string, label: TemplateText, defaultValue = false, description?: TemplateText): TemplateConfigField =>
   ({ path: providerPath(provider, key), type: 'boolean', label, defaultValue, description });
@@ -19,36 +19,36 @@ const upstreamText = (provider: string, key: string, label: TemplateText, placeh
   ({ path: upstreamPath(provider, key), type: 'string', label, placeholder });
 
 export const oauthAliasShape: ConfigShape = { type: 'array', item: { type: 'object', fields: {
-  name: { ...nonemptyText, label: T('上游模型', 'Upstream model', '上流モデル') },
-  alias: { ...nonemptyText, label: T('客户端别名', 'Client alias', 'クライアント別名') },
-  'display-name': textShape(T('展示名称', 'Display name', '表示名')),
-  fork: boolShape(T('保留原始模型名称', 'Keep the original model ID', '元のモデル ID を維持')),
-  'force-mapping': boolShape(T('将响应模型名改回别名', 'Map response model back to alias', '応答モデルを別名に変換')),
+  name: { ...nonemptyText, label: T('上游模型', 'Upstream model', '上流モデル', 'Modelo no provedor') },
+  alias: { ...nonemptyText, label: T('客户端别名', 'Client alias', 'クライアント別名', 'Alias do cliente') },
+  'display-name': textShape(T('展示名称', 'Display name', '表示名', 'Nome de exibição')),
+  fork: boolShape(T('保留原始模型名称', 'Keep the original model ID', '元のモデル ID を維持', 'Manter o ID original do modelo')),
+  'force-mapping': boolShape(T('将响应模型名改回别名', 'Map response model back to alias', '応答モデルを別名に変換', 'Restaurar o alias do modelo nas respostas')),
 } } };
 const modelSettingsShape: ConfigShape = { type: 'array', item: { type: 'object', fields: {
-  name: { ...nonemptyText, label: T('模型名称', 'Model name', 'モデル名') },
-  alias: { ...textShape(T('匹配客户端别名', 'Match client alias', 'クライアント別名を照合')),
-    hint: T('可选；精确别名匹配优先于模型名称匹配。', 'Optional. An exact alias match takes precedence over the model name.', '任意です。別名の完全一致はモデル名の一致より優先されます。') },
-  'max-context-length': { type: 'number', min: 0, optional: true, label: T('上下文窗口', 'Context window', 'コンテキストウィンドウ'),
-    hint: T('未设置或 0 使用原始模型能力。', 'Unset or zero uses the original model capability.', '未設定または 0 では元のモデル機能を使用します。') },
+  name: { ...nonemptyText, label: T('模型名称', 'Model name', 'モデル名', 'Nome do modelo') },
+  alias: { ...textShape(T('匹配客户端别名', 'Match client alias', 'クライアント別名を照合', 'Corresponder ao alias do cliente')),
+    hint: T('可选；精确别名匹配优先于模型名称匹配。', 'Optional. An exact alias match takes precedence over the model name.', '任意です。別名の完全一致はモデル名の一致より優先されます。', 'Opcional. Uma correspondência exata do alias tem prioridade sobre o nome do modelo.') },
+  'max-context-length': { type: 'number', min: 0, optional: true, label: T('上下文窗口', 'Context window', 'コンテキストウィンドウ', 'Janela de contexto'),
+    hint: T('未设置或 0 使用原始模型能力。', 'Unset or zero uses the original model capability.', '未設定または 0 では元のモデル機能を使用します。', 'Se não definido ou igual a zero, usa os recursos originais do modelo.') },
 } } };
 
 export const iceServersShape: ConfigShape = { type: 'array', item: { type: 'object', fields: {
-  urls: { type: 'array', item: { type: 'string', validate: value => typeof value === 'string' && /^(stun|stuns|turn|turns):\S+$/i.test(value) ? null : T('请使用 STUN 或 TURN 地址', 'Use a STUN or TURN URL', 'STUN または TURN の URL を指定してください') },
-    label: T('STUN / TURN 地址', 'STUN / TURN URLs', 'STUN / TURN URL'), validate: value => Array.isArray(value) && value.length ? null : T('请至少添加一个地址', 'At least one URL is required', 'URL を 1 件以上追加してください') },
-  username: textShape(T('TURN 用户名', 'TURN username', 'TURN ユーザー名')),
-  credential: { ...textShape(T('TURN 密钥', 'TURN credential', 'TURN 認証情報')), secret: true },
+  urls: { type: 'array', item: { type: 'string', validate: value => typeof value === 'string' && /^(stun|stuns|turn|turns):\S+$/i.test(value) ? null : T('请使用 STUN 或 TURN 地址', 'Use a STUN or TURN URL', 'STUN または TURN の URL を指定してください', 'Use uma URL de STUN ou TURN') },
+    label: T('STUN / TURN 地址', 'STUN / TURN URLs', 'STUN / TURN URL', 'URLs de STUN / TURN'), validate: value => Array.isArray(value) && value.length ? null : T('请至少添加一个地址', 'At least one URL is required', 'URL を 1 件以上追加してください', 'Informe pelo menos uma URL') },
+  username: textShape(T('TURN 用户名', 'TURN username', 'TURN ユーザー名', 'Nome de usuário TURN')),
+  credential: { ...textShape(T('TURN 密钥', 'TURN credential', 'TURN 認証情報', 'Credencial TURN')), secret: true },
 } } };
 
 const controlChars = /[\u0000-\u001f\u007f-\u009f]/;
 export const sensitivePatternsShape: ConfigShape = { type: 'array', item: { type: 'object', fields: {
-  pattern: { ...nonemptyText, label: T('正则表达式 (RE2)', 'Regular expression (RE2)', '正規表現 (RE2)'),
+  pattern: { ...nonemptyText, label: T('正则表达式 (RE2)', 'Regular expression (RE2)', '正規表現 (RE2)', 'Expressão regular (RE2)'),
     validate: value => typeof value === 'string' && Boolean(value.trim()) && !controlChars.test(value) ? null
-      : T('请输入不含控制字符的非空表达式', 'Enter a non-empty pattern without control characters', '制御文字を含まない、空でない式を入力してください') },
-  replacement: { ...textShape(T('替换文本', 'Replacement', '置換テキスト')),
+      : T('请输入不含控制字符的非空表达式', 'Enter a non-empty pattern without control characters', '制御文字を含まない、空でない式を入力してください', 'Informe uma expressão não vazia, sem caracteres de controle') },
+  replacement: { ...textShape(T('替换文本', 'Replacement', '置換テキスト', 'Substituição')),
     validate: value => typeof value === 'string' && !controlChars.test(value) ? null
-      : T('替换文本不能包含控制字符', 'Replacement must not contain control characters', '置換テキストに制御文字は使用できません'),
-    hint: T('留空表示删除匹配内容。', 'Leave empty to delete matches.', '空欄にすると一致部分を削除します。') },
+      : T('替换文本不能包含控制字符', 'Replacement must not contain control characters', '置換テキストに制御文字は使用できません', 'O texto de substituição não pode conter caracteres de controle'),
+    hint: T('留空表示删除匹配内容。', 'Leave empty to delete matches.', '空欄にすると一致部分を削除します。', 'Deixe em branco para excluir o texto encontrado.') },
 } } };
 
 // Mirrors the core's duration parser: it accepts the ns/us/ms/s/m/h units in any
@@ -73,54 +73,54 @@ const tosPauseMillis = (value: string): number | null => {
   return end === body.length && end > 0 ? total : null;
 };
 const tosPauseValidate = (value: unknown): TemplateText | null => {
-  if (typeof value !== 'string') return T('请输入时长或留空关闭。', 'Enter a duration, or leave empty to disable.', '期間を入力するか、空欄で無効にします。');
+  if (typeof value !== 'string') return T('请输入时长或留空关闭。', 'Enter a duration, or leave empty to disable.', '期間を入力するか、空欄で無効にします。', 'Informe uma duração ou deixe em branco para desativar.');
   const trimmed = value.trim();
   if (trimmed === '') return null;
-  if (controlChars.test(trimmed)) return T('时长不能包含控制字符。', 'The duration must not contain control characters.', '期間に制御文字は使用できません。');
+  if (controlChars.test(trimmed)) return T('时长不能包含控制字符。', 'The duration must not contain control characters.', '期間に制御文字は使用できません。', 'A duração não pode conter caracteres de controle.');
   if (/^(?:0|off|false|none|disabled)$/i.test(trimmed)) return null;
   // Any parseable duration is saved as typed: a zero or negative value simply
   // means the pause stays off, so the UI must not reject what the core accepts.
   return tosPauseMillis(trimmed) !== null ? null
-    : T('留空表示关闭；也可填 6h、30m、1us 等内核支持的时长，或 0 / off / false / none / disabled。', 'Leave empty to disable, or enter a core duration such as 6h, 30m or 1us, or 0 / off / false / none / disabled.', '空欄で無効。6h、30m、1us などコアが対応する期間、または 0 / off / false / none / disabled を入力してください。');
+    : T('留空表示关闭；也可填 6h、30m、1us 等内核支持的时长，或 0 / off / false / none / disabled。', 'Leave empty to disable, or enter a core duration such as 6h, 30m or 1us, or 0 / off / false / none / disabled.', '空欄で無効。6h、30m、1us などコアが対応する期間、または 0 / off / false / none / disabled を入力してください。', 'Deixe em branco para desativar ou informe uma duração aceita pelo núcleo, como 6h, 30m ou 1us, ou 0 / off / false / none / disabled.');
 };
 
 export const oauthTemplateGroups: TemplateConfigGroup[] = [
-  { id: 'oauth-common', title: T('OAuth 通用设置', 'OAuth settings', 'OAuth 設定'), fields: [
+  { id: 'oauth-common', title: T('OAuth 通用设置', 'OAuth settings', 'OAuth 設定', 'Configurações de OAuth'), fields: [
     { path: ['oauth', 'auth-dir'], type: 'string', directory: true, restart: true, defaultValue: '~/.cli-proxy-api',
-      label: T('凭据文件目录', 'Credential files directory', '認証情報ファイルのフォルダー'),
-      description: T('支持 ~ 和相对路径；相对路径以内核安装目录为基准。修改不会移动已有凭据文件，重启内核后生效。恢复内核默认值使用 ~/.cli-proxy-api。', 'Supports ~ and paths relative to the core installation directory. Changing this path does not move existing credential files and takes effect after restarting the core. The core default is ~/.cli-proxy-api.', '~ と相対パスに対応します。相対パスの基準はコアのインストールフォルダーです。変更しても既存の認証情報ファイルは移動せず、コアの再起動後に適用されます。コアの既定値は ~/.cli-proxy-api です。'),
-      validate: (value) => typeof value === 'string' && value.trim().length > 0 && !/[\u0000-\u001f\u007f-\u009f]/.test(value) ? null : T('请输入非空且不含控制字符的目录路径。', 'Enter a non-empty directory path without control characters.', '制御文字を含まない、空でないフォルダーパスを入力してください。') },
-    { path: ['oauth', 'auth-auto-refresh-workers'], type: 'number', min: 0, label: T('凭据自动刷新并发数', 'Credential refresh workers', '認証情報の更新ワーカー数'),
-      description: T('留空使用内核默认值；增加并发会同时刷新更多凭据。', 'Leave unset to use the kernel default. More workers refresh more credentials concurrently.', '未設定ではカーネルの既定値を使用します。') },
+      label: T('凭据文件目录', 'Credential files directory', '認証情報ファイルのフォルダー', 'Diretório de arquivos de credenciais'),
+      description: T('支持 ~ 和相对路径；相对路径以内核安装目录为基准。修改不会移动已有凭据文件，重启内核后生效。恢复内核默认值使用 ~/.cli-proxy-api。', 'Supports ~ and paths relative to the core installation directory. Changing this path does not move existing credential files and takes effect after restarting the core. The core default is ~/.cli-proxy-api.', '~ と相対パスに対応します。相対パスの基準はコアのインストールフォルダーです。変更しても既存の認証情報ファイルは移動せず、コアの再起動後に適用されます。コアの既定値は ~/.cli-proxy-api です。', 'Aceita ~ e caminhos relativos ao diretório de instalação do núcleo. Alterar o caminho não move os arquivos de credenciais existentes e só tem efeito após reiniciar o núcleo. O padrão é ~/.cli-proxy-api.'),
+      validate: (value) => typeof value === 'string' && value.trim().length > 0 && !/[\u0000-\u001f\u007f-\u009f]/.test(value) ? null : T('请输入非空且不含控制字符的目录路径。', 'Enter a non-empty directory path without control characters.', '制御文字を含まない、空でないフォルダーパスを入力してください。', 'Informe o caminho de um diretório, sem caracteres de controle.') },
+    { path: ['oauth', 'auth-auto-refresh-workers'], type: 'number', min: 0, label: T('凭据自动刷新并发数', 'Credential refresh workers', '認証情報の更新ワーカー数', 'Processos de atualização de credenciais'),
+      description: T('留空使用内核默认值；增加并发会同时刷新更多凭据。', 'Leave unset to use the kernel default. More workers refresh more credentials concurrently.', '未設定ではカーネルの既定値を使用します。', 'Deixe em branco para usar o padrão do núcleo. Mais processos permitem atualizar mais credenciais ao mesmo tempo.') },
   ] },
-  { id: 'oauth-models', title: T('OAuth 模型与通道', 'OAuth models and channels', 'OAuth モデルとチャンネル'),
-    description: T('按通道管理，例如 codex、claude、aistudio、vertex、antigravity、kimi、xai、meta；别名也支持插件通道。单凭据中的规则优先。', 'Manage channels such as codex, claude, aistudio, vertex, antigravity, kimi, xai and meta. Aliases also support plugin channels. Credential-specific rules take precedence.', '通道ごとに設定します。別名はプラグインのチャンネルにも対応し、認証情報ごとのルールが優先されます。'), fields: [
-      structuredField(['oauth', 'model-alias'], T('模型别名', 'Model aliases', 'モデル別名'), { type: 'map', item: oauthAliasShape }),
-      structuredField(['oauth', 'settings'], T('模型能力覆盖', 'Model capabilities', 'モデル機能の上書き'), { type: 'map', item: modelSettingsShape }),
-      structuredField(['oauth', 'excluded-models'], T('排除模型', 'Excluded models', '除外するモデル'), { type: 'map', item: stringsShape() }),
-      structuredField(['oauth', 'request-scoped-errors'], T('上游错误处理', 'Upstream error rules', '上流エラールール'), { type: 'map', item: errorRulesShape }),
+  { id: 'oauth-models', title: T('OAuth 模型与通道', 'OAuth models and channels', 'OAuth モデルとチャンネル', 'Modelos e canais OAuth'),
+    description: T('按通道管理，例如 codex、claude、aistudio、vertex、antigravity、kimi、xai、meta；别名也支持插件通道。单凭据中的规则优先。', 'Manage channels such as codex, claude, aistudio, vertex, antigravity, kimi, xai and meta. Aliases also support plugin channels. Credential-specific rules take precedence.', '通道ごとに設定します。別名はプラグインのチャンネルにも対応し、認証情報ごとのルールが優先されます。', 'Gerencie canais como codex, claude, aistudio, vertex, antigravity, kimi, xai e meta. Os aliases também valem para canais de plugins. As regras de cada credencial têm prioridade.'), fields: [
+      structuredField(['oauth', 'model-alias'], T('模型别名', 'Model aliases', 'モデル別名', 'Aliases de modelos'), { type: 'map', item: oauthAliasShape }),
+      structuredField(['oauth', 'settings'], T('模型能力覆盖', 'Model capabilities', 'モデル機能の上書き', 'Recursos do modelo'), { type: 'map', item: modelSettingsShape }),
+      structuredField(['oauth', 'excluded-models'], T('排除模型', 'Excluded models', '除外するモデル', 'Modelos excluídos'), { type: 'map', item: stringsShape() }),
+      structuredField(['oauth', 'request-scoped-errors'], T('上游错误处理', 'Upstream error rules', '上流エラールール', 'Regras de erro do provedor'), { type: 'map', item: errorRulesShape }),
     ] },
-  { id: 'oauth-codex', title: T('Codex OAuth 行为', 'Codex OAuth behavior', 'Codex OAuth の動作'), fields: [
-    upstreamFlag('codex', 'upstream-request-compression', T('压缩 Codex 上游请求体', 'Compress upstream Codex requests', '上流 Codex リクエストを圧縮'), false,
-      T('向上游 Codex 发送请求时压缩请求体。', 'Compress request bodies sent to upstream Codex.', '上流の Codex に送信するリクエスト本文を圧縮します。')),
-    upstreamNumber('codex', 'upstream-request-compression-min-bytes', T('压缩最小请求体 (字节)', 'Compression minimum bytes', '圧縮の最小サイズ (バイト)'), 0, undefined,
-      T('仅压缩超过该字节数的上游请求体，0 沿用默认。', 'Only compress upstream request bodies larger than this many bytes (0 uses default).', 'このバイト数を超える上流リクエスト本文のみ圧縮します（0 で既定値）。')),
-    upstreamFlag('codex', 'websocket-compression', T('启用 Codex WebSocket 压缩', 'Enable Codex WebSocket compression', 'Codex WebSocket 圧縮を有効化'), false,
-      T('在与上游 Codex 建立 WebSocket 连接时启用压缩扩展。', 'Enable compression extensions for WebSocket connections to upstream Codex.', '上流 Codex との WebSocket 接続で圧縮拡張を有効化します。')),
-    flag('codex', 'response-steering', T('双向 WebSocket 引导（实验性）', 'Full-duplex response steering (experimental)', '双方向レスポンス制御（実験的）')),
-    flag('codex', 'disable-codex-cloaking', T('禁用 Codex 客户端伪装', 'Disable Codex client cloaking', 'Codex 偽装を無効化')),
-    flag('codex', 'stream-bootstrap-buffering', T('缓冲流式启动事件', 'Buffer stream bootstrap events', 'ストリーム開始イベントをバッファー'), false,
-      T('在输出首个有效内容前保留响应头，使过载时可以切换凭据；可能增加首字延迟。', 'Hold headers until useful output arrives, allowing overload failover. This can delay the first token.', '有効な出力までヘッダーを保持し、過負荷時の切替を可能にします。開始が遅れる場合があります。')),
-    { ...text('codex', 'stream-bootstrap-timeout', T('启动缓冲时限', 'Bootstrap buffering timeout', '開始バッファーの制限時間'), '20s'),
-      description: T('留空或 0 / none / unlimited / disabled / off / never 表示不限时；纯数字按秒计算。建议反向代理场景使用 20s。', 'Blank or 0 / none / unlimited / disabled / off / never means unlimited. Plain integers mean seconds. 20s is recommended behind a reverse proxy.', '空欄、0、none / unlimited / disabled / off / never は無制限。整数のみの場合は秒です。リバースプロキシでは 20s を推奨。'),
-      validate: value => value == null || typeof value === 'string' && (/^(?:\d*|none|unlimited|disabled|off|never)$/i.test(value.trim()) || /^(?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|s|m|h))+$/.test(value.trim())) ? null : T('请输入有效时长，如 20s 或 20', 'Enter a duration such as 20s or 20', '20s または 20 などの時間を入力してください') },
-    flag('codex', 'orphan-delegation-compatibility', T('兼容孤立委派输出', 'Orphan delegation compatibility', '孤立した委譲出力の互換性')),
-    flag('codex', 'model-level-cooling', T('仅冷却发生限额的模型', 'Limit cooldown to the affected model', '対象モデルのみクールダウン')),
+  { id: 'oauth-codex', title: T('Codex OAuth 行为', 'Codex OAuth behavior', 'Codex OAuth の動作', 'Comportamento do OAuth do Codex'), fields: [
+    upstreamFlag('codex', 'upstream-request-compression', T('压缩 Codex 上游请求体', 'Compress upstream Codex requests', '上流 Codex リクエストを圧縮', 'Comprimir requisições enviadas ao Codex'), false,
+      T('向上游 Codex 发送请求时压缩请求体。', 'Compress request bodies sent to upstream Codex.', '上流の Codex に送信するリクエスト本文を圧縮します。', 'Comprime os corpos das requisições enviadas ao Codex.')),
+    upstreamNumber('codex', 'upstream-request-compression-min-bytes', T('压缩最小请求体 (字节)', 'Compression minimum bytes', '圧縮の最小サイズ (バイト)', 'Tamanho mínimo para compressão (bytes)'), 0, undefined,
+      T('仅压缩超过该字节数的上游请求体，0 沿用默认。', 'Only compress upstream request bodies larger than this many bytes (0 uses default).', 'このバイト数を超える上流リクエスト本文のみ圧縮します（0 で既定値）。', 'Só comprime corpos de requisições enviados ao provedor que excedam esse tamanho em bytes (0 usa o padrão).')),
+    upstreamFlag('codex', 'websocket-compression', T('启用 Codex WebSocket 压缩', 'Enable Codex WebSocket compression', 'Codex WebSocket 圧縮を有効化', 'Ativar a compressão WebSocket do Codex'), false,
+      T('在与上游 Codex 建立 WebSocket 连接时启用压缩扩展。', 'Enable compression extensions for WebSocket connections to upstream Codex.', '上流 Codex との WebSocket 接続で圧縮拡張を有効化します。', 'Ativa extensões de compressão nas conexões WebSocket com o Codex.')),
+    flag('codex', 'response-steering', T('双向 WebSocket 引导（实验性）', 'Full-duplex response steering (experimental)', '双方向レスポンス制御（実験的）', 'Controle bidirecional das respostas (experimental)')),
+    flag('codex', 'disable-codex-cloaking', T('禁用 Codex 客户端伪装', 'Disable Codex client cloaking', 'Codex 偽装を無効化', 'Desativar o mascaramento do cliente Codex')),
+    flag('codex', 'stream-bootstrap-buffering', T('缓冲流式启动事件', 'Buffer stream bootstrap events', 'ストリーム開始イベントをバッファー', 'Armazenar eventos iniciais do streaming em buffer'), false,
+      T('在输出首个有效内容前保留响应头，使过载时可以切换凭据；可能增加首字延迟。', 'Hold headers until useful output arrives, allowing overload failover. This can delay the first token.', '有効な出力までヘッダーを保持し、過負荷時の切替を可能にします。開始が遅れる場合があります。', 'Retém os cabeçalhos até receber conteúdo útil, permitindo recorrer a uma alternativa em caso de sobrecarga. Isso pode atrasar o primeiro token.')),
+    { ...text('codex', 'stream-bootstrap-timeout', T('启动缓冲时限', 'Bootstrap buffering timeout', '開始バッファーの制限時間', 'Tempo limite do buffer de inicialização'), '20s'),
+      description: T('留空或 0 / none / unlimited / disabled / off / never 表示不限时；纯数字按秒计算。建议反向代理场景使用 20s。', 'Blank or 0 / none / unlimited / disabled / off / never means unlimited. Plain integers mean seconds. 20s is recommended behind a reverse proxy.', '空欄、0、none / unlimited / disabled / off / never は無制限。整数のみの場合は秒です。リバースプロキシでは 20s を推奨。', 'Em branco ou 0 / none / unlimited / disabled / off / never significa sem limite. Números inteiros sem unidade representam segundos. Recomenda-se 20s atrás de um proxy reverso.'),
+      validate: value => value == null || typeof value === 'string' && (/^(?:\d*|none|unlimited|disabled|off|never)$/i.test(value.trim()) || /^(?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|s|m|h))+$/.test(value.trim())) ? null : T('请输入有效时长，如 20s 或 20', 'Enter a duration such as 20s or 20', '20s または 20 などの時間を入力してください', 'Informe uma duração, como 20s ou 20') },
+    flag('codex', 'orphan-delegation-compatibility', T('兼容孤立委派输出', 'Orphan delegation compatibility', '孤立した委譲出力の互換性', 'Compatibilidade com delegação órfã')),
+    flag('codex', 'model-level-cooling', T('仅冷却发生限额的模型', 'Limit cooldown to the affected model', '対象モデルのみクールダウン', 'Limitar a pausa temporária ao modelo afetado')),
     text('codex', 'header-defaults.user-agent', 'User-Agent'),
-    text('codex', 'header-defaults.beta-features', T('WebSocket Beta 功能', 'WebSocket beta features', 'WebSocket ベータ機能')),
+    text('codex', 'header-defaults.beta-features', T('WebSocket Beta 功能', 'WebSocket beta features', 'WebSocket ベータ機能', 'Recursos beta de WebSocket')),
   ] },
-  { id: 'oauth-media', title: T('Codex 实时媒体中继', 'Codex live media relay', 'Codex ライブメディアリレー'),
-    description: T('代理实时音频和数据通道，需要可达的入站 UDP 端口。TURN 密钥从本地配置读取并保留。', 'Relay live audio and data channels. Requires reachable inbound UDP ports. TURN credentials are read from and preserved in the local configuration.', '音声とデータを中継します。受信 UDP ポートが必要です。TURN 認証情報はローカル設定から読み込み、保持します。'),
+  { id: 'oauth-media', title: T('Codex 实时媒体中继', 'Codex live media relay', 'Codex ライブメディアリレー', 'Retransmissão de mídia ao vivo do Codex'),
+    description: T('代理实时音频和数据通道，需要可达的入站 UDP 端口。TURN 密钥从本地配置读取并保留。', 'Relay live audio and data channels. Requires reachable inbound UDP ports. TURN credentials are read from and preserved in the local configuration.', '音声とデータを中継します。受信 UDP ポートが必要です。TURN 認証情報はローカル設定から読み込み、保持します。', 'Retransmite canais de áudio e dados em tempo real. Requer portas UDP de entrada acessíveis. As credenciais TURN são lidas da configuração local e preservadas.'),
     validate: config => {
       const oauth = configRecord(config.oauth) ? config.oauth : {};
       const providers = configRecord(oauth.providers) ? oauth.providers : {};
@@ -128,53 +128,53 @@ export const oauthTemplateGroups: TemplateConfigGroup[] = [
       const relay = configRecord(codex['live-media-relay']) ? codex['live-media-relay'] : {};
       const min = Number(relay['udp-port-min'] ?? 0), max = Number(relay['udp-port-max'] ?? 0), sessions = Number(relay['max-sessions'] || 32);
       return min === 0 && max === 0 || min > 0 && max >= min && max - min + 1 >= sessions * 2 ? null
-        : T('UDP 起止端口需要同时设置，并为每个会话至少预留两个端口。', 'Set both UDP range endpoints and allow at least two ports per session.', 'UDP の開始・終了ポートを両方設定し、セッションごとに 2 ポート以上を確保してください。');
+        : T('UDP 起止端口需要同时设置，并为每个会话至少预留两个端口。', 'Set both UDP range endpoints and allow at least two ports per session.', 'UDP の開始・終了ポートを両方設定し、セッションごとに 2 ポート以上を確保してください。', 'Defina o início e o fim do intervalo UDP e permita pelo menos duas portas por sessão.');
     }, fields: [
-      flag('codex', 'live-media-relay.enabled', T('启用实时媒体中继', 'Enable live media relay', 'ライブメディアリレーを有効化')),
-      number('codex', 'live-media-relay.max-sessions', T('最大并发会话', 'Maximum concurrent sessions', '最大同時セッション数'), 32),
-      flag('codex', 'live-media-relay.disable-private-remote-ips', T('拒绝内网远端 IP', 'Reject private remote IPs', 'プライベート IP を拒否'), false,
-        T('本机或受信任局域网中的 Codex Desktop 通常应关闭此项。', 'Usually leave disabled for Codex Desktop on this machine or a trusted LAN.', '同じ端末や信頼する LAN の Codex Desktop では通常無効にします。')),
-      text('codex', 'live-media-relay.public-ip', T('对外公布的 IP', 'Advertised public IP', '公開 IP')),
-      number('codex', 'live-media-relay.udp-port-min', T('UDP 起始端口', 'First UDP port', 'UDP 開始ポート'), 0, 65535),
-      number('codex', 'live-media-relay.udp-port-max', T('UDP 结束端口', 'Last UDP port', 'UDP 終了ポート'), 0, 65535),
-      structuredField(providerPath('codex', 'live-media-relay.ice-servers'), T('STUN / TURN 服务器', 'STUN / TURN servers', 'STUN / TURN サーバー'), iceServersShape),
+      flag('codex', 'live-media-relay.enabled', T('启用实时媒体中继', 'Enable live media relay', 'ライブメディアリレーを有効化', 'Ativar a retransmissão de mídia ao vivo')),
+      number('codex', 'live-media-relay.max-sessions', T('最大并发会话', 'Maximum concurrent sessions', '最大同時セッション数', 'Máximo de sessões simultâneas'), 32),
+      flag('codex', 'live-media-relay.disable-private-remote-ips', T('拒绝内网远端 IP', 'Reject private remote IPs', 'プライベート IP を拒否', 'Rejeitar IPs remotos privados'), false,
+        T('本机或受信任局域网中的 Codex Desktop 通常应关闭此项。', 'Usually leave disabled for Codex Desktop on this machine or a trusted LAN.', '同じ端末や信頼する LAN の Codex Desktop では通常無効にします。', 'Em geral, deixe desativado para o Codex Desktop neste computador ou em uma rede local confiável.')),
+      text('codex', 'live-media-relay.public-ip', T('对外公布的 IP', 'Advertised public IP', '公開 IP', 'IP público anunciado')),
+      number('codex', 'live-media-relay.udp-port-min', T('UDP 起始端口', 'First UDP port', 'UDP 開始ポート', 'Primeira porta UDP'), 0, 65535),
+      number('codex', 'live-media-relay.udp-port-max', T('UDP 结束端口', 'Last UDP port', 'UDP 終了ポート', 'Última porta UDP'), 0, 65535),
+      structuredField(providerPath('codex', 'live-media-relay.ice-servers'), T('STUN / TURN 服务器', 'STUN / TURN servers', 'STUN / TURN サーバー', 'Servidores STUN / TURN'), iceServersShape),
     ] },
-  { id: 'oauth-claude', title: T('Claude OAuth 行为', 'Claude OAuth behavior', 'Claude OAuth の動作'), fields: [
-    upstreamFlag('claude', 'tool-search', T('启用 Claude 原生工具搜索', 'Enable Claude native tool search', 'Claude ネイティブツール検索を有効化'), false,
-      T('启用 Claude 上游原生客户端工具搜索能力。', 'Enable native client tool search for Claude upstream requests.', 'Claude 上流リクエストでネイティブクライアントツール検索を有効化します。')),
-    upstreamNumber('claude', 'session-date-pin-days', T('伪装当前日期锁定天数', 'Cloaked date pin duration (days)', '偽装日付の固定期間 (日)'), 0, undefined,
-      T('会话中锁定的伪装系统日期天数，0 表示不锁定。', 'Number of days to pin cloaked system date within a session (0 disables pinning).', 'セッション内で偽装システム日付を固定する日数（0 で無効）。')),
-    upstreamFlag('claude', 'disable-cloaking-model-list', T('模型列表返回原始 ID', 'Return original model IDs in list', 'モデル一覧で元の ID を返す'), false,
-      T('在模型列表中直接返回上游原始模型 ID，不进行伪装。', 'Return upstream original model IDs directly in model lists without cloaking.', 'モデル一覧で偽装を行わず、上流の元のモデル ID を返します。')),
-    flag('claude', 'model-level-cooling', T('仅冷却发生限额的模型', 'Limit cooldown to the affected model', '対象モデルのみクールダウン')),
-    flag('claude', 'disable-claude-cloak-mode', T('禁用 Claude 请求伪装', 'Disable Claude request cloaking', 'Claude リクエストの偽装を無効化')),
-    ...[['user-agent', 'User-Agent'], ['package-version', T('软件包版本', 'Package version', 'パッケージバージョン')], ['runtime-version', T('运行时版本', 'Runtime version', 'ランタイムバージョン')], ['os', T('操作系统', 'Operating system', 'OS')], ['arch', T('处理器架构', 'Architecture', 'アーキテクチャ')], ['timeout', T('请求超时头', 'Request timeout header', 'タイムアウトヘッダー')], ['timezone', T('默认时区', 'Default timezone', '既定のタイムゾーン')]].map(([key, label]) => text('claude', `header-defaults.${key}`, label as TemplateText)),
-    flag('claude', 'header-defaults.stabilize-device-profile', T('固定凭据设备特征', 'Stabilize credential device profile', '端末プロファイルを固定')),
+  { id: 'oauth-claude', title: T('Claude OAuth 行为', 'Claude OAuth behavior', 'Claude OAuth の動作', 'Comportamento do OAuth do Claude'), fields: [
+    upstreamFlag('claude', 'tool-search', T('启用 Claude 原生工具搜索', 'Enable Claude native tool search', 'Claude ネイティブツール検索を有効化', 'Ativar a busca nativa de ferramentas do Claude'), false,
+      T('启用 Claude 上游原生客户端工具搜索能力。', 'Enable native client tool search for Claude upstream requests.', 'Claude 上流リクエストでネイティブクライアントツール検索を有効化します。', 'Ativa a busca nativa de ferramentas do cliente nas requisições ao Claude.')),
+    upstreamNumber('claude', 'session-date-pin-days', T('伪装当前日期锁定天数', 'Cloaked date pin duration (days)', '偽装日付の固定期間 (日)', 'Duração da fixação da data mascarada (dias)'), 0, undefined,
+      T('会话中锁定的伪装系统日期天数，0 表示不锁定。', 'Number of days to pin cloaked system date within a session (0 disables pinning).', 'セッション内で偽装システム日付を固定する日数（0 で無効）。', 'Número de dias para manter fixa a data do sistema mascarada durante uma sessão (0 desativa a fixação).')),
+    upstreamFlag('claude', 'disable-cloaking-model-list', T('模型列表返回原始 ID', 'Return original model IDs in list', 'モデル一覧で元の ID を返す', 'Exibir os IDs originais dos modelos na lista'), false,
+      T('在模型列表中直接返回上游原始模型 ID，不进行伪装。', 'Return upstream original model IDs directly in model lists without cloaking.', 'モデル一覧で偽装を行わず、上流の元のモデル ID を返します。', 'Retorna diretamente os IDs originais dos modelos do provedor nas listas de modelos, sem mascaramento.')),
+    flag('claude', 'model-level-cooling', T('仅冷却发生限额的模型', 'Limit cooldown to the affected model', '対象モデルのみクールダウン', 'Limitar a pausa temporária ao modelo afetado')),
+    flag('claude', 'disable-claude-cloak-mode', T('禁用 Claude 请求伪装', 'Disable Claude request cloaking', 'Claude リクエストの偽装を無効化', 'Desativar o mascaramento das requisições ao Claude')),
+    ...[['user-agent', 'User-Agent'], ['package-version', T('软件包版本', 'Package version', 'パッケージバージョン', 'Versão do pacote')], ['runtime-version', T('运行时版本', 'Runtime version', 'ランタイムバージョン', 'Versão do ambiente de execução')], ['os', T('操作系统', 'Operating system', 'OS', 'Sistema operacional')], ['arch', T('处理器架构', 'Architecture', 'アーキテクチャ', 'Arquitetura')], ['timeout', T('请求超时头', 'Request timeout header', 'タイムアウトヘッダー', 'Cabeçalho de tempo limite da requisição')], ['timezone', T('默认时区', 'Default timezone', '既定のタイムゾーン', 'Fuso horário padrão')]].map(([key, label]) => text('claude', `header-defaults.${key}`, label as TemplateText)),
+    flag('claude', 'header-defaults.stabilize-device-profile', T('固定凭据设备特征', 'Stabilize credential device profile', '端末プロファイルを固定', 'Estabilizar o perfil do dispositivo da credencial')),
   ] },
-  { id: 'oauth-claude-headers', title: T('Claude 上游请求头默认值', 'Claude upstream header defaults', 'Claude 上流の既定ヘッダー'),
-    description: T('作用于 upstream.claude 的默认请求头，与凭据级 header-defaults 相互独立。', 'Default headers for upstream.claude, configured independently of credential-level header-defaults.', 'upstream.claude に適用する既定ヘッダーで、認証情報レベルの header-defaults とは独立しています。'), fields: [
-    ...[['user-agent', 'User-Agent'], ['package-version', T('软件包版本', 'Package version', 'パッケージバージョン')], ['runtime-version', T('运行时版本', 'Runtime version', 'ランタイムバージョン')], ['os', T('操作系统', 'Operating system', 'OS')], ['arch', T('处理器架构', 'Architecture', 'アーキテクチャ')], ['timeout', T('请求超时头', 'Request timeout header', 'タイムアウトヘッダー')], ['timezone', T('默认时区', 'Default timezone', '既定のタイムゾーン')]].map(([key, label]) => upstreamText('claude', `header-defaults.${key}`, label as TemplateText)),
-    upstreamFlag('claude', 'header-defaults.stabilize-device-profile', T('固定凭据设备特征', 'Stabilize credential device profile', '端末プロファイルを固定')),
+  { id: 'oauth-claude-headers', title: T('Claude 上游请求头默认值', 'Claude upstream header defaults', 'Claude 上流の既定ヘッダー', 'Cabeçalhos padrão enviados ao Claude'),
+    description: T('作用于 upstream.claude 的默认请求头，与凭据级 header-defaults 相互独立。', 'Default headers for upstream.claude, configured independently of credential-level header-defaults.', 'upstream.claude に適用する既定ヘッダーで、認証情報レベルの header-defaults とは独立しています。', 'Cabeçalhos padrão para upstream.claude, configurados separadamente de header-defaults da credencial.'), fields: [
+    ...[['user-agent', 'User-Agent'], ['package-version', T('软件包版本', 'Package version', 'パッケージバージョン', 'Versão do pacote')], ['runtime-version', T('运行时版本', 'Runtime version', 'ランタイムバージョン', 'Versão do ambiente de execução')], ['os', T('操作系统', 'Operating system', 'OS', 'Sistema operacional')], ['arch', T('处理器架构', 'Architecture', 'アーキテクチャ', 'Arquitetura')], ['timeout', T('请求超时头', 'Request timeout header', 'タイムアウトヘッダー', 'Cabeçalho de tempo limite da requisição')], ['timezone', T('默认时区', 'Default timezone', '既定のタイムゾーン', 'Fuso horário padrão')]].map(([key, label]) => upstreamText('claude', `header-defaults.${key}`, label as TemplateText)),
+    upstreamFlag('claude', 'header-defaults.stabilize-device-profile', T('固定凭据设备特征', 'Stabilize credential device profile', '端末プロファイルを固定', 'Estabilizar o perfil do dispositivo da credencial')),
   ] },
-  { id: 'oauth-others', title: T('其他 OAuth 上游', 'Other OAuth providers', 'その他の OAuth プロバイダー'), fields: [
-    flag('aistudio', 'ws-auth', T('AI Studio WebSocket 身份验证', 'AI Studio WebSocket authentication', 'AI Studio WebSocket 認証'), true),
-    flag('xai', 'inject-x-search', T('xAI 自动注入 X Search', 'Inject xAI X Search', 'xAI X Search を自動追加')),
-    flag('antigravity', 'antigravity-credits', T('Antigravity 耗尽免费配额后使用积分', 'Use Antigravity credits after free quota is exhausted', '無料枠を使い切った後に Antigravity クレジットを使用'), true),
-    flag('antigravity', 'signature-cache-enabled', T('Antigravity 签名缓存校验', 'Antigravity signature cache validation', 'Antigravity 署名キャッシュ検証'), true),
-    flag('antigravity', 'signature-bypass-strict', T('绕过缓存时严格校验签名', 'Strict validation when bypassing the cache', 'キャッシュを迂回する際の厳格な検証')),
-    flag('antigravity', 'connection-pool.enabled', T('启用 Antigravity 连接池', 'Enable Antigravity connection pooling', 'Antigravity 接続プールを有効化')),
-    { ...text('antigravity', 'connection-pool.idle-conn-timeout', T('空闲连接超时（上限 210s）', 'Idle connection timeout (maximum 210s)', 'アイドル接続のタイムアウト（最大 210s）'), '30s'), validate: value => typeof value === 'string' && /^(?:\d+(?:\.\d+)?(?:ms|s|m))+$/.test(value) ? null : T('请输入有效时长', 'Enter a valid duration', '有効な時間を入力してください') },
-    number('antigravity', 'connection-pool.max-idle-conns-per-host', T('每个主机的最大空闲连接', 'Maximum idle connections per host', 'ホストごとの最大アイドル接続数'), 2),
-    { ...text('antigravity', 'tos-pause-window', T('TOS 保护暂停时长', 'Protective TOS pause window', 'TOS 保護一時停止の期間'), '6h'),
+  { id: 'oauth-others', title: T('其他 OAuth 上游', 'Other OAuth providers', 'その他の OAuth プロバイダー', 'Outros provedores OAuth'), fields: [
+    flag('aistudio', 'ws-auth', T('AI Studio WebSocket 身份验证', 'AI Studio WebSocket authentication', 'AI Studio WebSocket 認証', 'Autenticação WebSocket do AI Studio'), true),
+    flag('xai', 'inject-x-search', T('xAI 自动注入 X Search', 'Inject xAI X Search', 'xAI X Search を自動追加', 'Injetar xAI X Search')),
+    flag('antigravity', 'antigravity-credits', T('Antigravity 耗尽免费配额后使用积分', 'Use Antigravity credits after free quota is exhausted', '無料枠を使い切った後に Antigravity クレジットを使用', 'Usar créditos do Antigravity quando a cota gratuita acabar'), true),
+    flag('antigravity', 'signature-cache-enabled', T('Antigravity 签名缓存校验', 'Antigravity signature cache validation', 'Antigravity 署名キャッシュ検証', 'Validação do cache de assinaturas do Antigravity'), true),
+    flag('antigravity', 'signature-bypass-strict', T('绕过缓存时严格校验签名', 'Strict validation when bypassing the cache', 'キャッシュを迂回する際の厳格な検証', 'Validação rigorosa ao ignorar o cache')),
+    flag('antigravity', 'connection-pool.enabled', T('启用 Antigravity 连接池', 'Enable Antigravity connection pooling', 'Antigravity 接続プールを有効化', 'Ativar o pool de conexões do Antigravity')),
+    { ...text('antigravity', 'connection-pool.idle-conn-timeout', T('空闲连接超时（上限 210s）', 'Idle connection timeout (maximum 210s)', 'アイドル接続のタイムアウト（最大 210s）', 'Tempo limite da conexão ociosa (máximo de 210s)'), '30s'), validate: value => typeof value === 'string' && /^(?:\d+(?:\.\d+)?(?:ms|s|m))+$/.test(value) ? null : T('请输入有效时长', 'Enter a valid duration', '有効な時間を入力してください', 'Informe uma duração válida') },
+    number('antigravity', 'connection-pool.max-idle-conns-per-host', T('每个主机的最大空闲连接', 'Maximum idle connections per host', 'ホストごとの最大アイドル接続数', 'Máximo de conexões ociosas por host'), 2),
+    { ...text('antigravity', 'tos-pause-window', T('TOS 保护暂停时长', 'Protective TOS pause window', 'TOS 保護一時停止の期間', 'Duração da pausa preventiva por violação dos termos de serviço'), '6h'),
       validate: tosPauseValidate,
-      description: T('内核 8.0.72 起支持；默认关闭，仅当内核返回 403 TOS_VIOLATION 时触发，瞬时 429 不会触发。设置后首次触发会暂停整组 Antigravity 凭据，例如 6h。', 'Supported since core 8.0.72 and off by default. It triggers only on an upstream 403 TOS_VIOLATION, never on transient 429s. When set, the first such response pauses the whole Antigravity pool, for example 6h.', 'コア 8.0.72 以降で対応。既定では無効で、上流の 403 TOS_VIOLATION でのみ作動し、一時的な 429 では作動しません。設定すると最初の検出時に Antigravity プール全体を 6h など停止します。') },
-    structuredField(providerPath('antigravity', 'sensitive-patterns-replace'), T('敏感词正则替换', 'Sensitive-pattern replacements', '敏感語の正規表現置換'), sensitivePatternsShape,
-      T('按顺序执行的 Go RE2 正则替换，用于改写系统提示中的可识别内容；替换文本留空即删除匹配内容。', 'Ordered Go RE2 replacement rules applied to system prompts; an empty replacement deletes the matched text.', 'システムプロンプトに順番に適用する Go RE2 置換ルールです。置換テキストが空の場合は一致部分を削除します。')),
+      description: T('内核 8.0.72 起支持；默认关闭，仅当内核返回 403 TOS_VIOLATION 时触发，瞬时 429 不会触发。设置后首次触发会暂停整组 Antigravity 凭据，例如 6h。', 'Supported since core 8.0.72 and off by default. It triggers only on an upstream 403 TOS_VIOLATION, never on transient 429s. When set, the first such response pauses the whole Antigravity pool, for example 6h.', 'コア 8.0.72 以降で対応。既定では無効で、上流の 403 TOS_VIOLATION でのみ作動し、一時的な 429 では作動しません。設定すると最初の検出時に Antigravity プール全体を 6h など停止します。', 'Disponível desde a versão 8.0.72 do núcleo e desativado por padrão. Só é acionado quando o provedor retorna 403 TOS_VIOLATION, nunca em erros 429 temporários. Quando configurado, a primeira resposta desse tipo pausa todo o pool do Antigravity pela duração informada, por exemplo, 6h.') },
+    structuredField(providerPath('antigravity', 'sensitive-patterns-replace'), T('敏感词正则替换', 'Sensitive-pattern replacements', '敏感語の正規表現置換', 'Substituição de padrões sensíveis'), sensitivePatternsShape,
+      T('按顺序执行的 Go RE2 正则替换，用于改写系统提示中的可识别内容；替换文本留空即删除匹配内容。', 'Ordered Go RE2 replacement rules applied to system prompts; an empty replacement deletes the matched text.', 'システムプロンプトに順番に適用する Go RE2 置換ルールです。置換テキストが空の場合は一致部分を削除します。', 'Regras de substituição Go RE2 aplicadas em ordem aos prompts de sistema. Deixe a substituição em branco para excluir o texto encontrado.')),
   ] },
-  { id: 'oauth-filters', title: T('上游敏感词过滤', 'Provider sensitive-word filters', 'プロバイダーの敏感語フィルター'), fields: [
-    { path: providerPath('antigravity', 'sensitive-words'), type: 'string-list', label: T('Antigravity 敏感词', 'Antigravity sensitive words', 'Antigravity の敏感語'),
-      description: T('每行一个短语；按上游通道过滤，与凭据级伪装的敏感词相互独立。', 'One phrase per line. This is a per-provider filter, separate from per-credential cloaking sensitive words.', '1 行に 1 フレーズ。プロバイダー単位のフィルターで、認証情報ごとの偽装用敏感語とは別です。') },
-    { path: providerPath('devin', 'sensitive-words'), type: 'string-list', label: T('Devin 敏感词', 'Devin sensitive words', 'Devin の敏感語'),
-      description: T('每行一个短语；按上游通道过滤，与凭据级伪装的敏感词相互独立。', 'One phrase per line. This is a per-provider filter, separate from per-credential cloaking sensitive words.', '1 行に 1 フレーズ。プロバイダー単位のフィルターで、認証情報ごとの偽装用敏感語とは別です。') },
+  { id: 'oauth-filters', title: T('上游敏感词过滤', 'Provider sensitive-word filters', 'プロバイダーの敏感語フィルター', 'Filtros de termos sensíveis por provedor'), fields: [
+    { path: providerPath('antigravity', 'sensitive-words'), type: 'string-list', label: T('Antigravity 敏感词', 'Antigravity sensitive words', 'Antigravity の敏感語', 'Termos sensíveis do Antigravity'),
+      description: T('每行一个短语；按上游通道过滤，与凭据级伪装的敏感词相互独立。', 'One phrase per line. This is a per-provider filter, separate from per-credential cloaking sensitive words.', '1 行に 1 フレーズ。プロバイダー単位のフィルターで、認証情報ごとの偽装用敏感語とは別です。', 'Uma expressão por linha. Este filtro é por provedor, separado dos termos sensíveis do mascaramento por credencial.') },
+    { path: providerPath('devin', 'sensitive-words'), type: 'string-list', label: T('Devin 敏感词', 'Devin sensitive words', 'Devin の敏感語', 'Termos sensíveis do Devin'),
+      description: T('每行一个短语；按上游通道过滤，与凭据级伪装的敏感词相互独立。', 'One phrase per line. This is a per-provider filter, separate from per-credential cloaking sensitive words.', '1 行に 1 フレーズ。プロバイダー単位のフィルターで、認証情報ごとの偽装用敏感語とは別です。', 'Uma expressão por linha. Este filtro é por provedor, separado dos termos sensíveis do mascaramento por credencial.') },
   ] },
 ];

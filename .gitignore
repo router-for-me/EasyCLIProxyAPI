@@ -10,6 +10,7 @@ AGENTS.md
 
 agent_docs/
 .codex/
+.agents/
 
 *.log
 *.tmp

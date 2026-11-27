@@ -1,4 +1,5 @@
 import { invoke, isTauri } from './platform';
+import { selectCodexSubscriptionStore } from './codexSubscription';
 import { resetTargetQuotaCache } from './quotaCache';
 import { selectCredentialTagStore } from './credentialTags';
 
@@ -30,7 +31,9 @@ export const remoteTargetRevision = () => current.remoteActive ? current.revisio
 export function useConnectionTarget(connection: CpaConnection) {
   if (current.endpoint !== connection.endpoint || current.revision !== connection.revision) resetTargetQuotaCache();
   current = connection;
-  selectCredentialTagStore(connection.remoteActive ? connection.endpoint : null);
+  const endpoint = connection.remoteActive ? connection.endpoint : null;
+  selectCredentialTagStore(endpoint);
+  selectCodexSubscriptionStore(endpoint);
   return connection;
 }
 export const getCpaConnection = async () => {

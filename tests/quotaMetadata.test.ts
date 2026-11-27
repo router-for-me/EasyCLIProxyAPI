@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { antigravityProjectFor, codexMetadataFor, isPaidXaiFile } from '../src/services/quotaMetadata';
+import { antigravityProjectFor, codexMetadataFor, codexOrganizationIdFor, isPaidXaiFile } from '../src/services/quotaMetadata';
 import { providerForFile } from '../src/services/quotaService';
 
 const jwt = (payload: unknown) => `header.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.signature`;
@@ -31,6 +31,62 @@ describe('quota credential metadata', () => {
     expect(codexMetadataFor({ id_token: 'bad.jwt', account_id: 'direct', metadata: { subscription: { active_until: 1900000000 } } }))
       .toEqual({ accountId: 'direct', plan: undefined, subscriptionActiveUntil: '1900000000' });
     expect(codexMetadataFor({ id_token: [], subscription_active_until: 0 }).subscriptionActiveUntil).toBeUndefined();
+  });
+
+  it('Codex 回退读取 access_token 声明并提取 organization_id', () => {
+    const accessToken = jwt({
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'acc-from-access',
+        chatgpt_plan_type: 'TEAM',
+        chatgpt_subscription_active_until: '2031-02-03T04:05:06Z',
+        organizations: [
+          { id: 'org-secondary', is_default: false },
+          { id: 'org-default', is_default: true },
+        ],
+      },
+    });
+    const idToken = jwt({
+      'https://api.openai.com/auth': {
+        organization_id: 'org-from-id',
+      },
+    });
+    expect(codexMetadataFor({ access_token: accessToken })).toEqual({
+      accountId: 'acc-from-access',
+      plan: 'team',
+      subscriptionActiveUntil: '2031-02-03T04:05:06Z',
+    });
+    expect(codexOrganizationIdFor({ access_token: accessToken, id_token: idToken })).toBe('org-default');
+    expect(codexOrganizationIdFor({ id_token: idToken })).toBe('org-from-id');
+    expect(codexOrganizationIdFor({ metadata: { chatgpt_org_id: 'org-meta' } })).toBe('org-meta');
+  });
+
+  it('顶层写回的 subscription_active_until（含显式 null）与 chatgpt_plan_type 优先于旧 id_token', () => {
+    const staleIdToken = jwt({
+      'https://api.openai.com/auth': {
+        chatgpt_account_id: 'acc-1',
+        chatgpt_plan_type: 'pro',
+        chatgpt_subscription_active_until: '2026-11-08T02:43:00Z',
+      },
+    });
+    expect(codexMetadataFor({
+      id_token: staleIdToken,
+      subscription_active_until: '2026-12-08T02:43:00.000Z',
+      chatgpt_plan_type: 'team',
+      plan_type: 'pro',
+    })).toEqual({
+      accountId: 'acc-1',
+      plan: 'team',
+      subscriptionActiveUntil: '2026-12-08T02:43:00.000Z',
+    });
+    expect(codexMetadataFor({
+      id_token: staleIdToken,
+      subscription_active_until: null,
+      chatgpt_plan_type: 'free',
+    })).toEqual({
+      accountId: 'acc-1',
+      plan: 'free',
+      subscriptionActiveUntil: undefined,
+    });
   });
 
   it('Antigravity 支持 metadata、attributes 和下载文件的项目字段', () => {

@@ -9,6 +9,7 @@ export const releaseNotesLanguages = [
   { locale: 'ja', label: '日本語', missing: 'このバージョンの日本語の更新内容はありません。' },
   { locale: 'en', label: 'English', missing: 'Release notes for this version are not available in English.' },
   { locale: 'ru', label: 'Русский', missing: 'Примечания к выпуску этой версии на русском языке недоступны.' },
+  { locale: 'pt-BR', label: 'Português (Brasil)', missing: 'As notas desta versão não estão disponíveis em português do Brasil.' },
 ];
 
 // Only explicitly authored translations are published. Missing languages stay missing.

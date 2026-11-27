@@ -1,0 +1,548 @@
+{
+  "config_management": {
+    "title": "Painel de configuração",
+    "meta_fields": "{{count}} configurações",
+    "meta_dirty": "{{count}} não salvas",
+    "meta_dirty_source": "Edições no código-fonte não salvas",
+    "meta_errors": "{{count}} erros de validação",
+    "meta_synced": "Sincronizado",
+    "actions": {
+      "discard": "Descartar alterações",
+      "save": "Salvar alterações"
+    },
+    "discard_confirm_message": "Descartar todas as alterações não salvas e restaurar a última configuração de exemplo salva?",
+    "mode": {
+      "label": "Modo do editor",
+      "visual": "Visual",
+      "source": "Código-fonte"
+    },
+    "reload": "Recarregar",
+    "reload_confirm_message": "Recarregar descarta as alterações não salvas. Deseja continuar?",
+    "save": "Salvar",
+    "status_loading": "Carregando configuração...",
+    "status_loading_short": "Carregando",
+    "status_loaded": "Configuração carregada",
+    "status_loaded_short": "Carregada",
+    "status_dirty": "Alterações não salvas",
+    "status_dirty_short": "Não salvo",
+    "status_disconnected": "Conecte-se ao servidor para carregar a configuração",
+    "status_disconnected_short": "Desconectado",
+    "status_load_failed": "Falha ao carregar",
+    "status_load_failed_short": "Falhou",
+    "status_saving": "Salvando configuração...",
+    "status_saving_short": "Salvando",
+    "save_success": "Configuração salva com sucesso",
+    "visual_mode_unavailable": "O editor visual fica indisponível até a sintaxe YAML ser corrigida",
+    "visual_mode_unavailable_short": "Problema no YAML",
+    "validation_blocked_short": "Corrija os erros",
+    "visual_mode_unavailable_detail": "O editor visual está indisponível porque a configuração contém YAML inválido: {{message}}",
+    "visual_mode_save_blocked": "Não é possível salvar pelo modo visual até a sintaxe YAML ser corrigida",
+    "source_changes_before_visual": "Salve ou descarte as edições não salvas do código-fonte antes de mudar para o modo visual.",
+    "precise_save_incomplete": "O salvamento preciso não terminou; algumas alterações podem já ter sido aplicadas. Seu rascunho foi mantido. Salve de novo para revisar as diferenças restantes no servidor.",
+    "concurrent_list_conflict": "A lista {{path}} do servidor mudou depois da base do seu rascunho. O salvamento foi bloqueado para não sobrescrever essas alterações. Seu rascunho foi mantido; anote suas edições, recarregue a configuração e concilie as diferenças.",
+    "precise_save_recovery_required": "Não foi possível ler de volta o resultado do salvamento. A edição está pausada. Salve de novo para recuperar a base do rascunho ou recarregue a configuração.",
+    "visual_mode_latest_yaml_invalid": "A configuração mais recente do servidor contém YAML inválido. Revise-a no modo código-fonte antes de salvar as alterações visuais: {{message}}",
+    "editor_placeholder": "chave: valor",
+    "search_placeholder": "Buscar na configuração...",
+    "search_button": "Buscar",
+    "search_no_results": "Nenhum resultado",
+    "search_prev": "Anterior",
+    "search_next": "Próximo",
+    "diff": {
+      "title": "Revisar alterações",
+      "confirm": "Confirmar salvamento",
+      "no_changes": "Nenhuma alteração detectada"
+    },
+    "visual": {
+      "serverExtras": {
+        "trustedProxies": {
+          "label": "Proxies confiáveis",
+          "hint": "Endereços IP ou CIDRs; vazio significa que os cabeçalhos encaminhados não são confiáveis. Confiar em faixas que cobrem todos os endereços permite falsificar o IP do cliente. Exige reiniciar o servidor."
+        },
+        "discoveryEnabled": {
+          "label": "Ativar descoberta",
+          "hint": "Anuncia o serviço por mDNS / DNS-SD na rede local. Desativado por padrão; as alterações valem sem reiniciar."
+        },
+        "discoveryServiceName": {
+          "label": "Prefixo do nome do serviço",
+          "hint": "O servidor acrescenta um ID curto. Vazio usa CPA-<ShortID>."
+        },
+        "discoveryServiceType": {
+          "label": "Tipo de serviço"
+        },
+        "discoverySubtypes": {
+          "label": "Subtipos de protocolo",
+          "hint": "Vazio usa os cinco protocolos padrão. O _ inicial é adicionado se faltar; entradas inválidas são ignoradas."
+        },
+        "discoveryInterfacesInclude": {
+          "label": "Incluir interfaces",
+          "hint": "Vazio seleciona automaticamente as interfaces físicas da rede local. Use nomes ou padrões de prefixo terminados em *."
+        },
+        "discoveryInterfacesExclude": {
+          "label": "Excluir interfaces",
+          "hint": "Use nomes ou padrões de prefixo terminados em *. As exclusões têm prioridade sobre as inclusões."
+        },
+        "discoveryAuthRequired": {
+          "label": "Anunciar exigência de autenticação",
+          "hint": "Ativado por padrão. Só altera os metadados anunciados; não muda a autenticação real da API."
+        },
+        "discoveryAdvertiseManagement": {
+          "label": "Anunciar serviço de gerenciamento",
+          "hint": "Desativado por padrão. Só anuncia que o serviço de gerenciamento existe; não muda as permissões de acesso remoto."
+        },
+        "discoveryTitle": "Descoberta na rede local",
+        "discoveryHint": "Exige interfaces físicas com suporte a multicast e escuta fora do loopback. No Docker, normalmente é preciso usar a rede do host; o alcance não é garantido."
+      },
+      "additions": {
+        "oauthTitle": "Comportamento dos provedores OAuth",
+        "oauthHint": "Estas configurações de provedor valem apenas para credenciais OAuth ou em arquivo, não para credenciais com chave de API.",
+        "claudeTitle": "Claude",
+        "codexTitle": "Codex",
+        "antigravityTitle": "Antigravity",
+        "xaiTitle": "xAI",
+        "liveRelayTitle": "Relay de mídia do Codex Live",
+        "iceAdd": "Adicionar servidor ICE",
+        "iceRemove": "Remover servidor ICE {{index}}",
+        "iceURLs": "URLs STUN/TURN",
+        "iceUsername": "Usuário TURN",
+        "iceCredential": "Senha TURN",
+        "iceServer": "Servidor ICE {{index}}",
+        "routingSessionAffinitySubagents": {
+          "label": "Afinidade de sessão para subagentes",
+          "hint": "Ativado por padrão; só tem efeito quando a afinidade de sessão está ativada. Os subagentes herdam a credencial do agente principal para reaproveitar caches. Desative para distribuir os subagentes entre as credenciais e ganhar concorrência."
+        },
+        "saveCooldownStatus": {
+          "label": "Guardar status de espera",
+          "hint": "Salva o status de espera de cada credencial em arquivos .cds ao lado dos arquivos de autenticação. Desativado por padrão; nesse caso, o status fica só na memória."
+        },
+        "transientErrorCooldownSeconds": {
+          "label": "Espera após erro temporário (segundos)",
+          "hint": "Período de espera para erros 408/500/502/503/504/520–526 do provedor. 0 usa o padrão de 60 segundos; um valor negativo desativa essa espera."
+        },
+        "videoResultAuthCacheTTL": {
+          "label": "Validade do cache de credencial de vídeo",
+          "hint": "Por quanto tempo os IDs de vídeo ficam ligados à credencial que os criou. Use uma duração como 30m ou 3h; padrão: 3h."
+        },
+        "claudeHeaderTimezone": {
+          "label": "Fuso horário alternativo",
+          "hint": "Fuso horário IANA para o currentDate disfarçado, por exemplo America/Sao_Paulo, ou Local para o fuso do servidor. O fuso horário do JSON da credencial tem prioridade."
+        },
+        "claudeModelLevelCooling": {
+          "label": "Espera por modelo",
+          "hint": "Aplica as esperas de cota do Claude só ao modelo solicitado, em vez de a todos os modelos que usam a mesma credencial. Desativado por padrão."
+        },
+        "claudeDisableCloakMode": {
+          "label": "Desativar disfarce de requisições",
+          "hint": "Desativa o disfarce de Claude Code CLI e a troca do prompt de sistema; repassa o prompt de sistema original. Os arquivos de credencial podem alterar isso com cloak_mode. Padrão: false (disfarce automático para clientes que não são o Claude Code)."
+        },
+        "claudeCodeDisableCloakingModelList": {
+          "label": "Desativar disfarce dos IDs de modelo",
+          "hint": "Retorna os IDs originais dos modelos nas respostas da lista de modelos da Anthropic, em vez dos IDs disfarçados. Desativado por padrão."
+        },
+        "codexDisableCloaking": {
+          "label": "Desativar disfarce de requisições",
+          "hint": "Deixa de forçar os cabeçalhos User-Agent e Originator oficiais do Codex nas requisições HTTP/SSE e WebSocket. Desativado por padrão."
+        },
+        "codexModelLevelCooling": {
+          "label": "Espera por modelo",
+          "hint": "Aplica as esperas de cota usage_limit_reached só ao modelo solicitado, em vez de a todos os modelos que usam a mesma credencial. Desativado por padrão."
+        },
+        "codexStreamBootstrapBuffering": {
+          "label": "Reter o início do stream",
+          "hint": "Segura os eventos vazios e os heartbeats iniciais para permitir trocar de credencial em rejeições precoces por sobrecarga ou limite de taxa. Desativado por padrão. Atrasa os cabeçalhos da resposta e pode causar tempo esgotado no cliente ou no proxy reverso; a retenção tem limites de quadros e de bytes."
+        },
+        "codexStreamBootstrapTimeout": {
+          "label": "Tempo limite do início do stream",
+          "hint": "Limite de tempo opcional para a retenção, por exemplo 20s. Padrão: 0 (sem limite de tempo; os limites de quadros e bytes continuam valendo). É verificado conforme chegam os quadros do provedor; não é um prazo rígido para cada travamento de rede. Os cabeçalhos ainda podem esperar a saída traduzida."
+        },
+        "codexOptimizeMultiAgentV2": {
+          "label": "Otimizar multiagente v2",
+          "hint": "Otimiza as requisições multiagente oficiais do Codex: atualiza os detalhes do modelo em spawn_agent, remove a criptografia dos parâmetros de mensagem, normaliza o conteúdo de agent_message e o converte em mensagens de usuário para protocolos que não são o Codex. Desativado por padrão."
+        },
+        "codexOrphanDelegationCompatibility": {
+          "label": "Compatibilidade com delegação órfã",
+          "hint": "Nas requisições X-Openai-Subagent: collab_spawn, converte em mensagens de usuário as saídas órfãs de codex_app/create_thread e codex_app/send_message_to_thread sem uma chamada correspondente válida. Desativado por padrão."
+        },
+        "codexResponseSteering": {
+          "label": "Direcionamento de respostas",
+          "hint": "WebSockets experimentais de Responses do Codex em full-duplex. Cada socket fica ligado a uma conta e a um modelo do provedor; a entrada aceita nunca é reenviada. Desativado por padrão."
+        },
+        "antigravityConnectionPoolEnabled": {
+          "label": "Ativar pool de conexões",
+          "hint": "Reaproveita conexões HTTP/1.1 com o provedor. Padrão: false (conexões de curta duração)."
+        },
+        "antigravityConnectionPoolIdleTimeout": {
+          "label": "Tempo limite de conexão ociosa",
+          "hint": "Por quanto tempo as conexões ociosas ficam no pool. Padrão: 30s; máximo de 210s. Zero ou uma duração negativa muda para conexões de curta duração."
+        },
+        "antigravityConnectionPoolMaxIdleConnsPerHost": {
+          "label": "Máximo de conexões ociosas por host",
+          "hint": "Máximo de conexões ociosas mantidas por host do provedor e por credencial. Padrão: 2; máximo de 100. Zero usa o padrão do Go, que é 2; um valor negativo muda para conexões de curta duração."
+        },
+        "xaiInjectXSearch": {
+          "label": "Incluir x_search",
+          "hint": "Adiciona a ferramenta nativa x_search da xAI quando ela não vier na requisição, inclusive em tool_choice.allowed_tools quando couber. Desativado por padrão."
+        },
+        "codexLiveMediaRelayEnabled": {
+          "label": "Ativar relay de mídia",
+          "hint": "Termina e repassa neste processo a mídia WebRTC do Codex Live. Exige que o UDP de entrada seja alcançável. Desativado por padrão para manter as conexões de mídia diretas."
+        },
+        "codexLiveMediaRelayMaxSessions": {
+          "label": "Máximo de sessões de mídia simultâneas",
+          "hint": "Em branco ou 0 usa o padrão de 32 sessões. Uma faixa UDP personalizada precisa ter pelo menos duas portas por sessão."
+        },
+        "codexLiveMediaRelayDisablePrivateRemoteIPs": {
+          "label": "Bloquear candidatos com IP remoto privado",
+          "hint": "Padrão: false, o que permite candidatos privados para clientes locais ou de redes confiáveis. Ative para recusar candidatos SDP que apontem para IPs privados, de loopback, link-local ou não especificados e reduzir a exposição da rede interna; conexões locais podem falhar."
+        },
+        "codexLiveMediaRelayPublicIP": {
+          "label": "IP público anunciado",
+          "hint": "Endereço IPv4 ou IPv6 público opcional, para anunciar quando o proxy estiver atrás de NAT 1:1. Informe um endereço IP, não um nome de host."
+        },
+        "codexLiveMediaRelayUDPPortMin": {
+          "label": "Porta UDP mínima",
+          "hint": "Deixe os dois limites UDP em 0 para o sistema escolher, ou informe uma faixa contínua (inclusive) com pelo menos o dobro do limite efetivo de sessões em portas."
+        },
+        "codexLiveMediaRelayUDPPortMax": {
+          "label": "Porta UDP máxima",
+          "hint": "Precisa ser pelo menos igual à porta mínima. Os dois limites devem ser 0 ou ambos diferentes de zero; uma faixa personalizada precisa de pelo menos duas portas por sessão (64 com o padrão de 32 sessões)."
+        },
+        "codexLiveMediaRelayICEServers": {
+          "label": "Servidores ICE",
+          "hint": "Servidores STUN/TURN opcionais com URLs stun:, stuns:, turn: ou turns:. As credenciais TURN não aparecem na API de configuração em JSON. Informe a credencial como senha e mantenha segredos fora de capturas de tela e logs."
+        }
+      },
+      "search": {
+        "placeholder": "Buscar configurações (nome ou chave YAML)",
+        "no_results": "Nenhuma configuração corresponde"
+      },
+      "sections": {
+        "common": {
+          "title": "Comuns"
+        },
+        "connectivity": {
+          "title": "Acesso e autenticação"
+        },
+        "logging": {
+          "title": "Logs e diagnóstico"
+        },
+        "advanced": {
+          "antigravity_credits": "Usar créditos do Antigravity",
+          "title": "Avançado e experimental",
+          "plugins_title": "Plugins",
+          "antigravity_title": "Antigravity",
+          "devin_title": "Devin",
+          "signature_title": "Validação de assinatura"
+        },
+        "server": {
+          "github_token": "Token global do GitHub",
+          "github_token_hint": "Usado nas requisições do servidor ao GitHub, como atualizações do painel e downloads de plugins. Tem prioridade sobre GITHUB_TOKEN; deixe em branco para usar as credenciais do ambiente, ou requisições sem autenticação se não houver nenhuma. As regras de autenticação da loja de plugins que corresponderem têm prioridade.",
+          "host": "Endereço do host",
+          "port": "Porta"
+        },
+        "tls": {
+          "title": "Configuração TLS/SSL",
+          "enable": "Ativar TLS",
+          "cert": "Caminho do arquivo de certificado",
+          "key": "Caminho do arquivo de chave privada"
+        },
+        "remote": {
+          "title": "Gerenciamento remoto",
+          "allow_remote": "Permitir acesso remoto",
+          "allow_remote_desc": "Permite o acesso de gerenciamento a partir de outros computadores",
+          "disable_panel": "Desativar painel de controle",
+          "disable_auto_update_panel": "Desativar atualização automática do painel",
+          "disable_auto_update_panel_desc": "Baixa o painel quando ele ainda não existir, mas nunca o atualiza automaticamente pelo GitHub",
+          "secret_key": "Chave de gerenciamento",
+          "secret_key_placeholder": "Defina a chave de gerenciamento",
+          "panel_repo": "Repositório do painel"
+        },
+        "auth": {
+          "auth_dir": "Pasta de credenciais OAuth (oauth.auth-dir)"
+        },
+        "system": {
+          "debug": "Modo de depuração",
+          "commercial_mode": "Modo comercial",
+          "commercial_mode_desc": "Desativa middlewares de alto custo para suportar alta concorrência",
+          "logging_to_file": "Gravar log em arquivo",
+          "plugins_enabled": "Ativar sistema de plugins",
+          "plugins_enabled_desc": "Ativa o carregamento padrão de plugins por biblioteca dinâmica; cada instância de plugin continua sendo gerenciada na página Plugins",
+          "plugin_store_sources": "Fontes de plugins de terceiros",
+          "plugin_store_sources_desc": "Acrescenta fontes de registro à loja de plugins; a fonte oficial integrada é sempre mantida",
+          "plugin_store_sources_label": "URL do registro de fontes de plugins (plugins.store-sources)",
+          "plugin_store_sources_placeholder": "https://example.com/cliproxy-plugins/registry.json",
+          "plugin_store_auth": "Regras de autenticação da loja de plugins",
+          "plugin_store_auth_hint": "Informe apenas nomes de variáveis de ambiente, não os tokens. O servidor lê os valores do próprio ambiente de execução.",
+          "store_auth_empty": "Nenhuma regra de autenticação configurada. Fontes públicas de plugins não precisam disso.",
+          "store_auth_rule": "Regra de autenticação",
+          "store_auth_add": "Adicionar regra de autenticação",
+          "store_auth_match": "Prefixo de URL correspondente",
+          "store_auth_type": "Tipo de autenticação",
+          "store_auth_apply_to": "Aplicar a",
+          "store_auth_apply_to_hint": "Quando nada estiver selecionado, a regra vale para todos os tipos de requisição.",
+          "store_auth_apply_registry": "Registro",
+          "store_auth_apply_metadata": "Metadados",
+          "store_auth_apply_artifact": "Artefato",
+          "store_auth_type_none": "Nenhuma",
+          "store_auth_type_bearer": "Bearer",
+          "store_auth_type_basic": "Basic",
+          "store_auth_type_header": "Cabeçalho personalizado",
+          "store_auth_type_github_token": "Token do GitHub",
+          "store_auth_token_env": "Variável de ambiente do token",
+          "store_auth_username_env": "Variável de ambiente do usuário",
+          "store_auth_password_env": "Variável de ambiente da senha",
+          "store_auth_header_name": "Nome do cabeçalho",
+          "store_auth_header_value_env": "Variável de ambiente do valor do cabeçalho",
+          "store_auth_allow_insecure": "Permitir URLs HTTP inseguras",
+          "logs_max_size": "Tamanho máximo do arquivo de log (MB)",
+          "error_logs_max_files": "Arquivos de log de erro mantidos",
+          "usage_statistics_enabled": "Ativar estatísticas de uso em memória",
+          "redis_usage_retention": "Retenção da fila de uso no Redis (segundos)",
+          "redis_usage_retention_hint": "Retenção em memória da saída de uso por RESP LPOP/RPOP, máximo de 3600 segundos",
+          "antigravity_sensitive_words": "Ofuscação de termos sensíveis",
+          "antigravity_sensitive_words_desc": "Insere caracteres de largura zero nas palavras correspondentes das instruções de sistema do Antigravity para dificultar a detecção exata de palavras-chave no provedor",
+          "antigravity_sensitive_words_label": "Termos sensíveis OAuth (oauth.providers.antigravity.sensitive-words)",
+          "antigravity_sensitive_words_placeholder": "proxy",
+          "antigravity_sensitive_words_hint": "Uma palavra ou expressão por linha. A comparação ignora maiúsculas e minúsculas; entradas vazias são removidas e o servidor ignora entradas com menos de 2 caracteres",
+          "devin_sensitive_words": "Termos sensíveis do prompt de sistema do Devin",
+          "devin_sensitive_words_desc": "Somente nos prompts de sistema do Devin, a linha que contém um termo configurado é removida inteira; o restante do prompt de sistema é então ofuscado. Mensagens comuns e argumentos de ferramentas não mudam",
+          "devin_sensitive_words_label": "Termos sensíveis OAuth (oauth.providers.devin.sensitive-words)",
+          "devin_sensitive_words_placeholder": "expressão sensível",
+          "devin_sensitive_words_hint": "Uma palavra ou expressão por linha. Configure com cuidado: o conteúdo correspondente faz a linha inteira do prompt de sistema ser apagada; entradas vazias são removidas ao salvar",
+          "antigravity_signature_cache": "Ativar cache de assinaturas do Antigravity",
+          "antigravity_signature_cache_desc": "Prefere e valida as assinaturas de blocos de raciocínio guardadas em cache",
+          "antigravity_signature_strict": "Validação rígida de assinaturas no bypass",
+          "antigravity_signature_strict_desc": "Só vale quando o cache de assinaturas está desativado; valida a árvore protobuf completa do Claude"
+        },
+        "headers": {
+          "title": "Cabeçalhos padrão",
+          "claude_title": "Cabeçalhos padrão do OAuth do Claude",
+          "codex_title": "Cabeçalhos padrão do OAuth do Codex",
+          "user_agent": "User-Agent",
+          "package_version": "Versão do pacote",
+          "runtime_version": "Versão do runtime",
+          "os": "Sistema operacional",
+          "arch": "Arquitetura",
+          "timeout": "Tempo limite",
+          "stabilize_device": "Estabilizar perfil do dispositivo",
+          "stabilize_device_desc": "Fixa o SO e a arquitetura e estabiliza a impressão digital do software por credencial ou chave de API",
+          "beta_features": "Recursos beta"
+        },
+        "network": {
+          "title": "Configuração de rede",
+          "proxy_url": "URL do proxy",
+          "proxy_url_sponsor_hint": "Não tem um proxy adequado?",
+          "request_retry": "Número de novas tentativas",
+          "max_retry_credentials": "Máximo de credenciais nas novas tentativas",
+          "max_retry_credentials_hint": "Deixe em branco para não definir. Use 0 ou um inteiro negativo para tentar todas as credenciais disponíveis.",
+          "max_retry_interval": "Intervalo máximo entre tentativas (segundos)",
+          "max_retry_interval_hint": "Use 0 ou um inteiro negativo para não esperar entre as rodadas de novas tentativas.",
+          "auth_auto_refresh_workers": "Workers de renovação automática de autenticação",
+          "auth_auto_refresh_workers_hint": "Um inteiro positivo define o número de workers; 0, um inteiro negativo ou o campo vazio usa o padrão (16)",
+          "disable_image_generation": "Desativar geração de imagens",
+          "disable_image_generation_false": "false (ativada)",
+          "disable_image_generation_true": "true (desativada em tudo)",
+          "disable_image_generation_chat": "chat (desativa só a inclusão no chat)",
+          "disable_image_generation_passthrough": "passthrough (mantém a lista de ferramentas do cliente)",
+          "gpt_image_2_base_model": "Modelo base do GPT Image 2",
+          "gpt_image_2_base_model_hint": "Modelo principal usado ao repassar requisições de imagem do gpt-image-2; o servidor usa o padrão quando vazio ou inválido",
+          "routing_strategy": "Estratégia de roteamento",
+          "strategy_round_robin": "Rodízio",
+          "strategy_weighted_round_robin": "Rodízio ponderado",
+          "strategy_fill_first": "Preencher primeiro",
+          "session_affinity_ttl": "Validade da afinidade de sessão",
+          "force_model_prefix": "Exigir prefixo de modelo",
+          "force_model_prefix_desc": "Requisições de modelo sem prefixo usam só credenciais sem prefixo",
+          "passthrough_headers": "Repassar cabeçalhos do provedor",
+          "disable_cooling": "Desativar períodos de espera",
+          "disable_cooling_desc": "Desativa globalmente os períodos de espera de autenticação e de modelo após falhas",
+          "session_affinity": "Roteamento por afinidade de sessão",
+          "ws_auth": "Autenticação WebSocket",
+          "ws_auth_desc": "Exige autenticação nas conexões WebSocket do AI Studio (oauth.providers.aistudio.ws-auth)"
+        },
+        "streaming": {
+          "title": "Configuração de streaming",
+          "keepalive_seconds": "Keepalive (segundos)",
+          "bootstrap_retries": "Novas tentativas no início",
+          "bootstrap_hint": "Novas tentativas antes do primeiro byte; 0, um inteiro negativo ou o campo vazio desativa essas tentativas",
+          "nonstream_keepalive": "Intervalo de keepalive sem streaming (segundos)",
+          "nonstream_keepalive_hint": "Envia linhas em branco a cada N segundos nas respostas sem streaming; 0, um inteiro negativo ou o campo vazio desativa o keepalive",
+          "disabled": "Desativado"
+        },
+        "payload": {
+          "title": "Configuração do payload",
+          "default_rules": "Regras padrão",
+          "default_raw_rules": "Regras padrão em bruto",
+          "override_rules": "Regras de substituição",
+          "override_raw_rules": "Regras de substituição em bruto",
+          "filter_rules": "Regras de filtro"
+        }
+      },
+      "api_keys": {
+        "label": "Chaves de API de clientes (access.api-keys)",
+        "add": "Adicionar chave de API",
+        "generate": "Gerar",
+        "empty": "Nenhuma chave de API",
+        "edit_title": "Editar chave de API",
+        "add_title": "Adicionar chave de API",
+        "input_label": "Chave de API",
+        "input_placeholder": "Cole sua chave de API",
+        "name_label": "Nome / descrição",
+        "name_placeholder": "Por exemplo: notebook da Ana",
+        "name_hint": "Os nomes são salvos à parte para a instância selecionada e não entram no YAML. Limpe o campo para remover o nome.",
+        "name_save_error": "Não foi possível salvar o nome no armazenamento do navegador. Verifique as configurações de armazenamento do navegador.",
+        "input_hint": "As alterações valem depois de salvar a configuração. As chaves dos provedores são gerenciadas à parte.",
+        "error_empty": "Insira uma chave de API",
+        "error_invalid": "A chave de API contém caracteres inválidos",
+        "strength": {
+          "label": "Força da chave de API",
+          "empty": "Não informada",
+          "weak": "Fraca",
+          "fair": "Razoável",
+          "good": "Boa",
+          "strong": "Forte"
+        }
+      },
+      "payload_rules": {
+        "rule": "Regra",
+        "models": "Modelos aplicáveis",
+        "model_name": "Nome do modelo",
+        "provider_type": "Tipo de provedor",
+        "add_model": "Adicionar modelo",
+        "params": "Configuração de parâmetros",
+        "remove_params": "Remover parâmetros",
+        "json_path": "Caminho JSON (ex.: temperature)",
+        "json_path_filter": "Caminho JSON (gjson/sjson), ex.: generationConfig.thinkingConfig.thinkingBudget",
+        "param_type": "Tipo do parâmetro",
+        "param_value": "Valor do parâmetro",
+        "add_param": "Adicionar parâmetro",
+        "no_rules": "Nenhuma regra",
+        "add_rule": "Adicionar regra",
+        "provider_default": "Padrão",
+        "provider_openai": "OpenAI",
+        "provider_openai_response": "OpenAI Response",
+        "provider_responses": "Responses",
+        "provider_gemini": "Gemini",
+        "provider_claude": "Claude",
+        "provider_codex": "Codex",
+        "provider_antigravity": "Antigravity",
+        "advanced": "Avançado",
+        "hide_advanced": "Ocultar avançado",
+        "from_protocol": "Protocolo de origem (from-protocol)",
+        "headers": "Correspondência de cabeçalhos da requisição",
+        "header_name": "Nome do cabeçalho",
+        "header_value": "Valor do cabeçalho",
+        "add_header": "Adicionar cabeçalho",
+        "match": "Correspondências obrigatórias (match)",
+        "notMatch": "Correspondências proibidas (not-match)",
+        "exist": "Caminhos obrigatórios (exist)",
+        "notExist": "Caminhos proibidos (not-exist)",
+        "condition_path": "Caminho da correspondência",
+        "condition_value": "Valor da correspondência",
+        "add_condition": "Adicionar condição",
+        "value_type_string": "Texto",
+        "value_type_number": "Número",
+        "value_type_boolean": "Booleano",
+        "value_type_json": "JSON",
+        "value_string": "Valor de texto",
+        "value_number": "Valor numérico (ex.: 0.7)",
+        "value_boolean": "true ou false",
+        "value_json": "Valor JSON",
+        "value_raw_json": "Trecho JSON em bruto, ex.: true, 123, \"high\" ou {\"type\":\"object\"}",
+        "value_default": "Valor",
+        "boolean_true": "true",
+        "boolean_false": "false"
+      },
+      "validation": {
+        "invalid_trusted_proxies": "Cada proxy confiável precisa ser um endereço IP ou CIDR válido.",
+        "invalid_discovery_service_type": "Use _nome._tcp: o nome deve ter de 1 a 15 letras, dígitos ou hífens, sem hífen no início ou no fim.",
+        "validation_blocked": "Corrija os erros de validação antes de salvar",
+        "invalid_duration": "Insira uma duração válida, como 30s ou 3h",
+        "positive_duration": "Insira uma duração maior que zero",
+        "invalid_timezone": "Insira um fuso horário IANA válido, como America/Sao_Paulo",
+        "invalid_ip": "Insira um endereço IPv4 ou IPv6 válido",
+        "udp_port_pair": "Deixe as duas portas UDP em 0 ou defina as duas, com a mínima sem passar da máxima",
+        "udp_port_capacity": "A faixa UDP precisa ter, em portas, pelo menos o dobro do máximo efetivo de sessões (0 sessões usa 32)",
+        "invalid_ice_servers": "Cada servidor ICE precisa de pelo menos uma URL stun:, stuns:, turn: ou turns: válida",
+        "integer_range_0_65535": "Insira um número inteiro entre 0 e 65535",
+        "port_range": "Insira uma porta válida entre 1 e 65535",
+        "integer": "Insira um número inteiro",
+        "non_negative_integer": "Insira um número inteiro não negativo",
+        "integer_range_1_3600": "Insira um número inteiro entre 1 e 3600",
+        "payload_invalid_number": "Insira um número válido",
+        "payload_invalid_boolean": "Escolha true ou false",
+        "payload_invalid_json": "Insira um JSON válido",
+        "payload_replace_invalid_target": "Use user, system ou developer como papel de destino.",
+        "payload_replace_invalid_positions": "Escolha todas as mensagens do papel selecionado ou informe uma lista não vazia de posições inteiras positivas, não as duas coisas.",
+        "payload_replace_invalid_paths": "Informe pelo menos um caminho JSON preenchido. Caminhos não podem ser combinados com papel, todas ou posições.",
+        "payload_replace_invalid_models": "Adicione pelo menos um modelo com nome preenchido e condições válidas.",
+        "payload_replace_invalid_replacements": "Adicione pelo menos uma substituição válida. Textos literais de origem não podem ficar vazios. A expressão regular usa Go RE2; uma substituição vazia apaga o texto encontrado."
+      },
+      "common": {
+        "edit": "Editar",
+        "delete": "Excluir",
+        "cancel": "Cancelar",
+        "update": "Atualizar",
+        "add": "Adicionar"
+      },
+      "payload_replace": {
+        "title": "Substituições de texto no payload",
+        "description": "Roda depois das substituições de valores e antes dos filtros. As substituições rodam em ordem sobre os textos existentes.",
+        "target": "Escopo",
+        "replacements": "Substituições",
+        "target_all": "Todas as mensagens deste papel",
+        "target_positions": "Posições das mensagens",
+        "target_hint": "As posições começam em 1 e contam todas as mensagens do papel selecionado no payload final enviado ao provedor, inclusive as que não têm texto editável. Separe as posições com vírgulas.",
+        "from": "Texto de origem",
+        "to": "Texto de substituição (vazio apaga)",
+        "add_replacement": "Adicionar substituição",
+        "move_up": "Mover para cima",
+        "move_down": "Mover para baixo",
+        "reset_invalid": "Redefinir regra inválida",
+        "invalid_hint": "Esta regra contém valores incompatíveis ou malformados. Corrija no YAML ou redefina antes de editar.",
+        "target_selector": "Tipo de destino",
+        "target_paths": "Caminhos JSON",
+        "paths_hint": "Os caminhos são relativos à raiz do payload enviado ao provedor. Valores ausentes ou que não sejam texto são ignorados.",
+        "from_or_pattern": "Texto de origem ou padrão",
+        "replacement_type": "Tipo de substituição",
+        "literal": "Literal",
+        "regex": "Expressão regular (RE2)",
+        "pattern": "Padrão RE2"
+      }
+    }
+  },
+  "sensitive_replacements": {
+    "literal_title": "Substituições literais",
+    "pattern_title": "Substituições por expressão regular",
+    "group_title": "Substituição de texto sensível",
+    "literal_hint": "Linhas sem texto literal ficam no rascunho e não são salvas.",
+    "pattern_hint": "As regras rodam em ordem com a sintaxe Go RE2; lookaround e referências retroativas nos padrões não são suportados. O servidor descarta padrões inválidos ou em branco.",
+    "literal_key": "Texto literal",
+    "replacement": "Substituição",
+    "replacement_placeholder": "Deixe em branco para apagar o trecho encontrado",
+    "pattern": "Padrão",
+    "duplicate_key": "Chave repetida. As alterações literais só são aplicadas depois que as chaves repetidas forem resolvidas.",
+    "add_literal": "Adicionar substituição literal",
+    "add_pattern": "Adicionar regra de expressão regular",
+    "empty_literal": "Ainda não há substituições literais.",
+    "empty_pattern": "Ainda não há regras de expressão regular.",
+    "literal_key_row": "Texto literal, linha {{row}}",
+    "literal_value_row": "Substituição literal, linha {{row}}",
+    "pattern_row": "Padrão da expressão regular, linha {{row}}",
+    "pattern_value_row": "Substituição da expressão regular, linha {{row}}",
+    "remove_literal": "Remover linha literal {{row}}",
+    "remove_pattern": "Remover linha de expressão regular {{row}}",
+    "move_up": "Mover linha de expressão regular {{row}} para cima",
+    "move_down": "Mover linha de expressão regular {{row}} para baixo"
+  },
+  "common": {
+    "collapse": "Recolher",
+    "copy": "Copiar",
+    "expand": "Expandir"
+  },
+  "notification": {
+    "copy_failed": "Falha ao copiar",
+    "link_copied": "Link copiado para a área de transferência"
+  },
+  "routing": {}
+}

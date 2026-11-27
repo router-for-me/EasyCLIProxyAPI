@@ -3112,6 +3112,8 @@ export function ConfigPanelPage() {
               <strong>
                 {locale === 'en'
                   ? `${dirtyDescriptors.length} unsaved ${dirtyDescriptors.length === 1 ? 'section' : 'sections'}`
+                  : locale === 'pt-BR'
+                    ? `${dirtyDescriptors.length} ${dirtyDescriptors.length === 1 ? 'seção não salva' : 'seções não salvas'}`
                   : locale === 'ja'
                     ? `${dirtyDescriptors.length} 件の未保存変更`
                     : `${dirtyDescriptors.length} 项分组有未保存修改`}
@@ -3137,7 +3139,7 @@ export function ConfigPanelPage() {
                 onClick={discardAllDirty}
               >
                 {dirtyDescriptors.length > 1
-                  ? (locale === 'en' ? 'Discard all' : locale === 'ja' ? 'すべて破棄' : '全部放弃')
+                  ? (locale === 'en' ? 'Discard all' : locale === 'pt-BR' ? 'Descartar tudo' : locale === 'ja' ? 'すべて破棄' : '全部放弃')
                   : t('agents.catalog.discard')}
               </button>
               <button
@@ -3151,7 +3153,7 @@ export function ConfigPanelPage() {
                   {anySaveBusy
                     ? t('common.saving')
                     : dirtyDescriptors.length > 1
-                      ? (locale === 'en' ? 'Save all changes' : locale === 'ja' ? 'すべて保存' : '一键全部保存')
+                      ? (locale === 'en' ? 'Save all changes' : locale === 'pt-BR' ? 'Salvar tudo' : locale === 'ja' ? 'すべて保存' : '一键全部保存')
                       : t('common.save')}
                 </span>
                 <kbd className="config-save-shortcut" aria-hidden="true">Ctrl+S</kbd>

@@ -31,6 +31,36 @@ const messages = {
   expires: ['链接有效期至', 'Link expires at', 'リンクの有効期限'],
 } as const;
 
+export const pluginOAuthPtBR: Partial<Record<keyof typeof messages, string>> = {
+  title: "Login por plugin",
+  providerTitle: "OAuth de {name}",
+  providerHint: "Entre por este plugin para salvar as credenciais da conta.",
+  loadFailed: "Não foi possível carregar as opções de login do plugin. Atualize para tentar novamente.",
+  starting: "Solicitando link de login…",
+  waiting: "Aguardando autorização…",
+  success: "Autorização concluída e credenciais salvas.",
+  failed: "Não foi possível autorizar. Tente novamente.",
+  expired: "O login expirou. Solicite um novo link.",
+  unavailable: "Login indisponível. Verifique se o plugin está ativado.",
+  entry: "Opção de login",
+  missingState: "O núcleo não retornou uma sessão de login para verificar.",
+  invalidUrl: "URL de login inválida.",
+  link: "URL de login",
+  open: "Abrir no navegador",
+  copy: "Copiar link",
+  code: "Código do dispositivo",
+  copyCode: "Copiar código",
+  deviceHint: "Abra a URL de login e insira este código para autorizar.",
+  callback: "URL de retorno",
+  callbackHint: "Se a autorização não for concluída automaticamente, cole a URL de retorno completa do navegador.",
+  callbackInvalid: "Insira a URL de retorno completa contendo o estado atual e um código ou erro.",
+  submit: "Enviar URL de retorno",
+  submitting: "Enviando…",
+  submitted: "URL de retorno enviada. Aguardando autorização.",
+  retry: "Tentar login novamente",
+  expires: "O link expira às",
+};
+
 const ruMessages: Record<keyof typeof messages, string> = {
   entry: 'Вход',
   title: 'Вход через плагин',
@@ -63,6 +93,6 @@ const ruMessages: Record<keyof typeof messages, string> = {
 
 export type PluginOAuthMessage = keyof typeof messages;
 export function pluginOAuthText(key: PluginOAuthMessage, locale: AppLocale = getCurrentLocale()): string {
-  const value = locale === 'ru' ? ruMessages[key] : messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
+  const value = locale === 'pt-BR' ? pluginOAuthPtBR[key] ?? messages[key][1] : locale === 'ru' ? ruMessages[key] : messages[key][locale === 'en' ? 1 : locale === 'ja' ? 2 : 0];
   return locale === 'zh-TW' ? createTraditionalMessages({ text: value }).text : value;
 }

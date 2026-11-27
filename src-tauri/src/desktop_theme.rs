@@ -458,7 +458,7 @@ const ALLOWED_THEME_KEYS: &[&str] = &[
     "tokens",
     "backdrop",
 ];
-const THEME_LABEL_LOCALES: &[&str] = &["zh-CN", "zh-TW", "ja", "en", "ru"];
+const THEME_LABEL_LOCALES: &[&str] = &["zh-CN", "zh-TW", "ja", "en", "ru", "pt-BR"];
 
 fn is_valid_theme_label(value: &serde_json::Value) -> bool {
     let valid_text = |text: &str| !text.trim().is_empty() && text.chars().count() <= 80;

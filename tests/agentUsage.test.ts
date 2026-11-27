@@ -237,7 +237,7 @@ describe('Agent usage browser mock', () => {
   it('serves the report contract for every supported source', async () => {
     const mock = createBrowserMockRuntime('running');
     const parsed = normalizeAgentUsageReport(await mock.invoke('get_agent_usage', { query: { range: '7d' } }));
-    expect(parsed.sources).toHaveLength(11);
+    expect(parsed.sources).toHaveLength(15);
     expect(parsed.timeline.length).toBeGreaterThan(0);
     expect(parsed.sources.find((entry) => entry.source === 'pi')?.status).toBe('archived');
     expect(parsed.sources.find((entry) => entry.source === 'codex')?.series.length).toBeGreaterThan(0);

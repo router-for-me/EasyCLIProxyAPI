@@ -31,7 +31,7 @@ export const AGENT_USAGE_VIEWS = ['trend', 'structure'] as const;
 export type AgentUsageView = (typeof AGENT_USAGE_VIEWS)[number];
 
 const SERIES_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#94a3b8'];
-const SOURCE_COLORS = ['#3b82f6', '#10b981', '#8b5cf6', '#0ea5e9', '#ec4899', '#f59e0b', '#14b8a6', '#6366f1', '#ef4444', '#84cc16', '#a855f7'];
+const SOURCE_COLORS = ['#3b82f6', '#10b981', '#8b5cf6', '#0ea5e9', '#ec4899', '#f59e0b', '#14b8a6', '#6366f1', '#ef4444', '#84cc16', '#f97316', '#06b6d4', '#22c55e', '#d946ef', '#a855f7'];
 export const STRUCTURE_COLORS = ['#10b981', '#a7f3d0', '#3b82f6', '#f59e0b'];
 const OTHER_COLOR = '#94a3b8';
 const BAR_TOP = 16;
@@ -110,7 +110,7 @@ export function AgentUsageChart({ view, metric, report, groupBy, locale, seriesL
     }
     const byModel = new Map<string, AgentUsageBucketRow[]>();
     report.sources.forEach((source) => source.series.forEach((row) => {
-      const separator = row.bucket.lastIndexOf('|');
+      const separator = row.bucket.indexOf('|');
       const bucket = separator >= 0 ? row.bucket.slice(0, separator) : row.bucket;
       const model = separator >= 0 ? row.bucket.slice(separator + 1) : source.source;
       const rows = byModel.get(model) ?? [];
