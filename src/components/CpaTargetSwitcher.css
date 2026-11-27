@@ -72,22 +72,19 @@
   .sidebar .cpa-target-trigger {
     min-height: 36px;
     padding: 0 12px;
-    border-color: var(--color-border-default);
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--sidebar-selected-bg) 76%, transparent);
-    color: var(--sidebar-text-strong);
+    border-color: var(--sidebar-edge);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--sidebar-text);
     font-weight: var(--font-weight-medium);
-    box-shadow: 0 1px 2px color-mix(in srgb, var(--sidebar-text-strong) 4%, transparent);
     transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, color 150ms ease;
   }
   .sidebar .cpa-target-trigger > svg:first-child { color: var(--sidebar-icon); }
   .sidebar .cpa-target-trigger > svg:last-child { color: var(--sidebar-icon); opacity: 0.78; }
   .sidebar .cpa-target-trigger-text small { color: var(--sidebar-text-subtle); }
   .sidebar .cpa-target-trigger:hover:not(:disabled) {
-    background: var(--sidebar-selected-bg);
-    border-color: color-mix(in srgb, var(--sidebar-text-strong) 14%, transparent);
+    background: var(--sidebar-hover-bg);
     color: var(--sidebar-text-strong);
-    box-shadow: var(--sidebar-selected-shadow);
   }
   .sidebar .cpa-target-trigger[aria-expanded='true'] {
     background: var(--sidebar-selected-bg);

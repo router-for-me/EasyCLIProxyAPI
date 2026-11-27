@@ -64,7 +64,7 @@
   padding: 0;
   place-items: center;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--sidebar-icon);
   transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
@@ -87,7 +87,7 @@
   width: 34px;
   height: 34px;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   box-shadow: var(--sidebar-logo-ring);
 }
 
@@ -167,7 +167,7 @@
   height: 33px;
   padding: 0 11px 0 13px;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--sidebar-text);
   font-size: 13.5px;
@@ -306,7 +306,7 @@
   justify-content: center;
   gap: 6px;
   padding: 0 9px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--sidebar-hover-bg) 72%, transparent);
   color: var(--sidebar-text);
   font-size: 13px;
@@ -466,7 +466,7 @@
   height: 26px;
   justify-content: center;
   padding: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-md);
 }
 
 .nav-plugin-toggle > svg {
@@ -489,7 +489,7 @@
 .nav-section .nav-plugin-children button {
   height: 30px;
   padding: 0 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-size: 12.5px;
 }
 
@@ -899,7 +899,7 @@
   gap: 8px;
   padding: 0 11px 0 13px;
   margin-bottom: 2px;
-  border-radius: 7px;
+  border-radius: var(--radius-md);
   color: var(--sidebar-text-subtle);
   font-size: 12px;
   font-weight: var(--font-weight-semibold);

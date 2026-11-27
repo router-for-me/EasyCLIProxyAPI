@@ -81,7 +81,10 @@ import {
   quotaTone,
   tierBadgeVariant,
 } from './accountSwitch/AccountSwitchHelpers';
-import './AccountSwitchPage.css';
+import './accountSwitch/shell.css';
+import './accountSwitch/overview.css';
+import './accountSwitch/accounts.css';
+import './accountSwitch/dialogs.css';
 
 type ActiveView = 'overview' | SwitchPlatformId;
 type LayoutMode = 'compact' | 'list' | 'cards';

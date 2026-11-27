@@ -1,0 +1,624 @@
+@layer pages {
+  /* =========================================================================
+     Account Switch — Account Cards, Table View, Compact List & Tag Sections
+     ========================================================================= */
+  .fd-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(290px, 100%), 1fr));
+    gap: 14px;
+    min-width: 0;
+  }
+
+  .fd-account-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 18px 16px 15px;
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    overflow: hidden;
+    box-shadow: var(--shadow-xs);
+    transition: transform 200ms cubic-bezier(0.23, 1, 0.32, 1),
+      box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1),
+      border-color 180ms ease;
+  }
+
+  .fd-account-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--color-border-hover);
+    box-shadow: var(--shadow-md);
+  }
+
+  .fd-account-card.is-active {
+    border-color: color-mix(in srgb, var(--color-text-primary) 34%, var(--color-border-default));
+    background: var(--color-surface);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .fd-account-card.is-selected {
+    border-color: var(--ui-accent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ui-accent) 42%, transparent);
+  }
+
+  .fd-card-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+  }
+
+  .fd-card-email {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    color: var(--color-text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ---------- Plan Seals ---------- */
+  .fd-tier-pill {
+    position: relative;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 7px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--color-border-default);
+    background: transparent;
+    color: var(--color-text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    line-height: 1.25;
+    white-space: nowrap;
+  }
+
+  .fd-tier-pill.is-xs {
+    padding: 2px 8px;
+    font-size: 10.5px;
+  }
+
+  .fd-tier-pill.tier-plus,
+  .fd-tier-pill.tier-pro {
+    background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+    border-color: var(--color-border-strong);
+    color: var(--color-text-primary);
+  }
+
+  .fd-tier-pill.tier-team,
+  .fd-tier-pill.tier-max {
+    background: var(--ui-accent);
+    border-color: transparent;
+    color: var(--color-text-on-accent);
+  }
+
+  .fd-tier-pill.tier-free,
+  .fd-tier-pill.tier-default {
+    background: transparent;
+    border-color: var(--color-border-default);
+    color: var(--color-text-muted);
+  }
+
+  /* ---------- Card Metadata, Meters & Expiration ---------- */
+  .fd-card-meta-row {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+    min-height: 20px;
+    margin-top: -6px;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 13px;
+    color: var(--color-text-muted);
+  }
+
+  .fd-meta-group {
+    flex: none;
+    color: var(--color-text-secondary);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .fd-meta-tag {
+    flex: none;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 13px;
+    font-weight: 400;
+    white-space: nowrap;
+    transition: color 140ms ease;
+  }
+
+  .fd-meta-tag:hover {
+    color: var(--color-text-primary);
+  }
+
+  .fd-card-note {
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: 13px;
+    color: var(--color-text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-card-meta-row .fd-card-time {
+    flex: none;
+    margin-left: auto;
+    padding-left: 4px;
+  }
+
+  .fd-card-meters {
+    padding: 14px 0 4px;
+    border-top: 1px solid var(--color-border-subtle);
+    flex: 1 1 auto;
+  }
+
+  .fd-card-expiry {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    min-height: 22px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-text-muted);
+  }
+
+  .fd-card-expiry > svg {
+    flex: none;
+    opacity: 0.65;
+  }
+
+  .fd-card-expiry > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-card-expiry.tone-muted {
+    color: var(--color-text-muted);
+  }
+
+  .fd-card-expiry.tone-soon {
+    color: var(--color-danger-text);
+    font-weight: 500;
+  }
+
+  .fd-card-expiry.tone-expired {
+    color: var(--color-danger);
+    font-weight: 600;
+  }
+
+  .fd-expiry-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-subtle);
+    color: var(--color-text-secondary);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 11px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    flex: none;
+  }
+
+  .fd-expiry-pill.tone-muted {
+    color: var(--color-text-muted);
+  }
+
+  .fd-expiry-pill.tone-soon {
+    background: var(--color-warning-subtle);
+    color: var(--color-warning-text);
+    font-weight: 600;
+  }
+
+  .fd-expiry-pill.tone-expired {
+    background: var(--color-danger-subtle);
+    color: var(--color-danger-text);
+    font-weight: 600;
+  }
+
+  .fd-card-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-top: 8px;
+    margin-top: auto;
+    border-top: 1px solid color-mix(in srgb, var(--color-border-default) 52%, transparent);
+  }
+
+  .fd-card-time {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fd-card-icon-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    flex: none;
+  }
+
+  .fd-card-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex: none;
+  }
+
+  .fd-card-actions.is-right {
+    justify-content: flex-end;
+  }
+
+  .fd-table .fd-card-actions.is-right {
+    width: 100%;
+  }
+
+  .fd-active-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 4px;
+    height: 32px;
+    border-radius: var(--radius-full);
+    border: 0;
+    background: transparent;
+    color: var(--color-text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex: none;
+  }
+
+  .fd-card-foot .fd-card-icon-group {
+    opacity: 0.56;
+    transition: opacity 160ms ease;
+  }
+
+  .fd-account-card:hover .fd-card-icon-group,
+  .fd-account-card:focus-within .fd-card-icon-group {
+    opacity: 1;
+  }
+
+  .fd-card-icon {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--color-text-muted);
+    transition: background-color 130ms ease, color 130ms ease;
+  }
+
+  .fd-card-icon:hover:not(:disabled) {
+    background: var(--color-surface-subtle);
+    color: var(--color-text-primary);
+  }
+
+  .fd-card-icon.is-danger:hover:not(:disabled) {
+    background: var(--color-danger-subtle);
+    color: var(--color-danger);
+  }
+
+  /* ---------- Table View ---------- */
+  .fd-table-shell {
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    overflow-x: auto;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .fd-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+
+  .fd-table th {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--color-border-default);
+    color: var(--color-text-muted);
+    font-size: 11.5px;
+    font-weight: 600;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .fd-table td {
+    padding: 11px 14px;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-border-default) 55%, transparent);
+    vertical-align: middle;
+  }
+
+  .fd-table td:last-child {
+    white-space: nowrap;
+  }
+
+  .fd-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .fd-table tbody tr:hover {
+    background: var(--color-surface-subtle);
+  }
+
+  .fd-table tbody tr.is-active {
+    background: color-mix(in srgb, var(--color-success) 6%, transparent);
+  }
+
+  .fd-table-account {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .fd-table-meters {
+    display: grid;
+    gap: 6px;
+  }
+
+  .fd-table-meter {
+    display: grid;
+    grid-template-columns: 88px minmax(80px, 1fr) 38px;
+    align-items: center;
+    gap: 8px;
+    font-size: 11.5px;
+  }
+
+  .fd-table-meter span {
+    color: var(--color-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-table-meter strong {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- Compact List ---------- */
+  .fd-compact-list {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .fd-compact-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    max-width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+    transition: border-color 140ms ease, box-shadow 140ms ease;
+  }
+
+  .fd-compact-row .fd-name-group {
+    flex: 1 1 150px;
+    min-width: 100px;
+  }
+
+  .fd-compact-row .fd-card-actions {
+    flex: none;
+    width: auto;
+  }
+
+  .fd-compact-row:hover {
+    border-color: color-mix(in srgb, var(--ui-accent) 28%, var(--color-border-strong));
+  }
+
+  .fd-compact-row.is-active {
+    border-color: color-mix(in srgb, var(--color-text-primary) 34%, var(--color-border-default));
+    background: var(--color-surface);
+  }
+
+  .fd-compact-quotas {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 1 auto;
+    min-width: 0;
+    gap: 6px;
+    margin-left: auto;
+    overflow: hidden;
+  }
+
+  .fd-compact-pill {
+    padding: 3px 9px;
+    border-radius: var(--radius-md);
+    background: var(--color-surface-subtle);
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* ---------- Inline Name, Copy & Rename ---------- */
+  .fd-name-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1 1 120px;
+    min-width: 0;
+  }
+
+  .fd-copy-mini {
+    display: inline-grid;
+    place-items: center;
+    width: 0;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-text-muted);
+    opacity: 0;
+    overflow: hidden;
+    flex: none;
+    transition: width 130ms ease, opacity 130ms ease, color 130ms ease, background-color 130ms ease;
+  }
+
+  .fd-account-card:hover .fd-copy-mini,
+  .fd-table tbody tr:hover .fd-copy-mini,
+  .fd-compact-row:hover .fd-copy-mini,
+  .fd-spotlight-top:hover .fd-copy-mini,
+  .fd-copy-mini:focus-visible,
+  .fd-copy-mini.is-copied {
+    width: 22px;
+    opacity: 1;
+  }
+
+  .fd-copy-mini:hover {
+    background: var(--color-surface-subtle);
+    color: var(--color-text-primary);
+  }
+
+  .fd-copy-mini.is-copied {
+    color: var(--color-success-text);
+  }
+
+  .fd-inline-rename-input {
+    flex: 1 1 auto;
+    min-width: 90px;
+    height: 26px;
+    padding: 0 8px;
+    border: 1px solid var(--ui-accent);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    color: var(--color-text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    outline: none;
+  }
+
+  /* ---------- Cross-Platform All-Accounts & Tag Sections ---------- */
+  .fd-all-accounts {
+    display: grid;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .fd-all-accounts-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .fd-search.fd-search-wide {
+    width: min(420px, 100%);
+    background: var(--color-surface);
+  }
+
+  .fd-search.fd-search-wide:focus-within {
+    width: min(460px, 100%);
+  }
+
+  .fd-all-empty {
+    padding: 36px 16px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--color-text-muted);
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+  }
+
+  .fd-platform-tag-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 25px;
+    padding: 0 9px;
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-subtle);
+    color: var(--color-text-secondary);
+    font-size: 11.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex: none;
+    transition: border-color 130ms ease, color 130ms ease;
+  }
+
+  .fd-platform-tag-btn:hover {
+    border-color: var(--ui-accent);
+    color: var(--ui-accent-strong);
+  }
+
+  .fd-tag-group-toggle {
+    font-weight: 600;
+    color: var(--color-text-primary);
+  }
+
+  .fd-tag-sep {
+    height: 1px;
+    background: var(--color-border-default);
+  }
+
+  .fd-tag-sections {
+    display: grid;
+    gap: 18px;
+    min-width: 0;
+  }
+
+  .fd-tag-section {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .fd-tag-section-head {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    justify-self: start;
+    padding: 5px 11px 5px 7px;
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-full);
+    background: var(--color-surface);
+    color: var(--color-text-primary);
+    font-size: 12px;
+    font-weight: 600;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .fd-tag-section-head:hover {
+    border-color: var(--color-border-strong);
+  }
+
+  .fd-tag-section-head em {
+    font-style: normal;
+    font-size: 11px;
+    color: var(--color-text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+}
