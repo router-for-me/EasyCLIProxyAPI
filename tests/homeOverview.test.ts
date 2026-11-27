@@ -4,6 +4,7 @@ import {
   countHomeProviderKeys,
   loadHomeOverview,
   normalizeHomeModels,
+  reconcileHomeModels,
   summarizeHomeCredentials,
   summarizeHomeUsage,
 } from '../src/services/homeOverview';
@@ -76,6 +77,30 @@ describe('home overview aggregation', () => {
     expect(normalizeHomeModels([])).toEqual([]);
     expect(() => normalizeHomeModels(null)).toThrow();
     expect(() => normalizeHomeModels([{ name: '' }])).toThrow();
+  });
+
+  it('reconciles refreshed models while preserving existing display order and reference on reorder-only refreshes', () => {
+    const previous = [
+      { name: 'model-a', displayName: 'Model A' },
+      { name: 'model-b' },
+      { name: 'model-c' },
+    ];
+    const reordered = [
+      { name: 'model-c' },
+      { name: 'model-a', displayName: 'Model A' },
+      { name: 'model-b' },
+    ];
+    expect(reconcileHomeModels(previous, reordered)).toBe(previous);
+    expect(reconcileHomeModels(previous, [
+      { name: 'model-d' },
+      { name: 'model-c' },
+      { name: 'model-a', displayName: 'Model A2' },
+    ])).toEqual([
+      { name: 'model-a', displayName: 'Model A2' },
+      { name: 'model-c' },
+      { name: 'model-d' },
+    ]);
+    expect(reconcileHomeModels(previous, null)).toBeNull();
   });
 });
 

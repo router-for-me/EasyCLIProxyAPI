@@ -112,6 +112,35 @@ export function normalizeHomeModels(payload: unknown): CoreHealthModel[] {
   return [...models.values()];
 }
 
+// 后台轮询刷新模型列表时保留已有模型的展示顺序，避免内核映射迭代顺序变化引发列表抖动
+export function reconcileHomeModels(
+  previous: CoreHealthModel[] | null | undefined,
+  next: CoreHealthModel[] | null,
+): CoreHealthModel[] | null {
+  if (!previous || !next) return next;
+  const nextByName = new Map(next.map((model) => [model.name, model]));
+  const merged: CoreHealthModel[] = [];
+  for (const model of previous) {
+    const updated = nextByName.get(model.name);
+    if (!updated) continue;
+    merged.push(updated);
+    nextByName.delete(model.name);
+  }
+  for (const model of nextByName.values()) {
+    merged.push(model);
+  }
+  if (
+    merged.length === previous.length
+    && merged.every((model, index) => (
+      model.name === previous[index]?.name
+      && (model.displayName ?? '') === (previous[index]?.displayName ?? '')
+    ))
+  ) {
+    return previous;
+  }
+  return merged;
+}
+
 async function loadProviderKeys(): Promise<number> {
   try {
     return countHomeProviderKeys(await managementApi.get('/config/api-keys'));
