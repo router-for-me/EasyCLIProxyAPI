@@ -1413,9 +1413,9 @@ function TokenComposition({ overview }: { overview: UsageOverview }) {
   const { t, locale } = useI18n();
   const composition = calculateTokenComposition(overview);
   const unpricedRequests = Math.max(overview.totalRequests - overview.pricedRequests, 0);
-  const pricingLabel = unpricedRequests > 0
+  const pricingTitle = unpricedRequests > 0
     ? t('usage.token.pricingNeedsUpdate')
-    : t('usage.token.pricing');
+    : t('usage.stat.costNote');
   const labels = {
     input: t('usage.token.uncachedInput'),
     'cache-read': t('usage.token.cacheRead'),
@@ -1493,8 +1493,8 @@ function TokenComposition({ overview }: { overview: UsageOverview }) {
               <div><dt>{t('usage.stat.averageLatency')}</dt><dd>{compactDuration(overview.averageLatencyMs)}</dd></div>
             </dl>
           </section>
-          <section className="usage-token-context-group surface-sunken" aria-labelledby="usage-token-pricing-title" title={t('usage.stat.costNote')}>
-            <h3 id="usage-token-pricing-title"><Wallet size={14} aria-hidden="true" />{pricingLabel}</h3>
+          <section className="usage-token-context-group surface-sunken" aria-labelledby="usage-token-pricing-title" title={pricingTitle}>
+            <h3 id="usage-token-pricing-title"><Wallet size={14} aria-hidden="true" />{t('usage.token.pricing')}</h3>
             <dl className="usage-token-context-metrics">
               <div><dt>{t('usage.token.priced')}</dt><dd>{compactNumber(overview.pricedRequests)}</dd></div>
               <div><dt>{t('usage.token.unpriced')}</dt><dd>{compactNumber(unpricedRequests)}</dd></div>

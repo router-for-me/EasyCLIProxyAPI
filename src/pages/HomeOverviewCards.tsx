@@ -17,7 +17,7 @@ export function HomeOverviewCards({ snapshot, loading, coreReady, onRefresh, act
   const rate = usage?.successRate;
   const availability = credentials && credentials.total > 0 && credentials.unknown < credentials.total
     ? credentials.available / credentials.total * 100 : null;
-  const unavailable = (remote: boolean) => t(loading ? 'common.loading' : remote && !coreReady ? 'home.overview.offline' : 'home.overview.unavailable');
+  const unavailable = (remote: boolean) => (loading ? t('common.loading') : remote && !coreReady ? '' : t('home.overview.unavailable'));
   const cards = [
     {
       id: 'usage', label: t('home.overview.successRate'),
@@ -43,13 +43,13 @@ export function HomeOverviewCards({ snapshot, loading, coreReady, onRefresh, act
     {
       id: 'providerKeys', label: t('home.overview.providerKeys'),
       value: snapshot?.providerKeys == null ? '—' : formatNumber(snapshot.providerKeys),
-      description: snapshot?.providerKeys == null ? unavailable(true) : t('home.overview.providerKeysHint'),
+      description: snapshot?.providerKeys == null ? unavailable(true) : '',
       tone: 'neutral', error: snapshot?.errors.providerKeys,
     },
     {
       id: 'models', label: t('home.overview.models'),
       value: snapshot?.models == null ? '—' : formatNumber(snapshot.models.length),
-      description: snapshot?.models == null ? unavailable(true) : t('home.overview.modelsHint'),
+      description: snapshot?.models == null ? unavailable(true) : '',
       tone: 'neutral', error: snapshot?.errors.models,
     },
   ];
@@ -72,7 +72,7 @@ export function HomeOverviewCards({ snapshot, loading, coreReady, onRefresh, act
             aria-valuemax={card.percent != null ? 100 : undefined}
             aria-valuenow={card.percent != null ? Math.max(0, Math.min(100, card.percent)) : undefined}
           ><span style={{ width: `${Math.max(0, Math.min(100, card.percent ?? 0))}%` }} /></div>}
-          <p title={card.error || undefined}>{card.description}</p>
+          {card.description ? <p title={card.error || undefined}>{card.description}</p> : null}
         </article>)}
       </div>
     </section>

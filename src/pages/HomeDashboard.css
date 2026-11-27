@@ -26,7 +26,7 @@
 .home-panel-heading, .home-overview-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .home-panel-heading > div { min-width: 0; }
 .home-panel-heading { flex-wrap: wrap; align-items: flex-start; }
-.home-dashboard .home-top-grid .panel-heading { flex-direction: row; align-items: flex-start; min-height: 48px; margin: 0; padding: 0; }
+.home-dashboard .home-top-grid .panel-heading { flex-direction: row; align-items: center; min-height: 32px; margin: 0; padding: 0; }
 .home-dashboard .home-top-grid h2, .home-dashboard .home-overview-heading h2 { margin: 0; color: var(--text-primary); font-size: 16px; font-weight: 600; line-height: 1.4; letter-spacing: -.02em; }
 .home-dashboard .home-top-grid h2 { font-size: 18px; }
 .home-dashboard .home-panel-heading p { margin: 6px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }

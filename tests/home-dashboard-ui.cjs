@@ -132,8 +132,7 @@ const base = process.env.HOME_DASHBOARD_TEST_BASE_URL || 'http://127.0.0.1:1421'
     assert.ok((await page.locator('.core-health-entry').boundingBox()).height < 150, 'the collapsed entry must not take up a full panel');
     assert.equal(await page.locator('.home-overview-heading .core-health-entry').count(), 1, 'health monitoring belongs in the overview header');
     assert.equal(await page.locator('.home-dashboard > .core-health-entry').count(), 0, 'health monitoring must not leave an orphan entry below the overview');
-    const healthSummaryBounds = await page.locator('.core-health-entry-status').boundingBox();
-    assert.ok(healthSummaryBounds.width > 1 && healthSummaryBounds.height > 1, 'the health summary must stay visible beside its entry');
+    assert.equal(await page.locator('.core-health-entry-status').count(), 0, 'idle health entry must not show noisy status filler text before checks run');
 
     const access = page.locator('.home-access-panel');
     assert.equal(await access.locator('.client-api-card').count(), 1, 'only the selected connection details should be shown');

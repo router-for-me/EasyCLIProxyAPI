@@ -11,11 +11,12 @@ export function ClaudeResponseLanguage({ value, disabled, onChange }: {
   const { t, locale } = useI18n();
   const [custom, setCustom] = useState(false);
   const mode = custom ? 'custom' : claudeResponseLanguageMode(value);
+  const hint = t('agents.responseLanguage.hint');
   return (
     <div className="agent-claude-code-number-field claude-response-language">
-      <label htmlFor="claude-response-language">{t('agents.responseLanguage.label')}</label>
+      <label htmlFor="claude-response-language" title={hint}>{t('agents.responseLanguage.label')}</label>
       <Select id="claude-response-language" value={mode} disabled={disabled}
-        aria-describedby="claude-response-language-hint"
+        title={hint}
         onChange={(event) => {
           const selection = event.currentTarget.value;
           setCustom(selection === 'custom');
@@ -31,10 +32,9 @@ export function ClaudeResponseLanguage({ value, disabled, onChange }: {
       {mode === 'custom' ? (
         <input type="text" value={value ?? ''} disabled={disabled}
           aria-label={t('agents.responseLanguage.custom')}
-          aria-describedby="claude-response-language-hint"
+          title={hint}
           onChange={(event) => onChange(event.currentTarget.value)} />
       ) : null}
-      <small id="claude-response-language-hint">{t('agents.responseLanguage.hint')}</small>
     </div>
   );
 }

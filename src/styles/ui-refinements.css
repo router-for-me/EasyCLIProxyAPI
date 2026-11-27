@@ -508,7 +508,7 @@ button.oauth-account-count:focus-visible {
 .oauth-card .management-card-actions > .primary-button:hover:not(:disabled) {
   background: var(--primary-color);
   border-color: var(--primary-color);
-  color: var(--color-accent-contrast);
+  color: var(--color-text-on-accent);
   box-shadow: var(--shadow-sm);
 }
 .oauth-card:hover {

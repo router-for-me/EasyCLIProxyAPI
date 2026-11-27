@@ -168,13 +168,14 @@ export function CoreHealthPanel({
     </Dialog>
   );
 
+  const hasResults = healthy + failed + exhausted > 0;
   return (
     <>
       <div className={`core-health-entry${compact ? ' compact' : ''}`}>
-        <button type="button" className="secondary-button small-button core-health-open" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-expanded={open} aria-controls={dialogId} aria-describedby={`${dialogId}-entry-status`} title={summary}>
+        <button type="button" className="secondary-button small-button core-health-open" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-expanded={open} aria-controls={dialogId} aria-describedby={hasResults ? `${dialogId}-entry-status` : undefined} title={coreReady ? summary : t('home.health.offline')}>
           <Activity size={16} aria-hidden="true" /><span>{t('home.health.title')}</span>{!compact && <ChevronRight size={14} aria-hidden="true" />}
         </button>
-        <span id={`${dialogId}-entry-status`} className="core-health-entry-status" aria-live="polite">{!coreReady ? t('home.health.offline') : healthy + failed + exhausted > 0 ? summary : t('home.health.idle')}</span>
+        {hasResults ? <span id={`${dialogId}-entry-status`} className="core-health-entry-status" aria-live="polite">{summary}</span> : null}
       </div>
       {open ? dialog : null}
     </>

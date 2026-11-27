@@ -30,7 +30,7 @@ export function HomeAccessPanel({ profiles, apiKey, keyError, ready, copiedField
   return (
     <section className="panel surface-panel home-access-panel" aria-labelledby="home-access-title">
       <div className="home-panel-heading">
-        <div><h2 id="home-access-title">{t('home.access.title')}</h2><p>{t('home.access.description')}</p></div>
+        <div><h2 id="home-access-title">{t('home.access.title')}</h2></div>
         <span className={`home-connection-state ${ready ? 'ready' : ''}`}>
           <span aria-hidden="true" />{t(ready ? 'kernel.access.connectable' : 'kernel.access.waiting')}
         </span>

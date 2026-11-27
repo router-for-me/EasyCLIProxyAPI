@@ -74,9 +74,9 @@
 .routing-brand { object-fit: contain; flex-shrink: 0; }
 .routing-card-text { flex: 1; min-width: 60px; }
 .routing-card-name { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.routing-card-sub { display: block; color: var(--text-tertiary); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.routing-card-sub { display: block; color: var(--text-tertiary); font-size: 11px; line-height: 1.5; overflow-wrap: break-word; }
 .routing-card-end { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; margin-left: auto; }
-.routing-status-pill { font-size: 10px; padding: 2px 5px; color: var(--text-secondary); background: var(--bg-tertiary); border-radius: var(--radius-sm); }
+.routing-status-pill { font-size: 10px; padding: 2px 5px; color: var(--text-secondary); background: var(--bg-tertiary); border-radius: var(--radius-sm); white-space: nowrap; }
 .routing-card-share { color: var(--text-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; }
 .routing-share-primary { color: var(--primary-color); font-weight: 600; }
 .routing-card-steps { display: flex; gap: 2px; }

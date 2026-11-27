@@ -625,7 +625,9 @@ export function OAuthLoginPage({ onOpenAuthFiles }: { onOpenAuthFiles?: (provide
                 ) : state.status === 'error' ? (
                   <Notice tone="error" icon={<CircleAlert size={15} />}>{t('oauth.flow.error', { error: privacy.text(state.error || t('oauth.authFailed')) })}</Notice>
                 ) : null}
-                <p className="oauth-hint">{t(provider.id === 'devin' ? 'oauth.devinHint' : provider.id === 'meta' ? 'oauth.metaHint' : 'oauth.hint')}</p>
+                {provider.id === 'devin' || provider.id === 'meta' ? (
+                  <p className="oauth-hint">{t(provider.id === 'devin' ? 'oauth.devinHint' : 'oauth.metaHint')}</p>
+                ) : null}
                 {state.url ? (
                   <div className="oauth-auth-url-box surface-sunken">
                     <div className="oauth-auth-url-label">{t('oauth.authorizationLink')}</div>
