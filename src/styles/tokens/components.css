@@ -9,6 +9,9 @@
   --button-danger-hover-bg: #e11d48;
   --button-danger-hover-border: #e11d48;
   --button-danger-hover-text: #ffffff;
+  --window-close-hover-bg: #c42b1c;
+  --window-close-active-bg: #a82317;
+  --window-close-hover-text: #ffffff;
   --usage-request-color: var(--theme-text-primary, #1d1d1f);
   --usage-records-page-color: var(--theme-text-primary, #1d1d1f);
   --usage-model-bar-track-shadow: inset 0 0 0 1px var(--usage-subpage-border);

@@ -52,9 +52,10 @@
 .window-controls button:active svg { transform: scale(0.92); }
 @media (hover: hover) {
   .window-controls button:hover { background: var(--bg-hover); }
-  .window-controls .window-close:hover { background: var(--color-surface-hover); color: var(--color-text-on-accent); }
+  .window-controls .window-close:hover { background: var(--window-close-hover-bg); color: var(--window-close-hover-text); }
 }
-.window-controls .window-close:active { background: var(--color-surface-active); color: var(--color-text-on-accent); }
+.window-controls .window-close:focus-visible { background: var(--window-close-hover-bg); color: var(--window-close-hover-text); }
+.window-controls .window-close:active { background: var(--window-close-active-bg); color: var(--window-close-hover-text); }
 .window-content { flex: 1; min-height: 0; overflow: hidden; }
 
 /* Beginner mode has no sidebar and sizes itself to 100vh; fit it below the titlebar instead. */

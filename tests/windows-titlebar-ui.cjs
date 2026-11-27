@@ -70,17 +70,46 @@ const coversCenterOf = (locator) => locator.evaluate(el => {
     await page.getByRole('button', { name: 'Maximize', exact: true }).focus();
     await page.keyboard.press('Tab');
     assert.equal(await page.locator('.window-close').evaluate(el => el.matches(':focus-visible')), true);
+    const closeFocusStyle = await page.locator('.window-close').evaluate(el => {
+      const style = getComputedStyle(el);
+      return { backgroundColor: style.backgroundColor, color: style.color };
+    });
+    assert.deepEqual(closeFocusStyle, { backgroundColor: 'rgb(196, 43, 28)', color: 'rgb(255, 255, 255)' },
+      'keyboard-focused close button uses red highlight with white glyph');
+    const assertCloseRedStates = async (theme) => {
+      const closeButton = page.locator('.window-close');
+      await closeButton.hover();
+      const hoverStyle = await closeButton.evaluate(el => {
+        const style = getComputedStyle(el);
+        return { backgroundColor: style.backgroundColor, color: style.color };
+      });
+      assert.deepEqual(hoverStyle, { backgroundColor: 'rgb(196, 43, 28)', color: 'rgb(255, 255, 255)' },
+        `${theme} theme close hover is red with white glyph`);
+      const box = await closeButton.boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      const activeStyle = await closeButton.evaluate(el => {
+        const style = getComputedStyle(el);
+        return { backgroundColor: style.backgroundColor, color: style.color };
+      });
+      await page.mouse.up();
+      await page.mouse.move(0, 0);
+      assert.deepEqual(activeStyle, { backgroundColor: 'rgb(168, 35, 23)', color: 'rgb(255, 255, 255)' },
+        `${theme} theme close active is deeper red with white glyph`);
+    };
     await fs.mkdir('bin-work', { recursive: true });
     await page.locator('.theme-selector-trigger').click();
     await page.locator('.theme-selector-card[data-theme-id="light"]').click();
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
     await page.screenshot({ path: 'bin-work/windows-immersive-light.png' });
+    await assertCloseRedStates('light');
     await page.locator('.theme-selector-trigger').click();
     await page.locator('.theme-selector-card[data-theme-id="dark"]').click();
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
     await page.screenshot({ path: 'bin-work/windows-immersive-dark.png' });
+    await assertCloseRedStates('dark');
 
     // A material theme must remain visible through the restored window shell.
     await page.evaluate(() => {
