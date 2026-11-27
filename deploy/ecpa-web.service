@@ -1,0 +1,24 @@
+[Unit]
+Description=EasyCLIProxyAPI Headless WebUI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ecpa
+Group=ecpa
+WorkingDirectory=/opt/ecpa
+EnvironmentFile=-/etc/ecpa-web.env
+ExecStart=/opt/ecpa/EasyCLIProxyAPI-web --host 127.0.0.1 --port 9317 --data-dir /var/lib/ecpa
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+
+# Security hardening (keeps /var/lib/ecpa writable for CPA core, SQLite, config & credentials)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/ecpa
+
+[Install]
+WantedBy=multi-user.target

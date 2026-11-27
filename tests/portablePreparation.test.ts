@@ -104,3 +104,44 @@ test('release portable preparation still creates an archive-only core directory'
     expect(await readFile(join(root, 'bin-work', 'EasyCLIProxyAPI.exe'), 'utf8')).toBe('new GUI executable');
   });
 });
+
+test('web variant prepares headless EasyCLIProxyAPI-web packages across Linux, macOS, and Windows', async () => {
+  await withPortableFixture(async (root) => {
+    const cases = [
+      { os: 'linux', arch: 'amd64', archive: 'CLIProxyAPI_8.0.10_linux_amd64.tar.gz', binIn: 'ecpa-web', binOut: 'EasyCLIProxyAPI-web' },
+      { os: 'darwin', arch: 'aarch64', archive: 'CLIProxyAPI_8.0.10_darwin_aarch64.tar.gz', binIn: 'ecpa-web-darwin', binOut: 'EasyCLIProxyAPI-web' },
+      { os: 'windows', arch: 'amd64', archive: 'CLIProxyAPI_8.0.10_windows_amd64.zip', binIn: 'ecpa-web.exe', binOut: 'EasyCLIProxyAPI-web.exe' },
+    ];
+    const digest = createHash('sha256').update(archiveContents).digest('hex');
+    const checksumLines: string[] = [];
+    for (const item of cases) {
+      await writeFile(join(root, item.binIn), `headless web binary ${item.os}`);
+      await writeFile(join(root, 'cpa-core', item.archive), archiveContents);
+      checksumLines.push(`${digest}  ${item.archive}`);
+    }
+    await writeFile(join(root, 'cpa-core', 'checksums.txt'), `${checksumLines.join('\n')}\n`);
+
+    for (const item of cases) {
+      const outputDir = join(root, `web-release-${item.os}`);
+      const result = spawnSync('node', [
+        join(root, 'scripts', 'portable.mjs'),
+        '--variant', 'web',
+        '--binary', join(root, item.binIn),
+        '--output', outputDir,
+        '--os', item.os,
+        '--arch', item.arch,
+        '--download', 'false',
+      ], { encoding: 'utf8', cwd: root });
+      expect(result.stderr).toBe('');
+      expect(result.status).toBe(0);
+      expect(await readFile(join(outputDir, item.binOut), 'utf8')).toBe(`headless web binary ${item.os}`);
+      expect(await readdir(join(outputDir, 'cpa-core'))).toEqual([item.archive]);
+      const manifest = JSON.parse(await readFile(join(outputDir, 'portable-app.json'), 'utf8'));
+      expect(manifest.application).toBe('EasyCLIProxyAPI-web');
+      expect(manifest.variant).toBe('webui');
+      expect(manifest.platform).toBe(item.os);
+      expect(manifest.arch).toBe(item.arch);
+      expect(manifest.autoUpdate).toBe(false);
+    }
+  });
+});

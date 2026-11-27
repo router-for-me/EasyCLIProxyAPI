@@ -226,7 +226,7 @@ jobs:
       - name: Cache Rust dependencies and build outputs
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.runner }}-${{ matrix.arch }}
+          key: ${{ matrix.runner }}-${{ matrix.arch }}-desktop
           workspaces: src-tauri -> target
           cache-workspace-crates: true
           save-if: ${{ github.event_name != 'pull_request' }}
@@ -490,14 +490,204 @@ jobs:
         run: |
           echo "[Download $PACKAGE_NAME]($ARTIFACT_URL) (GitHub login required; retained for 7 days)." >> "$GITHUB_STEP_SUMMARY"
           echo "PR test build. macOS packages use ad-hoc signing without Apple notarization and may show security warnings." >> "$GITHUB_STEP_SUMMARY"
+
+  build-webui:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}-webui
+    if: needs.version.outputs.is_preview != 'true'
+    needs: [version, frontend]
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            os: linux
+            display_os: Linux
+            arch: amd64
+            suffix: tar.gz
+          - runner: ubuntu-22.04-arm
+            os: linux
+            display_os: Linux
+            arch: aarch64
+            suffix: tar.gz
+          - runner: macos-15
+            os: darwin
+            display_os: Darwin
+            arch: amd64
+            suffix: tar.gz
+            rust_target: x86_64-apple-darwin
+          - runner: macos-15
+            os: darwin
+            display_os: Darwin
+            arch: aarch64
+            suffix: tar.gz
+            rust_target: aarch64-apple-darwin
+          - runner: windows-2025
+            os: windows
+            display_os: Windows
+            arch: amd64
+            suffix: zip
+          - runner: windows-11-arm
+            os: windows
+            display_os: Windows
+            arch: aarch64
+            suffix: zip
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      RUST_TARGET: ${{ matrix.rust_target || '' }}
+      CARGO_RELEASE_DIR: ${{ matrix.rust_target && format('src-tauri/target/{0}/release', matrix.rust_target) || 'src-tauri/target/release' }}
+      PACKAGE_RELEASE: ${{ inputs.preview || github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' || github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref_name == 'preview') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          targets: ${{ matrix.rust_target || '' }}
+      - name: Cache Rust dependencies and build outputs (WebUI)
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.runner }}-${{ matrix.arch }}-webui
+          workspaces: src-tauri -> target
+          cache-workspace-crates: true
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: Sync bundled core version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITCODE_CORE_REPOSITORY: ${{ vars.GITCODE_CORE_REPOSITORY }}
+          CORE_VERSION_PIN: ${{ vars.CORE_VERSION_PIN }}
+        run: node scripts/update-bundled-core.mjs ${{ github.ref_type == 'tag' && '--freeze' || '' }}
+      - name: Restore bundled core archive
+        id: core-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: cpa-core
+          key: core-v2-${{ matrix.os }}-${{ matrix.arch }}-${{ hashFiles('core-version.txt') }}
+      - name: Apply release version
+        run: node scripts/set-version.mjs "${{ needs.version.outputs.version }}"
+      - name: Resolve WebUI release package name
+        id: package
+        shell: bash
+        env:
+          APP_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          echo "stem=EasyCLIProxyAPI-web-v${APP_VERSION}-${{ matrix.display_os }}-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
+      - name: Install headless Linux linker (no GUI/GTK/WebKit packages)
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mold
+          echo 'RUSTFLAGS=-C link-arg=-fuse-ld=mold' >> "$GITHUB_ENV"
+      - name: Disable Spotlight indexing
+        if: matrix.os == 'darwin'
+        run: sudo mdutil -a -i off || true
+      - name: Exclude CI build directories from Windows Defender
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $paths = @($env:GITHUB_WORKSPACE, (Join-Path $env:USERPROFILE '.cargo'))
+          if ($env:CARGO_HOME) { $paths += $env:CARGO_HOME }
+          try {
+            Add-MpPreference -ExclusionPath ($paths | Select-Object -Unique) -ErrorAction Stop
+          } catch {
+            Write-Warning "Defender exclusions are unavailable: $_"
+          }
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-frontend
+          path: dist
+      - name: Build headless ecpa-web binary
+        shell: bash
+        env:
+          ECPA_RELEASE_FAMILY: ${{ needs.version.outputs.release_family }}
+          ECPA_STABLE_SERIES_VERSION: ${{ needs.version.outputs.stable_series_version || 'unknown' }}
+          ECPA_PREVIEW_SERIES_VERSION: ${{ needs.version.outputs.preview_series_version || 'unknown' }}
+          GITCODE_GUI_REPOSITORY: ${{ vars.GITCODE_GUI_REPOSITORY }}
+          GITCODE_CORE_REPOSITORY: ${{ vars.GITCODE_CORE_REPOSITORY }}
+        run: |
+          target_args=()
+          if [ -n "$RUST_TARGET" ]; then
+            target_args=(--target "$RUST_TARGET")
+          fi
+          cargo build --manifest-path src-tauri/Cargo.toml -p ecpa-web --release "${target_args[@]}"
+      - name: Assert zero GUI/GTK/WebKit/DBus dynamic links (Linux)
+        if: matrix.os == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ldd "$CARGO_RELEASE_DIR/ecpa-web"
+          if ldd "$CARGO_RELEASE_DIR/ecpa-web" | grep -iE 'libwebkit|libgtk|libgdk|libdbus|libappindicator|libayatana'; then
+            echo "::error::ecpa-web unexpectedly linked against GUI/desktop libraries"
+            exit 1
+          fi
+      - name: Assert zero WebKit/AppKit dynamic links (macOS)
+        if: matrix.os == 'darwin'
+        shell: bash
+        run: |
+          set -euo pipefail
+          otool -L "$CARGO_RELEASE_DIR/ecpa-web"
+          if otool -L "$CARGO_RELEASE_DIR/ecpa-web" | grep -iE 'WebKit|AppKit'; then
+            echo "::error::ecpa-web unexpectedly linked against macOS GUI frameworks"
+            exit 1
+          fi
+      - name: Prepare headless portable directory
+        run: >-
+          node scripts/portable.mjs
+          --variant web
+          --binary "$CARGO_RELEASE_DIR/ecpa-web${{ matrix.os == 'windows' && '.exe' || '' }}"
+          --output "release/${{ steps.package.outputs.stem }}"
+          --os "${{ matrix.os }}"
+          --arch "${{ matrix.arch }}"
+          --download true
+        shell: bash
+      - name: Save bundled core archive
+        if: ${{ github.event_name != 'pull_request' && steps.core-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: cpa-core
+          key: ${{ steps.core-cache.outputs.cache-primary-key }}
+      - name: Archive WebUI Unix release
+        if: env.PACKAGE_RELEASE == 'true' && matrix.os != 'windows'
+        shell: bash
+        run: COPYFILE_DISABLE=1 tar -czf "${{ steps.package.outputs.stem }}.tar.gz" -C release "${{ steps.package.outputs.stem }}"
+      - name: Archive WebUI Windows release
+        if: env.PACKAGE_RELEASE == 'true' && matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "release/${{ steps.package.outputs.stem }}" -DestinationPath "${{ steps.package.outputs.stem }}.zip"
+      - uses: actions/upload-artifact@v7
+        id: upload
+        if: env.PACKAGE_RELEASE == 'true'
+        with:
+          name: ${{ steps.package.outputs.stem }}
+          path: ${{ steps.package.outputs.stem }}.${{ matrix.suffix }}
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 14 }}
+      - name: Link PR WebUI test package
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          PACKAGE_NAME: ${{ steps.package.outputs.stem }}
+        run: |
+          echo "[Download $PACKAGE_NAME]($ARTIFACT_URL) (Headless WebUI, retained for 7 days)." >> "$GITHUB_STEP_SUMMARY"
+
   publish:
     name: Publish GitHub release
     if: >-
-      !inputs.preview && github.event_name != 'pull_request'
+      always()
+      && !inputs.preview && github.event_name != 'pull_request'
+      && needs.version.result == 'success'
+      && needs.build.result == 'success'
+      && (needs.build-webui.result == 'success' || needs.build-webui.result == 'skipped')
       && (startsWith(github.ref, 'refs/tags/') || inputs.release_tag != '' || github.ref == 'refs/heads/preview')
     needs:
       - version
       - build
+      - build-webui
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

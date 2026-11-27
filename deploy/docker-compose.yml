@@ -1,0 +1,24 @@
+services:
+  ecpa-web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: easycliproxyapi-web:latest
+    container_name: ecpa-web
+    restart: unless-stopped
+    ports:
+      # Bind to localhost by default; put Nginx / Caddy / Tailscale in front for remote access.
+      - "127.0.0.1:9317:9317"
+      # Optional: expose CLIProxyAPI proxy port to LAN/host clients.
+      - "127.0.0.1:8317:8317"
+    environment:
+      ECPA_DATA_DIR: /data
+      ECPA_WEB_HOST: 0.0.0.0
+      ECPA_WEB_PORT: "9317"
+      # Set your own strong password, or remove this line to auto-generate one on first startup
+      # (printed once in `docker compose logs ecpa-web`).
+      # ECPA_WEB_PASSWORD: "change-me-to-a-strong-password"
+      # Enable when serving behind an HTTPS reverse proxy (Nginx / Caddy / Traefik).
+      # ECPA_WEB_TRUST_PROXY: "true"
+    volumes:
+      - ./data:/data

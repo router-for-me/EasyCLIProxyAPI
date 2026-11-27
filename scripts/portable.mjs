@@ -12,15 +12,23 @@ for (let index = 2; index < process.argv.length; index += 2) {
 }
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const output = resolve(args.get('--output') ?? join(root, 'bin-work'));
-const binary = resolve(args.get('--binary') ?? join(root, 'src-tauri', 'target', 'release', process.platform === 'win32' ? 'cpa-gui.exe' : 'cpa-gui'));
+const variant = (args.get('--variant') ?? 'desktop').trim().toLowerCase();
+if (!['desktop', 'web'].includes(variant)) {
+  throw new Error(`Unsupported portable variant: ${variant} (expected "desktop" or "web")`);
+}
+const isWebVariant = variant === 'web';
+const defaultBinName = isWebVariant
+  ? (process.platform === 'win32' ? 'ecpa-web.exe' : 'ecpa-web')
+  : (process.platform === 'win32' ? 'cpa-gui.exe' : 'cpa-gui');
+const output = resolve(args.get('--output') ?? join(root, isWebVariant ? 'bin-web' : 'bin-work'));
+const binary = resolve(args.get('--binary') ?? join(root, 'src-tauri', 'target', 'release', defaultBinName));
 const targetOS = args.get('--os') ?? ({ linux: 'linux', darwin: 'darwin', win32: 'windows' })[process.platform];
 const targetArch = args.get('--arch') ?? ({ x64: 'amd64', arm64: 'aarch64' })[process.arch];
 const shouldDownload = args.get('--download') === 'true';
 const preserveRuntimeConfig = args.get('--preserve-runtime-config') === 'true';
 
 if (!targetOS || !targetArch) throw new Error(`Unsupported target: ${process.platform}/${process.arch}`);
-if (!existsSync(binary)) throw new Error(`GUI binary not found: ${binary}`);
+if (!existsSync(binary)) throw new Error(`${isWebVariant ? 'WebUI' : 'GUI'} binary not found: ${binary}`);
 
 const rawVersion = (await readFile(join(root, 'core-version.txt'), 'utf8')).trim();
 if (!/^v?\d+(?:\.\d+)+$/.test(rawVersion)) throw new Error(`Invalid core-version.txt: ${rawVersion}`);
@@ -76,21 +84,38 @@ if (verification && verification.actual !== verification.expected) {
 }
 
 await mkdir(output, { recursive: true });
-const outputBinary = join(output, targetOS === 'windows' ? 'EasyCLIProxyAPI.exe' : 'EasyCLIProxyAPI');
-const legacyOutputBinary = join(output, targetOS === 'windows' ? 'cpa-gui.exe' : 'cpa-gui');
-await rm(legacyOutputBinary, { force: true });
+const outputBinaryName = isWebVariant
+  ? (targetOS === 'windows' ? 'EasyCLIProxyAPI-web.exe' : 'EasyCLIProxyAPI-web')
+  : (targetOS === 'windows' ? 'EasyCLIProxyAPI.exe' : 'EasyCLIProxyAPI');
+const outputBinary = join(output, outputBinaryName);
+if (!isWebVariant) {
+  const legacyOutputBinary = join(output, targetOS === 'windows' ? 'cpa-gui.exe' : 'cpa-gui');
+  await rm(legacyOutputBinary, { force: true });
+}
 await copyFile(binary, outputBinary);
 if (targetOS !== 'windows') await chmod(outputBinary, 0o755);
 await copyFile(join(root, 'core-version.txt'), join(output, 'core-version.txt'));
-await writeFile(join(output, 'portable-app.json'), `${JSON.stringify({
-  schemaVersion: 1,
-  application: 'EasyCLIProxyAPI',
-  version: appVersion,
-  builtAt: new Date().toISOString(),
-  platform: targetOS,
-  arch: targetArch,
-  autoUpdate: ['windows', 'linux', 'darwin'].includes(targetOS),
-}, null, 2)}\n`);
+const manifest = isWebVariant
+  ? {
+      schemaVersion: 1,
+      application: 'EasyCLIProxyAPI-web',
+      variant: 'webui',
+      version: appVersion,
+      builtAt: new Date().toISOString(),
+      platform: targetOS,
+      arch: targetArch,
+      autoUpdate: false,
+    }
+  : {
+      schemaVersion: 1,
+      application: 'EasyCLIProxyAPI',
+      version: appVersion,
+      builtAt: new Date().toISOString(),
+      platform: targetOS,
+      arch: targetArch,
+      autoUpdate: ['windows', 'linux', 'darwin'].includes(targetOS),
+    };
+await writeFile(join(output, 'portable-app.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
 const coreOutput = join(output, 'cpa-core');
 if (!preserveRuntimeConfig) {
