@@ -85,7 +85,8 @@ import {
   sortAuthFilesByPriority,
 } from '../services/authFiles';
 import { authFileHealth, normalizeAuthFileCooldowns } from '../services/authFileHealth';
-import { canReauthenticate, credentialSignInState, credentialsNeedingSignIn, observeCredentialSignIn } from '../services/credentialSignIn';
+import { canReauthenticate, credentialsNeedingSignIn, observeCredentialSignIn } from '../services/credentialSignIn';
+import { getCredentialReauthSnapshot } from '../services/credentialReauth';
 import { resolveCodexMetadata } from '../services/codexSubscription';
 import { quotaResetInstant, useQuotaClock } from '../services/quotaTime';
 import {
@@ -391,6 +392,11 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
   }, [tagFilter, tagCounts]);
   const tagIdentities = files.flatMap(authFileIdentities);
 
+  const signInRequiredKeys = useMemo(
+    () => new Set(credentialsNeedingSignIn(files, quotas).map(quotaKey)),
+    [files, quotas],
+  );
+
   const visibleFiles = useMemo(() => {
     const query = filter.trim().toLowerCase();
     return files.filter((file) => {
@@ -401,7 +407,11 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
         (statusFilter === 'disabled' && disabled) ||
         (statusFilter === 'enabled' && !disabled) ||
         (statusFilter === 'runtime' && isRuntimeOnly(file)) ||
-        (statusFilter === 'problem' && !disabled && (['error', 'warning'].includes(authFileHealth(file).tone) || (Array.isArray(file.cooldowns) && file.cooldowns.length > 0)));
+        (statusFilter === 'problem' && !disabled && (
+          ['error', 'warning'].includes(authFileHealth(file).tone)
+          || (Array.isArray(file.cooldowns) && file.cooldowns.length > 0)
+          || signInRequiredKeys.has(quotaKey(file))
+        ));
       const searchMatch =
         !query ||
         [fileName(file), providerName(file), readString(file, 'email', 'account', 'label'), readString(file, 'note'), readString(file, 'prefix'), ...normalizeAuthFileTags(file.tags)]
@@ -410,7 +420,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
           .includes(query);
       return providerMatch && runtimeMatch && searchMatch && (untaggedOnly ? !normalizeAuthFileTags(file.tags).length : !tagFilter || normalizeAuthFileTags(file.tags).includes(tagFilter));
     });
-  }, [files, filter, providerFilter, statusFilter, tagFilter, untaggedOnly]);
+  }, [files, filter, providerFilter, signInRequiredKeys, statusFilter, tagFilter, untaggedOnly]);
 
   const pageCount = Math.max(1, Math.ceil(visibleFiles.length / pageSize));
   const currentPage = Math.min(page, pageCount);
@@ -466,15 +476,32 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
   };
 
   const reauth = useCredentialReauth();
+  const lastReauthRevision = useRef(reauth.completedRevision);
+  useEffect(() => {
+    if (reauth.completedRevision === lastReauthRevision.current) return;
+    lastReauthRevision.current = reauth.completedRevision;
+    void loadFiles(false);
+  }, [loadFiles, reauth.completedRevision]);
+
   const signInAgain = async (file: AuthFile) => {
     if (reauth.pending) return;
     const name = shownName(file);
     feedback.clearNotice();
     setError('');
-    const result = await reauth.signInAgain(fileName(file), providerKey(file));
+    const result = await reauth.signInAgain(file, files);
     if (!mountedRef.current || result.status === 'cancelled') return;
+    lastReauthRevision.current = getCredentialReauthSnapshot().completedRevision;
     if (result.status === 'success') {
       showNotice({ key: result.replacedFile ? 'authFiles.signIn.successReplaced' : 'authFiles.signIn.success', variables: { name } }, 'success');
+      await loadFiles(false);
+    } else if (result.status === 'identity-changed') {
+      setError(t('authFiles.signIn.identityChanged', { name, observed: privacy.text(result.observedAccount, [result.observedAccount]) }));
+      await loadFiles(false);
+    } else if (result.status === 'ambiguous') {
+      setError(t('authFiles.signIn.ambiguous', { name }));
+      await loadFiles(false);
+    } else if (result.status === 'unconfirmed') {
+      setError(t('authFiles.signIn.unconfirmed', { name }));
       await loadFiles(false);
     } else {
       setError(t('authFiles.signIn.failed', { name, error: result.error || t('oauth.authFailed') }));
@@ -538,7 +565,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
   };
 
   const disabledCount = files.filter((file) => readBoolean(file, 'disabled')).length;
-  const signInCount = credentialsNeedingSignIn(files).length;
+  const signInCount = signInRequiredKeys.size;
   const runtimeCount = files.filter(isRuntimeOnly).length;
 
   return (
@@ -660,11 +687,9 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
               // cooldown data; its long prose belongs on that line, not in the badge.
               const suspended = health.suspension !== undefined;
               const showCooldown = hasCooldown || cooldownSnapshot?.records === null || suspended;
-              const signInState = credentialSignInState(file, files);
-              const needsSignIn = signInState === 'required';
+              const needsSignIn = signInRequiredKeys.has(key);
               const signingIn = reauth.pending === name;
               const statusLabel = needsSignIn ? t('authFiles.signIn.required')
-                : signInState === 'replaced' ? t('authFiles.signIn.replaced')
                 : hasCooldown && !health.disabled ? t('authFiles.list.cooling')
                 : health.label === 'authFiles.health.active' ? t('authFiles.list.available')
                   : suspended ? t('authFiles.status.disabled') : t(health.label);
@@ -715,7 +740,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
                     {expiryMs !== undefined ? <small title={t('authFiles.list.expiry', { time: formatDate(new Date(expiryMs).toISOString()) })}>{expiryMs <= now ? t('authFiles.list.expired') : t('authFiles.list.daysRemaining', { count: Math.ceil((expiryMs - now) / 86_400_000) })}</small> : null}
                   </div>
                   <div className="auth-list-cell auth-list-status" data-label={t('authFiles.list.status')}>
-                    <span className={`auth-status-badge ${needsSignIn ? 'error' : signInState === 'replaced' ? 'warning' : hasCooldown && !health.disabled ? 'warning' : health.tone}`} title={needsSignIn && health.message ? health.message : statusLabel}>{statusLabel}</span>
+                    <span className={`auth-status-badge ${needsSignIn ? 'error' : hasCooldown && !health.disabled ? 'warning' : health.tone}`} title={needsSignIn && health.message ? health.message : statusLabel}>{statusLabel}</span>
                     <small>{t('authFiles.priority.button', { priority })}</small>
                     {layout === 'compact' ? <button type="button" className="secondary-button tiny-button auth-card-glance-toggle" onClick={() => toggleGlance(key)} aria-expanded={!glance}
                       aria-label={`${t(glance ? 'cardLayout.details.show' : 'cardLayout.details.hide')}: ${identity || displayName}`} title={t(glance ? 'cardLayout.details.show' : 'cardLayout.details.hide')}>
@@ -742,7 +767,7 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
                     <div className="auth-signin-strip" role="group" aria-label={t('authFiles.signIn.required')}>
                       <LogIn size={15} aria-hidden="true" />
                       <span>{signingIn ? t('authFiles.signIn.waiting') : t('authFiles.signIn.hint')}</span>
-                      {signingIn && reauth.openFailure ? (
+                      {signingIn && reauth.openFailure?.name === name ? (
                         <button type="button" className="secondary-button small-button" onClick={() => {
                           const url = reauth.openFailure?.url ?? '';
                           void navigator.clipboard.writeText(url).then(() => showNotice({ key: 'oauth.linkCopied' }, 'success'), () => setError(t('common.copyFailed')));
@@ -756,15 +781,6 @@ export function AuthFileManagementPage({ initialProvider }: { initialProvider?: 
                           <LogIn size={14} aria-hidden="true" />{t('authFiles.signIn.action')}
                         </button>
                       ) : null}
-                    </div>
-                  ) : null}
-                  {signInState === 'replaced' ? (
-                    <div className="auth-signin-strip replaced" role="group" aria-label={t('authFiles.signIn.replaced')}>
-                      <span>{t('authFiles.signIn.replacedHint')}</span>
-                      <button type="button" className="secondary-button small-button" disabled={busy}
-                        aria-label={`${t('authFiles.signIn.removeOld')}: ${identity || displayName}`} onClick={() => void deleteFile(file)}>
-                        {t('authFiles.signIn.removeOld')}
-                      </button>
                     </div>
                   ) : null}
                   {showCooldown ? <AuthFileHealthStatus compact file={file} receivedAtMs={receivedAtMs} observedAt={observedAt}

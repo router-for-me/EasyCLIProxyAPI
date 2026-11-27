@@ -2608,13 +2608,13 @@ export const zhCN: Record<string, string> = {
   'authFiles.signIn.showAccounts': '查看',
   'authFiles.signIn.badge': '需要重新登录的账号：{count}',
   'authFiles.signIn.successReplaced': '{name} 已重新登录，已删除过期的文件。',
-  'authFiles.signIn.replaced': '已被替代',
-  'authFiles.signIn.replacedHint': '该账号已有更新的登录可正常使用，这个过期文件不再使用。',
-  'authFiles.signIn.removeOld': '删除旧文件',
+  'authFiles.signIn.identityChanged': '已登录另一个账号（{observed}），原有过期文件 {name} 未被删除。',
+  'authFiles.signIn.ambiguous': '登录已完成，但检测到多个凭证发生变化，已保留原有文件 {name}，请核对。',
+  'authFiles.signIn.unconfirmed': '登录已完成，但未能确认 {name} 已更新，已保留原有文件，请刷新后核对。',
   'notifications.signIn.title': '{provider} 账号需要重新登录',
   'notifications.signIn.body': '{name} 无法再续期登录。请打开 EasyCLIProxyAPI，在其卡片上选择“重新登录”。',
   'config.software.signInNotifications': '登录提醒',
-  'config.software.signInNotificationsDescription': 'OAuth 账号登录过期、需要重新登录时显示系统通知。',
+  'config.software.signInNotificationsDescription': 'OAuth 账号登录过期、需要重新登录时显示系统通知',
 } as const;
 
 export type MessageKey = string;
