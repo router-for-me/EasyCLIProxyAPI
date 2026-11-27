@@ -35,7 +35,7 @@ export const allSettingsTemplateGroups = Object.values(settingsTemplateGroups).f
 export const settingsMessages = {
   title: text('高级设置', 'Advanced settings', '詳細設定', "Configurações avançadas"),
   search: text('搜索设置', 'Search settings', '設定を検索', "Buscar configurações"),
-  searchHint: text('搜索设置…', 'Search settings…', '設定を検索…', "Buscar configurações…"),
+  searchHint: text('搜索设置…', 'Search settings…', '設定を検索…', "Buscar…"),
   clearSearch: text('清空搜索', 'Clear search', '検索をクリア', "Limpar busca"),
   outboundProxyTitle: text('出站代理', 'Outbound Proxy', '送信プロキシ', "Proxy de saída"),
   outboundProxySaved: text('出站代理设置已保存', 'Outbound proxy settings saved', '送信プロキシ設定を保存しました', "Configurações do proxy de saída salvas"),
