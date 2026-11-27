@@ -2,6 +2,8 @@ import { isThemeId, isThemeLabel, type SystemThemes, type ThemeAppearance, type 
 import { normalizeThemeTokens } from './tokenContract';
 import { isThemeAssetPath, isThemeImageDataUrl, normalizeThemeAssets } from './resources';
 import { warmSand } from './warmSand';
+import { cpaWarmPaper } from './cpaWarmPaper';
+import { cpaWarmDark } from './cpaWarmDark';
 import { graphite } from './graphite';
 import { midnight } from './midnight';
 import { light } from './light';
@@ -67,7 +69,7 @@ export function createThemeRegistry(definitions: readonly ThemeDefinition[]) {
   };
 }
 
-export const builtinThemes: readonly ThemeDefinition[] = [light, dark, warmSand, graphite, midnight, sakura, anime];
+export const builtinThemes: readonly ThemeDefinition[] = [light, dark, warmSand, cpaWarmPaper, cpaWarmDark, graphite, midnight, sakura, anime];
 export const themeRegistry = createThemeRegistry(builtinThemes);
 export type ThemeRegistry = ReturnType<typeof createThemeRegistry>;
 
@@ -77,8 +79,8 @@ export function themePreview(theme: ThemeDefinition): ThemePreview {
     background: theme.backdropImage
       ? `${themeBackdropImage(theme)} ${themeImagePosition(theme)} / cover no-repeat ${theme.tokens.workspaceBackground ?? theme.windowBackground}`
       : `${theme.backdrop ? `${backdropImage(theme.backdrop)}, ` : ''}${theme.tokens.workspaceBackground ?? theme.windowBackground}`,
-    sidebar: theme.backdrop?.sidebar ?? theme.tokens.sidebarBackground ?? (dark ? '#1d1b18' : '#f0eee8'),
-    surface: theme.backdrop?.panel ?? theme.tokens.surface ?? (dark ? '#262320' : '#fffdf9'),
-    accent: theme.tokens.accent ?? (dark ? '#f6f4f1' : '#2d2a26'),
+    sidebar: theme.backdrop?.sidebar ?? theme.tokens.sidebarBackground ?? (dark ? '#0f1218' : '#f7f8fa'),
+    surface: theme.backdrop?.panel ?? theme.tokens.surface ?? (dark ? '#141720' : '#ffffff'),
+    accent: theme.tokens.accent ?? (dark ? '#f5f5f5' : '#222222'),
   };
 }

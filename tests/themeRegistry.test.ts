@@ -4,6 +4,8 @@ import { createThemeApplicator } from '../src/themes/applyTheme';
 import { en, zhCN, zhTW, ja, ru } from '../src/i18n/resources';
 import { localizeThemeLabel, type PlatformWindowMaterial, type ThemeBackdrop, type ThemeDefinition } from '../src/themes/types';
 import { warmSand } from '../src/themes/warmSand';
+import { cpaWarmPaper } from '../src/themes/cpaWarmPaper';
+import { cpaWarmDark } from '../src/themes/cpaWarmDark';
 import { graphite } from '../src/themes/graphite';
 import { midnight } from '../src/themes/midnight';
 import { themeMaterialTokens, themeOverlayRules, themeOverlaySurface, themeOverlayPalette } from '../src/themes/materials';
@@ -11,7 +13,7 @@ import { sakura } from '../src/themes/sakura';
 import { anime } from '../src/themes/anime';
 import { backdropImage, themeBackdropImage } from '../src/themes/backdrop';
 
-const additionalThemes = [warmSand, graphite, midnight, sakura, anime];
+const additionalThemes = [warmSand, cpaWarmPaper, cpaWarmDark, graphite, midnight, sakura, anime];
 const custom: ThemeDefinition = { id: 'test-dark', nameKey: 'app.theme.dark', appearance: 'dark', order: 1,
   windowBackground: '#102030', tokens: { surface: '#203040', accent: '#abcdef', sidebarBackground: '#112233' } };
 const customControl: ThemeDefinition = { ...custom, id: 'test-control-dark',

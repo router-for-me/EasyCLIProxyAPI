@@ -1057,7 +1057,7 @@ export function AccountSwitchPage({
     if (account.isActive) {
       return (
         <span className="fd-active-label">
-          <CheckCircle2 size={13} aria-hidden="true" />
+          <i className="fd-live-dot" aria-hidden="true" />
           <span>{t('accountSwitch.actions.active')}</span>
         </span>
       );
@@ -1132,45 +1132,30 @@ export function AccountSwitchPage({
                   ) : null}
                 </div>
 
-                {/* Clean single-line metadata row: Group dot + tags + note + last switched */}
-                <div className="fd-card-meta-row">
-                  {groupObj ? (
-                    <span className="fd-chip is-group">
-                      {groupObj.color ? (
-                        <i
-                          className="fd-gdot"
-                          style={{ background: groupObj.color }}
-                        />
-                      ) : null}
-                      <span>{groupObj.name}</span>
-                    </span>
-                  ) : null}
-                  {account.tags.slice(0, 2).map((tag) => (
-                    <button
-                      key={tag}
-                      type="button"
-                      className="fd-chip"
-                      onClick={() => toggleTagValue(tag)}
-                    >
-                      #{tag}
-                    </button>
-                  ))}
-                  {account.notes ? (
-                    <span className="fd-card-note" title={account.notes}>
-                      {account.notes}
-                    </span>
-                  ) : null}
-                  <span
-                    className="fd-card-time"
-                    title={t(
-                      `accountSwitch.card.source.${account.source}` as const,
-                    )}
+                {/* Clean quiet subtitle: Group · Tags (no noisy boxes or truncated fragments) */}
+                {groupObj || account.tags.length > 0 || account.notes ? (
+                  <div
+                    className="fd-card-meta-row"
+                    title={account.notes ?? undefined}
                   >
-                    {account.lastUsedAt
-                      ? formatRelativeTime(account.lastUsedAt, t)
-                      : t('accountSwitch.card.neverUsed')}
-                  </span>
-                </div>
+                    {groupObj ? (
+                      <span className="fd-meta-group">{groupObj.name}</span>
+                    ) : null}
+                    {account.tags.slice(0, 2).map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        className="fd-meta-tag"
+                        onClick={() => toggleTagValue(tag)}
+                      >
+                        #{tag}
+                      </button>
+                    ))}
+                    {!groupObj && account.tags.length === 0 && account.notes ? (
+                      <span className="fd-card-note">{account.notes}</span>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 {/* Elevated Inset Quota Panel (Fully Localized 6px Gradient Meters) */}
                 <div className="fd-card-meters">
@@ -1212,7 +1197,7 @@ export function AccountSwitchPage({
                                 ) : reset ? (
                                   <small className="fd-meter-reset">
                                     {' '}
-                                    · ↻ {reset}
+                                    · {reset}
                                   </small>
                                 ) : null}
                               </span>
@@ -1796,8 +1781,8 @@ export function AccountSwitchPage({
         />
       ) : activeStatus && selectedPlatform ? (
         <div className="fd-workspace">
-          {/* ZONE 2: ONE Single Unified Surface Toolbar Card (Groups + Search + Filter + Sort + View + Tools!) */}
-          <div className="surface-card as-toolbar">
+          {/* ZONE 2: Borderless Unified Toolbar sitting directly on the calm paper canvas */}
+          <div className="as-toolbar">
             <div className="as-toolbar-left">
               <input
                 type="checkbox"
@@ -1838,12 +1823,6 @@ export function AccountSwitchPage({
                         .join(' ')}
                       onClick={() => setGroupFilter(group.id)}
                     >
-                      {group.color ? (
-                        <i
-                          className="fd-gdot"
-                          style={{ background: group.color }}
-                        />
-                      ) : null}
                       <span>{group.name}</span>
                       <em>{count}</em>
                     </button>
@@ -2102,11 +2081,15 @@ export function AccountSwitchPage({
             </div>
           </div>
 
-          {/* Slim Contextual Alerts (Only when actionable; zero dashed borders!) */}
+          {/* Quiet Architectural Contextual Notices (no loud red/pink full-width banners) */}
           {activeStatus.proxy.mode === 'cpa_proxy' ||
           activeStatus.proxy.mode === 'custom_proxy' ? (
-            <div className="fd-inline-alert is-warning" role="alert">
-              <ShieldAlert size={14} aria-hidden="true" />
+            <div
+              className="fd-inline-alert is-warning"
+              role="alert"
+              title={activeStatus.proxy.detail ?? undefined}
+            >
+              <ShieldAlert size={15} aria-hidden="true" />
               <span className="fd-inline-alert-copy">
                 <strong>
                   {t(
@@ -2116,9 +2099,6 @@ export function AccountSwitchPage({
                     { platform: activeStatus.displayName },
                   )}
                 </strong>
-                {activeStatus.proxy.detail ? (
-                  <small>{activeStatus.proxy.detail}</small>
-                ) : null}
               </span>
               {activeStatus.proxy.canDecouple ? (
                 <button
@@ -2127,7 +2107,7 @@ export function AccountSwitchPage({
                   disabled={decouplingPlatform === selectedPlatform}
                   onClick={() => void handleDecoupleProxy(selectedPlatform)}
                 >
-                  <Unplug size={12} aria-hidden="true" />
+                  <Unplug size={13} aria-hidden="true" />
                   <span>
                     {t(
                       decouplingPlatform === selectedPlatform
