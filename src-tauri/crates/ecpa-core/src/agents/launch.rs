@@ -1,0 +1,3052 @@
+use super::*;
+use std::net::TcpListener;
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentTerminalOption {
+    pub(crate) id: String,
+    pub(crate) label: String,
+}
+
+fn terminal_option(id: &str, label: &str) -> AgentTerminalOption {
+    AgentTerminalOption {
+        id: id.to_string(),
+        label: label.to_string(),
+    }
+}
+
+fn program_on_path(program: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+    env::split_paths(&path).find_map(|directory| {
+        let candidate = directory.join(program);
+        candidate.is_file().then_some(candidate)
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_iterm2_installed() -> bool {
+    Path::new("/Applications/iTerm.app").is_dir()
+        || env::var_os("HOME")
+            .map(PathBuf::from)
+            .is_some_and(|home| home.join("Applications/iTerm.app").is_dir())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_ghostty_installed() -> bool {
+    Path::new("/Applications/Ghostty.app").is_dir()
+        || env::var_os("HOME")
+            .map(PathBuf::from)
+            .is_some_and(|home| home.join("Applications/Ghostty.app").is_dir())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_terminal_definitions() -> &'static [(
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+    &'static str,
+)] {
+    &[
+        (
+            "x-terminal-emulator",
+            "x-terminal-emulator",
+            &["-e"],
+            "System terminal",
+        ),
+        (
+            "gnome-terminal",
+            "gnome-terminal",
+            &["--"],
+            "GNOME Terminal",
+        ),
+        ("konsole", "konsole", &["-e"], "Konsole"),
+        ("xfce4-terminal", "xfce4-terminal", &["-x"], "Xfce Terminal"),
+        ("mate-terminal", "mate-terminal", &["--"], "MATE Terminal"),
+        ("kitty", "kitty", &["-e"], "Kitty"),
+        ("alacritty", "alacritty", &["-e"], "Alacritty"),
+        ("ghostty", "ghostty", &["-e"], "Ghostty"),
+        ("xterm", "xterm", &["-e"], "XTerm"),
+    ]
+}
+
+pub(crate) fn available_agent_terminals() -> Vec<AgentTerminalOption> {
+    let mut options = vec![terminal_option("auto", "Automatic")];
+    #[cfg(target_os = "macos")]
+    {
+        options.push(terminal_option("terminal", "Terminal"));
+        if macos_iterm2_installed() {
+            options.push(terminal_option("iterm2", "iTerm2"));
+        }
+        if macos_ghostty_installed() {
+            options.push(terminal_option("ghostty", "Ghostty"));
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if program_on_path("wt.exe").is_some() {
+            options.push(terminal_option("windows-terminal", "Windows Terminal"));
+        }
+        let powershell = windows_powershell_executable();
+        if powershell.is_file() {
+            options.push(terminal_option("powershell", "PowerShell"));
+        }
+        let command_prompt = windows_command_processor();
+        if command_prompt.is_file() {
+            options.push(terminal_option("cmd", "Command Prompt"));
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        for (id, program, _, label) in linux_terminal_definitions() {
+            if program_on_path(program).is_some() {
+                options.push(terminal_option(id, label));
+            }
+        }
+    }
+    options
+}
+
+pub(crate) fn normalize_agent_terminal(value: &str) -> String {
+    let value = value.trim();
+    if available_agent_terminals()
+        .iter()
+        .any(|option| option.id == value)
+    {
+        value.to_string()
+    } else {
+        DEFAULT_AGENT_TERMINAL.to_string()
+    }
+}
+
+#[ecpa_macros::ecpa_command]
+pub(crate) async fn launch_agent(
+    remote: crate::runtime::State<'_, crate::remote_cpa::RemoteCpaState>,
+    target_revision: Option<u32>,
+    api_key: Option<String>,
+    config_directories: Option<AgentConfigDirectories>,
+    app: crate::runtime::AppHandle,
+    gui_config_state: crate::runtime::State<'_, GuiConfigState>,
+    deepseek_process_state: crate::runtime::State<'_, DeepSeekHarnessProcessState>,
+    client: String,
+    target: Option<String>,
+    executable_path: Option<String>,
+    desktop_executable_path: Option<String>,
+    working_directory: Option<String>,
+    deepseek_harness_options: Option<DeepSeekHarnessLaunchOptions>,
+    custom_arguments: Option<String>,
+) -> Result<(), String> {
+    let terminal = normalize_agent_terminal(&gui_config_state.snapshot()?.default_terminal);
+    let directories = validate_agent_config_directories(config_directories)?;
+    remote.agent_operation(target_revision, api_key, AGENT_CONFIG_DIRECTORIES.scope(directories, async move {
+    let custom_arguments = parse_custom_launch_arguments(custom_arguments.as_deref())?;
+    if target.as_deref() == Some("app") && !custom_arguments.is_empty() {
+        return Err("Custom startup arguments are only supported for CLI launches".into());
+    }
+    if client.trim().eq_ignore_ascii_case("deepseek-harness") {
+        validate_deepseek_custom_arguments(&custom_arguments)?;
+    }
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
+    let config = gui_config_state.snapshot()?;
+    let requested_target = target
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if deepseek_harness_options.is_some() && !client.trim().eq_ignore_ascii_case("deepseek-harness")
+    {
+        return Err("DeepSeek Harness launch options cannot be used with other clients".to_string());
+    }
+
+    if client.trim().eq_ignore_ascii_case(PI_AGENT_ID) {
+        if requested_target.is_some_and(|value| value != "cli") {
+            return Err("Pi supports only CLI launch mode".to_string());
+        }
+        let executable_override = executable_path.as_deref().map(Path::new);
+        let status = inspect_pi_provider_status_with_executable(&home, config.port, effective_agent_api_key(&config), executable_override);
+        if !status.installed {
+            return Err("Pi CLI was not detected. Install Pi and detect it again".to_string());
+        }
+        let executable = executable_override.filter(|path| path.is_file()).map(Path::to_path_buf)
+            .or_else(|| find_pi_executable(&home))
+            .ok_or_else(|| "Pi CLI executable not found".to_string())?;
+        let launch_directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
+        return launch_cli_agent(
+            &executable,
+            PI_AGENT_NAME,
+            &launch_directory,
+            &custom_arguments,
+            &[],
+            &[],
+            &terminal,
+        );
+    }
+
+    let client = AgentClient::parse(&client)?;
+    if !client.supported_platform() {
+        return Err(format!("The current platform does not support launching {}", client.name()));
+    }
+    let executable_override = executable_path.as_deref().map(Path::new);
+    let desktop_override = desktop_executable_path.as_deref().map(Path::new);
+    let (status, detected_executable) = inspect_agent_config_and_executable(client, &home, config.port, effective_agent_api_key(&config), executable_override, desktop_override);
+    if !status.installed {
+        if client == AgentClient::Codex {
+            if let Some(error) = status.error {
+                return Err(error);
+            }
+        }
+        return Err(format!("{} was not detected. Install it and detect it again", client.name()));
+    }
+    let default_target = status
+        .launch_targets
+        .first()
+        .map(|target| target.id.as_str())
+        .unwrap_or("cli");
+    let requested_target = requested_target.unwrap_or(default_target);
+    if requested_target != "cli" && !custom_arguments.is_empty() {
+        return Err("Custom startup arguments are only supported for CLI launches".into());
+    }
+    match (client, requested_target) {
+        (AgentClient::ClaudeDesktop, "app") => launch_claude_desktop(&home, executable_override),
+        (AgentClient::AntigravityCli, "cli")
+            if antigravity_has_marker(client, &agent_config_paths(client, &home))? => {
+            validate_managed_antigravity_arguments(&custom_arguments)?;
+            if !status.configured {
+                return Err("Antigravity CLI configuration does not match CPA. Apply the configuration again".into());
+            }
+            let executable = env::current_exe().map_err(|_| "Unable to locate CPA launch adapter")?;
+            let directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
+            let mut arguments = antigravity_cli_helper_arguments(&home);
+            arguments.extend(custom_arguments);
+            launch_cli_agent(&executable, client.name(), &directory, &arguments, &[], &[], &terminal)
+        }
+        (AgentClient::CopilotCli, "cli") if copilot_has_marker(client, &agent_config_paths(client, &home))? => {
+            if !status.configured { return Err("Copilot CLI configuration does not match CPA. Apply it again".into()); }
+            let executable = executable_override.filter(|p| p.is_file()).map(Path::to_path_buf)
+                .or_else(|| find_agent_executable(client, &home)).ok_or("Copilot CLI not found")?;
+            let adapter = env::current_exe().map_err(|_| "Unable to locate CPA launch adapter")?;
+            let directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
+            let mut args = vec!["--cpa-copilot-cli".into(), path_to_string(&agent_config_paths(client, &home)[0]), path_to_string(&executable)];
+            args.extend(custom_arguments);
+            launch_cli_agent(&adapter, client.name(), &directory, &args, &[], &[], &terminal)
+        }
+        (AgentClient::VscodeCopilot, "app") => {
+            let executable = executable_override.filter(|p| p.is_file()).map(Path::to_path_buf)
+                .or_else(|| find_agent_executable(client, &home)).ok_or("VS Code not found")?;
+            let directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
+            launch_vscode_directory(&executable, &directory)
+        }
+        (AgentClient::WorkBuddy, "app") => {
+            let executable = manual_desktop_path(executable_override).map(Path::to_path_buf)
+                .or_else(|| find_workbuddy_desktop_executable(&home))
+                .ok_or_else(|| "WorkBuddy application not found".to_string())?;
+            launch_desktop_agent(&executable, client.name())
+        }
+        (AgentClient::ZCode, "app") => {
+            let executable = manual_desktop_path(executable_override).map(Path::to_path_buf)
+                .or_else(|| find_zcode_desktop_executable(&home))
+                .ok_or_else(|| "ZCode application not found".to_string())?;
+            launch_desktop_agent(&executable, client.name())
+        }
+        (AgentClient::Codex, "app") => {
+            launch_codex_desktop(&home, desktop_override)
+        }
+        (AgentClient::OpenCode, "app") => launch_opencode_desktop(&home, desktop_override),
+        (AgentClient::DeepSeekHarness, "app") => {
+            let executable = manual_desktop_path(desktop_override).map(Path::to_path_buf)
+                .or_else(|| find_deepseek_harness_desktop_application(&home))
+                .ok_or_else(|| "DeepSeek Harness Desktop application not found".to_string())?;
+            launch_desktop_agent(&executable, "DeepSeek Harness Desktop")
+        }
+        (AgentClient::ClaudeDesktop | AgentClient::ZCode | AgentClient::WorkBuddy, "cli") => {
+            Err(format!("{} does not support CLI launch mode", client.name()))
+        }
+        (AgentClient::Codex, "cli") => {
+            let plan = prepare_codex_cli_launch(&home, &status, detected_executable, &custom_arguments)?;
+            let launch_directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
+            let path = plan.environment_path.to_string_lossy();
+            launch_cli_agent(
+                &plan.executable,
+                client.name(),
+                &launch_directory,
+                &plan.arguments,
+                &[],
+                &[("PATH", path.as_ref())],
+                &terminal,
+            )
+        }
+        (_, "cli") => {
+            let executable = executable_override.filter(|path| path.is_file()).map(Path::to_path_buf)
+                .or_else(|| find_agent_executable(client, &home))
+                .ok_or_else(|| status.error.clone().unwrap_or_else(|| format!("Executable for {} not found", client.name())))?;
+            let launch_directory = resolve_launch_directory(working_directory.as_deref(), &home)?;
+            if client == AgentClient::DeepSeekHarness {
+                let mode = deepseek_harness_launch_mode(deepseek_harness_options.as_ref())?;
+                let arguments = deepseek_harness_arguments_with_custom(
+                    deepseek_harness_options.as_ref(), &custom_arguments,
+                )?;
+                return launch_managed_deepseek_harness(
+                    deepseek_process_state.inner(),
+                    &executable,
+                    &launch_directory,
+                    &arguments,
+                    &mode,
+                    deepseek_harness_options.as_ref(),
+                );
+            }
+            let environment_to_remove = if client == AgentClient::ClaudeCode {
+                &["ANTHROPIC_API_KEY"][..]
+            } else {
+                &[]
+            };
+            let mut arguments = agent_cli_launch_arguments(client, deepseek_harness_options.as_ref())?;
+            arguments.extend(custom_arguments);
+            launch_cli_agent(
+                &executable,
+                client.name(),
+                &launch_directory,
+                &arguments,
+                environment_to_remove,
+                &[],
+                &terminal,
+            )
+        }
+        (_, "app") => Err(format!("{} does not support desktop App launch mode", client.name())),
+        _ => Err("Unsupported agent launch mode".to_string()),
+    }
+    })).await
+}
+
+#[derive(Debug)]
+pub(crate) struct CodexCliLaunchPlan {
+    pub(crate) executable: PathBuf,
+    pub(crate) arguments: Vec<String>,
+    pub(crate) environment_path: std::ffi::OsString,
+}
+
+pub(crate) fn prepare_codex_cli_launch(
+    home: &Path,
+    status: &AgentConfigStatus,
+    detected_executable: Option<PathBuf>,
+    custom_arguments: &[String],
+) -> Result<CodexCliLaunchPlan, String> {
+    let executable = detected_executable.ok_or_else(|| status.error.clone()
+        .unwrap_or_else(|| "Executable for Codex not found".to_string()))?;
+    let environment_path = agent_command_path(home, &executable)?;
+    let mut arguments = agent_cli_launch_arguments(AgentClient::Codex, None)?;
+    arguments.extend_from_slice(custom_arguments);
+    #[cfg(windows)]
+    let (executable, arguments) = if !arguments.is_empty() {
+        let directories = env::split_paths(&environment_path).collect::<Vec<_>>();
+        let node = find_named_agent_executable_in_directories(&directories, &["node"]);
+        windows_literal_cli_invocation_with_node(&executable, &arguments, node.as_deref())?
+    } else { (executable, arguments) };
+    Ok(CodexCliLaunchPlan { executable, arguments, environment_path })
+}
+
+
+fn parse_custom_launch_arguments(source: Option<&str>) -> Result<Vec<String>, String> {
+    let source = source.unwrap_or_default();
+    if source.chars().any(|character| character.is_ascii_control() && character != '\t') {
+        return Err("Startup arguments cannot contain newlines or control characters".into());
+    }
+    shlex::split(source).ok_or_else(|| "Startup arguments contain an unclosed quote or trailing escape".into())
+}
+
+fn validate_deepseek_custom_arguments(arguments: &[String]) -> Result<(), String> {
+    if arguments.iter().any(|argument| matches!(argument.split('=').next().unwrap_or_default(),
+        "--profile" | "--patch" | "--host" | "--port" | "--trusted-host" | "--no-open" | "--open")) {
+        return Err("Use the structured DeepSeek Harness controls for profile, patch, host, port, trusted-host and browser options".into());
+    }
+    Ok(())
+}
+
+fn deepseek_harness_arguments_with_custom(
+    options: Option<&DeepSeekHarnessLaunchOptions>,
+    custom_arguments: &[String],
+) -> Result<Vec<String>, String> {
+    validate_deepseek_custom_arguments(custom_arguments)?;
+    let mut arguments = build_deepseek_harness_launch_arguments(options)?;
+    let task = if deepseek_harness_launch_mode(options)? == "headless" {
+        arguments.pop()
+    } else {
+        None
+    };
+    arguments.extend_from_slice(custom_arguments);
+    arguments.extend(task);
+    Ok(arguments)
+}
+
+fn deepseek_harness_launch_mode(
+    options: Option<&DeepSeekHarnessLaunchOptions>,
+) -> Result<String, String> {
+    let mode = options
+        .map(|options| options.mode.trim().to_ascii_lowercase())
+        .filter(|mode| !mode.is_empty())
+        .unwrap_or_else(|| "web".to_string());
+    if matches!(
+        mode.as_str(),
+        "web" | "headless" | "acp" | "sdk" | "sdk-minimal" | "custom"
+    ) {
+        Ok(mode)
+    } else {
+        Err(format!("Unsupported DeepSeek Harness launch mode: {mode}"))
+    }
+}
+
+fn agent_cli_launch_arguments(
+    client: AgentClient,
+    deepseek_harness_options: Option<&DeepSeekHarnessLaunchOptions>,
+) -> Result<Vec<String>, String> {
+    if client != AgentClient::DeepSeekHarness {
+        if deepseek_harness_options.is_some() {
+            return Err("DeepSeek Harness launch options cannot be used with other clients".to_string());
+        }
+        return Ok(Vec::new());
+    }
+
+    build_deepseek_harness_launch_arguments(deepseek_harness_options)
+}
+
+fn build_deepseek_harness_launch_arguments(
+    options: Option<&DeepSeekHarnessLaunchOptions>,
+) -> Result<Vec<String>, String> {
+    let mode = deepseek_harness_launch_mode(options)?;
+    let profile = match mode.as_str() {
+        "web" | "headless" | "acp" | "sdk" | "sdk-minimal" => mode.as_str(),
+        "custom" => validate_deepseek_harness_profile(
+            options
+                .and_then(|options| options.profile.as_deref())
+                .unwrap_or_default(),
+        )?,
+        _ => return Err(format!("Unsupported DeepSeek Harness launch mode: {mode}")),
+    };
+    let mut arguments = if profile == "web" {
+        vec!["web".to_string()]
+    } else {
+        vec!["--profile".to_string(), profile.to_string()]
+    };
+
+    if let Some(options) = options {
+        for patch in &options.patches {
+            arguments.push("--patch".to_string());
+            arguments.push(validate_deepseek_harness_argument(patch, "Patch path")?);
+        }
+    }
+
+    match mode.as_str() {
+        "web" => {
+            if let Some(host) = options
+                .and_then(|options| options.web_host.as_deref())
+                .map(str::trim)
+                .filter(|host| !host.is_empty())
+            {
+                arguments.push("--host".to_string());
+                arguments.push(validate_deepseek_harness_argument(host, "Web host")?);
+            }
+            if let Some(port) = options.and_then(|options| options.web_port) {
+                arguments.push("--port".to_string());
+                arguments.push(port.to_string());
+            }
+            if options.and_then(|options| options.open_browser) == Some(false) {
+                arguments.push("--no-open".to_string());
+            }
+            if let Some(options) = options {
+                for authority in &options.trusted_hosts {
+                    arguments.push("--trusted-host".to_string());
+                    arguments.push(validate_deepseek_harness_argument(
+                        authority,
+                        "trusted host",
+                    )?);
+                }
+            }
+        }
+        "headless" => {
+            let task = options
+                .and_then(|options| options.task.as_deref())
+                .unwrap_or_default();
+            arguments.push(validate_deepseek_harness_argument(task, "Headless task")?);
+        }
+        "acp" | "sdk" | "sdk-minimal" | "custom" => {}
+        _ => unreachable!(),
+    }
+    Ok(arguments)
+}
+
+impl DeepSeekHarnessProcessState {
+    fn status(&self) -> Result<DeepSeekHarnessProcessStatus, String> {
+        let mut process = self
+            .process
+            .lock()
+            .map_err(|_| "DeepSeek Harness process status lock is poisoned".to_string())?;
+        let Some(managed) = process.as_mut() else {
+            return Ok(DeepSeekHarnessProcessStatus::default());
+        };
+        match managed.child.try_wait() {
+            Ok(None) => Ok(DeepSeekHarnessProcessStatus {
+                running: true,
+                pid: Some(managed.child.id()),
+                mode: Some(managed.mode.clone()),
+            }),
+            Ok(Some(_)) => {
+                *process = None;
+                Ok(DeepSeekHarnessProcessStatus::default())
+            }
+            Err(error) => Err(format!("Failed to check DeepSeek Harness process status: {error}")),
+        }
+    }
+}
+
+#[ecpa_macros::ecpa_command]
+pub(crate) fn get_deepseek_harness_process_status(
+    process_state: crate::runtime::State<'_, DeepSeekHarnessProcessState>,
+) -> Result<DeepSeekHarnessProcessStatus, String> {
+    process_state.status()
+}
+
+#[ecpa_macros::ecpa_command]
+pub(crate) fn stop_deepseek_harness_process(
+    process_state: crate::runtime::State<'_, DeepSeekHarnessProcessState>,
+) -> Result<DeepSeekHarnessProcessStatus, String> {
+    stop_managed_deepseek_harness(process_state.inner())?;
+    process_state.status()
+}
+
+fn launch_managed_deepseek_harness(
+    process_state: &DeepSeekHarnessProcessState,
+    executable: &Path,
+    working_directory: &Path,
+    arguments: &[String],
+    mode: &str,
+    options: Option<&DeepSeekHarnessLaunchOptions>,
+) -> Result<(), String> {
+    let mut process = process_state
+        .process
+        .lock()
+        .map_err(|_| "DeepSeek Harness process status lock is poisoned".to_string())?;
+    if let Some(managed) = process.as_mut() {
+        match managed.child.try_wait() {
+            Ok(None) => {
+                return Err(format!(
+                    "DeepSeek Harness is already running (PID {}). Stop the current process first",
+                    managed.child.id()
+                ));
+            }
+            Ok(Some(_)) => *process = None,
+            Err(error) => return Err(format!("Failed to check DeepSeek Harness process status: {error}")),
+        }
+    }
+
+    if mode == "web" {
+        ensure_deepseek_harness_web_endpoint_available(options)?;
+    }
+
+    let child = spawn_managed_deepseek_harness(executable, working_directory, arguments)?;
+    *process = Some(ManagedDeepSeekHarnessProcess {
+        child,
+        mode: mode.to_string(),
+        launch: DeepSeekHarnessLaunchSnapshot {
+            executable: executable.to_path_buf(),
+            working_directory: working_directory.to_path_buf(),
+            arguments: arguments.to_vec(),
+            options: options.cloned(),
+        },
+    });
+    Ok(())
+}
+
+#[ecpa_macros::ecpa_command]
+pub(crate) async fn restart_deepseek_harness_process(
+    app: crate::runtime::AppHandle,
+) -> Result<DeepSeekHarnessProcessStatus, String> {
+    crate::runtime::async_runtime::spawn_blocking(move || {
+        restart_managed_deepseek_harness(app.state::<DeepSeekHarnessProcessState>().inner())
+    })
+    .await
+    .map_err(|error| format!("DeepSeek Harness Web restart task failed: {error}"))?
+}
+
+fn restart_managed_deepseek_harness(
+    process_state: &DeepSeekHarnessProcessState,
+) -> Result<DeepSeekHarnessProcessStatus, String> {
+    restart_managed_deepseek_harness_with(
+        process_state,
+        terminate_deepseek_harness_process_tree,
+        spawn_managed_deepseek_harness,
+    )
+}
+
+fn restart_managed_deepseek_harness_with(
+    process_state: &DeepSeekHarnessProcessState,
+    stop: impl FnOnce(&mut Child) -> Result<(), String>,
+    spawn: impl FnOnce(&Path, &Path, &[String]) -> Result<Child, String>,
+) -> Result<DeepSeekHarnessProcessStatus, String> {
+    let mut process = process_state
+        .process
+        .lock()
+        .map_err(|_| "DeepSeek Harness process status lock is poisoned".to_string())?;
+    let managed = process
+        .as_mut()
+        .ok_or_else(|| "No DeepSeek Harness Web service is running".to_string())?;
+    if managed
+        .child
+        .try_wait()
+        .map_err(|error| format!("Failed to check DeepSeek Harness process status: {error}"))?
+        .is_some()
+    {
+        *process = None;
+        return Err("DeepSeek Harness Web has exited. Start it again".to_string());
+    }
+    if managed.mode != "web" {
+        return Err("Only Web mode supports restart".to_string());
+    }
+    let launch = managed.launch.clone();
+    if !launch.executable.is_file() || !launch.working_directory.is_dir() {
+        return Err("DeepSeek Harness launcher or working directory no longer exists".to_string());
+    }
+    stop(&mut managed.child)?;
+    *process = None;
+    ensure_deepseek_harness_web_endpoint_available(launch.options.as_ref())?;
+    let child = spawn(
+        &launch.executable,
+        &launch.working_directory,
+        &launch.arguments,
+    )?;
+    let status = DeepSeekHarnessProcessStatus {
+        running: true,
+        pid: Some(child.id()),
+        mode: Some("web".to_string()),
+    };
+    *process = Some(ManagedDeepSeekHarnessProcess {
+        child,
+        mode: "web".to_string(),
+        launch,
+    });
+    Ok(status)
+}
+
+fn ensure_deepseek_harness_web_endpoint_available(
+    options: Option<&DeepSeekHarnessLaunchOptions>,
+) -> Result<(), String> {
+    let port = options
+        .and_then(|options| options.web_port)
+        .unwrap_or(DEEPSEEK_HARNESS_DEFAULT_WEB_PORT);
+    if port == 0 {
+        return Ok(());
+    }
+    let host = options
+        .and_then(|options| options.web_host.as_deref())
+        .map(str::trim)
+        .filter(|host| !host.is_empty())
+        .unwrap_or("127.0.0.1");
+    let listener = TcpListener::bind((host, port)).map_err(|error| {
+        if error.kind() == io::ErrorKind::AddrInUse {
+            format!(
+                "DeepSeek Harness Web address {host}:{port} is in use. Stop the existing service or choose another port"
+            )
+        } else {
+            format!("Cannot use DeepSeek Harness Web address {host}:{port}: {error}")
+        }
+    })?;
+    drop(listener);
+    Ok(())
+}
+
+fn spawn_managed_deepseek_harness(
+    executable: &Path,
+    working_directory: &Path,
+    arguments: &[String],
+) -> Result<Child, String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        let mut command = windows_literal_cli_command(executable, arguments)?;
+        command
+            .current_dir(working_directory)
+            .creation_flags(
+                (if cfg!(test) {
+                    0x0800_0000
+                } else {
+                    CREATE_NEW_CONSOLE
+                }) | CREATE_NEW_PROCESS_GROUP,
+            );
+        return command
+            .spawn()
+            .map_err(|error| format!("Failed to start DeepSeek Harness: {error}"));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        let mut command = Command::new(executable);
+        command
+            .args(arguments)
+            .current_dir(working_directory)
+            .process_group(0);
+        return command
+            .spawn()
+            .map_err(|error| format!("Failed to start DeepSeek Harness: {error}"));
+    }
+
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = (executable, working_directory, arguments);
+        Err("The current platform does not support managed DeepSeek Harness startup".to_string())
+    }
+}
+
+pub(crate) fn stop_managed_deepseek_harness(
+    process_state: &DeepSeekHarnessProcessState,
+) -> Result<(), String> {
+    let mut process = process_state
+        .process
+        .lock()
+        .map_err(|_| "DeepSeek Harness process status lock is poisoned".to_string())?;
+    let Some(managed) = process.as_mut() else {
+        return Ok(());
+    };
+    if managed
+        .child
+        .try_wait()
+        .map_err(|error| format!("Failed to check DeepSeek Harness process status: {error}"))?
+        .is_some()
+    {
+        *process = None;
+        return Ok(());
+    }
+    terminate_deepseek_harness_process_tree(&mut managed.child)?;
+    *process = None;
+    Ok(())
+}
+
+fn terminate_deepseek_harness_process_tree(child: &mut Child) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let process_id = child.id().to_string();
+        let mut command = Command::new("taskkill");
+        command
+            .args(["/PID", &process_id, "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        configure_background_command(&mut command);
+        let status = command
+            .status()
+            .map_err(|error| format!("Failed to stop DeepSeek Harness process tree: {error}"))?;
+        if !status.success() {
+            return Err(format!(
+                "Failed to stop DeepSeek Harness process tree: PID {process_id}"
+            ));
+        }
+        let _ = child.wait();
+        return Ok(());
+    }
+
+    #[cfg(unix)]
+    {
+        let process_group = format!("-{}", child.id());
+        let term_status = Command::new("kill")
+            .args(["-TERM", &process_group])
+            .status()
+            .map_err(|error| format!("Failed to stop DeepSeek Harness process group: {error}"))?;
+        if !term_status.success() {
+            return Err(format!(
+                "Failed to stop DeepSeek Harness process group: PID {}",
+                child.id()
+            ));
+        }
+        for _ in 0..20 {
+            match child.try_wait() {
+                Ok(Some(_)) => return Ok(()),
+                Ok(None) => thread::sleep(Duration::from_millis(100)),
+                Err(error) => {
+                    return Err(format!("Failed to check DeepSeek Harness process status: {error}"));
+                }
+            }
+        }
+        let kill_status = Command::new("kill")
+            .args(["-KILL", &process_group])
+            .status()
+            .map_err(|error| format!("Failed to force-stop DeepSeek Harness process group: {error}"))?;
+        if !kill_status.success() {
+            return Err(format!(
+                "Failed to force-stop DeepSeek Harness process group: PID {}",
+                child.id()
+            ));
+        }
+        child
+            .wait()
+            .map_err(|error| format!("Failed while waiting for DeepSeek Harness process to exit: {error}"))?;
+        return Ok(());
+    }
+
+    #[cfg(not(any(windows, unix)))]
+    {
+        child
+            .kill()
+            .map_err(|error| format!("Failed to stop DeepSeek Harness process: {error}"))?;
+        child
+            .wait()
+            .map_err(|error| format!("Failed while waiting for DeepSeek Harness process to exit: {error}"))?;
+        Ok(())
+    }
+}
+
+fn validate_deepseek_harness_profile(profile: &str) -> Result<&str, String> {
+    let profile = profile.trim();
+    if profile.is_empty() {
+        return Err("Enter a DeepSeek Harness profile name".to_string());
+    }
+    if matches!(profile, "." | "..")
+        || !profile.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+    {
+        return Err(
+            "DeepSeek Harness profile name may contain only letters, numbers, periods, hyphens, and underscores".to_string(),
+        );
+    }
+    Ok(profile)
+}
+
+fn validate_deepseek_harness_argument(value: &str, label: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(format!("{label} cannot be empty"));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(format!("{label} cannot contain control characters"));
+    }
+    Ok(value.to_string())
+}
+
+#[ecpa_macros::ecpa_command]
+pub(crate) async fn restart_codex_app(app: crate::runtime::AppHandle) -> Result<(), String> {
+    restart_agent_app(app, "codex".to_string(), None).await
+}
+
+#[ecpa_macros::ecpa_command]
+pub(crate) async fn restart_opencode_app(app: crate::runtime::AppHandle) -> Result<(), String> {
+    restart_agent_app(app, "opencode".to_string(), None).await
+}
+
+#[ecpa_macros::ecpa_command]
+pub(crate) async fn restart_agent_app(
+    app: crate::runtime::AppHandle,
+    client: String,
+    executable_path: Option<String>,
+) -> Result<(), String> {
+    let client = AgentClient::parse(&client)?;
+    if !matches!(
+        client,
+        AgentClient::Codex
+            | AgentClient::OpenCode
+            | AgentClient::DeepSeekHarness
+            | AgentClient::ClaudeDesktop
+            | AgentClient::ZCode
+            | AgentClient::WorkBuddy
+    ) {
+        return Err(format!("{} does not support restarting the desktop application", client.name()));
+    }
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
+    crate::runtime::async_runtime::spawn_blocking(move || {
+        let executable_override = executable_path.as_deref().map(Path::new);
+        let target = find_desktop_restart_target(client, &home, executable_override)?;
+        match client {
+            AgentClient::Codex => stop_codex_desktop(&target)?,
+            AgentClient::OpenCode => {
+                match &target {
+                    DesktopAppTarget::Application(path) => stop_opencode_desktop(path)?,
+                    #[cfg(target_os = "windows")]
+                    DesktopAppTarget::WindowsAppId(_) => {
+                        return Err("Invalid OpenCode desktop installation type".to_string());
+                    }
+                }
+            }
+            _ => stop_other_desktop(&target, client.name())?,
+        }
+        match &target {
+            DesktopAppTarget::Application(path) => launch_desktop_agent(path, client.name()),
+            #[cfg(target_os = "windows")]
+            DesktopAppTarget::WindowsAppId(app_id) => {
+                launch_windows_store_app(app_id, client.name())
+            }
+        }
+    })
+    .await
+    .map_err(|error| format!("Desktop application restart task failed: {error}"))?
+}
+
+#[ecpa_macros::ecpa_command]
+pub(crate) async fn get_codex_cli_daemon_running(
+    app: crate::runtime::AppHandle,
+    executable_path: Option<String>,
+) -> Result<bool, String> {
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
+    crate::runtime::async_runtime::spawn_blocking(move || {
+        codex_cli_daemon_running(&home, executable_path.as_deref().map(Path::new))
+    })
+    .await
+    .map_err(|error| format!("Codex CLI background service check task failed: {error}"))?
+}
+
+static CODEX_CLI_DAEMON_RESTARTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+struct CodexCliDaemonRestartGuard;
+
+impl Drop for CodexCliDaemonRestartGuard {
+    fn drop(&mut self) {
+        CODEX_CLI_DAEMON_RESTARTING.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+// A second `daemon restart` issued while Codex is still draining the first would restart the
+// replacement daemon as well, so only one restart may run at a time across all windows.
+fn begin_codex_cli_daemon_restart() -> Option<CodexCliDaemonRestartGuard> {
+    CODEX_CLI_DAEMON_RESTARTING
+        .compare_exchange(false, true, std::sync::atomic::Ordering::Acquire, std::sync::atomic::Ordering::Relaxed)
+        .ok()
+        .map(|_| CodexCliDaemonRestartGuard)
+}
+
+#[ecpa_macros::ecpa_command]
+pub(crate) async fn restart_codex_cli_daemon(
+    app: crate::runtime::AppHandle,
+    executable_path: Option<String>,
+) -> Result<(), String> {
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|error| format!("Failed to get user directory: {error}"))?;
+    let guard = begin_codex_cli_daemon_restart()
+        .ok_or_else(|| "A Codex CLI background service restart is already in progress".to_string())?;
+    crate::runtime::async_runtime::spawn_blocking(move || {
+        let _guard = guard;
+        restart_codex_cli_daemon_process(&home, executable_path.as_deref().map(Path::new))
+    })
+    .await
+    .map_err(|error| format!("Codex CLI background service restart task failed: {error}"))?
+}
+
+fn codex_cli_daemon_running(home: &Path, executable_override: Option<&Path>) -> Result<bool, String> {
+    let mut command = codex_cli_daemon_command(home, executable_override, "version")?;
+    let output = command_output_with_timeout(&mut command, Duration::from_secs(10))
+        .map_err(|error| format!("Failed to check the Codex CLI background service: {error}"))?
+        .ok_or_else(|| "Checking the Codex CLI background service timed out".to_string())?;
+    parse_codex_cli_daemon_status(output.status.success(), &output.stdout, &output.stderr)
+}
+
+fn parse_codex_cli_daemon_status(
+    success: bool,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Result<bool, String> {
+    if !success {
+        let detail = String::from_utf8_lossy(stderr).trim().to_string();
+        // A stopped daemon leaves no listener on the control socket: ENOENT, or connection
+        // refused on macOS (61), Linux (111) and Windows (10061).
+        if detail.contains("failed to connect to ")
+            && detail.contains("app-server-control.sock")
+            && [2, 61, 111, 10061]
+                .iter()
+                .any(|code| detail.contains(&format!("(os error {code})")))
+        {
+            return Ok(false);
+        }
+        let detail = if detail.is_empty() {
+            String::from_utf8_lossy(stdout).trim().to_string()
+        } else {
+            detail
+        };
+        return Err(format!(
+            "Failed to check the Codex CLI background service{}",
+            if detail.is_empty() { String::new() } else { format!(": {detail}") }
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_slice(stdout).map_err(|error| {
+        format!("Invalid Codex CLI background service status response: {error}")
+    })?;
+    match value.get("status").and_then(serde_json::Value::as_str) {
+        Some("running") => Ok(true),
+        _ => Err("Unexpected Codex CLI background service status response".to_string()),
+    }
+}
+
+fn restart_codex_cli_daemon_process(home: &Path, executable_override: Option<&Path>) -> Result<(), String> {
+    let mut command = codex_cli_daemon_command(home, executable_override, "restart")?;
+    // Codex drains running turns before it force-stops the old daemon, which alone can take about a
+    // minute, so a shorter limit reports a timeout while the restart is still in progress.
+    let output = command_output_with_timeout(&mut command, Duration::from_secs(150))
+        .map_err(|error| format!("Failed to restart the Codex CLI background service: {error}"))?
+        .ok_or_else(|| "Restarting the Codex CLI background service timed out".to_string())?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(format!(
+        "Failed to restart the Codex CLI background service{}",
+        if detail.is_empty() { String::new() } else { format!(": {detail}") }
+    ))
+}
+
+fn codex_cli_daemon_command(
+    home: &Path,
+    executable_override: Option<&Path>,
+    action: &str,
+) -> Result<Command, String> {
+    let executable = resolve_codex_cli(home, executable_override)?
+        .map(|resolved| resolved.path)
+        .ok_or_else(|| "Executable for Codex not found".to_string())?;
+    #[cfg(target_os = "windows")]
+    let mut command = windows_command_for_executable(&executable, false);
+    #[cfg(not(target_os = "windows"))]
+    let mut command = Command::new(&executable);
+    command.args(["app-server", "daemon", action]);
+    configure_background_command(&mut command);
+    configure_agent_command_environment(&mut command, home, &executable)?;
+    Ok(command)
+}
+
+fn find_desktop_restart_target(
+    client: AgentClient,
+    home: &Path,
+    executable_override: Option<&Path>,
+) -> Result<DesktopAppTarget, String> {
+    if let Some(path) = manual_desktop_path(executable_override) {
+        return Ok(DesktopAppTarget::Application(path.to_path_buf()));
+    }
+    let target = match client {
+        AgentClient::Codex => find_codex_app_installation(home),
+        AgentClient::OpenCode => find_opencode_desktop_application(home).map(DesktopAppTarget::Application),
+        AgentClient::DeepSeekHarness => {
+            find_deepseek_harness_desktop_application(home).map(DesktopAppTarget::Application)
+        }
+        AgentClient::ZCode => {
+            find_zcode_desktop_executable(home).map(DesktopAppTarget::Application)
+        }
+        AgentClient::WorkBuddy => {
+            find_workbuddy_desktop_executable(home).map(DesktopAppTarget::Application)
+        }
+        AgentClient::ClaudeDesktop => {
+            let executable = find_claude_desktop_executable(home).map(DesktopAppTarget::Application);
+            #[cfg(target_os = "windows")]
+            {
+                executable
+                    .or_else(|| find_windows_claude_app_id().map(DesktopAppTarget::WindowsAppId))
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                executable
+            }
+        }
+        _ => None,
+    };
+    target.ok_or_else(|| format!("{} desktop application was not detected. Detect it again", client.name()))
+}
+
+#[cfg(target_os = "windows")]
+fn stop_other_desktop(target: &DesktopAppTarget, label: &str) -> Result<(), String> {
+    let (executable, install_root) = windows_desktop_stop_target(target)?;
+    stop_windows_matching_processes(executable.as_deref(), install_root.as_deref(), &[], label)
+}
+
+#[cfg(target_os = "macos")]
+fn stop_other_desktop(target: &DesktopAppTarget, label: &str) -> Result<(), String> {
+    let DesktopAppTarget::Application(path) = target;
+    stop_macos_desktop_application(path, label)
+}
+
+#[cfg(target_os = "linux")]
+fn stop_other_desktop(target: &DesktopAppTarget, label: &str) -> Result<(), String> {
+    let DesktopAppTarget::Application(path) = target;
+    stop_linux_desktop_application(path, label)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn stop_other_desktop(_target: &DesktopAppTarget, label: &str) -> Result<(), String> {
+    Err(format!("The current platform does not support restarting {label}"))
+}
+
+fn resolve_launch_directory(value: Option<&str>, fallback: &Path) -> Result<PathBuf, String> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(fallback.to_path_buf());
+    };
+    if value.chars().any(char::is_control) {
+        return Err("Working directory contains invalid characters".to_string());
+    }
+    let path = PathBuf::from(value);
+    if !path.is_absolute() {
+        return Err("Working directory must be an absolute path".to_string());
+    }
+    if !path.is_dir() {
+        return Err(format!("Working directory does not exist: {}", path_to_string(&path)));
+    }
+    Ok(path)
+}
+
+fn launch_codex_desktop(home: &Path, executable_override: Option<&Path>) -> Result<(), String> {
+    let target = find_desktop_restart_target(AgentClient::Codex, home, executable_override)?;
+    launch_codex_target(&target)
+}
+
+fn launch_codex_target(target: &DesktopAppTarget) -> Result<(), String> {
+    match target {
+        #[cfg(target_os = "windows")]
+        DesktopAppTarget::WindowsAppId(app_id) => launch_windows_store_app(app_id, "Codex App"),
+        DesktopAppTarget::Application(path) => launch_desktop_agent(path, "Codex App"),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn stop_codex_desktop(target: &DesktopAppTarget) -> Result<(), String> {
+    let (executable, install_root) = windows_desktop_stop_target(target)?;
+    stop_windows_matching_processes(
+        executable.as_deref(),
+        install_root.as_deref(),
+        &["ChatGPT.exe", "Codex.exe"],
+        "Codex App",
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn stop_opencode_desktop(application: &Path) -> Result<(), String> {
+    stop_windows_matching_processes(
+        Some(application),
+        None,
+        &["OpenCode.exe"],
+        "OpenCode Desktop",
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn stop_codex_desktop(target: &DesktopAppTarget) -> Result<(), String> {
+    let DesktopAppTarget::Application(application) = target;
+    stop_macos_desktop_application(application, "Codex App")
+}
+
+#[cfg(target_os = "macos")]
+fn stop_opencode_desktop(application: &Path) -> Result<(), String> {
+    stop_macos_desktop_application(application, "OpenCode Desktop")
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn desktop_process_ids_from_ps(output: &str, application: &Path) -> Vec<i32> {
+    let bundle = application
+        .ancestors()
+        .find(|path| path.extension().and_then(|value| value.to_str()) == Some("app"));
+    output
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let split = line.find(char::is_whitespace)?;
+            let pid = line[..split].parse::<i32>().ok()?;
+            if pid <= 0 || pid == std::process::id() as i32 {
+                return None;
+            }
+            let executable = Path::new(line[split..].trim());
+            (executable == application || bundle.is_some_and(|root| executable.starts_with(root)))
+                .then_some(pid)
+        })
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn macos_processes_for_application(application: &Path) -> Result<Vec<i32>, String> {
+    let output = Command::new("ps")
+        .args(["-axww", "-o", "pid=", "-o", "comm="])
+        .output()
+        .map_err(|error| format!("Failed to read desktop application processes: {error}"))?;
+    if !output.status.success() {
+        return Err("Failed to read desktop application processes".to_string());
+    }
+    Ok(desktop_process_ids_from_ps(
+        &String::from_utf8_lossy(&output.stdout),
+        application,
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn stop_macos_desktop_application(application: &Path, label: &str) -> Result<(), String> {
+    if macos_processes_for_application(application)?.is_empty() {
+        return Ok(());
+    }
+    let bundle = application
+        .ancestors()
+        .find(|path| path.extension().and_then(|value| value.to_str()) == Some("app"))
+        .unwrap_or(application);
+    let escaped = path_to_string(bundle)
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    let mut quit = Command::new("osascript");
+    quit.args(["-e", &format!("tell application \"{escaped}\" to quit")]);
+    let _ = command_output_with_timeout(&mut quit, Duration::from_secs(5));
+    for _ in 0..50 {
+        if macos_processes_for_application(application)?.is_empty() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    for pid in macos_processes_for_application(application)? {
+        if unsafe { libc::kill(pid, libc::SIGKILL) } != 0 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                return Err(format!("Failed to stop {label} process {pid}: {error}"));
+            }
+        }
+    }
+    for _ in 0..10 {
+        if macos_processes_for_application(application)?.is_empty() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    Err(format!("{label} did not close completely"))
+}
+
+#[cfg(target_os = "linux")]
+fn stop_opencode_desktop(application: &Path) -> Result<(), String> {
+    stop_linux_desktop_application(application, "OpenCode Desktop")
+}
+
+#[cfg(target_os = "linux")]
+fn stop_linux_desktop_application(application: &Path, label: &str) -> Result<(), String> {
+    let application = fs::canonicalize(application).unwrap_or_else(|_| application.to_path_buf());
+    let processes = linux_processes_for_application(&application);
+    let mut signal_error = None;
+    for process_id in processes {
+        if let Err(error) = signal_linux_process(process_id, libc::SIGTERM) {
+            signal_error.get_or_insert(error);
+        }
+    }
+
+    for _ in 0..50 {
+        if linux_processes_for_application(&application).is_empty() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    let remaining = linux_processes_for_application(&application);
+    for process_id in &remaining {
+        if let Err(error) = signal_linux_process(*process_id, libc::SIGKILL) {
+            signal_error.get_or_insert(error);
+        }
+    }
+    for _ in 0..10 {
+        if linux_processes_for_application(&application).is_empty() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    let remaining = linux_processes_for_application(&application);
+    if remaining.is_empty() {
+        Ok(())
+    } else if let Some(error) = signal_error {
+        Err(error)
+    } else {
+        Err(format!(
+            "{label} did not close completely; remaining process IDs: {}",
+            remaining
+                .iter()
+                .map(i32::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_processes_for_application(application: &Path) -> Vec<i32> {
+    let current_process = std::process::id() as i32;
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let mut process_ids = entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<i32>().ok())
+        .filter(|process_id| *process_id != current_process)
+        .filter(|process_id| linux_process_matches_application(*process_id, application))
+        .collect::<Vec<_>>();
+    process_ids.sort_unstable();
+    process_ids
+}
+
+#[cfg(target_os = "linux")]
+fn linux_process_matches_application(process_id: i32, application: &Path) -> bool {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let process_directory = PathBuf::from(format!("/proc/{process_id}"));
+    if fs::read_link(process_directory.join("exe"))
+        .ok()
+        .is_some_and(|path| linux_process_path_matches(&path, application))
+    {
+        return true;
+    }
+
+    if let Ok(command_line) = fs::read(process_directory.join("cmdline")) {
+        let installation_root = linux_opencode_nix_installation_root(application);
+        if command_line
+            .split(|byte| *byte == 0)
+            .filter(|argument| !argument.is_empty())
+            .map(|argument| Path::new(OsStr::from_bytes(argument)))
+            .enumerate()
+            .any(|(index, argument)| {
+                (index == 0 && linux_process_path_matches(argument, application))
+                    || installation_root.is_some_and(|root| {
+                        fs::canonicalize(argument)
+                            .ok()
+                            .is_some_and(|argument| argument.starts_with(root))
+                    })
+            })
+        {
+            return true;
+        }
+    }
+
+    fs::read(process_directory.join("environ"))
+        .ok()
+        .is_some_and(|environment| {
+            environment
+                .split(|byte| *byte == 0)
+                .filter_map(|entry| entry.strip_prefix(b"APPIMAGE="))
+                .any(|path| {
+                    !path.is_empty()
+                        && linux_process_path_matches(
+                            Path::new(OsStr::from_bytes(path)),
+                            application,
+                        )
+                })
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_process_path_matches(candidate: &Path, application: &Path) -> bool {
+    candidate == application
+        || fs::canonicalize(candidate)
+            .ok()
+            .is_some_and(|candidate| candidate == application)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_opencode_nix_installation_root(application: &Path) -> Option<&Path> {
+    application.ancestors().find(|ancestor| {
+        ancestor.parent() == Some(Path::new("/nix/store"))
+            && ancestor
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.to_ascii_lowercase().contains("opencode"))
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn signal_linux_process(process_id: i32, signal: i32) -> Result<(), String> {
+    if unsafe { libc::kill(process_id, signal) } == 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(format!("Failed to stop desktop application process {process_id}: {error}"))
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn stop_codex_desktop(_target: &DesktopAppTarget) -> Result<(), String> {
+    Err("The current platform does not support restarting Codex App".to_string())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn stop_opencode_desktop(_application: &Path) -> Result<(), String> {
+    Err("The current platform does not support restarting OpenCode Desktop".to_string())
+}
+
+fn launch_claude_desktop(home: &Path, executable_override: Option<&Path>) -> Result<(), String> {
+    let executable = manual_desktop_path(executable_override).map(Path::to_path_buf)
+        .or_else(|| find_claude_desktop_executable(home));
+    if let Some(executable) = executable {
+        return launch_desktop_agent(&executable, "Claude Desktop");
+    }
+    #[cfg(target_os = "windows")]
+    {
+        launch_windows_claude_store_app()
+    }
+    #[cfg(not(target_os = "windows"))]
+    Err("Claude Desktop application was not detected. Install or detect it again".to_string())
+}
+
+fn launch_opencode_desktop(home: &Path, executable_override: Option<&Path>) -> Result<(), String> {
+    let application = manual_desktop_path(executable_override).map(Path::to_path_buf)
+        .or_else(|| find_opencode_desktop_application(home))
+        .ok_or_else(|| "OpenCode Desktop application was not detected. Install or detect it again".to_string())?;
+    launch_desktop_agent(&application, "OpenCode Desktop")
+}
+
+fn launch_vscode_directory(executable: &Path, directory: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        // Prefer the editor binary to its batch launcher so folder names are not
+        // interpreted by cmd.exe.
+        let editor = executable.parent().and_then(Path::parent)
+            .map(|root| root.join("Code.exe"))
+            .filter(|path| path.is_file());
+        match editor {
+            Some(editor) => Command::new(editor),
+            None => windows_command_for_executable(executable, false),
+        }
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        if let Some(application) = executable.ancestors()
+            .find(|path| path.extension().and_then(|value| value.to_str()) == Some("app"))
+        {
+            let mut command = Command::new("open");
+            command.arg("-a").arg(application);
+            command
+        } else {
+            Command::new(executable)
+        }
+    };
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let mut command = Command::new(executable);
+
+    command.arg(directory).current_dir(directory)
+        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    configure_background_command(&mut command);
+    command.spawn().map(|_| ())
+        .map_err(|error| format!("Failed to start VSCode Copilot: {error}"))
+}
+
+fn launch_desktop_agent(executable: &Path, label: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let application = executable
+            .ancestors()
+            .find(|path| path.extension().and_then(|value| value.to_str()) == Some("app"))
+            .unwrap_or(executable);
+        let mut command = Command::new("open");
+        command.arg(application);
+        command
+    };
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    let mut command = Command::new(executable);
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        let _ = (executable, label);
+        return Err("The current platform does not support desktop agents".to_string());
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    {
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        configure_background_command(&mut command);
+        command
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("Failed to start {label}: {error}"))
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn launch_windows_store_app(app_id: &str, label: &str) -> Result<(), String> {
+    let mut command = Command::new(windows_explorer_executable());
+    command
+        .arg(format!("shell:AppsFolder\\{app_id}"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    configure_background_command(&mut command);
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Failed to start {label}: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn launch_windows_claude_store_app() -> Result<(), String> {
+    let app_id = find_windows_claude_app_id()
+        .ok_or_else(|| "No launchable Claude Desktop application found".to_string())?;
+    launch_windows_store_app(&app_id, "Claude Desktop")
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(target_os = "macos")]
+fn launch_cli_agent(
+    executable: &Path,
+    label: &str,
+    working_directory: &Path,
+    arguments: &[String],
+    environment_to_remove: &[&str],
+    environment_to_set: &[(&str, &str)],
+    terminal: &str,
+) -> Result<(), String> {
+    let removals = environment_to_remove
+        .iter()
+        .map(|key| format!("-u {}", shell_single_quote(key)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let assignments = environment_to_set
+        .iter()
+        .map(|(key, value)| format!("{}={}", shell_single_quote(key), shell_single_quote(value)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let invocation = std::iter::once(shell_single_quote(&path_to_string(executable)))
+        .chain(
+            arguments
+                .iter()
+                .map(|argument| shell_single_quote(argument)),
+        )
+        .collect::<Vec<_>>()
+        .join(" ");
+    let command_line = format!(
+        "cd {} && exec env {} {} {}",
+        shell_single_quote(&path_to_string(working_directory)),
+        removals,
+        assignments,
+        invocation,
+    );
+    let script = if terminal == "iterm2" {
+        format!(
+            "tell application \"iTerm2\"\nactivate\nset newWindow to (create window with default profile)\ntell current session of newWindow\nwrite text \"{}\"\nend tell\nend tell",
+            command_line.replace('\\', "\\\\").replace('"', "\\\"")
+        )
+    } else if terminal == "ghostty" {
+        format!(
+            "tell application \"Ghostty\"\nactivate\nset surfaceConfig to new surface configuration\nset initial input of surfaceConfig to \"{}\\n\"\nnew window with configuration surfaceConfig\nend tell",
+            command_line.replace('\\', "\\\\").replace('"', "\\\"")
+        )
+    } else if matches!(terminal, "auto" | "terminal") {
+        format!(
+            "tell application \"Terminal\"\nactivate\ndo script \"{}\"\nend tell",
+            command_line.replace('\\', "\\\\").replace('"', "\\\"")
+        )
+    } else {
+        return Err(format!("Failed to start {label}: selected terminal is unsupported"));
+    };
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|error| format!("Failed to start {label} terminal: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(format!("Failed to start {label} terminal: {detail}"))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_cli_terminal_command(
+    program: &Path,
+    terminal_arguments: &[&str],
+    executable: &Path,
+    working_directory: &Path,
+    arguments: &[String],
+    environment_to_remove: &[&str],
+    environment_to_set: &[(&str, &str)],
+) -> Command {
+    let mut command = Command::new(program);
+    command.args(terminal_arguments).arg(executable).args(arguments)
+        .current_dir(working_directory).stdin(Stdio::null())
+        .stdout(Stdio::null()).stderr(Stdio::null());
+    for key in environment_to_remove {
+        command.env_remove(key);
+    }
+    for (key, value) in environment_to_set {
+        command.env(key, value);
+    }
+    command
+}
+
+#[cfg(target_os = "linux")]
+fn launch_cli_agent(
+    executable: &Path,
+    label: &str,
+    working_directory: &Path,
+    command_arguments: &[String],
+    environment_to_remove: &[&str],
+    environment_to_set: &[(&str, &str)],
+    terminal: &str,
+) -> Result<(), String> {
+    let definitions = linux_terminal_definitions();
+    let mut last_error = None;
+    for definition in definitions {
+        let (id, program, arguments, _) = *definition;
+        if terminal != "auto" && id != terminal {
+            continue;
+        }
+        if program_on_path(program).is_none() {
+            continue;
+        }
+        let mut command = linux_cli_terminal_command(
+            Path::new(program), arguments, executable, working_directory,
+            command_arguments, environment_to_remove, environment_to_set,
+        );
+        match command.spawn() {
+            Ok(_) => return Ok(()),
+            Err(error) => last_error = Some(error.to_string()),
+        }
+    }
+    if terminal != "auto" && last_error.is_none() {
+        return Err(format!("Failed to start {label}: selected terminal not found"));
+    }
+    Err(match last_error {
+        Some(error) => format!("Failed to start {label}: {error}"),
+        None => format!("Failed to start {label}: no available terminal program found"),
+    })
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_powershell_script_invocation(executable: &Path, arguments: &[String]) -> String {
+    let arguments = arguments.iter().map(|argument| windows_powershell_single_quoted_literal(argument)).collect::<Vec<_>>().join(", ");
+    format!("$cpaLaunchArguments = @({arguments}); & {} @cpaLaunchArguments", windows_powershell_single_quoted_literal(&path_to_string(executable)))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_powershell_cli_script(
+    executable: &Path,
+    working_directory: &Path,
+    arguments: &[String],
+) -> String {
+    let directory = windows_powershell_single_quoted_literal(&path_to_string(working_directory));
+    if executable.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("ps1")) {
+        return format!("Set-Location -LiteralPath {directory}; {}", windows_powershell_script_invocation(executable, arguments));
+    }
+    let executable = windows_powershell_single_quoted_literal(&path_to_string(executable));
+    {
+        let arguments = arguments
+            .iter()
+            .map(|argument| {
+                let mut quoted = String::from("\"");
+                let mut backslashes = 0;
+                for ch in argument.chars() {
+                    if ch == '\\' {
+                        backslashes += 1;
+                        continue;
+                    }
+                    quoted.push_str(&"\\".repeat(if ch == '"' {
+                        backslashes * 2 + 1
+                    } else {
+                        backslashes
+                    }));
+                    backslashes = 0;
+                    quoted.push(ch);
+                }
+                quoted.push_str(&"\\".repeat(backslashes * 2));
+                quoted.push('"');
+                quoted
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        return format!(
+            "Set-Location -LiteralPath {directory}; \
+             $cpaLaunchInfo = New-Object System.Diagnostics.ProcessStartInfo; \
+             $cpaLaunchInfo.FileName = {executable}; \
+             $cpaLaunchInfo.WorkingDirectory = {directory}; \
+             $cpaLaunchInfo.UseShellExecute = $false; \
+             $cpaLaunchInfo.Arguments = {}; \
+             $cpaLaunchProcess = [System.Diagnostics.Process]::Start($cpaLaunchInfo); \
+             try {{ $cpaLaunchProcess.WaitForExit(); $global:LASTEXITCODE = $cpaLaunchProcess.ExitCode }} \
+             finally {{ $cpaLaunchProcess.Dispose() }}",
+            windows_powershell_single_quoted_literal(&arguments),
+        );
+    }
+}
+
+#[cfg(any(windows, test))]
+fn windows_literal_cli_invocation(executable: &Path, arguments: &[String]) -> Result<(PathBuf, Vec<String>), String> {
+    windows_literal_cli_invocation_with_node(executable, arguments, None)
+}
+
+#[cfg(any(windows, test))]
+fn windows_literal_cli_invocation_with_node(
+    executable: &Path,
+    arguments: &[String],
+    node_path: Option<&Path>,
+) -> Result<(PathBuf, Vec<String>), String> {
+    let extension = executable.extension().and_then(|value| value.to_str()).unwrap_or_default();
+    if ["js", "mjs", "cjs"].iter().any(|value| extension.eq_ignore_ascii_case(value)) {
+        let node = node_path.map(Path::to_path_buf).or_else(|| program_on_path("node.exe"))
+            .ok_or("Node.js executable was not found")?;
+        let mut forwarded = vec![path_to_string(executable)];
+        forwarded.extend_from_slice(arguments);
+        return Ok((node, forwarded));
+    }
+    if extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat") {
+        let source = fs::read_to_string(executable).map_err(|_| "Unable to read CLI startup wrapper")?;
+        let pattern = regex::Regex::new(r#"(?i)"%dp0%[\\/]([^"\r\n]+\.(?:js|mjs|cjs))""#).unwrap();
+        let script = pattern.captures(&source).and_then(|capture| capture.get(1))
+            .filter(|_| source.to_ascii_lowercase().contains("node"))
+            .ok_or("This batch wrapper cannot safely forward literal arguments. Select the CLI executable or its JavaScript entry point instead")?;
+        let directory = executable.parent().ok_or("CLI wrapper directory is missing")?;
+        let script = directory.join(script.as_str());
+        if !script.is_file() { return Err("CLI wrapper entry point was not found".into()); }
+        let node = directory.join("node.exe");
+        let node = if node.is_file() { node } else {
+            node_path.map(Path::to_path_buf).or_else(|| program_on_path("node.exe"))
+                .ok_or("Node.js executable was not found")?
+        };
+        let mut forwarded = vec![path_to_string(&script)];
+        forwarded.extend_from_slice(arguments);
+        return Ok((node, forwarded));
+    }
+    Ok((executable.to_path_buf(), arguments.to_vec()))
+}
+
+#[cfg(any(windows, test))]
+fn windows_encoded_script(script: &str) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(script.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>())
+}
+
+#[cfg(any(windows, test))]
+fn windows_encoded_cli_launch_arguments(
+    executable: &Path,
+    working_directory: &Path,
+    arguments: &[String],
+    terminal: &str,
+) -> Vec<String> {
+    let script = windows_powershell_cli_script(executable, working_directory, arguments);
+    let mut shell_arguments = vec!["-NoLogo".into(), "-NoProfile".into()];
+    if terminal != "cmd" {
+        shell_arguments.push("-NoExit".into());
+    }
+    if executable.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("ps1")) {
+        shell_arguments.extend(["-ExecutionPolicy".into(), "Bypass".into()]);
+    }
+    shell_arguments.extend(["-EncodedCommand".into(), windows_encoded_script(&script)]);
+    shell_arguments
+}
+
+#[cfg(windows)]
+pub(crate) fn windows_literal_cli_command(executable: &Path, arguments: &[String]) -> Result<Command, String> {
+    let (executable, arguments) = windows_literal_cli_invocation(executable, arguments)?;
+    if executable.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("ps1")) {
+        let mut command = Command::new(windows_powershell_executable());
+        command.args(["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &windows_encoded_script(&windows_powershell_script_invocation(&executable, &arguments))]);
+        return Ok(command);
+    }
+    let mut command = Command::new(executable);
+    command.args(arguments);
+    Ok(command)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_cli_launch_command(
+    executable: &Path,
+    label: &str,
+    working_directory: &Path,
+    arguments: &[String],
+    terminal: &str,
+) -> Result<Command, String> {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+    if !arguments.is_empty() {
+        let (literal_executable, literal_arguments) = windows_literal_cli_invocation(executable, arguments)?;
+        let mut command = if terminal == "windows-terminal" {
+            let mut command = Command::new(program_on_path("wt.exe").ok_or("Windows Terminal not found")?);
+            command.args(["-d", &path_to_string(working_directory), "--"]).arg(windows_powershell_executable());
+            command
+        } else if terminal == "cmd" {
+            let mut command = Command::new(windows_command_processor());
+            command.args(["/D", "/K"]);
+            command.arg(windows_powershell_executable());
+            command
+        } else if matches!(terminal, "auto" | "powershell") {
+            Command::new(windows_powershell_executable())
+        } else {
+            return Err(format!("Failed to start {label}: selected terminal is unsupported"));
+        };
+        command.args(windows_encoded_cli_launch_arguments(
+            &literal_executable, working_directory, &literal_arguments, terminal,
+        ));
+        if terminal != "windows-terminal" { command.creation_flags(CREATE_NEW_CONSOLE); }
+        return Ok(command);
+    }
+    let is_batch_script = executable
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+        });
+    let is_powershell_script = executable
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("ps1"));
+
+    let command = match terminal {
+        "windows-terminal" => {
+            let terminal_executable = program_on_path("wt.exe")
+                .ok_or_else(|| format!("Failed to start {label}: Windows Terminal not found"))?;
+            let directory = path_to_string(working_directory);
+            let mut command = Command::new(terminal_executable);
+            command.args(["-d", &directory, "--"]);
+            if is_batch_script {
+                command
+                    .arg(windows_command_processor())
+                    .args(["/D", "/K", "call"])
+                    .arg(windows_batch_executable_argument(executable))
+                    .args(arguments);
+            } else {
+                command.arg(executable).args(arguments);
+            }
+            command
+        }
+        // A native CLI launched directly by the GUI owns the console lifetime.
+        // Use an interactive shell, as with a manual launch, so terminal setup
+        // and the window lifetime do not depend on the CLI (notably on Win10).
+        "auto" | "powershell" => {
+            let mut command = if is_batch_script {
+                let mut command = windows_command_for_executable(executable, true);
+                command.args(arguments);
+                command
+            } else if is_powershell_script {
+                let mut command = Command::new(windows_powershell_executable());
+                command.args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NoExit",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                ]);
+                command.arg(executable).args(arguments);
+                command
+            } else {
+                let mut command = Command::new(windows_powershell_executable());
+                let script = windows_powershell_cli_script(executable, working_directory, arguments);
+                command.args(["-NoLogo", "-NoProfile", "-NoExit", "-Command", &script]);
+                command
+            };
+            command.creation_flags(CREATE_NEW_CONSOLE);
+            command
+        }
+        "cmd" => {
+            let mut command = Command::new(windows_command_processor());
+            let arguments = arguments
+                .iter()
+                .map(|argument| format!(" \"{}\"", argument.replace('"', "\"\"")))
+                .collect::<String>();
+            let command_line = format!(
+                "cd /d \"{}\" && call \"{}\"{}",
+                path_to_string(working_directory).replace('"', "\"\""),
+                path_to_string(executable).replace('"', "\"\""),
+                arguments,
+            );
+            command.args(["/D", "/K", &command_line]);
+            command.creation_flags(CREATE_NEW_CONSOLE);
+            command
+        }
+        _ => return Err(format!("Failed to start {label}: selected terminal is unsupported")),
+    };
+    Ok(command)
+}
+
+#[cfg(target_os = "windows")]
+fn launch_cli_agent(
+    executable: &Path,
+    label: &str,
+    working_directory: &Path,
+    arguments: &[String],
+    environment_to_remove: &[&str],
+    environment_to_set: &[(&str, &str)],
+    terminal: &str,
+) -> Result<(), String> {
+    let mut command = windows_cli_launch_command(
+        executable, label, working_directory, arguments, terminal,
+    )?;
+    command.current_dir(working_directory);
+    for key in environment_to_remove {
+        command.env_remove(key);
+    }
+    for (key, value) in environment_to_set {
+        command.env(key, value);
+    }
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Failed to start {label}: {error}"))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+fn launch_cli_agent(
+    _executable: &Path,
+    label: &str,
+    _working_directory: &Path,
+    _arguments: &[String],
+    _environment_to_remove: &[&str],
+    _environment_to_set: &[(&str, &str)],
+    _terminal: &str,
+) -> Result<(), String> {
+    Err(format!("The current platform does not support launching {label}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(target_os = "linux")]
+    struct ArgumentRecorder(PathBuf);
+
+    #[cfg(target_os = "linux")]
+    impl ArgumentRecorder {
+        fn new() -> Self {
+            let directory = env::temp_dir().join(format!("cpa-argv-{}-{}", std::process::id(),
+                SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+            fs::create_dir_all(&directory).unwrap();
+            Self(directory)
+        }
+
+        fn script(&self, name: &str, body: &str) -> PathBuf {
+            use std::os::unix::fs::PermissionsExt;
+            let path = self.0.join(name);
+            fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        }
+
+        fn read(&self, name: &str) -> Vec<String> {
+            let bytes = fs::read(self.0.join(name)).unwrap();
+            bytes.strip_suffix(&[0]).unwrap().split(|byte| *byte == 0)
+                .map(|value| String::from_utf8(value.to_vec()).unwrap()).collect()
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for ArgumentRecorder {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn custom_arguments_linux_shared_terminal_records_generic_and_pi_argv() {
+        let recorder = ArgumentRecorder::new();
+        let terminal = recorder.script("terminal", "printf '%s\\0' \"$1\" > prefix; shift; exec \"$@\"");
+        let executable = recorder.script("cli recorder", "printf '%s\\0' \"$@\" > argv; printf '%s\\0' \"$PWD\" \"${ANTHROPIC_API_KEY-unset}\" \"$CPA_ARGV_TEST\" > context");
+        let custom = parse_custom_launch_arguments(Some("'' 'two words' 'a\"b' \"it's literal\" 'C:\\Work files\\' '日本語' --verbose --verbose '$(exit 91); & | %PATH% !bang! ^' --cpa-copilot-cli")).unwrap();
+        for client in [None, Some(AgentClient::Codex), Some(AgentClient::ClaudeCode)] {
+            let mut arguments = client.map(|client| agent_cli_launch_arguments(client, None).unwrap()).unwrap_or_default();
+            arguments.extend_from_slice(&custom);
+            for (_, _, prefix, _) in linux_terminal_definitions() {
+                let removals = if client == Some(AgentClient::ClaudeCode) { &["ANTHROPIC_API_KEY"][..] } else { &[] };
+                let mut command = linux_cli_terminal_command(&terminal, prefix, &executable, &recorder.0,
+                    &arguments, removals, &[("CPA_ARGV_TEST", "literal value")]);
+                if removals.is_empty() { command.env("ANTHROPIC_API_KEY", "inherited fixture"); }
+                assert!(command.status().unwrap().success());
+                assert_eq!(recorder.read("prefix"), *prefix);
+                assert_eq!(recorder.read("argv"), arguments);
+                assert_eq!(recorder.read("context"), [path_to_string(&recorder.0),
+                    if removals.is_empty() { "inherited fixture".into() } else { "unset".into() }, "literal value".into()]);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn custom_arguments_linux_managed_initial_and_restart_record_exact_argv() {
+        struct ProcessFixture(DeepSeekHarnessProcessState);
+        impl Drop for ProcessFixture {
+            fn drop(&mut self) {
+                if let Ok(mut process) = self.0.process.lock() {
+                    if let Some(process) = process.as_mut() {
+                        let _ = process.child.kill();
+                        let _ = process.child.wait();
+                    }
+                }
+            }
+        }
+        let recorder = ArgumentRecorder::new();
+        let executable = recorder.script("harness recorder", "printf '%s\\0' \"$@\" > argv; printf '%s\\0' \"$PWD\" > context; exec /bin/sleep 60");
+        let custom = parse_custom_launch_arguments(Some("'' 'two words' 'a\"b' '日本語' 'C:\\Work\\' --verbose --verbose '$(exit 91); & | %PATH% !bang!'")).unwrap();
+        let stop = |child: &mut Child| -> Result<(), String> {
+            child.kill().map_err(|error| error.to_string())?;
+            child.wait().map_err(|error| error.to_string())?;
+            Ok(())
+        };
+        for mode in ["web", "acp", "sdk", "sdk-minimal", "headless", "custom"] {
+            let mut options = deepseek_harness_options(mode);
+            options.web_port = Some(0);
+            options.task = Some("review repository".into());
+            options.profile = Some("tui-dev".into());
+            let arguments = deepseek_harness_arguments_with_custom(Some(&options), &custom).unwrap();
+            let fixture = ProcessFixture(DeepSeekHarnessProcessState::default());
+            let state = &fixture.0;
+            launch_managed_deepseek_harness(state, &executable, &recorder.0, &arguments, mode, Some(&options)).unwrap();
+            let verify = || {
+                for _ in 0..100 {
+                    if fs::read(recorder.0.join("context")).is_ok() { break; }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                let received = recorder.read("argv");
+                assert_eq!(received, arguments, "{mode}");
+                assert_eq!(received.windows(custom.len()).filter(|window| *window == custom.as_slice()).count(), 1);
+                assert_eq!(recorder.read("context"), [path_to_string(&recorder.0)]);
+                fs::remove_file(recorder.0.join("context")).unwrap();
+            };
+            verify();
+            if mode == "web" {
+                restart_managed_deepseek_harness_with(state, stop, spawn_managed_deepseek_harness).unwrap();
+                verify();
+            }
+            let mut process = state.process.lock().unwrap().take().unwrap();
+            stop(&mut process.child).unwrap();
+        }
+    }
+
+    #[test]
+    fn custom_arguments_shared_parsing_cases() {
+        let cases: serde_json::Value = serde_json::from_str(include_str!("../../../../../tests/fixtures/cli-arguments.json")).unwrap();
+        for fixture in cases.as_array().unwrap() {
+            let result = parse_custom_launch_arguments(fixture["source"].as_str());
+            if fixture["expected"].is_null() { assert!(result.is_err()); }
+            else { assert_eq!(serde_json::json!(result.unwrap()), fixture["expected"]); }
+        }
+        assert!(parse_custom_launch_arguments(None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn custom_arguments_deepseek_order_and_conflicts() {
+        for mode in ["web", "acp", "sdk", "sdk-minimal", "headless", "custom"] {
+            let mut options = deepseek_harness_options(mode);
+            options.task = Some("review repository".into());
+            options.profile = Some("tui-dev".into());
+            let generated = build_deepseek_harness_launch_arguments(Some(&options)).unwrap();
+            let custom = parse_custom_launch_arguments(Some("--verbose --verbose 'two words' ''")).unwrap();
+            validate_deepseek_custom_arguments(&custom).unwrap();
+            let combined = deepseek_harness_arguments_with_custom(Some(&options), &custom).unwrap();
+            let prefix = generated.len() - usize::from(mode == "headless");
+            assert_eq!(&combined[..prefix], &generated[..prefix]);
+            assert_eq!(&combined[prefix..prefix + custom.len()], &custom);
+            if mode == "headless" { assert_eq!(combined.last(), generated.last()); }
+        }
+        for option in ["--profile", "--patch", "--host", "--port", "--trusted-host", "--no-open", "--open"] {
+            assert!(validate_deepseek_custom_arguments(&[option.into()]).is_err());
+            assert!(validate_deepseek_custom_arguments(&[format!("{option}=value")]).is_err());
+        }
+    }
+
+    #[test]
+    fn custom_arguments_windows_encoded_launch_preserves_script_execution_policy() {
+        use base64::Engine;
+        let directory = Path::new(r"C:\Users\Test User\project's [work]");
+        let custom = vec!["two words".into(), String::new(), "$(x); & | 'quoted'".into()];
+        for executable in ["client.ps1", "client.PS1", "client.exe"] {
+            let (program, forwarded) = windows_literal_cli_invocation(Path::new(executable), &custom).unwrap();
+            for terminal in ["auto", "powershell", "cmd", "windows-terminal"] {
+                let values = windows_encoded_cli_launch_arguments(&program, directory, &forwarded, terminal);
+                let mut expected = vec!["-NoLogo", "-NoProfile"];
+                if terminal != "cmd" {
+                    expected.push("-NoExit");
+                }
+                if executable != "client.exe" {
+                    expected.extend(["-ExecutionPolicy", "Bypass"]);
+                }
+                expected.push("-EncodedCommand");
+                assert_eq!(&values[..values.len() - 1], &expected, "{terminal}: {executable}");
+                let bytes = base64::engine::general_purpose::STANDARD.decode(values.last().unwrap()).unwrap();
+                let script = String::from_utf16(&bytes.chunks_exact(2).map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]])).collect::<Vec<_>>()).unwrap();
+                assert_eq!(script, windows_powershell_cli_script(&program, directory, &custom));
+                assert_eq!(script.contains("$cpaLaunchArguments = @("), executable != "client.exe");
+                assert!(!script.contains("Set-ExecutionPolicy"));
+            }
+        }
+    }
+
+    #[test]
+    fn custom_arguments_windows_wrappers_encode_shell_data() {
+        use base64::Engine;
+        let directory = env::temp_dir().join(format!("cpa-literal-wrapper-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let unknown = directory.join("unknown.cmd");
+        fs::write(&unknown, "@echo off\r\necho %*\r\n").unwrap();
+        assert!(windows_literal_cli_invocation(&unknown, &["%PATH%".into()]).is_err());
+        let shim = directory.join("known.cmd");
+        fs::write(&shim, "@echo off\r\n\"%dp0%\\node.exe\" \"%dp0%\\entry.js\" %*\r\n").unwrap();
+        fs::write(directory.join("node.exe"), []).unwrap();
+        fs::write(directory.join("entry.js"), []).unwrap();
+        let arguments = vec!["%PATH% !bang! $(x); & | `x`".into(), String::new(), "a\"b".into(), "C:\\path with spaces\\".into()];
+        let (program, forwarded) = windows_literal_cli_invocation(&shim, &arguments).unwrap();
+        assert_eq!(program, directory.join("node.exe"));
+        assert_eq!(&forwarded[1..], &arguments);
+        let script = windows_powershell_cli_script(&program, &directory, &arguments);
+        let encoded = windows_encoded_script(&script);
+        let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
+        assert_eq!(String::from_utf16(&bytes.chunks_exact(2).map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]])).collect::<Vec<_>>()).unwrap(), script);
+        assert!(script.contains("ProcessStartInfo"));
+        assert!(script.contains("UseShellExecute = $false"));
+        assert!(script.contains(r#"\"a\"b\""#.trim_matches('\\')) == false);
+        assert!(script.contains(r#""" "a\"b" "C:\path with spaces\\""#));
+        let script = windows_powershell_cli_script(&directory.join("client.ps1"), &directory, &arguments);
+        assert!(script.contains("$cpaLaunchArguments = @("));
+        assert!(script.contains(", '', 'a\"b', 'C:\\path with spaces\\'"));
+        assert!(!script.contains(" -File "));
+        #[cfg(windows)]
+        for terminal in ["auto", "powershell", "cmd"] {
+            let command = windows_cli_launch_command(&shim, "fixture", &directory, &arguments, terminal).unwrap();
+            let values = command.get_args().map(|value| value.to_string_lossy().into_owned()).collect::<Vec<_>>();
+            let encoded = values.last().unwrap();
+            let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
+            let script = String::from_utf16(&bytes.chunks_exact(2).map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]])).collect::<Vec<_>>()).unwrap();
+            assert!(script.contains("ProcessStartInfo"));
+            assert!(script.contains("UseShellExecute = $false"));
+            assert!(!values[..values.len() - 1].iter().any(|value| value.contains("%PATH%")));
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn custom_arguments_shell_transport_is_literal() {
+        let arguments = parse_custom_launch_arguments(Some("'$(exit 91)' '`exit 92`' ';' '&' '|' '日本語' '' 'a\"b' \"it's literal\" 'C:\\Program Files\\' '%PATH%' '!test!'")).unwrap();
+        let source = format!("printf '%s\\0' {}", arguments.iter().map(|value| shell_single_quote(value)).collect::<Vec<_>>().join(" "));
+        let output = Command::new("sh").args(["-c", &source]).output().unwrap();
+        assert!(output.status.success());
+        let received = output.stdout.split(|value| *value == 0).collect::<Vec<_>>();
+        assert_eq!(&received[..received.len() - 1], arguments.iter().map(|value| value.as_bytes()).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn codex_cli_windows_wrapper_uses_resolved_node_and_preserves_literal_arguments() {
+        let root = crate::unique_test_temp_path("codex-cli-node-wrapper");
+        fs::create_dir_all(&root).unwrap();
+        let wrapper = root.join("codex shim.cmd");
+        let script = root.join("codex entry.js");
+        let node = root.join("node runtime.exe");
+        fs::write(&wrapper, "@echo off\r\nnode \"%dp0%/codex entry.js\" %*\r\n").unwrap();
+        fs::write(&script, "").unwrap();
+        fs::write(&node, "").unwrap();
+        let arguments = vec!["a b".to_string(), "&literal".to_string(), "\"quoted\"".to_string()];
+        let (program, forwarded) = windows_literal_cli_invocation_with_node(&wrapper, &arguments, Some(&node)).unwrap();
+        assert_eq!(program, node);
+        assert_eq!(forwarded[0], path_to_string(&script));
+        assert_eq!(&forwarded[1..], arguments);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_cli_daemon_command_preserves_executable_arguments_and_path() {
+        use std::os::unix::fs::PermissionsExt;
+        if let Some(root) = env::var_os("CPA_CODEX_DAEMON_TEST_HOME") {
+            let root = PathBuf::from(root);
+            let missing = root.join("missing");
+            let error = codex_cli_daemon_command(&root, Some(&missing), "version").unwrap_err();
+            assert!(error.contains("configured CLI path"), "{error}");
+            assert!(!root.join("fallback.calls").exists());
+            return;
+        }
+        let root = env::temp_dir().join(format!("cpa-daemon-command-{}-{}", std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir_all(&root).unwrap();
+        let executable = root.join("codex fixture");
+        fs::write(&executable, b"#!/bin/sh\nprintf 'codex-cli 1.2.3\\n'\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        for action in ["version", "restart"] {
+            let command = codex_cli_daemon_command(&root, Some(&executable), action).unwrap();
+            assert_eq!(command.get_program(), executable.as_os_str());
+            let arguments = command.get_args().map(|arg| arg.to_str().unwrap()).collect::<Vec<_>>();
+            assert_eq!(arguments, ["app-server", "daemon", action]);
+            let path = command.get_envs().find(|(key, _)| *key == "PATH").unwrap().1.unwrap();
+            assert_eq!(env::split_paths(path).next().unwrap(), root);
+        }
+        let fallback = root.join("codex");
+        fs::write(&fallback, b"#!/bin/sh\nprintf 'called\\n' >> \"$HOME/fallback.calls\"\nprintf 'codex-cli 9.9.9\\n'\n").unwrap();
+        fs::set_permissions(&fallback, fs::Permissions::from_mode(0o755)).unwrap();
+        let output = Command::new(env::current_exe().unwrap())
+            .args(["--exact", "agents::launch::tests::codex_cli_daemon_command_preserves_executable_arguments_and_path", "--nocapture"])
+            .env_clear()
+            .env("CPA_CODEX_DAEMON_TEST_HOME", &root)
+            .env("HOME", &root)
+            .env("PATH", &root)
+            .output().unwrap();
+        fs::remove_dir_all(root).unwrap();
+        assert!(output.status.success(), "{}\n{}",
+            String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    }
+
+    #[test]
+    fn codex_cli_daemon_restart_allows_one_restart_at_a_time() {
+        let guard = begin_codex_cli_daemon_restart().unwrap();
+        assert!(begin_codex_cli_daemon_restart().is_none());
+        drop(guard);
+        assert!(begin_codex_cli_daemon_restart().is_some());
+    }
+
+    #[test]
+    fn codex_cli_daemon_status_requires_valid_running_response() {
+        assert!(parse_codex_cli_daemon_status(true, br#"{"status":"running"}"#, b"").unwrap());
+        for response in [
+            b"not JSON".as_slice(),
+            br#"{}"#,
+            br#"{"status":"unknown"}"#,
+            br#"{"status":"stopped"}"#,
+        ] {
+            assert!(parse_codex_cli_daemon_status(true, response, b"").is_err());
+        }
+    }
+
+    #[test]
+    fn codex_cli_daemon_status_recognizes_only_stopped_socket_errors() {
+        for code in [2, 61, 111, 10061] {
+            let detail = format!("Error: failed to connect to fixture/app-server-control.sock\n\nCaused by:\n    localized OS message (os error {code})");
+            assert!(!parse_codex_cli_daemon_status(false, b"", detail.as_bytes()).unwrap());
+            let unrelated = format!("failed to read config.toml (os error {code})");
+            assert!(parse_codex_cli_daemon_status(false, b"", unrelated.as_bytes()).is_err());
+        }
+    }
+
+    #[test]
+    fn codex_cli_daemon_status_preserves_unsupported_and_runtime_errors() {
+        for detail in [
+            "error: unrecognized subcommand 'daemon'",
+            "Error: daemon management is not supported on this platform",
+            "Error: failed to connect to fixture/app-server-control.sock: permission denied (os error 13)",
+            "Error: failed to connect to fixture/app-server-control.sock: network subsystem failed (os error 10050)",
+        ] {
+            let error = parse_codex_cli_daemon_status(false, b"", detail.as_bytes()).unwrap_err();
+            assert!(error.contains(detail));
+        }
+        let error = parse_codex_cli_daemon_status(false, b"stdout-only diagnostic", b"").unwrap_err();
+        assert!(error.contains("stdout-only diagnostic"));
+    }
+
+    #[test]
+    fn manual_desktop_paths_drive_detection_and_restart_without_replacing_cli_paths() {
+        let root = env::temp_dir().join(format!("cpa-manual-desktop-{}-{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir_all(&root).unwrap();
+        let desktop = root.join("Custom Desktop.exe");
+        #[cfg(unix)]
+        let cli = root.join("custom-cli.exe");
+        fs::write(&desktop, b"desktop fixture").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::write(&cli, "#!/bin/sh\nprintf 'codex-cli 1.2.3\\n'\n").unwrap();
+            fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        #[cfg(windows)]
+        let cli = {
+            let cli = root.join("custom-cli.cmd");
+            fs::write(&cli, "@echo off\r\necho codex-cli 1.2.3\r\n").unwrap();
+            cli
+        };
+        for client in [AgentClient::Codex, AgentClient::OpenCode, AgentClient::DeepSeekHarness] {
+            let status = inspect_agent_config_with_executables(client, &root, 8317, "test-key", Some(&cli), Some(&desktop));
+            assert!(status.installed, "{}", client.name());
+            assert!(status.launch_targets.iter().any(|target| target.id == "app"), "{}", client.name());
+            let cli_target = status.launch_targets.iter().find(|target| target.id == "cli").unwrap();
+            assert!(cli_target.detail.contains("custom-cli."));
+            assert!(!cli_target.detail.contains("Custom Desktop.exe"));
+        }
+        for client in [AgentClient::ClaudeDesktop, AgentClient::ZCode, AgentClient::WorkBuddy] {
+            let status = inspect_agent_config_with_executables(client, &root, 8317, "test-key", Some(&desktop), None);
+            assert!(status.installed, "{}", client.name());
+            assert_eq!(status.launch_targets.len(), 1);
+            assert_eq!(status.launch_targets[0].id, "app");
+            assert_eq!(status.launch_targets[0].detail, path_to_string(&desktop));
+        }
+        for client in [AgentClient::Codex, AgentClient::OpenCode, AgentClient::ClaudeDesktop,
+            AgentClient::ZCode, AgentClient::WorkBuddy, AgentClient::DeepSeekHarness] {
+            match find_desktop_restart_target(client, &root, Some(&desktop)).unwrap() {
+                DesktopAppTarget::Application(path) => assert_eq!(path, desktop),
+                #[cfg(target_os = "windows")]
+                DesktopAppTarget::WindowsAppId(_) => panic!("manual path must take precedence"),
+            }
+        }
+        assert!(manual_desktop_path(Some(&root.join("missing.exe"))).is_none());
+        assert!(manual_desktop_path(Some(&root)).is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn deepseek_harness_options(mode: &str) -> DeepSeekHarnessLaunchOptions {
+        DeepSeekHarnessLaunchOptions {
+            mode: mode.to_string(),
+            web_host: None,
+            web_port: None,
+            open_browser: None,
+            trusted_hosts: Vec::new(),
+            task: None,
+            profile: None,
+            patches: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn unknown_terminal_defaults_to_automatic() {
+        assert_eq!(
+            normalize_agent_terminal("missing-terminal"),
+            DEFAULT_AGENT_TERMINAL
+        );
+        assert_eq!(normalize_agent_terminal(" auto "), "auto");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_auto_cli_uses_a_persistent_shell_for_native_and_batch_clients() {
+        let directory = Path::new(r"C:\Users\Test User\project's [work]");
+        for executable in [
+            r"C:\Tools\Claude Code\claude.exe",
+            r"C:\Tools\Claude Code\claude.cmd",
+            r"C:\Tools\Claude Code\claude.BAT",
+            r"C:\Tools\Claude Code\claude.PS1",
+        ] {
+            for terminal in ["auto", "powershell"] {
+                let command = windows_cli_launch_command(
+                    Path::new(executable), "Claude Code", directory, &[], terminal,
+                ).unwrap();
+                let arguments = command.get_args().map(|arg| arg.to_string_lossy().into_owned()).collect::<Vec<_>>();
+                if executable.ends_with(".cmd") || executable.ends_with(".BAT") {
+                    assert_eq!(command.get_program(), windows_command_processor().as_os_str());
+                    assert_eq!(&arguments[..3], ["/D", "/K", "call"]);
+                    assert_eq!(arguments[3], windows_batch_executable_argument(Path::new(executable)));
+                    continue;
+                }
+                assert_eq!(command.get_program(), windows_powershell_executable().as_os_str());
+                if executable.ends_with(".PS1") {
+                    assert_eq!(arguments, ["-NoLogo", "-NoProfile", "-NoExit", "-ExecutionPolicy", "Bypass", "-File", executable]);
+                    continue;
+                }
+                assert_eq!(&arguments[..4], ["-NoLogo", "-NoProfile", "-NoExit", "-Command"]);
+                assert!(arguments[4].contains("Set-Location -LiteralPath 'C:\\Users\\Test User\\project''s [work]'"));
+                assert!(arguments[4].contains("System.Diagnostics.ProcessStartInfo"));
+                assert!(arguments[4].contains("WaitForExit()"));
+                assert!(!arguments[4].contains("Write-Host"));
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_auto_cli_preserves_directory_arguments_and_environment() {
+        let directory = env::temp_dir().join(format!(
+            "cpa-cli-launch-{}-{}", std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(),
+        )).join("project's [work]");
+        fs::create_dir_all(&directory).unwrap();
+        let powershell = directory.join("test client.ps1");
+        fs::write(&powershell, "[Console]::WriteLine([Environment]::CurrentDirectory); [Console]::WriteLine($args[0]); [Console]::WriteLine($env:CPA_LAUNCH_TEST)").unwrap();
+        let native = windows_powershell_executable();
+        for (executable, arguments) in [
+            (powershell, vec!["two words".to_string()]),
+            (native, vec!["-NoProfile".into(), "-Command".into(),
+                "[Console]::WriteLine([Environment]::CurrentDirectory); [Console]::WriteLine('two words'); [Console]::WriteLine($env:CPA_LAUNCH_TEST)".into()]),
+        ] {
+            let interactive = windows_cli_launch_command(
+                &executable, "test client", &directory, &arguments, "auto",
+            ).unwrap();
+            // Run the same startup script without keeping a test shell open.
+            let mut command = if interactive.get_program() == windows_command_processor().as_os_str() {
+                let mut command = windows_command_for_executable(&executable, false);
+                command.args(&arguments);
+                command
+            } else {
+                let mut command = Command::new(interactive.get_program());
+                command.args(interactive.get_args().filter(|arg| *arg != "-NoExit"));
+                command
+            };
+            command.current_dir(&directory).env("CPA_LAUNCH_TEST", "launch-fixture");
+            configure_background_command(&mut command);
+            let output = command_output_with_timeout(&mut command, Duration::from_secs(20))
+                .unwrap().expect("launch fixture timed out");
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let lines = stdout.lines().collect::<Vec<_>>();
+            assert_eq!(lines, [path_to_string(&directory).as_str(), "two words", "launch-fixture"]);
+        }
+        fs::remove_dir_all(directory.parent().unwrap()).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_waits_for_gui_helpers_and_preserves_arguments() {
+        let directory = env::temp_dir()
+            .join(format!(
+                "cpa-powershell-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+            ))
+            .join("User's [workspace] $value");
+        fs::create_dir_all(&directory).unwrap();
+        let executable = directory.join("GUI helper.exe");
+        let compiled = directory.parent().unwrap().join("helper.exe");
+        let source = r#"
+using System;
+using System.IO;
+using System.Text;
+using System.Threading;
+class GuiHelper {
+    static void Main(string[] args) {
+        Thread.Sleep(350);
+        File.WriteAllLines(Path.Combine(Environment.CurrentDirectory, "arguments.txt"), Array.ConvertAll(args, value => Convert.ToBase64String(Encoding.UTF8.GetBytes(value))));
+        File.WriteAllText(Path.Combine(Environment.CurrentDirectory, "finished.txt"), "done");
+    }
+}
+"#;
+        let script = format!(
+            "Add-Type -TypeDefinition {} -OutputAssembly {} -OutputType WindowsApplication -ErrorAction Stop",
+            windows_powershell_single_quoted_literal(source),
+            windows_powershell_single_quoted_literal(&path_to_string(&compiled)),
+        );
+        let run = |script: &str| {
+            let mut command = Command::new(windows_powershell_executable());
+            command.args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                script,
+            ]);
+            configure_background_command(&mut command);
+            let result = command_output_with_timeout(&mut command, Duration::from_secs(20))
+                .unwrap()
+                .expect("PowerShell timed out");
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        };
+        run(&script);
+        fs::rename(compiled, &executable).unwrap();
+        for helper_flag in ["--cpa-antigravity-cli", "--cpa-copilot-cli", "--user-option"] {
+            let mut arguments = vec![
+                helper_flag.into(),
+                path_to_string(&directory),
+                "trailing slash \\".into(),
+                "quote \" and \\\"".into(),
+                "literal $value & [x] 'quoted'".into(),
+                String::new(),
+            ];
+            let cases: serde_json::Value = serde_json::from_str(include_str!("../../../../../tests/fixtures/cli-arguments.json")).unwrap();
+            for fixture in cases.as_array().unwrap() {
+                if let Some(expected) = fixture["expected"].as_array() {
+                    arguments.extend(expected.iter().map(|value| value.as_str().unwrap().to_string()));
+                }
+            }
+            let script = format!(
+                "{}; if (![IO.File]::Exists({})) {{ throw 'GUI helper is still running' }}",
+                windows_powershell_cli_script(&executable, &directory, &arguments),
+                windows_powershell_single_quoted_literal(&path_to_string(
+                    &directory.join("finished.txt")
+                )),
+            );
+            run(&script);
+            let received = fs::read_to_string(directory.join("arguments.txt")).unwrap();
+            use base64::Engine;
+            let received = received.lines().map(|line| String::from_utf8(base64::engine::general_purpose::STANDARD.decode(line).unwrap()).unwrap()).collect::<Vec<_>>();
+            assert_eq!(
+                received,
+                arguments
+            );
+            fs::remove_file(directory.join("finished.txt")).unwrap();
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn desktop_process_matching_is_scoped_to_the_exact_bundle() {
+        let application = Path::new("/Applications/Claude Desktop.app/Contents/MacOS/Claude");
+        let processes = "10 /Applications/Claude Desktop.app/Contents/MacOS/Claude\n11 /Applications/Claude Desktop.app/Contents/Frameworks/Helper.app/Contents/MacOS/Helper\n12 /Applications/Claude Desktop.app.old/Contents/MacOS/Claude\n13 /Users/test/Claude Desktop.app/Contents/MacOS/Claude\n14 /usr/local/bin/claude\n";
+        assert_eq!(
+            desktop_process_ids_from_ps(processes, application),
+            vec![10, 11]
+        );
+        assert!(desktop_process_ids_from_ps(
+            "bad input\n-1 /opt/desktop",
+            Path::new("/opt/desktop")
+        )
+        .is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn desktop_restart_matching_is_scoped_to_the_exact_installation() {
+        let claude = PathBuf::from(r"C:\Apps\Claude's Desktop\Claude.exe");
+        assert!(windows_process_matches_stop_target(
+            &claude,
+            Some(&claude),
+            None,
+            &[],
+        ));
+        assert!(!windows_process_matches_stop_target(
+            Path::new(r"C:\Apps\Claude's Desktop.old\Claude.exe"),
+            Some(&claude),
+            None,
+            &[],
+        ));
+        let zcode = PathBuf::from(r"C:\Apps\ZCode\ZCode.exe");
+        assert!(windows_process_matches_stop_target(
+            &zcode,
+            Some(&zcode),
+            None,
+            &[]
+        ));
+        let store_root = PathBuf::from(r"C:\Program Files\WindowsApps\Anthropic.Claude_family");
+        assert!(windows_process_matches_stop_target(
+            &store_root.join("Claude.exe"),
+            None,
+            Some(&store_root),
+            &[],
+        ));
+        assert!(!windows_process_matches_stop_target(
+            Path::new(r"C:\Program Files\WindowsApps\Other\Claude.exe"),
+            None,
+            Some(&store_root),
+            &[],
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "helper launched only by the isolated desktop restart test"]
+    fn desktop_restart_test_process() {
+        if let Some(marker) = env::var_os("CPA_DESKTOP_RESTART_TEST_MARKER") {
+            fs::write(marker, "ready").unwrap();
+            thread::sleep(Duration::from_secs(30));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn desktop_stop_waits_for_only_the_selected_installation() {
+        struct Processes {
+            children: Vec<Child>,
+            directory: PathBuf,
+        }
+        impl Drop for Processes {
+            fn drop(&mut self) {
+                for child in &mut self.children {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                let _ = fs::remove_dir_all(&self.directory);
+            }
+        }
+        let directory = env::temp_dir().join(format!(
+            "cpa-desktop-restart-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let executable = env::current_exe().unwrap();
+        let target = directory.join("DesktopTest.exe");
+        fs::copy(&executable, &target).unwrap();
+        let mut processes = Processes {
+            children: Vec::new(),
+            directory,
+        };
+        for (index, application) in [&target, &executable].into_iter().enumerate() {
+            let marker = processes.directory.join(format!("ready-{index}"));
+            let mut command = Command::new(application);
+            command
+                .args([
+                    "--exact",
+                    "agents::launch::tests::desktop_restart_test_process",
+                    "--ignored",
+                ])
+                .env("CPA_DESKTOP_RESTART_TEST_MARKER", &marker)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            configure_background_command(&mut command);
+            processes.children.push(command.spawn().unwrap());
+            for _ in 0..100 {
+                if marker.exists() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            assert!(marker.exists(), "desktop helper did not start");
+        }
+        let installation = DesktopAppTarget::Application(target);
+        stop_other_desktop(&installation, "Test Desktop").unwrap();
+        assert!(processes.children[0].try_wait().unwrap().is_some());
+        assert!(
+            processes.children[1].try_wait().unwrap().is_none(),
+            "unrelated installation must keep running"
+        );
+        stop_other_desktop(&installation, "Test Desktop").unwrap();
+    }
+
+    struct HarnessRestartFixture {
+        state: DeepSeekHarnessProcessState,
+        directory: PathBuf,
+    }
+
+    impl Drop for HarnessRestartFixture {
+        fn drop(&mut self) {
+            let _ = stop_managed_deepseek_harness(&self.state);
+            let _ = fs::remove_dir_all(&self.directory);
+        }
+    }
+
+    fn harness_restart_fixture() -> HarnessRestartFixture {
+        let directory = env::temp_dir().join(format!(
+            "cpa-harness-restart-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        #[cfg(windows)]
+        let (executable, arguments) = (windows_powershell_executable(), vec![
+            "-NoLogo".to_string(), "-NoProfile".to_string(), "-NonInteractive".to_string(), "-Command".to_string(),
+            "[IO.File]::AppendAllText((Join-Path (Get-Location).Path 'launches.txt'), ((Get-Location).Path + [Environment]::NewLine)); Start-Sleep -Seconds 60".to_string(),
+        ]);
+        #[cfg(unix)]
+        let (executable, arguments) = (
+            PathBuf::from("/bin/sh"),
+            vec![
+                "-c".to_string(),
+                "pwd >> launches.txt; sleep 60".to_string(),
+            ],
+        );
+        let mut arguments = arguments;
+        arguments.extend(parse_custom_launch_arguments(Some("'' 'two words' 'a\"b' 'C:\\workspace\\' '--verbose' '--verbose'")).unwrap());
+        let mut options = deepseek_harness_options("web");
+        options.web_port = Some(0);
+        options.trusted_hosts = vec!["localhost".to_string()];
+        options.patches = vec!["preserve a value with spaces".to_string()];
+        let fixture = HarnessRestartFixture {
+            state: DeepSeekHarnessProcessState::default(),
+            directory,
+        };
+        launch_managed_deepseek_harness(
+            &fixture.state,
+            &executable,
+            &fixture.directory,
+            &arguments,
+            "web",
+            Some(&options),
+        )
+        .unwrap();
+        wait_for_harness_launches(&fixture, 1);
+        fixture
+    }
+
+    fn wait_for_harness_launches(fixture: &HarnessRestartFixture, expected: usize) {
+        for _ in 0..100 {
+            if fs::read_to_string(fixture.directory.join("launches.txt"))
+                .unwrap_or_default()
+                .lines()
+                .count()
+                >= expected
+            {
+                return;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        panic!("test process did not record launch {expected}");
+    }
+
+    #[test]
+    fn harness_web_restart_preserves_snapshot_and_serializes_stop_and_spawn() {
+        let fixture = harness_restart_fixture();
+        let old_pid = fixture.state.status().unwrap().pid;
+        let snapshot = fixture
+            .state
+            .process
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .launch
+            .clone();
+        let status = restart_managed_deepseek_harness_with(
+            &fixture.state,
+            |child| {
+                assert!(fixture.state.process.try_lock().is_err());
+                terminate_deepseek_harness_process_tree(child)
+            },
+            |executable, directory, arguments| {
+                assert!(fixture.state.process.try_lock().is_err());
+                assert_eq!(executable, snapshot.executable);
+                assert_eq!(directory, snapshot.working_directory);
+                assert_eq!(arguments, snapshot.arguments);
+                spawn_managed_deepseek_harness(executable, directory, arguments)
+            },
+        )
+        .unwrap();
+        assert!(status.running);
+        assert_ne!(status.pid, old_pid);
+        wait_for_harness_launches(&fixture, 2);
+        let launches = fs::read_to_string(fixture.directory.join("launches.txt")).unwrap();
+        let lines = launches.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], lines[1]);
+        let process = fixture.state.process.lock().unwrap();
+        let options = process.as_ref().unwrap().launch.options.as_ref().unwrap();
+        assert_eq!(options.web_port, Some(0));
+        assert_eq!(options.trusted_hosts, vec!["localhost"]);
+        assert_eq!(options.patches, vec!["preserve a value with spaces"]);
+    }
+
+    #[test]
+    fn harness_restart_stop_failure_retains_process_and_does_not_spawn() {
+        let fixture = harness_restart_fixture();
+        let pid = fixture.state.status().unwrap().pid;
+        let result = restart_managed_deepseek_harness_with(
+            &fixture.state,
+            |_| Err("stop failed".to_string()),
+            |_, _, _| panic!("must not spawn after stop failure"),
+        );
+        assert_eq!(result.unwrap_err(), "stop failed");
+        assert_eq!(fixture.state.status().unwrap().pid, pid);
+    }
+
+    #[test]
+    fn harness_restart_spawn_failure_reports_stopped_state() {
+        let fixture = harness_restart_fixture();
+        let result = restart_managed_deepseek_harness_with(
+            &fixture.state,
+            terminate_deepseek_harness_process_tree,
+            |_, _, _| Err("spawn failed".to_string()),
+        );
+        assert_eq!(result.unwrap_err(), "spawn failed");
+        assert!(!fixture.state.status().unwrap().running);
+    }
+
+    #[test]
+    fn harness_restart_rejects_missing_or_non_web_process_without_stopping_it() {
+        assert!(restart_managed_deepseek_harness(&DeepSeekHarnessProcessState::default()).is_err());
+        let fixture = harness_restart_fixture();
+        let pid = fixture.state.status().unwrap().pid;
+        fixture.state.process.lock().unwrap().as_mut().unwrap().mode = "headless".to_string();
+        assert!(restart_managed_deepseek_harness(&fixture.state)
+            .unwrap_err()
+            .contains("Web"));
+        assert_eq!(fixture.state.status().unwrap().pid, pid);
+    }
+
+    #[test]
+    fn relative_launch_directory_is_rejected() {
+        let error = resolve_launch_directory(Some("relative/project"), Path::new("/fallback"))
+            .expect_err("relative path should be rejected");
+        assert!(error.contains("absolute path"));
+    }
+
+    #[test]
+    fn omitted_launch_directory_uses_fallback() {
+        let fallback = if cfg!(target_os = "windows") {
+            Path::new(r"C:\Users\tester")
+        } else {
+            Path::new("/home/tester")
+        };
+        assert_eq!(resolve_launch_directory(None, fallback).unwrap(), fallback);
+    }
+
+    #[test]
+    fn deepseek_harness_launch_selects_the_web_profile() {
+        assert_eq!(
+            agent_cli_launch_arguments(AgentClient::DeepSeekHarness, None).unwrap(),
+            ["web"]
+        );
+        assert!(agent_cli_launch_arguments(AgentClient::Codex, None)
+            .unwrap()
+            .is_empty());
+
+        let targets = agent_launch_targets(
+            AgentClient::DeepSeekHarness,
+            Some(Path::new("dsh")),
+            Some("0.1.2-rc.1"),
+            false,
+        );
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].id, "cli");
+        assert_eq!(targets[0].label, "DeepSeek Harness Web");
+        assert_eq!(targets[0].detail, "dsh web");
+    }
+
+    #[test]
+    fn deepseek_harness_web_launch_arguments_include_supported_options() {
+        let mut options = deepseek_harness_options("web");
+        options.web_host = Some("127.0.0.1".to_string());
+        options.web_port = Some(0);
+        options.open_browser = Some(false);
+        options.trusted_hosts = vec!["localhost:3000".to_string(), "example.test".to_string()];
+        options.patches = vec!["./extra.yml".to_string()];
+
+        assert_eq!(
+            build_deepseek_harness_launch_arguments(Some(&options)).unwrap(),
+            [
+                "web",
+                "--patch",
+                "./extra.yml",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "0",
+                "--no-open",
+                "--trusted-host",
+                "localhost:3000",
+                "--trusted-host",
+                "example.test",
+            ]
+        );
+    }
+
+    #[test]
+    fn deepseek_harness_non_web_profiles_build_expected_arguments() {
+        for mode in ["acp", "sdk", "sdk-minimal"] {
+            let options = deepseek_harness_options(mode);
+            assert_eq!(
+                build_deepseek_harness_launch_arguments(Some(&options)).unwrap(),
+                ["--profile", mode]
+            );
+        }
+
+        let mut headless = deepseek_harness_options("headless");
+        headless.task = Some("review this repository".to_string());
+        assert_eq!(
+            build_deepseek_harness_launch_arguments(Some(&headless)).unwrap(),
+            ["--profile", "headless", "review this repository"]
+        );
+
+        let mut custom = deepseek_harness_options("custom");
+        custom.profile = Some("tui-dev".to_string());
+        assert_eq!(
+            build_deepseek_harness_launch_arguments(Some(&custom)).unwrap(),
+            ["--profile", "tui-dev"]
+        );
+    }
+
+    #[test]
+    fn deepseek_harness_launch_options_reject_missing_required_values() {
+        let headless = deepseek_harness_options("headless");
+        assert!(build_deepseek_harness_launch_arguments(Some(&headless)).is_err());
+
+        let custom = deepseek_harness_options("custom");
+        assert!(build_deepseek_harness_launch_arguments(Some(&custom)).is_err());
+
+        let options = deepseek_harness_options("web");
+        assert!(agent_cli_launch_arguments(AgentClient::Codex, Some(&options)).is_err());
+    }
+
+    #[test]
+    fn managed_deepseek_harness_state_stops_only_its_tracked_process() {
+        #[cfg(windows)]
+        let child = {
+            let mut command = Command::new(windows_powershell_executable());
+            command.args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Start-Sleep -Seconds 30",
+            ]);
+            configure_background_command(&mut command);
+            command.spawn().unwrap()
+        };
+        #[cfg(unix)]
+        let child = {
+            use std::os::unix::process::CommandExt;
+
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 30"]).process_group(0);
+            command.spawn().unwrap()
+        };
+
+        let state = DeepSeekHarnessProcessState::default();
+        let tracked_pid = child.id();
+        *state.process.lock().unwrap() = Some(ManagedDeepSeekHarnessProcess {
+            child,
+            mode: "test".to_string(),
+            launch: DeepSeekHarnessLaunchSnapshot {
+                executable: PathBuf::new(),
+                working_directory: PathBuf::new(),
+                arguments: Vec::new(),
+                options: None,
+            },
+        });
+
+        let running = state.status().unwrap();
+        assert!(running.running);
+        assert_eq!(running.pid, Some(tracked_pid));
+        assert_eq!(running.mode.as_deref(), Some("test"));
+
+        stop_managed_deepseek_harness(&state).unwrap();
+        assert!(!state.status().unwrap().running);
+    }
+
+    #[test]
+    fn deepseek_harness_web_launch_rejects_an_occupied_port() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut options = deepseek_harness_options("web");
+        options.web_port = Some(port);
+
+        let error = ensure_deepseek_harness_web_endpoint_available(Some(&options)).unwrap_err();
+
+        assert!(error.contains("is in use"), "{error}");
+    }
+
+    #[test]
+    fn deepseek_harness_web_launch_allows_random_ports() {
+        let mut options = deepseek_harness_options("web");
+        options.web_port = Some(0);
+
+        ensure_deepseek_harness_web_endpoint_available(Some(&options)).unwrap();
+    }
+
+    #[test]
+    fn codex_exposes_independent_app_and_cli_targets() {
+        let executable = Path::new("codex");
+        let targets =
+            agent_launch_targets(AgentClient::Codex, Some(executable), Some("1.0.0"), true);
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| target.id.as_str())
+                .collect::<Vec<_>>(),
+            ["app", "cli"]
+        );
+    }
+
+    #[test]
+    fn opencode_desktop_is_available_without_a_cli() {
+        let targets = agent_launch_targets(AgentClient::OpenCode, None, None, true);
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| target.id.as_str())
+                .collect::<Vec<_>>(),
+            ["app"]
+        );
+        assert_eq!(targets[0].label, "OpenCode Desktop");
+    }
+
+    #[test]
+    fn opencode_keeps_the_cli_as_the_default_when_both_are_installed() {
+        let executable = Path::new("opencode");
+        let targets = agent_launch_targets(AgentClient::OpenCode, Some(executable), None, true);
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| target.id.as_str())
+                .collect::<Vec<_>>(),
+            ["cli", "app"]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn opencode_linux_restart_matches_the_exact_appimage_environment() {
+        let directory = env::temp_dir().join(format!(
+            "cpa-opencode-linux-restart-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let application = directory.join("opencode-desktop-linux-amd64.AppImage");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(&application, []).unwrap();
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .env("APPIMAGE", &application)
+            .spawn()
+            .unwrap();
+        thread::sleep(Duration::from_millis(100));
+
+        stop_opencode_desktop(&application).unwrap();
+        child.wait().unwrap();
+        assert!(child.try_wait().unwrap().is_some());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn desktop_and_cli_clients_get_the_correct_target_kind() {
+        let executable = Path::new("agent");
+        let zcode =
+            agent_launch_targets(AgentClient::ZCode, Some(executable), Some("1.0.0"), false);
+        let kimi = agent_launch_targets(AgentClient::KimiCode, Some(executable), None, false);
+        assert_eq!(zcode[0].id, "app");
+        assert_eq!(kimi[0].id, "cli");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn codex_restart_matching_is_scoped_to_the_detected_installation() {
+        let executable = PathBuf::from(r"C:\Apps\Codex\Codex.exe");
+        assert!(windows_process_matches_stop_target(
+            &executable,
+            Some(&executable),
+            None,
+            &["ChatGPT.exe", "Codex.exe"],
+        ));
+        assert!(!windows_process_matches_stop_target(
+            Path::new(r"C:\Apps\Codex\helper.exe"),
+            Some(&executable),
+            None,
+            &["ChatGPT.exe", "Codex.exe"],
+        ));
+        let store_root = PathBuf::from(r"C:\Program Files\WindowsApps\OpenAI.Codex_123");
+        assert!(windows_process_matches_stop_target(
+            &store_root.join("ChatGPT.exe"),
+            None,
+            Some(&store_root),
+            &["ChatGPT.exe", "Codex.exe"],
+        ));
+        assert!(!windows_process_matches_stop_target(
+            Path::new(r"C:\Program Files\WindowsApps\Other\ChatGPT.exe"),
+            None,
+            Some(&store_root),
+            &["ChatGPT.exe", "Codex.exe"],
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn opencode_restart_matching_is_scoped_to_the_detected_installation() {
+        let application = PathBuf::from(
+            r"C:\Users\tester\AppData\Local\Programs\@opencode-aidesktop\OpenCode.exe",
+        );
+        assert!(windows_process_matches_stop_target(
+            &application,
+            Some(&application),
+            None,
+            &["OpenCode.exe"],
+        ));
+        assert!(!windows_process_matches_stop_target(
+            Path::new(r"C:\Users\tester\AppData\Local\Programs\other\OpenCode.exe"),
+            Some(&application),
+            None,
+            &["OpenCode.exe"],
+        ));
+    }
+}

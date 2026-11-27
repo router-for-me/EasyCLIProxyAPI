@@ -1,0 +1,47 @@
+[package]
+name = "ecpa-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Shared headless-capable core backend for EasyCLIProxyAPI"
+
+[dependencies]
+base64.workspace = true
+chrono.workspace = true
+ecpa-macros = { path = "../ecpa-macros" }
+flate2.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-rustls.workspace = true
+hyper-util.workspace = true
+json5.workspace = true
+notify.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_norway.workspace = true
+serde_yaml.workspace = true
+sha2.workspace = true
+shlex.workspace = true
+tar.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tokio-util.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+yaml-edit.workspace = true
+zip.workspace = true
+zstd.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true

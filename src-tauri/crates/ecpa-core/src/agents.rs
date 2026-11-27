@@ -1,0 +1,41 @@
+use super::*;
+
+pub(crate) mod backups;
+pub(crate) mod commands;
+mod configuration;
+pub(crate) mod deepseek_harness;
+mod deepseek_desktop;
+mod discovery;
+mod directories;
+pub(crate) mod environments;
+pub(crate) mod launch;
+pub(crate) mod native_oauth;
+mod state;
+pub(crate) mod system_prompts;
+pub(crate) mod templates;
+mod transactions;
+mod workbuddy;
+mod antigravity;
+mod copilot;
+pub(crate) mod zcode;
+#[cfg(target_os = "windows")]
+pub(crate) mod windows_probe;
+pub(crate) use backups::*;
+pub(crate) use commands::*;
+pub(crate) use configuration::*;
+pub(crate) use deepseek_harness::*;
+pub(crate) use deepseek_desktop::*;
+pub(crate) use discovery::*;
+pub(crate) use directories::*;
+pub(crate) use launch::*;
+pub(crate) use native_oauth::*;
+pub(crate) use state::*;
+pub(crate) use system_prompts::*;
+pub(crate) use templates::*;
+pub(crate) use transactions::*;
+pub(crate) use workbuddy::*;
+pub(crate) use antigravity::*;
+pub(crate) use copilot::*;
+pub(crate) use zcode::*;
+#[cfg(target_os = "windows")]
+pub(crate) use windows_probe::*;

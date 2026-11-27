@@ -50,12 +50,21 @@ export async function applyAppVersion(requestedVersion, {
   const previousVersion = parseCargoPackageVersion(contents, manifest);
 
   const nextContents = setCargoPackageVersion(contents, version, manifest);
-  const nextLockContents = setCargoLockPackageVersion(
+  let nextLockContents = setCargoLockPackageVersion(
     lockContents,
     'cpa-gui',
     version,
     lockfile,
   );
+  for (const member of ['ecpa-core', 'ecpa-web', 'ecpa-macros']) {
+    nextLockContents = setCargoLockPackageVersion(
+      nextLockContents,
+      member,
+      version,
+      lockfile,
+      { optional: true },
+    );
+  }
   const manifestChanged = nextContents !== contents;
   const lockfileChanged = nextLockContents !== lockContents;
   let manifestWriteAttempted = false;

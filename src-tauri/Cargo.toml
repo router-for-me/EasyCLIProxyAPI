@@ -1,15 +1,19 @@
-[package]
-name = "cpa-gui"
-# Single source of truth for the desktop app version.
+[workspace]
+resolver = "2"
+members = [
+    "crates/ecpa-macros",
+    "crates/ecpa-core",
+    "crates/ecpa-web",
+]
+default-members = ["."]
+
+[workspace.package]
+# Single source of truth for the app & workspace version.
 version = "0.3.121"
-description = "CPA desktop management shell"
-authors = ["lzt404"]
 edition = "2021"
+authors = ["lzt404"]
 
-[build-dependencies]
-tauri-build = { version = "2", features = [] }
-
-[dependencies]
+[workspace.dependencies]
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 flate2 = "1"
@@ -20,6 +24,7 @@ hyper = { version = "1", features = ["server", "http1"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "tls12", "ring"] }
 hyper-util = { version = "0.1", features = ["tokio", "server"] }
 json5 = "0.4"
+libc = "0.2"
 notify = "7"
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["gzip", "json", "multipart", "rustls-tls", "rustls-tls-native-roots", "socks", "stream"] }
@@ -34,39 +39,11 @@ serde_yaml = "0.9"
 sha2 = "0.10"
 shlex = "2"
 tar = "0.4"
-tauri = { version = "~2.12.4", features = ["macos-private-api", "tray-icon", "unstable"] }
-tauri-plugin-autostart = "2.7.0"
-tauri-plugin-dialog = "2.8.3"
-tauri-plugin-notification = "2.8.1"
-tauri-plugin-opener = "2.7.2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
 tokio-rustls = "0.26"
 tokio-util = "0.7"
 toml = "0.8"
 toml_edit = "0.20"
-yaml-edit = "0.3"
-zip = { version = "2", default-features = false, features = ["deflate"] }
-zstd = "0.13"
-
-[dev-dependencies]
-tauri = { version = "~2.12.4", features = ["test"] }
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-dbus = "0.9"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSEvent", "NSRunningApplication", "NSStatusItem"] }
-objc2-foundation = "0.3"
-window-vibrancy = "0.8.1"
-
-[target.'cfg(windows)'.dependencies]
-webview2-com = "0.39.1"
-windows = "0.62.2"
-window-vibrancy = "0.8.1"
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_Networking_WinHttp",
@@ -83,3 +60,77 @@ windows-sys = { version = "0.59", features = [
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
+yaml-edit = "0.3"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+zstd = "0.13"
+
+[package]
+name = "cpa-gui"
+version.workspace = true
+description = "CPA desktop management shell"
+authors.workspace = true
+edition.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64.workspace = true
+chrono.workspace = true
+ecpa-core = { path = "crates/ecpa-core" }
+flate2.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-rustls.workspace = true
+hyper-util.workspace = true
+json5.workspace = true
+notify.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_norway.workspace = true
+serde_yaml.workspace = true
+sha2.workspace = true
+shlex.workspace = true
+tar.workspace = true
+tauri = { version = "~2.12.4", features = ["macos-private-api", "tray-icon", "unstable"] }
+tauri-plugin-autostart = "2.7.0"
+tauri-plugin-dialog = "2.8.3"
+tauri-plugin-notification = "2.8.1"
+tauri-plugin-opener = "2.7.2"
+tokio.workspace = true
+tokio-rustls.workspace = true
+tokio-util.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+yaml-edit.workspace = true
+zip.workspace = true
+zstd.workspace = true
+
+[dev-dependencies]
+tauri = { version = "~2.12.4", features = ["test"] }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus = "0.9"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSEvent", "NSRunningApplication", "NSStatusItem"] }
+objc2-foundation = "0.3"
+window-vibrancy = "0.8.1"
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39.1"
+windows = "0.62.2"
+window-vibrancy = "0.8.1"
+windows-sys.workspace = true

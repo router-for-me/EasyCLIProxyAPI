@@ -1,2595 +1,237 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod agents;
-mod acp;
-mod agent_skills;
-mod agent_usage;
-mod agent_usage_store;
-mod app_settings;
-mod app_update;
-mod app_version_series;
-mod claude_catalog;
-mod codex_catalog;
-mod codex_sessions;
-mod configuration_watcher;
-mod core_config;
-mod sensitive_words;
-mod core_runtime;
-mod core_recovery;
-mod desktop_theme;
-mod instance_lock;
 #[cfg(any(target_os = "linux", test))]
 mod linux_graphics;
-mod management_api;
-mod mcp_servers;
-mod network_proxy;
-#[cfg(any(
-    target_os = "linux",
-    target_os = "macos",
-    target_os = "windows"
-))]
+mod linux_theme;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 mod native_i18n;
-mod oauth_browser;
 mod plugin_webview;
-mod plugins;
-mod privacy_mode;
-mod progress;
-mod remote_cpa;
-mod provider_health;
-mod reverse_proxy;
-mod auto_update;
-#[cfg(any(
-    target_os = "linux",
-    target_os = "macos",
-    target_os = "windows"
-))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 mod tray;
-mod usage;
-#[cfg(target_os = "windows")]
-mod windows_frame;
-mod window_material;
-mod window_activity;
 #[cfg(any(windows, test))]
 mod webview_recovery;
+mod window_activity;
+mod window_geometry;
+mod window_material;
+#[cfg(target_os = "windows")]
+mod windows_frame;
 
-#[cfg(test)]
-use configuration_watcher::nearest_existing_watch_directory;
-use management_api::{
-    format_management_request_error, management_authorization, management_endpoint,
-    management_http_client, management_plaintext_key, read_management_text, read_management_value,
+use ecpa_core::{
+    acquire_app_instance_guard, bootstrap_core_states, configured_window_size, core_base_dir,
+    current_core_status, emit_core_status, lock_core_operation, normalize_app_locale,
+    open_directory_in_file_manager, path_to_string, restart_core_process_with_state,
+    should_start_hidden, shutdown_core_services, start_core_process_with_state,
+    start_local_background_services, stop_core_process_with_state, try_run_helper_subcommand,
+    AppHandle as CoreAppHandle, CoreProcessState, CoreStatus, GuiConfigState, HostPlatform,
+    OpenUrlOutcome, RuntimeCapabilities, WindowsCloseAction, WindowsCloseBehavior,
 };
-use oauth_browser::*;
-#[cfg(test)]
-use provider_health::{
-    provider_health_content_type_is_streaming, provider_health_stream_has_terminal_success,
-    provider_health_stream_has_text,
-};
-
-use agents::*;
-use app_settings::*;
-use app_update::*;
-use core_config::*;
-use core_runtime::*;
-use flate2::read::GzDecoder;
-use futures_util::StreamExt;
-use instance_lock::*;
 #[cfg(target_os = "macos")]
 use objc2::MainThreadMarker;
 #[cfg(target_os = "macos")]
 use objc2_app_kit::NSEvent;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(target_os = "macos")]
-use std::sync::Arc;
 use std::{
-    collections::{HashMap, HashSet},
-    env, fs,
-    fs::File,
-    io::{self, Read, Seek, SeekFrom, Write},
-    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket},
-    path::{Component, Path, PathBuf},
-    process::{Child, Command, Stdio},
-    sync::{LazyLock, Mutex},
-    thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, OnceLock,
+    },
 };
-use tar::Archive;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use tauri::menu::PredefinedMenuItem;
 #[cfg(target_os = "macos")]
 use tauri::tray::{MouseButtonState, TrayIcon};
-#[cfg(any(
-    target_os = "linux",
-    target_os = "macos",
-    target_os = "windows"
-))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
 };
-use tauri::{Emitter, LogicalSize, Manager};
+use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_opener::OpenerExt;
-use tokio_util::sync::CancellationToken;
-#[cfg(any(
-    target_os = "linux",
-    target_os = "macos",
-    target_os = "windows"
-))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use tray::*;
-use zip::ZipArchive;
+use window_geometry::*;
 
-const RELEASE_PAGE_URL: &str = "https://github.com/router-for-me/CLIProxyAPI/releases/latest";
-const RELEASE_ATOM_URL: &str = "https://github.com/router-for-me/CLIProxyAPI/releases.atom";
-const RELEASE_DOWNLOAD_PREFIX: &str =
-    "https://github.com/router-for-me/CLIProxyAPI/releases/download/";
-const CORE_RELEASES_API_URL: &str =
-    "https://api.github.com/repos/router-for-me/CLIProxyAPI/releases?per_page=100";
-#[cfg(windows)]
-const APP_UPDATE_MANIFEST_URL: &str = "https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest/download/portable-update-windows.json";
-#[cfg(target_os = "linux")]
-const APP_UPDATE_MANIFEST_URL: &str = "https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest/download/portable-update-linux.json";
-#[cfg(target_os = "macos")]
-const APP_UPDATE_MANIFEST_URL: &str = "https://github.com/router-for-me/EasyCLIProxyAPI/releases/latest/download/portable-update-darwin-v2.json";
-#[cfg(windows)]
-const APP_UPDATE_MANIFEST_FILE: &str = "portable-update-windows.json";
-#[cfg(target_os = "linux")]
-const APP_UPDATE_MANIFEST_FILE: &str = "portable-update-linux.json";
-#[cfg(target_os = "macos")]
-const APP_UPDATE_MANIFEST_FILE: &str = "portable-update-darwin-v2.json";
-const APP_RELEASE_DOWNLOAD_PREFIX: &str =
-    "https://github.com/router-for-me/EasyCLIProxyAPI/releases/download/";
-#[cfg(windows)]
-const APP_UPDATE_MANIFEST_NAME: &str = "portable-update-windows.json";
-#[cfg(target_os = "linux")]
-const APP_UPDATE_MANIFEST_NAME: &str = "portable-update-linux.json";
-#[cfg(target_os = "macos")]
-const APP_UPDATE_MANIFEST_NAME: &str = "portable-update-darwin-v2.json";
-const CODEX_MODEL_CATALOG_URL: &str = "https://raw.githubusercontent.com/router-for-me/EasyCLIProxyAPI/main/src-tauri/resources/codex_models/model-catalog.json";
-const CODEX_MODEL_CATALOG_OVERRIDE_DIR: &str = "codex_models";
-const CODEX_MODEL_CATALOG_SOURCE_FILE: &str = "model-catalog.json";
-const MAX_CODEX_MODEL_CATALOG_BYTES: usize = 4 * 1024 * 1024;
-const APP_UPDATE_PROGRESS_EVENT: &str = "app-update-progress";
-const PORTABLE_APP_MANIFEST_FILE: &str = "portable-app.json";
-#[cfg(windows)]
-const PORTABLE_APP_BINARY: &str = "EasyCLIProxyAPI.exe";
-#[cfg(target_os = "linux")]
-const PORTABLE_APP_BINARY: &str = "EasyCLIProxyAPI";
-const CORE_INSTALL_PROGRESS_EVENT: &str = "core-install-progress";
-const CORE_STATUS_EVENT: &str = "core-status-changed";
-const CONFIG_FILES_CHANGED_EVENT: &str = "config-files-changed";
-static VERSION_SOURCE_DETECTION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 const WINDOWS_CLOSE_REQUEST_EVENT: &str = "windows-close-requested";
-const CORE_METADATA_FILE: &str = "cpa-gui-meta.json";
-const CORE_CONFIG_FILE: &str = "config.yaml";
-const CORE_EXAMPLE_CONFIG_FILE: &str = "config.example.yaml";
-const CORE_VERSION_FILE: &str = "core-version.txt";
-const CORE_CHECKSUMS_FILE: &str = "checksums.txt";
-const GUI_CONFIG_FILE: &str = "config.toml";
-const LEGACY_GUI_CONFIG_FILE: &str = "cpa-gui.yaml";
-const MIN_MAIN_WINDOW_WIDTH: u32 = 640;
-const MIN_MAIN_WINDOW_HEIGHT: u32 = 600;
-const MAX_SAVED_WINDOW_DIMENSION: u32 = 16_384;
-const DEFAULT_MAIN_WINDOW_WIDTH: u32 = 1280;
-const DEFAULT_MAIN_WINDOW_HEIGHT: u32 = 800;
-const LEGACY_DEFAULT_MAIN_WINDOW_WIDTH: u32 = 1531;
-const LEGACY_DEFAULT_MAIN_WINDOW_HEIGHT: u32 = 891;
-const OAUTH_DIR_NAME: &str = "oauth";
-const DEFAULT_AUTH_DIR: &str = "../oauth";
-const DEFAULT_API_KEY: &str = "123456";
-const DEFAULT_AGENT_TERMINAL: &str = "auto";
-const DEFAULT_API_KEY_INITIAL_REMARK: &str = "Default key";
-const DEFAULT_REQUEST_RETRY: u32 = 3;
-const DEFAULT_MAX_RETRY_CREDENTIALS: u32 = 0;
-const DEFAULT_MAX_RETRY_INTERVAL: i64 = 30;
-const DEFAULT_STREAMING_BOOTSTRAP_RETRIES: u32 = 0;
-const DEFAULT_DISABLE_COOLING: bool = true;
-const DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS: i64 = -1;
-const DEFAULT_LOGS_MAX_TOTAL_SIZE_MB: u32 = 0;
-const DEFAULT_ERROR_LOGS_MAX_FILES: u32 = 10;
-const DEFAULT_REDIS_USAGE_QUEUE_RETENTION_SECONDS: u32 = 60;
-const LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY: &str = "123456";
-const MANAGED_AGENT_PROVIDER_ID: &str = "cpa-gui";
-const ZCODE_PROVIDER_CONFIG_FILE: &str = "provider_config.json";
-const KIMI_CODE_CONFIG_FILE: &str = "config.toml";
-const GROK_BUILD_CONFIG_FILE: &str = "config.toml";
-const DEEPSEEK_HARNESS_PROVIDER_ID: &str = "easy-cliproxyapi";
-const DEEPSEEK_HARNESS_CREDENTIAL: &str = "EASYCLIPROXYAPI_API_KEY";
-const DEEPSEEK_HARNESS_CREDENTIALS_VERSION: u64 = 1;
-const DEEPSEEK_HARNESS_DEFAULT_WEB_PORT: u16 = 3080;
-const DEEPSEEK_HARNESS_SETTINGS_FILE: &str = "settings.yaml";
-const DEEPSEEK_HARNESS_CREDENTIALS_FILE: &str = ".credentials.yaml";
-const PI_AGENT_ID: &str = "pi";
-const PI_AGENT_NAME: &str = "Pi";
-const OMP_AGENT_PROVIDER_ID: &str = "easy-cliproxyapi";
-const OMP_AGENT_API: &str = "openai-responses";
-const OMP_MODELS_FILE: &str = "models.yml";
-const OMP_SETTINGS_FILE: &str = "config.yml";
-const PI_CLIPROXYAPI_PACKAGE: &str = "npm:@router-for-me/pi-cliproxyapi-provider";
-const PI_CLIPROXYAPI_NPM_LATEST_URL: &str =
-    "https://registry.npmjs.org/@router-for-me%2Fpi-cliproxyapi-provider/latest";
-const PI_CLIPROXYAPI_PROVIDER_ID: &str = "cliproxyapi";
-const PI_AGENT_CONFIG_FILE: &str = "cliproxyapi.json";
-const PI_AGENT_SETTINGS_FILE: &str = "settings.json";
-const PI_AGENT_MODELS_CACHE_FILE: &str = "cliproxyapi-models.json";
-const CODEX_MODEL_CATALOG_FILE: &str = "cpa-gui-model-catalog.json";
-const CODEX_OAUTH_LOGIN_REQUIRED_ERROR: &str = "CODEX_OAUTH_LOGIN_REQUIRED";
-const CLAUDE_DESKTOP_PROFILE_ID: &str = "00000000-0000-4000-8000-000000831700";
-const CLAUDE_DESKTOP_OPUS_MODEL_ID: &str = "claude-opus-5";
-const CLAUDE_DESKTOP_SONNET_MODEL_ID: &str = "claude-sonnet-5";
-const CLAUDE_DESKTOP_HAIKU_MODEL_ID: &str = "claude-haiku-4-5";
-const LEGACY_CLAUDE_DESKTOP_MODEL_IDS: [&str; 3] =
-    ["claude-opus-5-cpa", "claude-sonnet-5-cpa", "claude-haiku-4-5-cpa"];
-const MANAGED_CLAUDE_OPUS_ALIAS_DISPLAY_NAME: &str = "EasyCLIProxyAPI managed Claude Opus mapping";
-const MANAGED_CLAUDE_SONNET_ALIAS_DISPLAY_NAME: &str =
-    "EasyCLIProxyAPI managed Claude Sonnet mapping";
-const MANAGED_CLAUDE_HAIKU_ALIAS_DISPLAY_NAME: &str =
-    "EasyCLIProxyAPI managed Claude Haiku mapping";
-const DEFAULT_CLAUDE_CONTEXT_WINDOW: u64 = 200_000;
-const CLAUDE_DESKTOP_EXTENDED_CONTEXT_WINDOW: u64 = 1_000_000;
-const CLAUDE_CODE_MAX_CONTEXT_TOKENS_ENV: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
-const CLAUDE_CODE_AUTO_COMPACT_WINDOW_ENV: &str = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
-const CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY_ENV: &str =
-    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY";
-const CLAUDE_CODE_AUTO_MODE_SERVER_ENV: &str = "CLAUDE_CODE_AUTO_MODE_SERVER";
-const CLAUDE_AUTOCOMPACT_PCT_OVERRIDE_ENV: &str = "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE";
-const DISABLE_AUTO_COMPACT_ENV: &str = "DISABLE_AUTO_COMPACT";
-const CLAUDE_CODE_MANAGED_MODEL_SETTINGS_ENV: &str = "EASYCLIPROXY_CLAUDE_CODE_MODEL_SETTINGS";
-const CLAUDE_CODE_MANAGED_STARTUP_MODEL_ENV: &str = "EASYCLIPROXY_CLAUDE_CODE_STARTUP_MODEL";
-const DEFAULT_CLAUDE_AUTO_COMPACT_PCT: u8 = 90;
-const MODEL_ALIAS_CONFIG_SECTIONS: &[&str] = &[
-    "codex-api-key",
-    "openai-compatibility",
-    "claude-api-key",
-    "gemini-api-key",
-];
-#[cfg(test)]
-const LEGACY_AGENT_MODIFICATION_STATE_VERSION: u8 = 1;
-#[cfg(test)]
-const AGENT_MODIFICATION_STATE_VERSION: u8 = 2;
-#[cfg(test)]
-const AGENT_APPLIED_STATE_VERSION: u8 = 4;
-#[cfg(test)]
-const AGENT_CONFIGURATION_REVISION: u8 = 1;
-#[cfg(test)]
-const AGENT_PHASE_APPLYING: &str = "applying";
-#[cfg(test)]
-const AGENT_PHASE_ACTIVE: &str = "active";
-#[cfg(test)]
-const AGENT_PHASE_RESTORING: &str = "restoring";
-#[cfg(test)]
-const AGENT_PHASE_RECOVERY: &str = "recovery";
-#[cfg(test)]
-const AGENT_MODIFICATION_STATE_CONFLICT: &str = "conflict";
-const USER_AGENT: &str = concat!(
-    "CPA-GUI/",
-    env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/router-for-me/CLIProxyAPI)"
-);
-const APP_USER_AGENT: &str = concat!(
-    "EasyCLIProxyAPI/",
-    env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/router-for-me/EasyCLIProxyAPI)"
-);
-static CORE_CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
-static AGENT_CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
-#[cfg(test)]
-static CODEX_APPLIED_STATES: LazyLock<
-    Mutex<std::collections::HashMap<PathBuf, AgentAppliedState>>,
-> = LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
-static CONFIG_WRITE_HASHES: LazyLock<Mutex<std::collections::HashMap<PathBuf, String>>> =
-    LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+const AUTOSTART_ARGUMENT: &str = "--autostart";
 
-fn normalize_app_locale(locale: &str) -> &'static str {
-    let normalized = locale.trim().to_ascii_lowercase();
-    if normalized.starts_with("ja") {
-        "ja"
-    } else if normalized.starts_with("ru") {
-        "ru"
-    } else if matches!(normalized.as_str(), "pt" | "pt-br" | "pt_br") {
-        "pt-BR"
-    } else if normalized == "zh-tw"
-        || normalized == "zh-hk"
-        || normalized == "zh-mo"
-        || normalized.starts_with("zh-hant")
-    {
-        "zh-TW"
-    } else if normalized.starts_with("zh") {
-        "zh-CN"
-    } else {
-        "en"
-    }
+struct DesktopHostPlatform {
+    tauri_app: OnceLock<tauri::AppHandle>,
+    data_dir: String,
 }
 
-#[derive(Default)]
-struct CoreDownloadState {
-    inner: Mutex<CoreDownloadInner>,
-    silent: bool,
-}
-
-#[derive(Default)]
-struct CoreDownloadInner {
-    running: bool,
-    token: Option<CancellationToken>,
-    task: CoreInstallTask,
-}
-
-#[derive(Default)]
-struct AppUpdateState {
-    inner: Mutex<AppUpdateInner>,
-}
-
-#[derive(Default)]
-struct AppUpdateInner {
-    task: AppUpdateTask,
-    token: Option<CancellationToken>,
-}
-
-#[derive(Default)]
-struct CoreProcessState {
-    remote_selected: AtomicBool,
-    recovery: core_recovery::CoreRecovery,
-    child: Mutex<Option<CoreChild>>,
-    adopted_processes: Mutex<Vec<AdoptedCoreProcess>>,
-    starting: AtomicBool,
-    shutting_down: AtomicBool,
-    shutdown_complete: AtomicBool,
-    preserve_on_exit: AtomicBool,
-}
-
-#[derive(Default)]
-struct DeepSeekHarnessProcessState {
-    process: Mutex<Option<ManagedDeepSeekHarnessProcess>>,
-}
-
-struct ManagedDeepSeekHarnessProcess {
-    child: Child,
-    mode: String,
-    launch: DeepSeekHarnessLaunchSnapshot,
-}
-
-#[derive(Clone)]
-struct DeepSeekHarnessLaunchSnapshot {
-    executable: PathBuf,
-    working_directory: PathBuf,
-    arguments: Vec<String>,
-    options: Option<DeepSeekHarnessLaunchOptions>,
-}
-
-#[derive(Clone)]
-struct AdoptedCoreProcess {
-    process_id: u32,
-    binary_path: PathBuf,
-}
-
-struct GuiConfigState {
-    inner: Mutex<GuiConfigFile>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct SavedWindowSize {
-    width: u32,
-    height: u32,
-}
-
-struct MainWindowState {
-    inner: Mutex<Option<SavedWindowSize>>,
-    position: Mutex<Option<tauri::PhysicalPosition<i32>>>,
-    position_tracking: AtomicBool,
-}
-
-#[derive(Default)]
-struct AgentConfigStatusCache {
-    refresh_lock: Mutex<()>,
-    entry: Mutex<Option<AgentConfigStatusCacheEntry>>,
-}
-
-struct AgentConfigStatusCacheEntry {
-    port: u16,
-    api_key_sha256: String,
-    statuses: Vec<AgentConfigStatus>,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ConfigFilesChangedPayload {
-    paths: Vec<String>,
-    errors: Vec<String>,
-}
-
-impl AgentConfigStatusCache {
-    fn get(&self, port: u16, api_key: &str) -> Result<Option<Vec<AgentConfigStatus>>, String> {
-        let api_key_sha256 = sha256_bytes(api_key.as_bytes());
-        self.entry
-            .lock()
-            .map(|entry| {
-                entry
-                    .as_ref()
-                    .filter(|entry| entry.port == port && entry.api_key_sha256 == api_key_sha256)
-                    .map(|entry| entry.statuses.clone())
-            })
-            .map_err(|_| "Agent configuration status cache lock is poisoned".to_string())
-    }
-
-    fn replace(
-        &self,
-        port: u16,
-        api_key: &str,
-        statuses: Vec<AgentConfigStatus>,
-    ) -> Result<(), String> {
-        let mut current = self
-            .entry
-            .lock()
-            .map_err(|_| "Agent configuration status cache lock is poisoned".to_string())?;
-        *current = Some(AgentConfigStatusCacheEntry {
-            port,
-            api_key_sha256: sha256_bytes(api_key.as_bytes()),
-            statuses,
-        });
-        Ok(())
-    }
-
-    pub(crate) fn clear(&self) -> Result<(), String> {
-        let mut current = self
-            .entry
-            .lock()
-            .map_err(|_| "Agent configuration status cache lock is poisoned".to_string())?;
-        *current = None;
-        Ok(())
-    }
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CorePlatform {
-    os: String,
-    arch: String,
-    asset_os: String,
-    asset_arch: String,
-    archive_kind: String,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CoreStatus {
-    installed: bool,
-    running: bool,
-    ready: bool,
-    starting: bool,
-    managed: bool,
-    process_id: Option<u32>,
-    current_version: Option<String>,
-    install_dir: String,
-    binary_path: Option<String>,
-    message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    recovery: Option<core_recovery::RecoveryStatus>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CoreLatest {
-    version: String,
-    asset_name: String,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CoreVersionOption {
-    version: String,
-    asset_name: String,
-    prerelease: bool,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AppUpdateInfo {
-    current_version: Option<String>,
-    latest_series_version: Option<String>,
-    latest_version: String,
-    installed_series: Option<app_version_series::AppVersionSeries>,
-    comparison_newer: bool,
-    update_available: bool,
-    install_available: bool,
-    release_url: String,
-    release_notes: HashMap<String, String>,
-    skipped_release_notes: Vec<SkippedReleaseNotes>,
-    published_at: String,
-    current_build_at: Option<String>,
-    latest_build_at: Option<String>,
-    auto_update_supported: bool,
-    preserve_core_supported: bool,
-    download_url: Option<String>,
-    download_file_name: Option<String>,
-    download_size_bytes: Option<u64>,
-    unsupported_reason: Option<String>,
-    update_channel: String,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SkippedReleaseNotes {
-    version: String,
-    release_notes: HashMap<String, String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PortableUpdateManifest {
-    schema_version: u32,
-    version: String,
-    published_at: String,
-    release_url: String,
-    #[serde(default, deserialize_with = "deserialize_release_notes")]
-    release_notes: HashMap<String, String>,
-    #[serde(default)]
-    release_notes_history: serde_json::Value,
-    assets: std::collections::HashMap<String, PortableUpdateAsset>,
-    #[serde(default)]
-    full_assets: Option<std::collections::HashMap<String, PortableUpdateAsset>>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PortableUpdateAsset {
-    url: String,
-    #[serde(default)]
-    fallback_urls: Vec<String>,
-    sha256: String,
-    size_bytes: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct GitcodeRelease {
-    tag_name: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PortableAppManifest {
-    schema_version: u32,
-    application: String,
-    version: String,
-    #[serde(default)]
-    built_at: Option<String>,
-    platform: String,
-    arch: String,
-    #[serde(default)]
-    auto_update: bool,
-}
-
-#[derive(Clone)]
-struct PendingAppUpdate {
-    version: String,
-    asset: PortableUpdateAsset,
-    #[cfg_attr(not(windows), allow(dead_code))]
-    arch: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AppUpdateTask {
-    running: bool,
-    #[serde(skip)]
-    automatic: bool,
-    preserve_core: bool,
-    cancellable: bool,
-    phase: String,
-    target_version: Option<String>,
-    downloaded_bytes: u64,
-    total_bytes: Option<u64>,
-    percent: Option<f64>,
-    message: Option<String>,
-}
-
-impl Default for AppUpdateTask {
-    fn default() -> Self {
+impl DesktopHostPlatform {
+    fn new(data_dir: String) -> Self {
         Self {
-            running: false,
-            cancellable: false,
-            phase: "idle".to_string(),
-            preserve_core: false,
-            automatic: false,
-            target_version: None,
-            downloaded_bytes: 0,
-            total_bytes: None,
-            percent: None,
-            message: None,
+            tauri_app: OnceLock::new(),
+            data_dir,
+        }
+    }
+
+    fn attach(&self, app: tauri::AppHandle) {
+        let _ = self.tauri_app.set(app);
+    }
+
+    fn tauri_handle(&self) -> Option<&tauri::AppHandle> {
+        self.tauri_app.get()
+    }
+}
+
+impl HostPlatform for DesktopHostPlatform {
+    fn capabilities(&self) -> RuntimeCapabilities {
+        RuntimeCapabilities::desktop(self.data_dir.clone())
+    }
+
+    fn exit(&self, code: i32) {
+        if let Some(app) = self.tauri_handle() {
+            app.exit(code);
+        }
+    }
+
+    fn request_restart(&self) {
+        if let Some(app) = self.tauri_handle() {
+            app.request_restart();
+        }
+    }
+
+    fn app_data_dir(&self) -> Result<PathBuf, String> {
+        if let Some(app) = self.tauri_handle() {
+            app.path().app_data_dir().map_err(|error| error.to_string())
+        } else {
+            ecpa_core::runtime::default_app_data_dir()
+        }
+    }
+
+    fn is_ui_active(&self) -> bool {
+        self.tauri_handle()
+            .is_some_and(window_activity::is_active)
+    }
+
+    fn on_core_status_changed(&self, status: &CoreStatus) {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        if let Some(app) = self.tauri_handle() {
+            update_windows_tray_status(app, status);
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        let _ = status;
+    }
+
+    fn on_locale_changed(&self, locale: &str, status: &CoreStatus) {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        if let Some(app) = self.tauri_handle() {
+            update_windows_tray_locale(app, locale, status);
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        let _ = (locale, status);
+    }
+
+    fn autostart_enabled(&self) -> Result<bool, String> {
+        let app = self
+            .tauri_handle()
+            .ok_or_else(|| "Desktop host is unavailable".to_string())?;
+        app.autolaunch()
+            .is_enabled()
+            .map_err(|error| format!("Failed to read system startup status: {error}"))
+    }
+
+    fn set_autostart_enabled(&self, enabled: bool) -> Result<(), String> {
+        let app = self
+            .tauri_handle()
+            .ok_or_else(|| "Desktop host is unavailable".to_string())?;
+        let manager = app.autolaunch();
+        if enabled {
+            manager
+                .enable()
+                .map_err(|error| format!("Failed to enable launch at startup: {error}"))
+        } else {
+            manager
+                .disable()
+                .map_err(|error| format!("Failed to disable launch at startup: {error}"))
+        }
+    }
+
+    fn open_url(&self, url: &str, program: Option<&str>) -> Result<OpenUrlOutcome, String> {
+        let app = self
+            .tauri_handle()
+            .ok_or_else(|| "Desktop host is unavailable".to_string())?;
+        app.opener()
+            .open_url(url, program)
+            .map_err(|error| format!("Failed to open browser: {error}"))?;
+        Ok(OpenUrlOutcome::Opened)
+    }
+
+    fn open_path(&self, path: &Path) -> Result<(), String> {
+        if path.is_dir() {
+            open_directory_in_file_manager(path)
+        } else {
+            tauri_plugin_opener::open_path(path, None::<&str>).map_err(|error| error.to_string())
         }
     }
 }
 
-#[cfg(any(windows, target_os = "linux"))]
-struct PortablePackagePayload {
-    manifest: PortableAppManifest,
-    core_archive_name: Option<String>,
-}
-
-#[cfg(any(windows, target_os = "linux"))]
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PortableUpdateDescriptor {
-    parent_pid: u32,
-    current_exe: PathBuf,
-    staged_exe: PathBuf,
-    current_manifest: PathBuf,
-    staged_manifest: PathBuf,
-    backup_exe: PathBuf,
-    backup_manifest: PathBuf,
-    current_core_version: PathBuf,
-    staged_core_version: PathBuf,
-    backup_core_version: PathBuf,
-    staged_core_archive: PathBuf,
-    target_core_archive: PathBuf,
-    install_core_archive: bool,
-    ack_path: PathBuf,
-    work_dir: PathBuf,
-    target_version: String,
-    #[serde(default)]
-    preserve_core: bool,
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MacosUpdateDescriptor {
-    parent_pid: u32,
-    current_app: PathBuf,
-    staged_app: PathBuf,
-    backup_app: PathBuf,
-    executable_relative_path: PathBuf,
-    ack_path: PathBuf,
-    work_dir: PathBuf,
-    target_version: String,
-    #[serde(default)]
-    preserve_core: bool,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct BundledCoreInfo {
-    version: String,
-    asset_name: String,
-    size_bytes: u64,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CoreInstallResult {
-    version: String,
-    asset_name: String,
-    install_dir: String,
-    binary_path: Option<String>,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CoreInstallTask {
-    running: bool,
-    cancellable: bool,
-    phase: String,
-    downloaded: u64,
-    total: Option<u64>,
-    percent: Option<f64>,
-    message: Option<String>,
-    result: Option<CoreInstallResult>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(default, rename_all = "kebab-case")]
-struct GuiConfigFile {
-    locale: String,
-    port: u16,
-    allow_lan: bool,
-    host: String,
-    run_on_startup: bool,
-    start_core_on_launch: bool,
-    silent_start: bool,
-    close_behavior: WindowsCloseBehavior,
-    default_terminal: String,
-    window_width: Option<u32>,
-    window_height: Option<u32>,
-    window_x: Option<i32>,
-    window_y: Option<i32>,
-    auth_dir: String,
-    auth_dir_user_selected: bool,
-    image_generation_user_selected: bool,
-    #[serde(deserialize_with = "deserialize_gui_api_keys")]
-    api_keys: Vec<GuiApiKeyEntry>,
-    api_access_remarks: Vec<GuiApiAccessRemark>,
-    management_secret_key: String,
-    management_secret_key_unmanaged: bool,
-    debug: bool,
-    #[serde(default = "default_update_channel")]
-    update_channel: String,
-    commercial_mode: bool,
-    auto_update: auto_update::AutoUpdateSettings,
-    logging_to_file: bool,
-    logs_max_total_size_mb: u32,
-    error_logs_max_files: u32,
-    usage_statistics_enabled: bool,
-    #[serde(rename = "usage_statistics_disabled", skip_serializing_if = "Option::is_none")]
-    usage_statistics_disabled: Option<bool>,
-    redis_usage_queue_retention_seconds: u32,
-    request_log: bool,
-    plugins_enabled: bool,
-    routing_strategy: String,
-    proxy_url: String,
-    proxy_override: bool,
-    download_source: VersionDownloadSource,
-    custom_download_mirrors: Vec<String>,
-    active_custom_download_mirror: String,
-    prefer_gitcode_downloads: bool,
-    routing_session_affinity: bool,
-    routing_session_affinity_ttl: String,
-    disable_cooling: bool,
-    request_retry: u32,
-    max_retry_credentials: u32,
-    max_retry_interval: i64,
-    transient_error_cooldown_seconds: i64,
-    streaming_bootstrap_retries: u32,
-    #[serde(
-        default,
-        rename = "reverse-proxy",
-        skip_serializing_if = "Option::is_none"
-    )]
-    reverse_proxy: Option<crate::reverse_proxy::ReverseProxyConfig>,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-enum VersionDownloadSource {
-    #[default]
-    Github,
-    Gitcode,
-    GhProxy,
-    GhFast,
-    Custom,
-}
-
-impl VersionDownloadSource {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Github => "github",
-            Self::Gitcode => "gitcode",
-            Self::GhProxy => "gh-proxy",
-            Self::GhFast => "gh-fast",
-            Self::Custom => "custom",
-        }
-    }
-
-    fn from_str(value: &str) -> Option<Self> {
-        match value.trim() {
-            "github" => Some(Self::Github),
-            "gitcode" => Some(Self::Gitcode),
-            "gh-proxy" => Some(Self::GhProxy),
-            "gh-fast" => Some(Self::GhFast),
-            "custom" => Some(Self::Custom),
-            _ => None,
-        }
-    }
-
-    fn display_name(self) -> &'static str {
-        match self {
-            Self::Github => "GitHub",
-            Self::Gitcode => "GitCode",
-            Self::GhProxy => "gh-proxy.com",
-            Self::GhFast => "ghfast.top",
-            Self::Custom => "Custom mirror",
-        }
-    }
-
-    fn github_proxy_prefix(self) -> Option<&'static str> {
-        match self {
-            Self::GhProxy => Some("https://gh-proxy.com/"),
-            Self::GhFast => Some("https://ghfast.top/"),
-            Self::Custom => None,
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct VersionDownloadCandidate {
-    source: VersionDownloadSource,
-    custom_url: Option<String>,
-}
-
-impl VersionDownloadCandidate {
-    fn builtin(source: VersionDownloadSource) -> Self {
-        Self {
-            source,
-            custom_url: None,
-        }
-    }
-
-    fn custom(url: &str) -> Self {
-        Self {
-            source: VersionDownloadSource::Custom,
-            custom_url: Some(url.to_string()),
-        }
-    }
-
-    fn key(&self) -> String {
-        self.custom_url
-            .as_ref()
-            .map(|url| format!("custom:{url}"))
-            .unwrap_or_else(|| self.source.as_str().to_string())
-    }
-
-    fn display_name(&self) -> String {
-        self.custom_url
-            .as_ref()
-            .and_then(|url| reqwest::Url::parse(url).ok())
-            .and_then(|url| url.host_str().map(str::to_string))
-            .unwrap_or_else(|| self.source.display_name().to_string())
-    }
-
-    fn proxy_prefix(&self) -> Option<&str> {
-        self.custom_url
-            .as_deref()
-            .or_else(|| self.source.github_proxy_prefix())
-    }
-}
-
-fn version_source_url(source: &VersionDownloadCandidate, github_url: &str) -> String {
-    source
-        .proxy_prefix()
-        .map(|prefix| format!("{prefix}{github_url}"))
-        .unwrap_or_else(|| github_url.to_string())
-}
-
-fn validate_version_download_source(
-    source: &VersionDownloadCandidate,
-    gitcode_available: bool,
+#[tauri::command]
+fn resolve_windows_close_request(
+    app: tauri::AppHandle,
+    core_app: tauri::State<'_, CoreAppHandle>,
+    action: WindowsCloseAction,
+    remember: Option<bool>,
 ) -> Result<(), String> {
-    if source.source == VersionDownloadSource::Gitcode && !gitcode_available {
-        return Err("The selected GitCode source is not available for this operation".to_string());
+    #[cfg(target_os = "linux")]
+    if action == WindowsCloseAction::MinimizeToTray && !linux_tray_available(&app) {
+        return Err(
+            "System tray is unavailable; keep the main window open or exit the app".to_string(),
+        );
     }
-    if source.source == VersionDownloadSource::Custom {
-        let url = source
-            .custom_url
-            .as_deref()
-            .ok_or("No custom mirror is selected")?;
-        normalize_custom_download_mirror_url(url)?;
+
+    if remember.unwrap_or(false) {
+        let close_behavior = match action {
+            WindowsCloseAction::Exit => WindowsCloseBehavior::Exit,
+            WindowsCloseAction::MinimizeToTray => WindowsCloseBehavior::MinimizeToTray,
+        };
+        core_app
+            .state::<GuiConfigState>()
+            .set_close_behavior(close_behavior)?;
     }
+
+    match action {
+        WindowsCloseAction::Exit => app.exit(0),
+        WindowsCloseAction::MinimizeToTray => {
+            let window =
+                main_window(&app).ok_or_else(|| "Main window does not exist".to_string())?;
+            crate::window_activity::hide(&window)
+                .map_err(|error| format!("Failed to hide main window: {error}"))?;
+        }
+    }
+
     Ok(())
 }
 
-fn normalize_custom_download_mirror_url(value: &str) -> Result<String, String> {
-    let mut url =
-        reqwest::Url::parse(value.trim()).map_err(|error| format!("Invalid mirror URL: {error}"))?;
-    if url.scheme() != "https"
-        || url.host_str().is_none()
-        || url.port().is_some()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
-        return Err("Mirror URL must be an HTTPS URL without authentication, port, query parameters, or fragment".to_string());
-    }
-    if !url.path().ends_with('/') {
-        let path = format!("{}/", url.path());
-        url.set_path(&path);
-    }
-    Ok(url.to_string())
-}
-
-impl GuiConfigFile {
-    fn selected_download_candidate(&self) -> VersionDownloadCandidate {
-        if self.download_source == VersionDownloadSource::Custom
-            && self
-                .custom_download_mirrors
-                .contains(&self.active_custom_download_mirror)
-        {
-            VersionDownloadCandidate::custom(&self.active_custom_download_mirror)
-        } else {
-            VersionDownloadCandidate::builtin(self.download_source)
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-enum WindowsCloseAction {
-    Exit,
-    MinimizeToTray,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-enum WindowsCloseBehavior {
-    #[default]
-    Ask,
-    Exit,
-    MinimizeToTray,
-}
-
-impl WindowsCloseBehavior {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Ask => "ask",
-            Self::Exit => "exit",
-            Self::MinimizeToTray => "minimize-to-tray",
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct GuiApiKeyEntry {
-    key: String,
-    #[serde(default)]
-    remark: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct GuiApiAccessRemark {
-    provider_section: String,
-    api_key_hash: String,
-    #[serde(default)]
-    record_hash: String,
-    remark: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ApiAccessRemarkLocator {
-    provider_name: String,
-    base_url: String,
-    api_keys: Vec<String>,
-    #[serde(default)]
-    config_identity: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ApiAccessRemarkQuery {
-    provider_section: String,
-    #[serde(flatten)]
-    locator: ApiAccessRemarkLocator,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ApiAccessRemarkUpdate {
-    provider_section: String,
-    previous_records: Vec<ApiAccessRemarkLocator>,
-    records: Vec<ApiAccessRemarkLocator>,
-    all_records: Vec<ApiAccessRemarkLocator>,
-    remark: String,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum GuiApiKeyInput {
-    Legacy(String),
-    Entry(GuiApiKeyEntry),
-}
-
-fn deserialize_gui_api_keys<'de, D>(deserializer: D) -> Result<Vec<GuiApiKeyEntry>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let entries = Vec::<GuiApiKeyInput>::deserialize(deserializer)?;
-    Ok(entries
-        .into_iter()
-        .map(|entry| match entry {
-            GuiApiKeyInput::Legacy(key) => GuiApiKeyEntry {
-                remark: String::new(),
-                key,
-            },
-            GuiApiKeyInput::Entry(entry) => entry,
-        })
-        .collect())
-}
-
-impl Default for GuiConfigFile {
-    fn default() -> Self {
-        Self {
-            locale: "en".to_string(),
-            port: 8317,
-            allow_lan: false,
-            host: "127.0.0.1".to_string(),
-            run_on_startup: false,
-            start_core_on_launch: true,
-            silent_start: false,
-            close_behavior: WindowsCloseBehavior::Ask,
-            default_terminal: DEFAULT_AGENT_TERMINAL.to_string(),
-            window_width: Some(DEFAULT_MAIN_WINDOW_WIDTH),
-            window_height: Some(DEFAULT_MAIN_WINDOW_HEIGHT),
-            window_x: None,
-            window_y: None,
-            auth_dir: DEFAULT_AUTH_DIR.to_string(),
-            auth_dir_user_selected: false,
-            image_generation_user_selected: false,
-            api_keys: vec![default_api_key_entry()],
-            api_access_remarks: Vec::new(),
-            management_secret_key: LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string(),
-            management_secret_key_unmanaged: false,
-            debug: false,
-            update_channel: default_update_channel(),
-            auto_update: auto_update::AutoUpdateSettings::default(),
-            commercial_mode: false,
-            logging_to_file: false,
-            logs_max_total_size_mb: DEFAULT_LOGS_MAX_TOTAL_SIZE_MB,
-            error_logs_max_files: DEFAULT_ERROR_LOGS_MAX_FILES,
-            usage_statistics_enabled: true,
-            usage_statistics_disabled: None,
-            redis_usage_queue_retention_seconds: DEFAULT_REDIS_USAGE_QUEUE_RETENTION_SECONDS,
-            request_log: false,
-            plugins_enabled: true,
-            routing_strategy: "round-robin".to_string(),
-            proxy_url: String::new(),
-            proxy_override: false,
-            download_source: VersionDownloadSource::Github,
-            custom_download_mirrors: Vec::new(),
-            active_custom_download_mirror: String::new(),
-            prefer_gitcode_downloads: false,
-            routing_session_affinity: false,
-            routing_session_affinity_ttl: String::new(),
-            disable_cooling: DEFAULT_DISABLE_COOLING,
-            request_retry: DEFAULT_REQUEST_RETRY,
-            max_retry_credentials: DEFAULT_MAX_RETRY_CREDENTIALS,
-            max_retry_interval: DEFAULT_MAX_RETRY_INTERVAL,
-            transient_error_cooldown_seconds: DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS,
-            streaming_bootstrap_retries: DEFAULT_STREAMING_BOOTSTRAP_RETRIES,
-            reverse_proxy: None,
-        }
-    }
-}
-
-#[derive(Default, Deserialize)]
-#[serde(default, rename_all = "kebab-case")]
-struct GuiConfigPresence {
-    locale: Option<String>,
-    port: Option<u16>,
-    allow_lan: Option<bool>,
-    host: Option<String>,
-    auth_dir: Option<String>,
-    api_keys: Option<Vec<GuiApiKeyInput>>,
-    api_access_remarks: Option<Vec<GuiApiAccessRemark>>,
-    management_secret_key: Option<String>,
-    close_behavior: Option<WindowsCloseBehavior>,
-    default_terminal: Option<String>,
-    start_core_on_launch: Option<bool>,
-    silent_start: Option<bool>,
-    debug: Option<bool>,
-    commercial_mode: Option<bool>,
-    logging_to_file: Option<bool>,
-    logs_max_total_size_mb: Option<u32>,
-    error_logs_max_files: Option<u32>,
-    usage_statistics_enabled: Option<bool>,
-    redis_usage_queue_retention_seconds: Option<u32>,
-    request_log: Option<bool>,
-    plugins_enabled: Option<bool>,
-    routing_strategy: Option<String>,
-    proxy_url: Option<String>,
-    proxy_override: Option<bool>,
-    download_source: Option<VersionDownloadSource>,
-    custom_download_mirrors: Option<Vec<String>>,
-    active_custom_download_mirror: Option<String>,
-    prefer_gitcode_downloads: Option<bool>,
-    routing_session_affinity: Option<bool>,
-    routing_session_affinity_ttl: Option<String>,
-    disable_cooling: Option<bool>,
-    request_retry: Option<u32>,
-    max_retry_credentials: Option<u32>,
-    max_retry_interval: Option<i64>,
-    transient_error_cooldown_seconds: Option<i64>,
-    streaming_bootstrap_retries: Option<u32>,
-    reverse_proxy: Option<crate::reverse_proxy::ReverseProxyConfig>,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct GuiSettings {
-    host: String,
-    port: u16,
-    allow_lan: bool,
-    run_on_startup: bool,
-    close_behavior: WindowsCloseBehavior,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct VersionSourceSettings {
-    source: String,
-    gitcode_available: bool,
-    custom_mirrors: Vec<String>,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SoftwareSettings {
-    close_behavior: WindowsCloseBehavior,
-    autostart_enabled: bool,
-    start_core_on_launch: bool,
-    silent_start_enabled: bool,
-    default_terminal: String,
-    available_terminals: Vec<AgentTerminalOption>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SoftwareSettingsInput {
-    close_behavior: WindowsCloseBehavior,
-    autostart_enabled: bool,
-    start_core_on_launch: bool,
-    silent_start_enabled: bool,
-    default_terminal: String,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentConfigStatus {
-    id: String,
-    name: String,
-    supported_platform: bool,
-    installed: bool,
-    plugin_installed: bool,
-    launch_targets: Vec<AgentLaunchTarget>,
-    version: Option<String>,
-    cli_version: Option<String>,
-    app_version: Option<String>,
-    plugin_version: Option<String>,
-    config_paths: Vec<String>,
-    config_exists: bool,
-    config_valid: bool,
-    configured: bool,
-    configuration_synchronized: bool,
-    connection_state: String,
-    current_model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    current_api_key: Option<String>,
-    oauth_configuration: bool,
-    codex_native_oauth: bool,
-    codex_openai_provider: bool,
-    codex_remote_compaction: bool,
-    modification_enabled: bool,
-    modification_state: String,
-    backup_available: bool,
-    applied_model: Option<String>,
-    claude_code_model_mappings: Option<ClaudeDesktopModelMappings>,
-    claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
-    warnings: Vec<String>,
-    error: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentLaunchTarget {
-    id: String,
+#[tauri::command]
+async fn add_acp_account(
+    core_app: tauri::State<'_, CoreAppHandle>,
     label: String,
-    detail: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DeepSeekHarnessLaunchOptions {
-    mode: String,
-    web_host: Option<String>,
-    web_port: Option<u16>,
-    open_browser: Option<bool>,
-    #[serde(default)]
-    trusted_hosts: Vec<String>,
-    task: Option<String>,
-    profile: Option<String>,
-    #[serde(default)]
-    patches: Vec<String>,
-}
-
-#[derive(Clone, Debug, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DeepSeekHarnessProcessStatus {
-    running: bool,
-    pid: Option<u32>,
-    mode: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentConfigActionResult {
-    outcome: String,
-    enabled: bool,
-    model: Option<String>,
-    changed_files: Vec<String>,
-    conflict_files: Vec<String>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PiProviderUpdateStatus {
-    installed_version: Option<String>,
-    latest_version: Option<String>,
-    update_available: bool,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CodexModelCatalogUpdateResult {
-    outcome: String,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentModelOption {
-    name: String,
-    alias: Option<String>,
-    #[serde(default)]
-    is_alias: bool,
-    #[serde(default)]
-    context_window: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    input_modalities: Option<Vec<String>>,
-    #[serde(skip)]
-    harness_metadata: Option<serde_json::Value>,
-    #[serde(skip)]
-    reasoning_levels: Vec<String>,
-}
-
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ClaudeDesktopModelMappings {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    desktop_models: Option<Vec<ClaudeDesktopModelMapping>>,
-    #[serde(default)]
-    opus: String,
-    #[serde(default)]
-    sonnet: String,
-    #[serde(default)]
-    haiku: String,
-    #[serde(default)]
-    fable: String,
-    #[serde(default)]
-    fable_1m: bool,
-    #[serde(default)]
-    opus_1m: bool,
-    #[serde(default)]
-    sonnet_1m: bool,
-    #[serde(default)]
-    haiku_1m: bool,
-    #[serde(default = "default_claude_code_max_context_tokens")]
-    max_context_tokens: u64,
-    #[serde(default = "default_claude_auto_compact_pct")]
-    auto_compact_pct: u8,
-    #[serde(default)]
-    disable_auto_compact: bool,
-    /// Keep Claude Code's session/default model selection under CPA control.
-    /// Defaults to true for backwards compatibility with existing profiles.
-    #[serde(default = "default_true")]
-    manage_default_model: bool,
-    /// Set CLAUDE_CODE_SUBAGENT_MODEL when enabled; otherwise allow inheritance.
-    /// Defaults to true for backwards compatibility with existing profiles.
-    #[serde(default = "default_true")]
-    manage_subagent_model: bool,
-    /// Optional explicit model written to the root Claude Code `model` setting.
-    #[serde(default)]
-    startup_model: Option<String>,
-    /// Optional explicit model written to CLAUDE_CODE_SUBAGENT_MODEL.
-    #[serde(default)]
-    subagent_model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    response_language: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ClaudeDesktopModelMapping {
-    #[serde(default)]
-    model: String,
-    #[serde(default)]
-    alias: String,
-    #[serde(default)]
-    context_1m: bool,
-}
-
-impl ClaudeDesktopModelMapping {
-    fn model_id(&self) -> &str {
-        if self.alias.trim().is_empty() {
-            self.model.trim()
-        } else {
-            self.alias.trim()
-        }
-    }
-
-    fn source_or_alias(&self) -> &str {
-        if self.model.trim().is_empty() {
-            self.alias.trim()
-        } else {
-            self.model.trim()
-        }
-    }
-
-    fn has_mapping(&self) -> bool {
-        !self.model.trim().is_empty()
-            && !self.alias.trim().is_empty()
-            && !self.model.trim().eq_ignore_ascii_case(self.alias.trim())
-    }
-}
-
-fn default_claude_code_max_context_tokens() -> u64 {
-    DEFAULT_CLAUDE_CONTEXT_WINDOW
-}
-
-fn default_claude_auto_compact_pct() -> u8 {
-    DEFAULT_CLAUDE_AUTO_COMPACT_PCT
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn default_update_channel() -> String {
-    // Official packages use their explicit family; retain the historic default for older builds.
-    let preview = match option_env!("ECPA_RELEASE_FAMILY") {
-        Some(family) => family == "preview",
-        None => app_version_series::is_preview_package(env!("CARGO_PKG_VERSION")),
-    };
-    if preview {
-        "preview".to_string()
-    } else {
-        "stable".to_string()
-    }
-}
-
-impl ClaudeDesktopModelMappings {
-    fn all(model: &str) -> Self {
-        Self {
-            desktop_models: None,
-            opus: model.to_string(),
-            sonnet: model.to_string(),
-            haiku: model.to_string(),
-            fable: model.to_string(),
-            fable_1m: false,
-            opus_1m: false,
-            sonnet_1m: false,
-            haiku_1m: false,
-            max_context_tokens: default_claude_code_max_context_tokens(),
-            auto_compact_pct: default_claude_auto_compact_pct(),
-            disable_auto_compact: false,
-            manage_default_model: true,
-            manage_subagent_model: true,
-            startup_model: None,
-            subagent_model: None,
-            response_language: None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct CodexModelDefinition {
-    id: String,
-    display_name: Option<String>,
-    description: Option<String>,
-    context_window: Option<u64>,
-    reasoning_levels: Vec<String>,
-    supports_tools: Option<bool>,
-}
-
-// Coordinates in the configuration arrays; never persisted into CPA configuration.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ModelAliasPosition {
-    section: String,
-    provider_index: Option<usize>,
-    model_index: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ThinkingAliasEntry {
-    position: ModelAliasPosition,
-    source_model: String,
-    alias: String,
-    effort: Option<String>,
-    provider: String,
-    kind: String,
-    oauth_channel: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SpeedAliasEntry {
-    position: ModelAliasPosition,
-    source_model: String,
-    alias: String,
-    service_tier: String,
-    provider: String,
-    kind: String,
-    oauth_channel: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ThinkingAliasSource {
-    id: String,
-    model: String,
-    display_name: Option<String>,
-    provider: String,
-    kind: String,
-    protocol: String,
-    reasoning_levels: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ThinkingAliasSourceLocation {
-    Oauth {
-        channel: String,
-        force_mapping: bool,
-    },
-    ConfigModel {
-        section: &'static str,
-        provider_index: usize,
-        model_index: usize,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ResolvedThinkingAliasSource {
-    source: ThinkingAliasSource,
-    location: ThinkingAliasSourceLocation,
-}
-
-#[cfg(test)]
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentModificationRecord {
-    version: u8,
-    client: String,
-    phase: String,
-    model: String,
-    files: Vec<AgentModificationFile>,
-}
-
-#[cfg(test)]
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentModificationFile {
-    path: PathBuf,
-    backup_path: PathBuf,
-    existed_before: bool,
-    original_sha256: Option<String>,
-    managed_sha256: String,
-}
-
-#[cfg(test)]
-struct AgentModificationInspection {
-    enabled: bool,
-    state: String,
-    backup_available: bool,
-    warnings: Vec<String>,
-}
-
-#[cfg(test)]
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentAppliedState {
-    version: u8,
-    client: String,
-    model: String,
-    #[serde(default)]
-    configuration_revision: u8,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    claude_desktop_model_mappings: Option<ClaudeDesktopModelMappings>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    backup_files: Vec<AgentAppliedBackupFile>,
-    updated_at_unix: u64,
-}
-
-#[cfg(test)]
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentAppliedBackupFile {
-    path: PathBuf,
-    backup_path: PathBuf,
-    existed_before: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AgentClient {
-    ClaudeCode,
-    ClaudeDesktop,
-    Codex,
-    OpenCode,
-    OpenClaw,
-    Hermes,
-    DeepSeekHarness,
-    ZCode,
-    WorkBuddy,
-    AntigravityCli,
-    CopilotCli,
-    VscodeCopilot,
-    KimiCode,
-    GrokBuild,
-    Omp,
-}
-
-#[derive(Clone, Debug)]
-enum DesktopAppTarget {
-    Application(PathBuf),
-    #[cfg(target_os = "windows")]
-    WindowsAppId(String),
-}
-
-impl AgentClient {
-    fn parse(value: &str) -> Result<Self, String> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "claude-code" => Ok(Self::ClaudeCode),
-            "claude-desktop" => Ok(Self::ClaudeDesktop),
-            "codex" => Ok(Self::Codex),
-            "opencode" => Ok(Self::OpenCode),
-            "openclaw" => Ok(Self::OpenClaw),
-            "hermes" => Ok(Self::Hermes),
-            "deepseek-harness" => Ok(Self::DeepSeekHarness),
-            "zcode" => Ok(Self::ZCode),
-            "workbuddy" => Ok(Self::WorkBuddy),
-            "antigravity-cli" => Ok(Self::AntigravityCli),
-            "copilot-cli" => Ok(Self::CopilotCli),
-            "vscode-copilot" => Ok(Self::VscodeCopilot),
-            "kimi-code" => Ok(Self::KimiCode),
-            "grok-build" => Ok(Self::GrokBuild),
-            "omp" => Ok(Self::Omp),
-            _ => Err(format!("Unsupported agent client: {value}")),
-        }
-    }
-
-    fn id(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "claude-code",
-            Self::ClaudeDesktop => "claude-desktop",
-            Self::Codex => "codex",
-            Self::OpenCode => "opencode",
-            Self::OpenClaw => "openclaw",
-            Self::Hermes => "hermes",
-            Self::DeepSeekHarness => "deepseek-harness",
-            Self::ZCode => "zcode",
-            Self::WorkBuddy => "workbuddy",
-            Self::AntigravityCli => "antigravity-cli",
-            Self::CopilotCli => "copilot-cli",
-            Self::VscodeCopilot => "vscode-copilot",
-            Self::KimiCode => "kimi-code",
-            Self::GrokBuild => "grok-build",
-            Self::Omp => "omp",
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "Claude Code",
-            Self::ClaudeDesktop => "Claude Desktop",
-            Self::Codex => "Codex",
-            Self::OpenCode => "OpenCode",
-            Self::OpenClaw => "OpenClaw",
-            Self::Hermes => "Hermes Agent",
-            Self::DeepSeekHarness => "DeepSeek Harness",
-            Self::ZCode => "ZCode",
-            Self::WorkBuddy => "WorkBuddy",
-            Self::AntigravityCli => "Antigravity CLI",
-            Self::CopilotCli => "Copilot CLI",
-            Self::VscodeCopilot => "VSCode Copilot",
-            Self::KimiCode => "Kimi Code",
-            Self::GrokBuild => "Grok Build",
-            Self::Omp => "Oh My Pi",
-        }
-    }
-
-    fn supported_platform(self) -> bool {
-        self != Self::ClaudeDesktop
-            || cfg!(any(
-                target_os = "windows",
-                target_os = "macos",
-                target_os = "linux"
-            ))
-    }
-
-    fn executable_names(self) -> &'static [&'static str] {
-        match self {
-            Self::ClaudeCode => &["claude"],
-            Self::ClaudeDesktop => &[],
-            Self::Codex => &["codex"],
-            Self::OpenCode => &["opencode"],
-            Self::OpenClaw => &["openclaw"],
-            Self::Hermes => &["hermes"],
-            Self::DeepSeekHarness => &["dsh"],
-            Self::ZCode => &["zcode"],
-            Self::WorkBuddy => &[],
-            Self::AntigravityCli => &["agy"],
-            Self::CopilotCli => &["copilot"],
-            Self::VscodeCopilot => &["code"],
-            Self::KimiCode => &["kimi"],
-            Self::GrokBuild => &["grok"],
-            Self::Omp => &["omp"],
-        }
-    }
-}
-
-struct AgentFileUpdate {
-    path: PathBuf,
-    after: String,
-}
-
-struct AgentConfigurationOptions<'a> {
-    models: &'a [AgentModelOption],
-    codex_catalog: Option<&'a str>,
-    oauth_configuration: bool,
-    claude_code_model_mappings: Option<&'a ClaudeDesktopModelMappings>,
-    claude_desktop_model_mappings: Option<&'a ClaudeDesktopModelMappings>,
-}
-
-struct PreparedAgentModels {
-    models: Vec<AgentModelOption>,
-    codex_catalog: Option<String>,
-}
-
-type FileSnapshot = (PathBuf, Option<Vec<u8>>);
-#[cfg(test)]
-type AgentRecordExtension = (AgentModificationRecord, Vec<FileSnapshot>);
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GuiNetworkSettings {
-    port: u16,
-    allow_lan: bool,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GuiNetworkRoutingSettings {
-    port: u16,
-    allow_lan: bool,
-    routing_session_affinity: bool,
-    routing_session_affinity_ttl: String,
-    #[serde(default)]
-    disable_cooling: bool,
-    request_retry: u32,
-    max_retry_credentials: u32,
-    max_retry_interval: i64,
-    streaming_bootstrap_retries: u32,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GuiNetworkEndpointSettings {
-    host: String,
-    port: u16,
-    #[serde(default)]
-    proxy_url: Option<String>,
-    #[serde(default)]
-    proxy_override: Option<bool>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GuiRetrySettings {
-    #[serde(default)]
-    disable_cooling: bool,
-    request_retry: u32,
-    max_retry_credentials: u32,
-    max_retry_interval: i64,
-    #[allow(dead_code)]
-    #[serde(default = "default_transient_error_cooldown_seconds")]
-    transient_error_cooldown_seconds: i64,
-    streaming_bootstrap_retries: u32,
-}
-
-fn default_transient_error_cooldown_seconds() -> i64 {
-    DEFAULT_TRANSIENT_ERROR_COOLDOWN_SECONDS
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GuiSessionRoutingSettings {
-    routing_session_affinity: bool,
-    routing_session_affinity_ttl: String,
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CoreTlsSettings {
-    enabled: bool,
-    cert: String,
-    key: String,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CoreSensitiveWordsSettings {
-    antigravity_sensitive_words: Vec<String>,
-    devin_sensitive_words: Vec<String>,
-    #[serde(default)]
-    antigravity_sensitive_words_replace: std::collections::BTreeMap<String, String>,
-    #[serde(default)]
-    devin_sensitive_words_replace: std::collections::BTreeMap<String, String>,
-}
-
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CoreLoggingSettingsInput {
-    debug: bool,
-    commercial_mode: bool,
-    logging_to_file: bool,
-    logs_max_total_size_mb: u32,
-    error_logs_max_files: u32,
-    usage_statistics_enabled: bool,
-    redis_usage_queue_retention_seconds: u32,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CoreConfigSettings {
-    #[serde(skip_serializing)]
-    host: String,
-    #[serde(skip_serializing)]
-    port: u16,
-    #[serde(skip_serializing)]
-    auth_dir: String,
-    api_keys: Vec<String>,
-    /// Whether the kernel configuration sets `auth-dir`; otherwise `auth_dir` is the kernel default.
-    #[serde(skip_serializing)]
-    auth_dir_configured: bool,
-    /// Whether the kernel configuration declares API keys other than the example placeholders.
-    #[serde(skip_serializing)]
-    api_keys_configured: bool,
-    management_secret_configured: bool,
-    debug: bool,
-    commercial_mode: bool,
-    logging_to_file: bool,
-    logs_max_total_size_mb: u32,
-    error_logs_max_files: u32,
-    usage_statistics_enabled: bool,
-    redis_usage_queue_retention_seconds: u32,
-    request_log: bool,
-    plugins_enabled: bool,
-    routing_strategy: String,
-    proxy_url: String,
-    routing_session_affinity: bool,
-    routing_session_affinity_ttl: String,
-    disable_cooling: bool,
-    request_retry: u32,
-    max_retry_credentials: u32,
-    max_retry_interval: i64,
-    transient_error_cooldown_seconds: i64,
-    streaming_bootstrap_retries: u32,
-    #[allow(dead_code)]
-    #[serde(skip_serializing)]
-    management_secret_key: Option<String>,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CoreApiKeyView {
-    api_key: String,
-    remark: String,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CoreConfigView {
-    host: String,
-    api_keys: Vec<CoreApiKeyView>,
-    management_secret_configured: bool,
-    port: u16,
-    allow_lan: bool,
-    debug: bool,
-    commercial_mode: bool,
-    logging_to_file: bool,
-    logs_max_total_size_mb: u32,
-    error_logs_max_files: u32,
-    usage_statistics_enabled: bool,
-    redis_usage_queue_retention_seconds: u32,
-    request_log: bool,
-    plugins_enabled: bool,
-    routing_strategy: String,
-    proxy_url: String,
-    proxy_override: bool,
-    routing_session_affinity: bool,
-    routing_session_affinity_ttl: String,
-    disable_cooling: bool,
-    request_retry: u32,
-    max_retry_credentials: u32,
-    max_retry_interval: i64,
-    streaming_bootstrap_retries: u32,
-}
-
-impl Default for CoreInstallTask {
-    fn default() -> Self {
-        Self {
-            running: false,
-            cancellable: false,
-            phase: "Idle".to_string(),
-            downloaded: 0,
-            total: None,
-            percent: None,
-            message: None,
-            result: None,
-        }
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CoreMetadata {
-    version: String,
-    asset_name: String,
-    installed_at_unix: u64,
-}
-
-struct DownloadedArchive {
-    size: u64,
-    sha256: String,
-}
-
-impl CoreDownloadState {
-    fn silent() -> Self {
-        Self { silent: true, ..Self::default() }
-    }
-    fn start(&self, token: CancellationToken, version: Option<String>) -> Result<(), String> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| "Kernel installation status lock is poisoned".to_string())?;
-
-        if inner.running {
-            return Err("A kernel installation task is already running".to_string());
-        }
-
-        inner.running = true;
-        inner.token = Some(token);
-        inner.task = CoreInstallTask {
-            running: true,
-            cancellable: true,
-            phase: version
-                .map(|version| format!("Preparing to install {version}"))
-                .unwrap_or_else(|| "Preparing to install the latest version".to_string()),
-            downloaded: 0,
-            total: None,
-            percent: None,
-            message: None,
-            result: None,
-        };
-
-        Ok(())
-    }
-
-    fn cancel(&self) {
-        if let Ok(inner) = self.inner.lock() {
-            if let Some(token) = &inner.token {
-                token.cancel();
-            }
-        }
-    }
-
-    fn snapshot(&self) -> CoreInstallTask {
-        self.inner
-            .lock()
-            .map(|inner| inner.task.clone())
-            .unwrap_or_default()
-    }
-
-    fn progress(
-        &self,
-        window: &tauri::Window,
-        phase: &str,
-        downloaded: u64,
-        total: Option<u64>,
-        cancellable: bool,
-    ) {
-        if self.silent {
-            return;
-        }
-        let percent = total
-            .filter(|total| *total > 0)
-            .map(|total| downloaded as f64 * 100.0 / total as f64);
-
-        let task = {
-            let Ok(mut inner) = self.inner.lock() else {
-                return;
-            };
-
-            inner.task.running = inner.running;
-            inner.task.cancellable = cancellable;
-            inner.task.phase = phase.to_string();
-            inner.task.downloaded = downloaded;
-            inner.task.total = total;
-            inner.task.percent = percent;
-            inner.task.clone()
-        };
-
-        let _ = window.emit(CORE_INSTALL_PROGRESS_EVENT, task);
-    }
-
-    fn finish(&self, window: &tauri::Window, result: Result<CoreInstallResult, String>) {
-        let task = {
-            let Ok(mut inner) = self.inner.lock() else {
-                return;
-            };
-
-            inner.running = false;
-            inner.token = None;
-            inner.task.running = false;
-            inner.task.cancellable = false;
-
-            match result {
-                Ok(result) => {
-                    inner.task.phase = "Installation complete".to_string();
-                    inner.task.downloaded = 1;
-                    inner.task.total = Some(1);
-                    inner.task.percent = Some(100.0);
-                    inner.task.message = Some(format!("{} installation complete", result.version));
-                    inner.task.result = Some(result);
-                }
-                Err(error) => {
-                    inner.task.phase = if error.to_ascii_lowercase().contains("cancel") {
-                        "Canceled".to_string()
-                    } else {
-                        "Installation failed".to_string()
-                    };
-                    inner.task.message = Some(error);
-                    inner.task.result = None;
-                }
-            }
-
-            inner.task.clone()
-        };
-
-        let _ = window.emit(CORE_INSTALL_PROGRESS_EVENT, task);
-    }
-}
-
-impl AppUpdateState {
-    fn snapshot(&self) -> AppUpdateTask {
-        self.inner
-            .lock()
-            .map(|inner| inner.task.clone())
-            .unwrap_or_default()
-    }
-
-    fn set_available(&self, task: AppUpdateTask) {
-        if let Ok(mut inner) = self.inner.lock() {
-            if !inner.task.running {
-                inner.task = task;
-            }
-        }
-    }
-
-    fn start(&self, token: CancellationToken) -> Result<(), String> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| "Application update status lock is poisoned".to_string())?;
-        if inner.task.running {
-            return Err("An application update task is already running".to_string());
-        }
-        inner.token = Some(token);
-        inner.task = AppUpdateTask {
-            running: true,
-            cancellable: true,
-            phase: "checking".to_string(),
-            ..AppUpdateTask::default()
-        };
-        Ok(())
-    }
-
-    fn start_download(&self, pending: &PendingAppUpdate) -> Result<(), String> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| "Application update status lock is poisoned".to_string())?;
-        if !inner.task.running || inner.task.phase != "checking" {
-            return Err("Application update is not in the checking stage".to_string());
-        }
-        if inner
-            .token
-            .as_ref()
-            .is_none_or(CancellationToken::is_cancelled)
-        {
-            return Err("Application update download canceled".to_string());
-        }
-        inner.task = AppUpdateTask {
-            running: true,
-            cancellable: true,
-            phase: "downloading".to_string(),
-            preserve_core: inner.task.preserve_core,
-            automatic: inner.task.automatic,
-            target_version: Some(pending.version.clone()),
-            downloaded_bytes: 0,
-            total_bytes: Some(pending.asset.size_bytes),
-            percent: Some(0.0),
-            message: None,
-        };
-        Ok(())
-    }
-
-    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-    fn update_task<F>(&self, update: F) -> AppUpdateTask
-    where
-        F: FnOnce(&mut AppUpdateTask),
-    {
-        let Ok(mut inner) = self.inner.lock() else {
-            return AppUpdateTask::default();
-        };
-        update(&mut inner.task);
-        inner.task.clone()
-    }
-
-    fn finish(&self, phase: &str, message: Option<String>) -> AppUpdateTask {
-        let Ok(mut inner) = self.inner.lock() else {
-            return AppUpdateTask::default();
-        };
-        inner.task.running = false;
-        inner.task.cancellable = false;
-        inner.task.phase = phase.to_string();
-        inner.task.message = message;
-        inner.token = None;
-        inner.task.clone()
-    }
-
-    fn cancel(&self) {
-        if let Ok(inner) = self.inner.lock() {
-            if let Some(token) = &inner.token {
-                token.cancel();
-            }
-        }
-    }
-}
-
-impl CoreProcessState {
-    fn new(starting: bool) -> Self {
-        Self {
-            remote_selected: AtomicBool::new(false),
-            recovery: core_recovery::CoreRecovery::default(),
-            child: Mutex::new(None),
-            adopted_processes: Mutex::new(Vec::new()),
-            starting: AtomicBool::new(starting),
-            shutting_down: AtomicBool::new(false),
-            shutdown_complete: AtomicBool::new(false),
-            preserve_on_exit: AtomicBool::new(false),
-        }
-    }
-
-    fn is_shutting_down(&self) -> bool {
-        self.shutting_down.load(Ordering::Acquire)
-    }
-
-    fn ensure_active(&self) -> Result<(), String> {
-        if self.remote_selected.load(Ordering::Acquire) { return Err("Remote CPA selected".into()); }
-        if self.is_shutting_down() || self.preserve_on_exit.load(Ordering::Acquire) {
-            Err("Application is exiting; kernel operation canceled".to_string())
-        } else {
-            Ok(())
-        }
-    }
-
-    fn is_starting(&self) -> bool {
-        self.starting.load(Ordering::Acquire)
-    }
-
-    fn set_starting(&self, starting: bool) {
-        self.starting.store(starting, Ordering::Release);
-    }
-
-    fn managed_pid(&self) -> Option<u32> {
-        if let Ok(mut child) = self.child.lock() {
-            if let Some(process) = child.as_mut() {
-                match process.try_wait() {
-                    Ok(None) => return Some(process.id()),
-                    Ok(Some(exit)) => {
-                        self.recovery.exited(format!("PID {}: {exit}", process.id()));
-                        *child = None;
-                    }
-                    // A status-check error is not proof of exit. Dropping a live
-                    // CoreChild would terminate its Windows job and create an outage.
-                    Err(_) => return Some(process.id()),
-                }
-            }
-        }
-
-        self.adopted_processes
-            .lock()
-            .ok()
-            .and_then(|mut processes| {
-                let had_processes = !processes.is_empty();
-                processes.retain(|process| {
-                    process_executable_path(process.process_id)
-                        .as_deref()
-                        .is_some_and(|path| executable_paths_match(&process.binary_path, path))
-                });
-                if had_processes && processes.is_empty() {
-                    self.recovery.exited("Adopted kernel process exited".into());
-                }
-                processes.first().map(|process| process.process_id)
-            })
-    }
-
-    fn take_child(&self) -> Option<CoreChild> {
-        self.child.lock().ok().and_then(|mut child| child.take())
-    }
-
-    fn adopt_process_ids(&self, binary_path: &Path, process_ids: Vec<u32>) -> Result<(), String> {
-        let mut adopted = self
-            .adopted_processes
-            .lock()
-            .map_err(|_| "Adopted kernel process status lock is poisoned".to_string())?;
-        *adopted = process_ids
-            .into_iter()
-            .filter(|process_id| is_process_alive(*process_id))
-            .map(|process_id| AdoptedCoreProcess {
-                process_id,
-                binary_path: binary_path.to_path_buf(),
-            })
-            .collect();
-        adopted.sort_unstable_by_key(|process| process.process_id);
-        adopted.dedup_by_key(|process| process.process_id);
-        if !adopted.is_empty() {
-            self.recovery.running();
-        }
-        Ok(())
-    }
-
-    fn clear_adopted_processes(&self) -> Result<(), String> {
-        self.adopted_processes
-            .lock()
-            .map(|mut processes| processes.clear())
-            .map_err(|_| "Adopted kernel process status lock is poisoned".to_string())
-    }
-
-    fn take_adopted_processes(&self) -> Vec<AdoptedCoreProcess> {
-        self.adopted_processes
-            .lock()
-            .map(|mut processes| std::mem::take(&mut *processes))
-            .unwrap_or_default()
-    }
-
-    fn store_child(&self, child: CoreChild) -> Result<u32, String> {
-        self.ensure_active()?;
-        let pid = child.id();
-        self.clear_adopted_processes()?;
-        let mut managed_child = self
-            .child
-            .lock()
-            .map_err(|_| "Kernel process status lock is poisoned".to_string())?;
-        *managed_child = Some(child);
-        self.recovery.running();
-        Ok(pid)
-    }
-}
-
-impl MainWindowState {
-    fn new(size: Option<SavedWindowSize>, position: Option<tauri::PhysicalPosition<i32>>) -> Self {
-        Self {
-            inner: Mutex::new(size),
-            position: Mutex::new(position),
-            position_tracking: AtomicBool::new(false),
-        }
-    }
-
-    fn position(&self) -> Result<Option<tauri::PhysicalPosition<i32>>, String> {
-        self.position
-            .lock()
-            .map(|position| *position)
-            .map_err(|_| "Main window position status lock is poisoned".to_string())
-    }
-
-    fn replace_position(&self, position: tauri::PhysicalPosition<i32>) -> Result<(), String> {
-        *self
-            .position
-            .lock()
-            .map_err(|_| "Main window position status lock is poisoned".to_string())? =
-            Some(position);
-        Ok(())
-    }
-
-    fn snapshot(&self) -> Result<Option<SavedWindowSize>, String> {
-        self.inner
-            .lock()
-            .map(|size| *size)
-            .map_err(|_| "Main window size status lock is poisoned".to_string())
-    }
-
-    fn replace(&self, size: SavedWindowSize) -> Result<(), String> {
-        let mut current = self
-            .inner
-            .lock()
-            .map_err(|_| "Main window size status lock is poisoned".to_string())?;
-        *current = Some(size);
-        Ok(())
-    }
-}
-
-impl GuiConfigState {
-    fn new(config: GuiConfigFile) -> Self {
-        Self {
-            inner: Mutex::new(config),
-        }
-    }
-
-    fn snapshot(&self) -> Result<GuiConfigFile, String> {
-        if let Ok(config) = remote_cpa::AGENT_CONFIG.try_with(Clone::clone) { return Ok(config); }
-        self.inner
-            .lock()
-            .map(|config| config.clone())
-            .map_err(|_| "GUI configuration status lock is poisoned".to_string())
-    }
-
-    fn replace_external(&self, config: GuiConfigFile) -> Result<(), String> {
-        let mut current = self
-            .inner
-            .lock()
-            .map_err(|_| "GUI configuration status lock is poisoned".to_string())?;
-        *current = config;
-        Ok(())
-    }
-
-    fn replace_core_settings_external(
-        &self,
-        settings: &CoreConfigSettings,
-    ) -> Result<GuiConfigFile, String> {
-        let mut current = self
-            .inner
-            .lock()
-            .map_err(|_| "GUI configuration status lock is poisoned".to_string())?;
-        let mut config = current.clone();
-        apply_core_settings_to_gui_config(&mut config, settings);
-        apply_external_core_proxy_override(&mut config, settings)?;
-        sanitize_gui_config(&mut config)?;
-        validate_gui_config(&config)?;
-        *current = config.clone();
-        Ok(config)
-    }
-
-    fn update_network(&self, port: u16, allow_lan: bool) -> Result<GuiConfigFile, String> {
-        self.update(|config| {
-            config.port = port;
-            config.allow_lan = allow_lan;
-            config.host = if allow_lan { "0.0.0.0" } else { "127.0.0.1" }.to_string();
-            Ok(())
-        })
-    }
-
-    fn update_network_routing(&self, settings: &GuiConfigFile) -> Result<GuiConfigFile, String> {
-        self.update(|config| {
-            config.port = settings.port;
-            config.allow_lan = settings.allow_lan;
-            config.host = settings.host.clone();
-            config.proxy_url = settings.proxy_url.clone();
-            config.routing_session_affinity = settings.routing_session_affinity;
-            config.routing_session_affinity_ttl = settings.routing_session_affinity_ttl.clone();
-            config.disable_cooling = settings.disable_cooling;
-            config.request_retry = settings.request_retry;
-            config.max_retry_credentials = settings.max_retry_credentials;
-            config.max_retry_interval = settings.max_retry_interval;
-            config.transient_error_cooldown_seconds = settings.transient_error_cooldown_seconds;
-            config.streaming_bootstrap_retries = settings.streaming_bootstrap_retries;
-            Ok(())
-        })
-    }
-
-    fn update_network_endpoint(&self, settings: &GuiConfigFile) -> Result<GuiConfigFile, String> {
-        self.update(|config| {
-            config.host = settings.host.clone();
-            config.allow_lan = settings.allow_lan;
-            config.port = settings.port;
-            config.proxy_url = settings.proxy_url.clone();
-            config.proxy_override = settings.proxy_override;
-            Ok(())
-        })
-    }
-
-    fn update_retry_settings(&self, settings: &GuiConfigFile) -> Result<GuiConfigFile, String> {
-        self.update(|config| {
-            config.disable_cooling = settings.disable_cooling;
-            config.request_retry = settings.request_retry;
-            config.max_retry_credentials = settings.max_retry_credentials;
-            config.max_retry_interval = settings.max_retry_interval;
-            config.transient_error_cooldown_seconds = settings.transient_error_cooldown_seconds;
-            config.streaming_bootstrap_retries = settings.streaming_bootstrap_retries;
-            Ok(())
-        })
-    }
-
-    fn update_session_routing(&self, settings: &GuiConfigFile) -> Result<GuiConfigFile, String> {
-        self.update(|config| {
-            config.routing_session_affinity = settings.routing_session_affinity;
-            config.routing_session_affinity_ttl = settings.routing_session_affinity_ttl.clone();
-            Ok(())
-        })
-    }
-
-    fn set_run_on_startup(&self, run_on_startup: bool) -> Result<GuiConfigFile, String> {
-        self.update(|config| {
-            config.run_on_startup = run_on_startup;
-            Ok(())
-        })
-    }
-
-    fn set_close_behavior(
-        &self,
-        close_behavior: WindowsCloseBehavior,
-    ) -> Result<GuiConfigFile, String> {
-        self.update(|config| {
-            config.close_behavior = close_behavior;
-            Ok(())
-        })
-    }
-
-    fn set_software_preferences(
-        &self,
-        close_behavior: WindowsCloseBehavior,
-        start_core_on_launch: bool,
-        silent_start: bool,
-        default_terminal: String,
-    ) -> Result<GuiConfigFile, String> {
-        self.update(|config| {
-            config.close_behavior = close_behavior;
-            config.start_core_on_launch = start_core_on_launch;
-            config.silent_start = silent_start;
-            config.default_terminal = normalize_agent_terminal(&default_terminal);
-            Ok(())
-        })
-    }
-
-    fn set_locale(&self, locale: String) -> Result<GuiConfigFile, String> {
-        self.update(|config| {
-            config.locale = normalize_app_locale(&locale).to_string();
-            Ok(())
-        })
-    }
-
-    fn set_download_source(
-        &self,
-        download_source: VersionDownloadSource,
-    ) -> Result<GuiConfigFile, String> {
-        self.set_download_candidate(VersionDownloadCandidate::builtin(download_source))
-    }
-
-    fn set_update_channel(&self, update_channel: &str) -> Result<GuiConfigFile, String> {
-        self.update(|config| {
-            config.update_channel = update_channel.to_string();
-            Ok(())
-        })
-    }
-
-    fn set_download_candidate(
-        &self,
-        candidate: VersionDownloadCandidate,
-    ) -> Result<GuiConfigFile, String> {
-        self.update(|config| {
-            if let Some(url) = &candidate.custom_url {
-                if !config.custom_download_mirrors.contains(url) {
-                    return Err("Custom mirror does not exist".to_string());
-                }
-                config.active_custom_download_mirror = url.clone();
-            }
-            config.download_source = candidate.source;
-            config.prefer_gitcode_downloads = candidate.source == VersionDownloadSource::Gitcode;
-            Ok(())
-        })
-    }
-
-    fn set_window_geometry(
-        &self,
-        size: SavedWindowSize,
-        position: Option<tauri::PhysicalPosition<i32>>,
-    ) -> Result<GuiConfigFile, String> {
-        self.update(|config| {
-            config.window_width = Some(size.width);
-            config.window_height = Some(size.height);
-            config.window_x = position.map(|position| position.x);
-            config.window_y = position.map(|position| position.y);
-            Ok(())
-        })
-    }
-
-    fn set_management_secret_key(&self, secret_key: String) -> Result<GuiConfigFile, String> {
-        self.update(|config| {
-            config.management_secret_key = secret_key;
-            config.management_secret_key_unmanaged = false;
-            Ok(())
-        })
-    }
-
-    fn sync_core_settings(&self, settings: &CoreConfigSettings) -> Result<GuiConfigFile, String> {
-        self.sync_core_settings_internal(settings, None, false, false, None)
-    }
-
-    fn sync_core_logging_settings(&self, settings: &CoreConfigSettings) -> Result<GuiConfigFile, String> {
-        self.sync_core_settings_internal(settings, None, false, true, None)
-    }
-
-    fn sync_core_settings_external(
-        &self,
-        settings: &CoreConfigSettings,
-    ) -> Result<GuiConfigFile, String> {
-        self.sync_core_settings_internal(settings, None, true, false, None)
-    }
-
-    fn sync_core_settings_with_api_key(
-        &self,
-        settings: &CoreConfigSettings,
-        added_api_key: Option<GuiApiKeyEntry>,
-    ) -> Result<GuiConfigFile, String> {
-        self.sync_core_settings_internal(settings, added_api_key, false, false, None)
-    }
-
-    fn sync_core_settings_internal(
-        &self,
-        settings: &CoreConfigSettings,
-        added_api_key: Option<GuiApiKeyEntry>,
-        apply_external_proxy: bool,
-        save_usage_preference: bool,
-        management_key_override: Option<&str>,
-    ) -> Result<GuiConfigFile, String> {
-        self.update(|config| {
-            config.api_keys = merge_core_api_keys_with_gui_metadata(
-                &config.api_keys,
-                &settings.api_keys,
-                added_api_key.as_ref(),
-            );
-            config.host = settings.host.clone();
-            config.port = settings.port;
-            config.allow_lan = !is_loopback_host(&settings.host);
-            config.auth_dir = settings.auth_dir.clone();
-            config.debug = settings.debug;
-            config.commercial_mode = settings.commercial_mode;
-            config.logging_to_file = settings.logging_to_file;
-            config.logs_max_total_size_mb = settings.logs_max_total_size_mb;
-            config.error_logs_max_files = settings.error_logs_max_files;
-            config.usage_statistics_enabled = settings.usage_statistics_enabled;
-            if save_usage_preference {
-                config.usage_statistics_disabled = (!settings.usage_statistics_enabled).then_some(true);
-            }
-            config.redis_usage_queue_retention_seconds =
-                settings.redis_usage_queue_retention_seconds;
-            config.request_log = settings.request_log;
-            if let Some(secret_key) = management_key_override.or_else(|| {
-                settings.management_secret_key.as_deref()
-                    .filter(|secret_key| !is_hashed_management_secret_key(secret_key))
-            }) {
-                config.management_secret_key = secret_key.to_string();
-                config.management_secret_key_unmanaged = management_key_override == Some("");
-            }
-            config.plugins_enabled = settings.plugins_enabled;
-            config.routing_strategy = settings.routing_strategy.clone();
-            config.routing_session_affinity = settings.routing_session_affinity;
-            config.routing_session_affinity_ttl = settings.routing_session_affinity_ttl.clone();
-            config.disable_cooling = settings.disable_cooling;
-            config.request_retry = settings.request_retry;
-            config.max_retry_credentials = settings.max_retry_credentials;
-            config.max_retry_interval = settings.max_retry_interval;
-            config.transient_error_cooldown_seconds = settings.transient_error_cooldown_seconds;
-            config.streaming_bootstrap_retries = settings.streaming_bootstrap_retries;
-            if apply_external_proxy {
-                apply_external_core_proxy_override(config, settings)?;
-            }
-            Ok(())
-        })
-    }
-
-    fn update<F>(&self, update: F) -> Result<GuiConfigFile, String>
-    where
-        F: FnOnce(&mut GuiConfigFile) -> Result<(), String>,
-    {
-        let mut current = self
-            .inner
-            .lock()
-            .map_err(|_| "GUI configuration status lock is poisoned".to_string())?;
-        let mut config = current.clone();
-        update(&mut config)?;
-        sanitize_gui_config(&mut config)?;
-        write_gui_config(&config)?;
-        *current = config.clone();
-        Ok(config)
-    }
-}
-
-impl From<&GuiConfigFile> for GuiSettings {
-    fn from(config: &GuiConfigFile) -> Self {
-        Self {
-            host: config.host.clone(),
-            port: config.port,
-            allow_lan: config.allow_lan,
-            run_on_startup: config.run_on_startup,
-            close_behavior: config.close_behavior,
-        }
-    }
-}
-
-impl From<&GuiConfigFile> for CoreConfigSettings {
-    fn from(config: &GuiConfigFile) -> Self {
-        Self {
-            host: config.host.clone(),
-            port: config.port,
-            auth_dir: config.auth_dir.clone(),
-            api_keys: gui_api_key_values(&config.api_keys),
-            auth_dir_configured: true,
-            api_keys_configured: true,
-            management_secret_configured: !config.management_secret_key.is_empty(),
-            debug: config.debug,
-            commercial_mode: config.commercial_mode,
-            logging_to_file: config.logging_to_file,
-            logs_max_total_size_mb: config.logs_max_total_size_mb,
-            error_logs_max_files: config.error_logs_max_files,
-            usage_statistics_enabled: config.usage_statistics_enabled,
-            redis_usage_queue_retention_seconds: config.redis_usage_queue_retention_seconds,
-            request_log: config.request_log,
-            plugins_enabled: config.plugins_enabled,
-            routing_strategy: config.routing_strategy.clone(),
-            proxy_url: config.proxy_url.clone(),
-            routing_session_affinity: config.routing_session_affinity,
-            routing_session_affinity_ttl: config.routing_session_affinity_ttl.clone(),
-            disable_cooling: config.disable_cooling,
-            request_retry: config.request_retry,
-            max_retry_credentials: config.max_retry_credentials,
-            max_retry_interval: config.max_retry_interval,
-            transient_error_cooldown_seconds: config.transient_error_cooldown_seconds,
-            streaming_bootstrap_retries: config.streaming_bootstrap_retries,
-            management_secret_key: Some(config.management_secret_key.clone()),
-        }
-    }
-}
-
-impl From<&GuiConfigFile> for CoreConfigView {
-    fn from(config: &GuiConfigFile) -> Self {
-        Self {
-            host: config.host.clone(),
-            api_keys: config
-                .api_keys
-                .iter()
-                .map(|entry| CoreApiKeyView {
-                    api_key: entry.key.clone(),
-                    remark: entry.remark.clone(),
-                })
-                .collect(),
-            management_secret_configured: !config.management_secret_key.is_empty(),
-            port: config.port,
-            allow_lan: config.allow_lan,
-            debug: config.debug,
-            commercial_mode: config.commercial_mode,
-            logging_to_file: config.logging_to_file,
-            logs_max_total_size_mb: config.logs_max_total_size_mb,
-            error_logs_max_files: config.error_logs_max_files,
-            usage_statistics_enabled: config.usage_statistics_enabled,
-            redis_usage_queue_retention_seconds: config.redis_usage_queue_retention_seconds,
-            request_log: config.request_log,
-            plugins_enabled: config.plugins_enabled,
-            routing_strategy: config.routing_strategy.clone(),
-            proxy_url: config.proxy_url.clone(),
-            proxy_override: config.proxy_override,
-            routing_session_affinity: config.routing_session_affinity,
-            routing_session_affinity_ttl: config.routing_session_affinity_ttl.clone(),
-            disable_cooling: config.disable_cooling,
-            request_retry: config.request_retry,
-            max_retry_credentials: config.max_retry_credentials,
-            max_retry_interval: config.max_retry_interval,
-            streaming_bootstrap_retries: config.streaming_bootstrap_retries,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct GithubRelease {
-    tag_name: String,
-    assets: Vec<GithubAsset>,
-}
-
-#[derive(Deserialize)]
-struct GithubAsset {
-    name: String,
-    browser_download_url: String,
-    size: Option<u64>,
-    digest: Option<String>,
+    replace: Option<String>,
+    on_link: tauri::ipc::Channel<ecpa_core::acp::manual_auth::ManualLink>,
+) -> Result<ecpa_core::acp::AcpStatus, String> {
+    ecpa_core::acp::add_acp_account_with_callback(
+        core_app.inner().clone(),
+        label,
+        replace,
+        move |link| {
+            on_link
+                .send(link)
+                .map_err(|_| "Antigravity terminal sign-in did not complete".to_string())
+        },
+    )
+    .await
 }
 
 fn start_linux_activation_for_main_window(_app: &tauri::AppHandle) {
     #[cfg(target_os = "linux")]
     {
         let activation_app = _app.clone();
-        if let Err(error) = start_app_activation_listener(move || {
+        if let Err(error) = ecpa_core::start_app_activation_listener(move || {
             let app_handle = activation_app.clone();
             if let Err(error) = activation_app
                 .run_on_main_thread(move || show_windows_main_window(&app_handle))
@@ -2602,37 +244,31 @@ fn start_linux_activation_for_main_window(_app: &tauri::AppHandle) {
     }
 }
 
-fn main() {
-    let helper_args = env::args_os().collect::<Vec<_>>();
-    if helper_args.get(1).is_some_and(|arg| arg == "--cpa-acp-tools") {
-        let result = acp::run_mcp_helper();
-        if let Err(error) = result { eprintln!("{error}"); std::process::exit(1); }
-        return;
-    }
-    if helper_args.get(1).is_some_and(|a| a == "--cpa-copilot-cli") {
-        let code = run_copilot_helper(&helper_args).unwrap_or_else(|error| { eprintln!("{error}"); 1 });
-        std::process::exit(code);
-    }
-    if antigravity_helper_requested(&helper_args) {
-        let code = run_antigravity_helper(&helper_args).unwrap_or_else(|error| {
-            eprintln!("{error}");
-            1
-        });
-        std::process::exit(code);
-    }
-    let mut args = env::args_os();
-    while let Some(argument) = args.next() {
-        if argument == "--portable-update-helper" {
-            let result = args
-                .next()
-                .map(PathBuf::from)
-                .ok_or_else(|| "Application update helper is missing its descriptor file".to_string())
-                .and_then(|path| run_portable_update_helper(&path));
-            if let Err(error) = result {
-                eprintln!("{error}");
+fn spawn_event_bridge(core_app: &CoreAppHandle, tauri_app: tauri::AppHandle) {
+    let mut rx = core_app.subscribe_events();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    if let Some(target) = event.target.as_deref() {
+                        let _ = tauri_app.emit_to(target, &event.event, event.payload);
+                    } else {
+                        let _ = tauri_app.emit(&event.event, event.payload);
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
-            return;
         }
+    });
+}
+
+fn main() {
+    if let Some(code) = try_run_helper_subcommand() {
+        if code != 0 {
+            std::process::exit(code);
+        }
+        return;
     }
 
     // SAFETY: no worker threads or GTK/WebKit runtime have started yet.
@@ -2645,7 +281,9 @@ fn main() {
         Ok(guard) => guard,
         Err(error) => {
             #[cfg(target_os = "linux")]
-            if portable_update_ack_argument().is_none() && request_running_app_activation() {
+            if ecpa_core::portable_update_ack_argument().is_none()
+                && ecpa_core::request_running_app_activation()
+            {
                 return;
             }
             eprintln!("{error}");
@@ -2653,85 +291,54 @@ fn main() {
         }
     };
 
-    let portable_update_ack = portable_update_ack_argument();
-    let mut remote_cpa = remote_cpa::RemoteCpaState::load();
-    let switch_start = remote_cpa.take_builtin_start().unwrap_or_else(|error| {
-        eprintln!("Failed to clear built-in CPA start request: {error:?}");
-        true
-    });
-    let remote_launch = remote_cpa.remote_launch;
-    let gui_config = if remote_launch {
-        // Local startup can repair credentials and rewrite local CPA config.
-        // A Remote session must not load that initialization path at all.
-        app_settings::desktop_preferences_only().unwrap_or_default()
-    } else {
-        match load_or_create_gui_config() {
-            Ok(config) => config,
-            Err(error) => {
-                eprintln!("{error}");
-                if portable_update_ack.is_some() {
-                    return;
-                }
-                let mut config = GuiConfigFile::default();
-                // If the GUI configuration cannot be read before the kernel starts,
-                // use the shared recovery key so requests and the generated kernel
-                // configuration stay synchronized.
-                config.management_secret_key = LEGACY_DEFAULT_MANAGEMENT_SECRET_KEY.to_string();
-                if let Err(sanitize_error) = sanitize_gui_config(&mut config) {
-                    eprintln!("Failed to initialize fixed credentials directory: {sanitize_error}");
-                }
-                config
-            }
+    let data_dir = core_base_dir()
+        .map(|p| path_to_string(&p))
+        .unwrap_or_default();
+    let host = Arc::new(DesktopHostPlatform::new(data_dir));
+    let core_app = CoreAppHandle::new(host.clone());
+    let bootstrap = match bootstrap_core_states(&core_app, instance_guard) {
+        Ok(bootstrap) => bootstrap,
+        Err(error) => {
+            eprintln!("{error}");
+            return;
         }
     };
-    let initial_window_size = configured_window_size(&gui_config);
-    let initial_window_position = configured_window_position(&gui_config);
-    let start_hidden = !switch_start && !remote_launch && should_start_hidden(&gui_config);
+
+    let remote_launch = bootstrap.remote_launch;
+    let switch_start = bootstrap.switch_start;
+    let portable_update_ack = bootstrap.portable_update_ack;
+    let initial_window_size = configured_window_size(&bootstrap.gui_config);
+    let initial_window_position = configured_window_position(&bootstrap.gui_config);
+    let start_hidden =
+        !switch_start && !remote_launch && should_start_hidden(&bootstrap.gui_config);
 
     let context = tauri::generate_context!();
     #[cfg(target_os = "linux")]
     let context = {
         let mut context = context;
-        // Prevent #491's partial blank rendering on Linux (AMD and NVIDIA): disable native
-        // transparency before build creates the window, not later in setup.
         linux_graphics::configure_main_window(context.config_mut());
         context
     };
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_notification::init());
-    let app = app.plugin(tauri_plugin_autostart::init(
-        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-        Some(vec![AUTOSTART_ARGUMENT]),
-    ));
-    let app = app
-        .manage(AppInstanceGuardState::new(instance_guard))
-        .manage(remote_cpa)
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![AUTOSTART_ARGUMENT]),
+        ))
         .plugin(
             tauri_plugin_opener::Builder::new()
                 .open_js_links_on_click(false)
                 .build(),
         )
-        .manage(CoreDownloadState::default())
-        .manage(acp::AcpState::default())
-        .manage(AppUpdateState::default())
-        .manage(auto_update::AutoUpdateState::default())
+        .manage(core_app.clone())
         .manage(window_activity::WindowActivity::default())
-        .manage(CoreProcessState::new(
-            !remote_launch && (switch_start || should_start_core_on_launch(&gui_config)),
-        ))
-        .manage(DeepSeekHarnessProcessState::default())
-        .manage(usage::UsageCollectorState::default())
-        .manage(agent_usage::AgentUsageState::default())
-        .manage(GuiConfigState::new(gui_config))
         .manage(plugin_webview::PluginWebviewState::default())
         .manage(MainWindowState::new(
             initial_window_size,
             initial_window_position,
-        ))
-        .manage(AgentConfigStatusCache::default())
-        .manage(reverse_proxy::ReverseProxyManagerState::default());
+        ));
 
     let app = app.on_window_event(|window, event| {
         if window.label() != "main" {
@@ -2748,13 +355,15 @@ fn main() {
             webview_recovery::request(window.app_handle());
         }
 
-        if matches!(event, tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(_)) {
+        if matches!(
+            event,
+            tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(_)
+        ) {
             window_activity::sync(window.app_handle());
         }
 
         if let tauri::WindowEvent::Moved(position) = event {
             let state = window.state::<MainWindowState>();
-            // Ignore startup placement and the OS's minimized/maximized coordinates.
             if state.position_tracking.load(Ordering::Acquire)
                 && !window.is_minimized().unwrap_or(true)
                 && !window.is_maximized().unwrap_or(true)
@@ -2789,7 +398,12 @@ fn main() {
 
     #[cfg(target_os = "macos")]
     let app = app.on_window_event(move |window, event| {
-        if !remote_launch && !window.state::<CoreProcessState>().remote_selected.load(Ordering::Acquire) && window.label() == "main" {
+        let remote_selected = window
+            .state::<CoreAppHandle>()
+            .state::<CoreProcessState>()
+            .remote_selected
+            .load(Ordering::Acquire);
+        if !remote_launch && !remote_selected && window.label() == "main" {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 set_macos_dock_visible(window.app_handle(), false);
@@ -2803,7 +417,12 @@ fn main() {
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let app = app.on_window_event(move |window, event| {
-        if !remote_launch && !window.state::<CoreProcessState>().remote_selected.load(Ordering::Acquire) && window.label() == "main" {
+        let remote_selected = window
+            .state::<CoreAppHandle>()
+            .state::<CoreProcessState>()
+            .remote_selected
+            .load(Ordering::Acquire);
+        if !remote_launch && !remote_selected && window.label() == "main" {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 if let Err(error) = window.emit(WINDOWS_CLOSE_REQUEST_EVENT, ()) {
@@ -2813,542 +432,150 @@ fn main() {
         }
     });
 
-    let app = app
-        .setup(move |app| {
-            // Match WindowFrame's Windows-only shell before showing the main window.
-            #[cfg(target_os = "windows")]
-            if let Some(window) = app.get_webview_window("main") {
-                windows_frame::install(&window)?;
-                window.set_decorations(false)?;
-                webview_recovery::install(&window)?;
-            }
-            if let Some(window) = app.get_webview_window("main") {
-                window.set_background_color(Some(tauri::window::Color(255, 255, 255, 255)))?;
-            }
-            if remote_launch {
-                usage::start_usage_collector(app.handle().clone());
-                start_linux_activation_for_main_window(app.handle());
-                configure_initial_main_window(app.handle(), false)?;
-                if let Some(ack_path) = portable_update_ack.as_ref() {
-                    // An application update started in Local mode may land on a
-                    // saved Remote selection; acknowledge the GUI, not a core.
-                    app_update::acknowledge_update_runtime_with_probe(ack_path, false, || {
-                        Err("Unexpected core acceptance in Remote mode".into())
-                    })?;
-                }
-                return Ok(());
-            }
+    let setup_core = core_app.clone();
+    let setup_host = host.clone();
+    let app = app.setup(move |app| {
+        setup_host.attach(app.handle().clone());
+        if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
+            ecpa_core::runtime::async_runtime::set_handle(rt_handle);
+        }
+        spawn_event_bridge(&setup_core, app.handle().clone());
 
-            if let Err(error) = network_proxy::refresh(app.state::<GuiConfigState>().inner()) {
-                eprintln!("Failed to read startup proxy settings: {error}");
-            }
-            if let Err(error) = codex_catalog::validate_embedded_catalog() {
-                eprintln!("Invalid bundled Codex model catalog: {error}");
-            }
-            if let Err(error) = load_codex_model_catalog_override(app.handle()) {
-                eprintln!("Failed to load Codex model catalog update file; using bundled catalog: {error}");
-            }
-            if let Err(error) = load_codex_model_customizations(app.handle()) {
-                eprintln!("Failed to load Codex custom model configuration: {error}");
-            }
-            if let Err(error) = load_agent_system_prompts(app.handle()) {
-                eprintln!("Failed to load agent system prompt configuration: {error}");
-            }
-            restore_agent_prompt_proxies(app.handle().clone());
-            if let Err(error) = restore_main_window_geometry(app.handle()) {
-                eprintln!("{error}");
-            }
-            app.state::<MainWindowState>()
-                .position_tracking
-                .store(true, Ordering::Release);
-
-            #[cfg(target_os = "macos")]
-            setup_macos_tray(app)?;
-            #[cfg(target_os = "linux")]
-            if let Err(error) = setup_windows_tray(app) {
-                eprintln!(
-                    "Failed to set up Linux tray; keeping the main window available: {error}"
-                );
-            }
-            #[cfg(target_os = "windows")]
-            setup_windows_tray(app)?;
-
-            if let Err(error) = configure_initial_main_window(app.handle(), start_hidden) {
-                eprintln!("Failed to configure startup window state: {error}");
-            }
-
+        #[cfg(target_os = "windows")]
+        if let Some(window) = app.get_webview_window("main") {
+            windows_frame::install(&window)?;
+            window.set_decorations(false)?;
+            webview_recovery::install(&window)?;
+        }
+        if let Some(window) = app.get_webview_window("main") {
+            window.set_background_color(Some(tauri::window::Color(255, 255, 255, 255)))?;
+        }
+        if remote_launch {
+            ecpa_core::usage::start_usage_collector(setup_core.clone());
             start_linux_activation_for_main_window(app.handle());
-
-            if let Err(error) =
-                configuration_watcher::start_configuration_file_watcher(app.handle().clone())
-            {
-                eprintln!("Failed to start configuration file watcher: {error}");
+            configure_initial_main_window(app.handle(), false)?;
+            if let Some(ack_path) = portable_update_ack.as_ref() {
+                ecpa_core::app_update::acknowledge_update_runtime_with_probe(
+                    ack_path,
+                    false,
+                    || Err("Unexpected core acceptance in Remote mode".into()),
+                )?;
             }
+            return Ok(());
+        }
 
-            network_proxy::start_monitor(app.handle().clone());
-            core_recovery::start(app.handle().clone());
-            agent_usage::start_background_sync(app.handle().clone());
+        if let Err(error) = restore_main_window_geometry(app.handle()) {
+            eprintln!("{error}");
+        }
+        app.state::<MainWindowState>()
+            .position_tracking
+            .store(true, Ordering::Release);
 
-            let usage_app = app.handle().clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                usage::start_usage_collector(usage_app);
-            });
+        #[cfg(target_os = "macos")]
+        setup_macos_tray(app)?;
+        #[cfg(target_os = "linux")]
+        if let Err(error) = setup_windows_tray(app) {
+            eprintln!(
+                "Failed to set up Linux tray; keeping the main window available: {error}"
+            );
+        }
+        #[cfg(target_os = "windows")]
+        setup_windows_tray(app)?;
 
-            let agent_status_app = app.handle().clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                let gui_config_state = agent_status_app.state::<GuiConfigState>();
-                let cache = agent_status_app.state::<AgentConfigStatusCache>();
-                if let Err(error) = refresh_agent_config_status_cache(
-                    &agent_status_app,
-                    gui_config_state.inner(),
-                    cache.inner(),
-                ) {
-                    eprintln!("Failed to refresh agent configuration status in the background: {error}");
-                }
-            });
+        if let Err(error) = configure_initial_main_window(app.handle(), start_hidden) {
+            eprintln!("Failed to configure startup window state: {error}");
+        }
 
-            let core_app = app.handle().clone();
-            let runtime_update_ack = portable_update_ack.clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                let Ok(_guard) = CORE_OPERATION_LOCK.lock() else {
-                    return;
-                };
-                let gui_config_state = core_app.state::<GuiConfigState>();
-                let process_state = core_app.state::<CoreProcessState>();
-                if process_state.ensure_active().is_err() {
-                    process_state.set_starting(false);
-                    return;
-                }
-                let Ok(config) = gui_config_state.snapshot() else {
-                    process_state.set_starting(false);
-                    return;
-                };
+        start_linux_activation_for_main_window(app.handle());
+        start_local_background_services(&setup_core, switch_start, portable_update_ack);
 
-                if switch_start || should_start_core_on_launch(&config) {
-                    if let Ok(status) =
-                        current_core_status(Some(process_state.inner()), Some(config.port))
-                    {
-                        emit_core_status(&core_app, &status);
-                    }
-                }
+        Ok(())
+    });
 
-                let preserve_core = env::args_os().any(|arg| arg == "--preserve-core");
-                match auto_install_bundled_core_if_needed(&core_app, preserve_core) {
-                    Ok(true) => eprintln!("Automatically installed or upgraded to the CPA kernel version bundled with the application"),
-                    Ok(false) => {}
-                    Err(error) => {
-                        eprintln!("Failed to automatically install CPA offline kernel: {error}");
-                        if runtime_update_ack.is_some() {
-                            process_state.set_starting(false);
-                            return;
-                        }
-                    }
-                }
-
-                let adopted_process_ids = match adopt_existing_core_processes(
-                    process_state.inner(),
-                    &config,
-                    preserve_core,
-                ) {
-                    Ok(process_ids) => process_ids,
-                    Err(error) => {
-                        eprintln!("Failed to scan for and adopt the CPA kernel in the current directory: {error}");
-                        Vec::new()
-                    }
-                };
-                if !adopted_process_ids.is_empty() {
-                    eprintln!(
-                        "Adopted running CPA kernel in the current directory: PID {}",
-                        adopted_process_ids
-                            .iter()
-                            .map(u32::to_string)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
-                }
-                // Adopt a preserved core before a cached update can replace it.
-                // Release the lifecycle lock: installation takes it itself.
-                drop(_guard);
-                if runtime_update_ack.is_none()
-                    && tauri::async_runtime::block_on(auto_update::startup(&core_app))
-                {
-                    return;
-                }
-                let Ok(_guard) = CORE_OPERATION_LOCK.lock() else {
-                    return;
-                };
-                let Ok(config) = gui_config_state.snapshot() else {
-                    process_state.set_starting(false);
-                    return;
-                };
-                if process_state.managed_pid().is_none() && (switch_start || should_start_core_on_launch(&config)) {
-                    let start_result = retry_core_operation(3, Duration::from_millis(400), || {
-                        process_state.ensure_active()?;
-                        start_core_process_inner(process_state.inner(), &config)
-                    });
-                    if let Err(error) = start_result {
-                        eprintln!("Failed to automatically start CPA kernel: {error}");
-                        if switch_start { process_state.recovery.halt(error); }
-                        if runtime_update_ack.is_some() {
-                            process_state.set_starting(false);
-                            return;
-                        }
-                    } else if let Err(error) = gui_config_state.set_run_on_startup(true) {
-                        eprintln!("Failed to save automatically started kernel state: {error}");
-                    }
-                }
-
-                process_state.set_starting(false);
-
-                let acp_app = core_app.clone();
-                tauri::async_runtime::spawn(acp::restore(acp_app));
-
-                let proxy_app = core_app.clone();
-                tauri::async_runtime::spawn(async move {
-                    let manager = proxy_app.state::<reverse_proxy::ReverseProxyManagerState>();
-                    if let Err(error) = manager.restore(proxy_app.clone()).await {
-                        eprintln!("Failed to restore reverse proxy listener: {error}");
-                    }
-                });
-
-                if let Ok(status) =
-                    current_core_status(Some(process_state.inner()), Some(config.port))
-                {
-                    emit_core_status(&core_app, &status);
-                }
-                if let Some(ack_path) = runtime_update_ack.as_ref() {
-                    let core_expected =
-                        !adopted_process_ids.is_empty() || should_start_core_on_launch(&config);
-                    if let Err(error) = acknowledge_update_runtime(
-                        ack_path,
-                        process_state.inner(),
-                        &config,
-                        core_expected,
-                    ) {
-                        eprintln!("Application update runtime acceptance failed: {error}");
-                        return;
-                    }
-                }
-                tauri::async_runtime::spawn(auto_update::run(core_app.clone()));
-            });
-
-            Ok(())
-        });
-
-    macro_rules! target_commands {
-        ($($($command:ident)::+),+ $(,)?) => {{
-            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![$($($command)::+),+];
-            move |invoke: tauri::ipc::Invoke<tauri::Wry>| {
-                let name = invoke.message.command();
-                if false $(|| Some(name) == stringify!($($command)::+).rsplit("::").next().map(str::trim))+ {
-                    handler(invoke)
-                } else {
-                    invoke.resolver.reject(format!("Built-in CPA operation unavailable for the selected external instance: {name}"));
-                    true
-                }
-            }
-        }};
-    }
-    let remote_handler = target_commands![
-            usage::get_usage_collector_status,
-            usage::get_usage_overview,
-            usage::get_usage_analysis,
-            usage::get_usage_events,
-            usage::save_usage_events_export,
-            usage::get_usage_pricing,
-            usage::get_usage_storage_settings,
-            usage::repair_usage_cache_records,
-            usage::save_usage_storage_settings,
-            usage::shrink_usage_database,
-            usage::save_usage_model_price,
-            usage::delete_usage_model_price,
-            usage::preview_usage_model_prices,
-            usage::apply_usage_model_prices,
-            agent_usage::get_agent_usage, agent_usage::sync_agent_usage, agent_usage::get_agent_usage_storage, agent_usage::clear_agent_usage_history,
-            remote_cpa::get_cpa_connection,
-            remote_cpa::config_document::read_cpa_config_document,
-            remote_cpa::config_document::save_cpa_config_document,
-            remote_cpa::test_remote_cpa,
-            remote_cpa::select_cpa_connection,
-            remote_cpa::forget_cpa_instance,
-            remote_cpa::get_remote_cpa_keys,
-            remote_cpa::save_remote_cpa_keys,
-            remote_cpa::remote_core_settings,
-            get_thinking_aliases,
-            get_model_alias_sources,
-            get_thinking_alias_sources,
-            get_speed_aliases,
-            get_speed_alias_sources,
-            create_thinking_alias,
-            create_speed_alias,
-            get_model_alias_edit_source,
-            delete_thinking_alias,
-            delete_speed_alias,
-            get_agent_models, get_agent_config_statuses, refresh_agent_config_statuses,
-            apply_agent_config, update_agent_config, set_agent_config_enabled,
-            preview_agent_config_template, apply_agent_config_template,
-            get_agent_environment_options, get_deepseek_harness_process_status,
-            launch_agent, restart_agent_app, restart_opencode_app, restart_codex_app,
-            get_codex_cli_daemon_running, restart_codex_cli_daemon,
-            stop_deepseek_harness_process, restart_deepseek_harness_process,
-            mcp_servers::list_mcp_servers, mcp_servers::save_mcp_server, mcp_servers::delete_mcp_server,
-            mcp_servers::set_mcp_server_enabled, mcp_servers::sync_mcp_server_to_openclaw,
-            mcp_servers::import_mcp_servers_json, mcp_servers::export_mcp_servers_json, mcp_servers::open_mcp_skills_directory,
-            agent_skills::list_skills, agent_skills::get_skill_detail, agent_skills::set_skill_enabled,
-            check_app_version_display, get_update_channel, get_app_version_baselines,
-            check_app_update, get_app_update_task, get_version_source_settings,
-            sensitive_words::fetch_latest_sensitive_word_rules,
-            plugin_webview::close_plugin_webview, plugin_webview::hide_plugin_webview,
-            desktop_theme::list_custom_themes, desktop_theme::get_theme_selection,
-            get_codex_subagent_config, save_codex_subagent_config, get_zcode_subagent_config, save_zcode_subagent_config,
-            check_codex_oauth_login, restore_agent_config_backup, delete_agent_config_backup, create_agent_config_backup, list_agent_config_backups, preview_agent_config_backup,
-            get_gui_settings, get_software_settings, save_software_settings, get_usage_view_preferences, save_usage_view_preferences,
-            desktop_theme::save_theme_selection, window_material::detect_window_material, window_material::set_window_material,
-            privacy_mode::get_privacy_mode, privacy_mode::save_privacy_mode,
-            list_oauth_browsers, open_oauth_url, open_external_url,
-            management_api::import_vertex_credential, management_api::start_oauth_login,
-            management_api::get_oauth_status, management_api::submit_oauth_callback,
-            provider_health::get_core_models, provider_health::core_health_probe,
-            plugins::get_plugin_support,
-            management_api::management_request,
-            management_api::upload_auth_file,
-            management_api::prepare_management_request,
-            management_api::cancel_management_request,
-            window_activity::main_window_active,
-            desktop_theme::get_linux_system_theme,
-        ];
-    let local_handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
-            remote_cpa::get_cpa_connection,
-            remote_cpa::config_document::read_cpa_config_document,
-            remote_cpa::config_document::save_cpa_config_document,
-            remote_cpa::test_remote_cpa,
-            remote_cpa::select_cpa_connection,
-            remote_cpa::forget_cpa_instance,
-            acp::get_acp_status,
-            acp::acp_connect,
-            acp::switch_acp_account,
-            acp::add_acp_account,
-            acp::submit_acp_account_authorization,
-            acp::relogin_acp_account,
-            acp::rename_acp_account,
-            acp::update_acp_account_settings,
-            acp::update_acp_pool_settings,
-            acp::verify_acp_account,
-            acp::verify_all_acp_accounts,
-            acp::reset_acp_account_cooldown,
-            acp::remove_acp_account,
-            acp::logout_acp_account,
-            acp::cancel_acp_operation,
-            acp::select_acp_model,
-            acp::test_acp_connection,
-            acp::set_acp_upstream_enabled,
-            window_activity::main_window_active,
-            desktop_theme::get_linux_system_theme,
-            desktop_theme::list_custom_themes,
-            desktop_theme::open_custom_themes_directory,
-            desktop_theme::import_custom_theme,
-            desktop_theme::get_theme_selection,
-            desktop_theme::save_theme_selection,
-            window_material::detect_window_material,
-            window_material::set_window_material,
-            privacy_mode::get_privacy_mode,
-            privacy_mode::save_privacy_mode,
-            health_check,
-            detect_core_platform,
-            get_core_status,
-            get_gui_settings,
-            get_usage_view_preferences,
-            save_usage_view_preferences,
-            agent_usage::get_agent_usage,
-            agent_usage::sync_agent_usage,
-            agent_usage::get_agent_usage_storage,
-            agent_usage::clear_agent_usage_history,
-            mcp_servers::list_mcp_servers,
-            mcp_servers::save_mcp_server,
-            mcp_servers::delete_mcp_server,
-            mcp_servers::set_mcp_server_enabled,
-            mcp_servers::sync_mcp_server_to_openclaw,
-            mcp_servers::import_mcp_servers_json,
-            mcp_servers::export_mcp_servers_json,
-            mcp_servers::open_mcp_skills_directory,
-            agent_skills::list_skills,
-            agent_skills::get_skill_detail,
-            agent_skills::set_skill_enabled,
-            resolve_api_access_remarks,
-            save_api_access_remark,
-            set_app_locale,
+    let desktop_local_handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool =
+        tauri::generate_handler![
+            add_acp_account,
             resolve_windows_close_request,
-            get_software_settings,
-            save_software_settings,
-            get_agent_config_statuses,
-            get_agent_environment_options,
-            create_agent_config_backup,
-            list_agent_config_backups,
-            preview_agent_config_backup,
-            restore_agent_config_backup,
-            delete_agent_config_backup,
-            preview_agent_config_template,
-            apply_agent_config_template,
-            refresh_agent_config_statuses,
-            get_agent_models,
-            check_pi_provider_update,
-            install_pi_provider,
-            update_pi_provider,
-            repair_pi_provider,
-            uninstall_pi_provider,
-            check_codex_oauth_login,
-            update_codex_model_catalog,
-            refresh_managed_codex_model_catalog,
-            get_deepseek_harness_model_catalog_editor,
-            save_deepseek_harness_model_catalog_editor,
-            get_codex_model_catalog_editor,
-            save_codex_model_catalog_editor,
-            get_zcode_model_catalog_editor,
-            save_zcode_model_catalog_editor,
-            get_thinking_aliases,
-            get_model_alias_sources,
-            get_model_alias_edit_source,
-            get_thinking_alias_sources,
-            create_thinking_alias,
-            delete_thinking_alias,
-            get_speed_aliases,
-            get_speed_alias_sources,
-            create_speed_alias,
-            delete_speed_alias,
-            apply_agent_config,
-            clear_codex_config,
-            restore_codex_official_config,
-            set_codex_openai_provider,
-            set_codex_remote_compaction,
-            get_codex_subagent_config,
-            save_codex_subagent_config,
-            get_zcode_subagent_config,
-            save_zcode_subagent_config,
-            get_agent_system_prompt_editor,
-            save_agent_system_prompt_editor,
-            close_codex_config_modification,
-            set_agent_config_enabled,
-            update_agent_config,
-            launch_agent,
-            get_deepseek_harness_process_status,
-            stop_deepseek_harness_process,
-            restart_deepseek_harness_process,
-            restart_agent_app,
-            restart_codex_app,
-            restart_opencode_app,
-            get_codex_cli_daemon_running,
-            restart_codex_cli_daemon,
-            get_lan_ipv4,
-            save_gui_settings,
-            save_network_routing_settings,
-            save_network_endpoint_settings,
-            save_retry_settings,
-            save_session_routing_settings,
-            get_core_tls_settings,
-            save_core_tls_settings,
-            get_core_sensitive_words_settings,
-            save_core_sensitive_words_settings,
-            sensitive_words::fetch_latest_sensitive_word_rules,
-            get_core_config_settings,
-            get_extended_core_config,
-            save_extended_core_config,
-            save_core_logging_settings,
-            set_core_request_log,
-            add_core_api_key,
-            update_core_api_key,
-            delete_core_api_key,
-            set_core_management_secret_key,
-            clear_core_management_secret_key,
-            management_api::management_request,
-            management_api::prepare_management_request,
-            management_api::cancel_management_request,
-            plugins::get_plugin_support,
-            plugins::local_install::install_local_plugin,
             plugin_webview::show_plugin_webview,
             plugin_webview::set_plugin_webview_bounds,
             plugin_webview::hide_plugin_webview,
             plugin_webview::close_plugin_webview,
-            plugins::get_plugin_latest_releases,
-            provider_health::provider_health_probe,
-            provider_health::get_core_models,
-            provider_health::core_health_probe,
-            management_api::upload_auth_file,
-            management_api::import_vertex_credential,
-            management_api::open_auth_files_directory,
-            management_api::open_core_logs_directory,
-            set_core_plugins_enabled,
-            set_core_routing_strategy,
-            set_core_proxy_url,
-            set_core_session_affinity,
-            set_core_session_affinity_ttl,
-            management_api::start_oauth_login,
-            management_api::get_oauth_status,
-            management_api::submit_oauth_callback,
-            list_oauth_browsers,
-            open_oauth_url,
-            open_external_url,
-            get_version_source_settings,
-            set_download_source,
-            add_custom_download_mirror,
-            remove_custom_download_mirror,
-            set_prefer_gitcode_downloads,
-            get_update_channel,
-            list_update_channels,
-            set_update_channel,
-            check_app_update,
-            check_app_version_display,
-            get_app_version_baselines,
-            get_app_update_task,
-            start_app_update,
-            cancel_app_update,
-            auto_update::get_auto_update_status,
-            auto_update::set_auto_update_settings,
-            auto_update::retry_auto_update,
-            check_latest_core,
-            core_runtime::list_core_versions,
-            detect_bundled_core,
-            install_core_version,
-            install_bundled_core,
-            cancel_core_install,
-            get_core_install_task,
-            usage::get_usage_collector_status,
-            usage::get_usage_overview,
-            usage::get_usage_analysis,
-            usage::get_usage_events,
-            usage::save_usage_events_export,
-            usage::get_usage_pricing,
-            usage::get_usage_storage_settings,
-            usage::repair_usage_cache_records,
-            usage::save_usage_storage_settings,
-            usage::shrink_usage_database,
-            usage::save_usage_model_price,
-            usage::delete_usage_model_price,
-            usage::preview_usage_model_prices,
-            usage::apply_usage_model_prices,
-            start_core_process,
-            stop_core_process,
-            restart_core_process,
-            codex_sessions::list_codex_sessions,
-            codex_sessions::delete_codex_sessions,
-            codex_sessions::repair_codex_session_metadata,
-            codex_sessions::preview_codex_session_index_cleanup,
-            codex_sessions::apply_codex_session_index_cleanup,
-            codex_sessions::context::get_codex_session_context,
-            codex_sessions::context::save_codex_session_context,
-            codex_sessions::context::open_codex_session_rollout,
-            reverse_proxy::reverse_proxy_get_state,
-            reverse_proxy::reverse_proxy_apply,
-            reverse_proxy::reverse_proxy_start,
-            reverse_proxy::reverse_proxy_stop
+            window_material::detect_window_material,
+            window_material::set_window_material,
+            window_activity::main_window_active,
+            linux_theme::get_linux_system_theme,
         ];
+    let desktop_remote_handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool =
+        tauri::generate_handler![
+            plugin_webview::close_plugin_webview,
+            plugin_webview::hide_plugin_webview,
+            window_material::detect_window_material,
+            window_material::set_window_material,
+            window_activity::main_window_active,
+            linux_theme::get_linux_system_theme,
+        ];
+
     let app = app.invoke_handler(move |invoke| {
-        let remote = invoke
+        let command = invoke.message.command().to_string();
+        let core_app = invoke
             .message
             .webview()
-            .state::<remote_cpa::RemoteCpaState>()
+            .state::<CoreAppHandle>()
+            .inner()
+            .clone();
+        let remote = core_app
+            .state::<ecpa_core::remote_cpa::RemoteCpaState>()
             .uses_external_dispatch();
-        if remote { remote_handler(invoke) } else { local_handler(invoke) }
+
+        let is_desktop_cmd = matches!(
+            command.as_str(),
+            "add_acp_account"
+                | "resolve_windows_close_request"
+                | "show_plugin_webview"
+                | "set_plugin_webview_bounds"
+                | "hide_plugin_webview"
+                | "close_plugin_webview"
+                | "detect_window_material"
+                | "set_window_material"
+                | "main_window_active"
+                | "get_linux_system_theme"
+        );
+        if is_desktop_cmd {
+            if remote {
+                let allowed_remote_desktop = matches!(
+                    command.as_str(),
+                    "close_plugin_webview"
+                        | "hide_plugin_webview"
+                        | "detect_window_material"
+                        | "set_window_material"
+                        | "main_window_active"
+                        | "get_linux_system_theme"
+                );
+                if allowed_remote_desktop {
+                    return desktop_remote_handler(invoke);
+                }
+                invoke.resolver.reject(format!(
+                    "Built-in CPA operation unavailable for the selected external instance: {command}"
+                ));
+                return true;
+            }
+            return desktop_local_handler(invoke);
+        }
+
+        let payload = match invoke.message.payload() {
+            tauri::ipc::InvokeBody::Json(value) => value.clone(),
+            tauri::ipc::InvokeBody::Raw(_) => serde_json::Value::Null,
+        };
+        let resolver = invoke.resolver;
+        tauri::async_runtime::spawn(async move {
+            match ecpa_core::rpc::dispatch(core_app, &command, payload).await {
+                Ok(value) => resolver.resolve(value),
+                Err(error) => resolver.reject(error),
+            }
+        });
+        true
     });
+
     let app = app.build(context).expect("failed to build app");
 
     app.run(move |app_handle, event| match event {
@@ -3364,13 +591,14 @@ fn main() {
         tauri::RunEvent::Exit if remote_launch => {
             #[cfg(windows)]
             webview_recovery::stop(app_handle);
-            usage::stop_usage_collector(app_handle);
-            app_handle.state::<AppInstanceGuardState>().release();
+            let core_app = app_handle.state::<CoreAppHandle>();
+            shutdown_core_services(core_app.inner(), true);
         }
         tauri::RunEvent::ExitRequested { api, code, .. } => {
             #[cfg(windows)]
             webview_recovery::stop(app_handle);
-            let process_state = app_handle.state::<CoreProcessState>();
+            let core_app = app_handle.state::<CoreAppHandle>().inner().clone();
+            let process_state = core_app.state::<CoreProcessState>();
             if process_state.shutdown_complete.load(Ordering::Acquire) {
                 return;
             }
@@ -3378,69 +606,21 @@ fn main() {
             if process_state.shutting_down.swap(true, Ordering::AcqRel) {
                 return;
             }
-            process_state.recovery.cancel();
-            app_handle.state::<acp::AcpState>().shutdown();
             if let Err(error) = persist_main_window_geometry(app_handle) {
                 eprintln!("Failed to save main window geometry: {error}");
             }
-            app_handle.state::<CoreDownloadState>().cancel();
-            app_handle.state::<auto_update::AutoUpdateState>().shutdown();
             let app_handle = app_handle.clone();
             tauri::async_runtime::spawn_blocking(move || {
-                let _guard = CORE_OPERATION_LOCK
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner());
-                let process_state = app_handle.state::<CoreProcessState>();
-                let gui_config_state = app_handle.state::<GuiConfigState>();
-                if !process_state.remote_selected.load(Ordering::Acquire) {
-                    shutdown_managed_core(process_state.inner(), gui_config_state.inner());
-                }
-                process_state
-                    .shutdown_complete
-                    .store(true, Ordering::Release);
+                shutdown_core_services(&core_app, false);
                 app_handle.exit(code.unwrap_or(0));
             });
         }
         tauri::RunEvent::Exit => {
-            app_handle.state::<acp::AcpState>().shutdown();
             #[cfg(windows)]
             webview_recovery::stop(app_handle);
-            usage::stop_usage_collector(app_handle);
-            let deepseek_process_state = app_handle.state::<DeepSeekHarnessProcessState>();
-            if let Err(error) = stop_managed_deepseek_harness(deepseek_process_state.inner()) {
-                eprintln!("Failed to stop DeepSeek Harness: {error}");
-            }
-            let gui_config_state = app_handle.state::<GuiConfigState>();
-            let process_state = app_handle.state::<CoreProcessState>();
-            if !process_state.shutdown_complete.load(Ordering::Acquire) {
-                process_state.shutting_down.store(true, Ordering::Release);
-                if !process_state.remote_selected.load(Ordering::Acquire) {
-                    shutdown_managed_core(process_state.inner(), gui_config_state.inner());
-                }
-            }
-            app_handle.state::<AppInstanceGuardState>().release();
+            let core_app = app_handle.state::<CoreAppHandle>();
+            shutdown_core_services(core_app.inner(), false);
         }
         _ => {}
     });
 }
-
-/// Returns a path under the system temporary directory that is unique for the
-/// lifetime of the test process. The wall clock alone is not enough: parallel
-/// tests that start within the clock's resolution would otherwise share a
-/// directory and delete or overwrite each other's files.
-#[cfg(test)]
-pub(crate) fn unique_test_temp_path(prefix: &str) -> PathBuf {
-    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    std::env::temp_dir().join(format!(
-        "{prefix}-{}-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos(),
-        SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ))
-}
-
-#[cfg(test)]
-mod tests;

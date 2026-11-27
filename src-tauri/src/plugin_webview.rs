@@ -1,8 +1,9 @@
-use super::{management_plaintext_key, open_external_url_inner, GuiConfigState};
-use crate::plugins::resolve_plugin_entry_url;
+use ecpa_core::plugins::resolve_plugin_entry_url;
+use ecpa_core::{management_plaintext_key, GuiConfigState};
 use std::sync::Mutex;
 use tauri::webview::{NewWindowResponse, WebviewBuilder};
 use tauri::{AppHandle, Manager, Rect, State, Url, Webview, WebviewUrl};
+use tauri_plugin_opener::OpenerExt;
 
 const MAIN_WINDOW: &str = "main";
 const PLUGIN_WEBVIEW: &str = "plugin-page";
@@ -337,7 +338,7 @@ fn build_webview(
         .initialization_script(script)
         .on_new_window(move |target, _| {
             if matches!(target.scheme(), "http" | "https") {
-                let _ = open_external_url_inner(&new_window_app, target.as_str());
+                let _ = new_window_app.opener().open_url(target.as_str(), None::<&str>);
             }
             NewWindowResponse::Deny
         });
@@ -365,7 +366,7 @@ fn build_webview(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn show_plugin_webview(
     app: AppHandle,
-    gui_config_state: State<'_, GuiConfigState>,
+    core_app: State<'_, ecpa_core::AppHandle>,
     state: State<'_, PluginWebviewState>,
     plugin_id: String,
     menu_index: usize,
@@ -381,11 +382,12 @@ pub(crate) async fn show_plugin_webview(
     if !state.lock()?.place(token, placed.clone().unwrap_or(None)) {
         return Err(SUPERSEDED.to_string());
     }
+    let gui_config_state = core_app.state::<GuiConfigState>();
     let result = match placed {
         Ok(_) => {
             open_plugin_page(
                 &app,
-                &gui_config_state,
+                gui_config_state.inner(),
                 &state,
                 plugin_id,
                 menu_index,

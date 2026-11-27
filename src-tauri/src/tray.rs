@@ -5,6 +5,12 @@ use crate::native_i18n::{native_operation_failed, native_text, NativeText};
 use objc2_app_kit::NSStatusItemBehavior;
 #[cfg(target_os = "macos")]
 use objc2_foundation::NSString;
+#[cfg(target_os = "macos")]
+use std::thread;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use std::time::Duration;
+#[cfg(target_os = "macos")]
+use std::time::Instant;
 
 pub(crate) fn main_window<R: tauri::Runtime, M: Manager<R>>(
     manager: &M,
@@ -88,6 +94,7 @@ pub(crate) fn show_macos_tray_menu<R: tauri::Runtime>(tray: &TrayIcon<R>) {
 #[cfg(target_os = "macos")]
 pub(crate) fn setup_macos_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Result<()> {
     let locale = app
+        .state::<ecpa_core::AppHandle>()
         .state::<GuiConfigState>()
         .snapshot()
         .map(|config| config.locale)
@@ -497,8 +504,9 @@ pub(crate) fn run_windows_tray_core_action(
 
     let app_handle = app_handle.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let process_state = app_handle.state::<CoreProcessState>();
-        let gui_config_state = app_handle.state::<GuiConfigState>();
+        let core_app = app_handle.state::<ecpa_core::AppHandle>();
+        let process_state = core_app.state::<CoreProcessState>();
+        let gui_config_state = core_app.state::<GuiConfigState>();
         let result = (|| -> Result<CoreStatus, String> {
             let _guard = lock_core_operation(process_state.inner())?;
             match action {
@@ -529,13 +537,13 @@ pub(crate) fn run_windows_tray_core_action(
         }
 
         match result {
-            Ok(status) => emit_core_status(&app_handle, &status),
+            Ok(status) => emit_core_status(core_app.inner(), &status),
             Err(error) => {
                 if let Ok(config) = gui_config_state.snapshot() {
                     if let Ok(status) =
                         current_core_status(Some(process_state.inner()), Some(config.port))
                     {
-                        emit_core_status(&app_handle, &status);
+                        emit_core_status(core_app.inner(), &status);
                     }
                 }
                 show_windows_tray_action_error(&app_handle, &error);
@@ -547,6 +555,7 @@ pub(crate) fn run_windows_tray_core_action(
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) fn setup_windows_tray(app: &mut tauri::App<tauri::Wry>) -> tauri::Result<()> {
     let locale = app
+        .state::<ecpa_core::AppHandle>()
         .state::<GuiConfigState>()
         .snapshot()
         .map(|config| config.locale)

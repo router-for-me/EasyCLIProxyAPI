@@ -60,7 +60,7 @@ fn platform_material() -> Option<WindowMaterial> {
 
 #[cfg(target_os = "windows")]
 fn platform_material() -> Option<WindowMaterial> {
-    crate::agents::windows_build_number().and_then(windows_material)
+    ecpa_core::windows_build_number().and_then(windows_material)
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]

@@ -145,4 +145,50 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
       stdout: '',
     }))).toThrow('cargo metadata failed with exit code 101: manifest parse error');
   });
+
+  it('supports workspace-inherited package version and updates all local workspace members in Cargo.lock', async () => {
+    const manifest = `[workspace]
+resolver = "2"
+members = ["crates/ecpa-core", "crates/ecpa-web"]
+
+[workspace.package]
+version = "1.0.0"
+
+[package]
+name = "cpa-gui"
+version.workspace = true
+`;
+    expect(parseCargoPackageVersion(manifest)).toBe('1.0.0');
+    const updatedManifest = setCargoPackageVersion(manifest, '2.1.0');
+    expect(parseCargoPackageVersion(updatedManifest)).toBe('2.1.0');
+    expect(updatedManifest).toContain('version.workspace = true');
+
+    const lockfile = `[[package]]
+name = "cpa-gui"
+version = "1.0.0"
+
+[[package]]
+name = "ecpa-core"
+version = "1.0.0"
+
+[[package]]
+name = "ecpa-web"
+version = "1.0.0"
+`;
+    const files = new Map<string, string>([
+      ['Cargo.toml', manifest],
+      ['Cargo.lock', lockfile],
+    ]);
+    await applyAppVersion('2.1.0', {
+      rootDir: 'test-root',
+      readText: async (path: string) => files.get(path.endsWith('Cargo.toml') ? 'Cargo.toml' : 'Cargo.lock')!,
+      writeText: async (path: string, contents: string) => {
+        files.set(path.endsWith('Cargo.toml') ? 'Cargo.toml' : 'Cargo.lock', contents);
+      },
+      validateProject: async () => {},
+    });
+    expect(files.get('Cargo.lock')).toContain('name = "cpa-gui"\nversion = "2.1.0"');
+    expect(files.get('Cargo.lock')).toContain('name = "ecpa-core"\nversion = "2.1.0"');
+    expect(files.get('Cargo.lock')).toContain('name = "ecpa-web"\nversion = "2.1.0"');
+  });
 });

@@ -12,43 +12,76 @@ export function validateAppVersion(value, source = 'app version') {
   return version;
 }
 
+function matchSection(contents, header) {
+  const escaped = header.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return contents.match(new RegExp(`(?:^|\\r?\\n)\\[${escaped}\\][ \\t]*\\r?\\n([\\s\\S]*?)(?=\\r?\\n\\[|$)`));
+}
+
 export function parseCargoPackageVersion(contents, source = 'Cargo.toml') {
-  const packageSection = contents.match(/(?:^|\r?\n)\[package\][ \t]*\r?\n([\s\S]*?)(?=\r?\n\[|$)/);
+  const packageSection = matchSection(contents, 'package');
   if (!packageSection) {
     throw new Error(`Missing [package] section in ${source}`);
   }
 
   const versionMatch = packageSection[1].match(/^[ \t]*version[ \t]*=[ \t]*"([^"]+)"[ \t]*(?:#.*)?$/m);
-  if (!versionMatch) {
-    throw new Error(`Missing package version in ${source}`);
+  if (versionMatch) {
+    return validateAppVersion(versionMatch[1], `package version in ${source}`);
   }
 
-  return validateAppVersion(versionMatch[1], `package version in ${source}`);
+  const workspaceInherited = /^[ \t]*version\.workspace[ \t]*=[ \t]*true[ \t]*(?:#.*)?$/m.test(packageSection[1]);
+  if (workspaceInherited) {
+    const workspacePackage = matchSection(contents, 'workspace.package');
+    const wsVersionMatch = workspacePackage?.[1].match(/^[ \t]*version[ \t]*=[ \t]*"([^"]+)"[ \t]*(?:#.*)?$/m);
+    if (wsVersionMatch) {
+      return validateAppVersion(wsVersionMatch[1], `workspace package version in ${source}`);
+    }
+  }
+
+  throw new Error(`Missing package version in ${source}`);
 }
 
 export function setCargoPackageVersion(contents, version, source = 'Cargo.toml') {
   const nextVersion = validateAppVersion(version);
-  const packageSection = contents.match(/(?:^|\r?\n)\[package\][ \t]*\r?\n([\s\S]*?)(?=\r?\n\[|$)/);
+  const packageSection = matchSection(contents, 'package');
   if (!packageSection) {
     throw new Error(`Missing [package] section in ${source}`);
   }
 
   const versionPattern = /^[ \t]*version[ \t]*=[ \t]*"[^"]+"[ \t]*(?:#.*)?$/m;
-  if (!versionPattern.test(packageSection[0])) {
+  let updated = contents;
+  let replacedAny = false;
+
+  if (versionPattern.test(packageSection[0])) {
+    const updatedSection = packageSection[0].replace(versionPattern, `version = "${nextVersion}"`);
+    updated = updated.replace(packageSection[0], updatedSection);
+    replacedAny = true;
+  }
+
+  const workspacePackage = matchSection(updated, 'workspace.package');
+  if (workspacePackage && versionPattern.test(workspacePackage[0])) {
+    const updatedWsSection = workspacePackage[0].replace(versionPattern, `version = "${nextVersion}"`);
+    updated = updated.replace(workspacePackage[0], updatedWsSection);
+    replacedAny = true;
+  }
+
+  if (!replacedAny) {
     throw new Error(`Missing package version in ${source}`);
   }
 
-  const updatedSection = packageSection[0].replace(versionPattern, `version = "${nextVersion}"`);
-  return contents.replace(packageSection[0], updatedSection);
+  return updated;
 }
 
-export function setCargoLockPackageVersion(contents, packageName, version, source = 'Cargo.lock') {
+export function setCargoLockPackageVersion(contents, packageName, version, source = 'Cargo.lock', { optional = false } = {}) {
   const nextVersion = validateAppVersion(version);
   const packageBlocks = contents.match(/\[\[package\]\]\r?\n[\s\S]*?(?=\r?\n\[\[package\]\]|$)/g) ?? [];
   const matchingBlocks = packageBlocks.filter((block) => (
     new RegExp(`^name = "${packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"$`, 'm').test(block)
     && !/^source = /m.test(block)
   ));
+
+  if (matchingBlocks.length === 0 && optional) {
+    return contents;
+  }
 
   if (matchingBlocks.length !== 1) {
     throw new Error(`Expected one local ${packageName} package in ${source}, found ${matchingBlocks.length}`);
