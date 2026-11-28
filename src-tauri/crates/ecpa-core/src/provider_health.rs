@@ -524,6 +524,30 @@ fn provider_health_proxy_url<'a>(url: &reqwest::Url, requested: Option<&'a str>,
     if proxy.eq_ignore_ascii_case("direct") { "" } else { proxy }
 }
 
+// 展开 reqwest 错误底层原因链并显式标注超时，避免前端丢失超时识别依据
+fn format_health_probe_error(prefix: &str, error: &reqwest::Error) -> String {
+    let mut details = Vec::new();
+    let primary = error.to_string();
+    if !primary.trim().is_empty() {
+        details.push(primary);
+    }
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        let text = cause.to_string();
+        if !text.trim().is_empty() && !details.iter().any(|existing| existing.contains(&text)) {
+            details.push(text);
+        }
+        source = cause.source();
+    }
+    let combined = details.join(": ");
+    let lower = combined.to_ascii_lowercase();
+    if error.is_timeout() && !lower.contains("timed out") && !lower.contains("timeout") {
+        format!("{prefix} (timed out): {combined}")
+    } else {
+        format!("{prefix}: {combined}")
+    }
+}
+
 pub(crate) async fn execute_health_probe(
     usage_app: Option<&crate::runtime::AppHandle>,
     client: reqwest::Client,
@@ -571,7 +595,7 @@ pub(crate) async fn execute_health_probe(
         .body(request.data.clone())
         .send()
         .await
-        .map_err(|error| format!("Health check request failed: {error}"))?;
+        .map_err(|error| format_health_probe_error("Health check request failed", &error))?;
     let status = response.status();
     if !status.is_success() {
         let detail = response.text().await.unwrap_or_default();
@@ -595,7 +619,8 @@ pub(crate) async fn execute_health_probe(
     let mut stream = response.bytes_stream();
     let mut received = Vec::new();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| format!("Failed to read health check stream: {error}"))?;
+        let chunk = chunk
+            .map_err(|error| format_health_probe_error("Failed to read health check stream", &error))?;
         if received.len().saturating_add(chunk.len()) > MAX_PROVIDER_HEALTH_STREAM_BYTES {
             return Err("Health check did not receive the model's first token within the limit".to_string());
         }

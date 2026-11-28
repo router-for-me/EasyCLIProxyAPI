@@ -44,13 +44,28 @@ describe('CPA 内核模型健康检测', () => {
   it('保留失败原因并识别超时，失败模型不打断其他模型', async () => {
     mockIPC((_command, args) => {
       if (args?.model === 'timeout') throw new Error('request timed out');
+      if (args?.model === 'reqwest-timeout') {
+        throw 'Health check request failed (timed out): error sending request for url (http://127.0.0.1:8317/v1/chat/completions)';
+      }
       if (args?.model === 'auth') throw 'HTTP 401: unauthorized';
       return { firstTokenLatencyMs: 20, responseLatencyMs: 30 };
     });
-    const results = await checkCoreModelsHealth([{ name: 'timeout' }, { name: 'auth' }, { name: 'working' }]);
+    const results = await checkCoreModelsHealth([
+      { name: 'timeout' },
+      { name: 'reqwest-timeout' },
+      { name: 'auth' },
+      { name: 'working' },
+    ]);
     expect(results[0]).toMatchObject({ model: 'timeout', success: false, status: 'failed', timedOut: true, error: 'request timed out' });
-    expect(results[1]).toMatchObject({ model: 'auth', success: false, timedOut: false, error: 'HTTP 401: unauthorized' });
-    expect(results[2]).toMatchObject({ model: 'working', success: true });
+    expect(results[1]).toMatchObject({
+      model: 'reqwest-timeout',
+      success: false,
+      status: 'failed',
+      timedOut: true,
+      error: 'Health check request failed (timed out): error sending request for url (http://127.0.0.1:8317/v1/chat/completions)',
+    });
+    expect(results[2]).toMatchObject({ model: 'auth', success: false, timedOut: false, error: 'HTTP 401: unauthorized' });
+    expect(results[3]).toMatchObject({ model: 'working', success: true });
   });
 
   it('去除重复 ID，保留大小写及别名，并限制同时请求数为四个', async () => {
