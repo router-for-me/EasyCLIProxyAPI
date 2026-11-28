@@ -11,7 +11,13 @@ export type RoutingAgent = RoutingNode & { client: ClientAgent };
 export type RoutingTarget = RoutingNode & { agentId?: string; model?: string; routeProvider?: string; credentialId: string };
 export type RoutingEdge = { id: string; agentId: string; targetId: string; count: number; failed: boolean };
 export const routingRecordId = (record: UsageRecord) => record.row_id || record.id;
-export const routingModelId = (record: UsageRecord) => `model:${record.alias?.trim() || record.model?.trim() || '—'}`;
+/** Requested model, plus the served model when a router or alias changed it (e.g. `cpa-opus → claude-haiku-4-5`). */
+export const routingModelLabel = (record: UsageRecord) => {
+  const requested = record.alias?.trim() || record.model?.trim() || '—';
+  const served = record.model?.trim();
+  return served && served !== requested ? `${requested} → ${served}` : requested;
+};
+export const routingModelId = (record: UsageRecord) => `model:${routingModelLabel(record)}`;
 export const routingTargetId = (record: UsageRecord) => record.auth_index?.trim()
   ? `auth:${record.auth_index.trim()}` : `provider:${JSON.stringify([record.provider, record.source_display || ''])}`;
 export const routingAgentId = (record: UsageRecord) => `agent:${usageClientAgent(record).id}`;
@@ -75,7 +81,7 @@ export function buildLiveRouting(records: UsageRecord[], cooldowns: RoutingCoold
     const agent = agents.get(agentId) ?? { ...blank(agentId, client.name || ''), client };
     const target = targets.get(targetId) ?? {
       ...blank(targetId, credential?.name || record.source_display || cooldown?.name || record.provider || '—'),
-      agentId, model: record.alias?.trim() || record.model?.trim() || '—', routeProvider: record.provider || '', credentialId,
+      agentId, model: routingModelLabel(record), routeProvider: record.provider || '', credentialId,
       provider: record.provider || credential?.provider || cooldown?.provider, cooldown,
     };
     add(agent, record);

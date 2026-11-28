@@ -66,6 +66,15 @@ describe('live routing telemetry', () => {
     expect(buildLiveRouting([], [], now).metrics.latency).toBeNull();
   });
 
+  it('splits routes by served model when a router or alias rewrote the requested one', () => {
+    const view = buildLiveRouting([
+      request('parent', { alias: 'cpa-opus', model: 'claude-opus' }),
+      request('rerouted', { alias: 'cpa-opus', model: 'claude-haiku' }),
+      request('plain', { alias: 'gpt', model: 'gpt' }),
+    ], [], now);
+    expect(view.targets.map(target => target.model).sort()).toEqual(['cpa-opus → claude-haiku', 'cpa-opus → claude-opus', 'gpt']);
+  });
+
   it('renders telemetry and a useful standby state before the first poll', () => {
     const html = renderToStaticMarkup(<I18nProvider><RoutingPanel /></I18nProvider>);
     expect(html).toContain('data-testid="routing-empty"');
