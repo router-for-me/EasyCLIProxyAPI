@@ -59,8 +59,10 @@ export function KernelPage({ view = 'home' }: { view?: KernelView }) {
     let disposed = false;
     let unlistenConfig: (() => void) | null = null;
 
-    void onConfigFilesChanged(() => {
+    void onConfigFilesChanged((event) => {
       if (disposed) return;
+      // 仅当核心或 GUI 配置文件变更（或事件未标注来源）时刷新内核上下文，避免外部 Agent 配置写入误中断健康监测
+      if (event.payload?.affectsCoreConfig === false) return;
       setConfigRevision((value) => value + 1);
       void loadGuiSettings();
       void loadTlsSettings();

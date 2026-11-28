@@ -39,6 +39,7 @@ const fixture = {
   refreshPanel: () => {},
   resolvePanel: () => {},
   changeConfig: () => { fixture.port += 1; return emit('config-files-changed', {}); },
+  changeAgentConfig: () => emit('config-files-changed', { paths: ['C:/Users/demo/.codex/config.toml'], errors: [], affectsCoreConfig: false }),
   releaseModels: () => { fixture.holdModels = false; fixture.modelReleases.splice(0).forEach((release) => release()); },
   releaseProbes: () => { fixture.holdProbes = false; fixture.probeReleases.splice(0).forEach((release) => release()); },
 };

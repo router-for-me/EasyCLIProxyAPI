@@ -1454,6 +1454,7 @@ fn sync_prepared_codex_model_catalog(
                     .map(|path| path_to_string(path))
                     .collect(),
                 errors: Vec::new(),
+                affects_core_config: false,
             },
         );
     }

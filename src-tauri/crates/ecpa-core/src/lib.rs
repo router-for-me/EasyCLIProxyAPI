@@ -349,6 +349,7 @@ struct AgentConfigStatusCacheEntry {
 struct ConfigFilesChangedPayload {
     paths: Vec<String>,
     errors: Vec<String>,
+    affects_core_config: bool,
 }
 
 impl AgentConfigStatusCache {

@@ -130,10 +130,11 @@ fn handle_configuration_file_changes(
             .is_some_and(|core_path| paths_refer_to_same_file(path, core_path))
     };
 
-    if tracked_changes
+    let core_or_gui_changed = tracked_changes
         .iter()
-        .any(|path| is_gui_path(path) || is_core_path(path))
-    {
+        .any(|path| is_gui_path(path) || is_core_path(path));
+
+    if core_or_gui_changed {
         refresh_agents = true;
         let mut preserve_invalid_gui_file = false;
         let mut preserve_invalid_core_file = false;
@@ -225,6 +226,7 @@ fn handle_configuration_file_changes(
             ConfigFilesChangedPayload {
                 paths: payload_paths,
                 errors,
+                affects_core_config: core_or_gui_changed,
             },
         );
     }
