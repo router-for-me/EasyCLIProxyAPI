@@ -86,7 +86,7 @@ export function buildThemeSchema(): Record<string, unknown> {
       tokens: {
         type: 'object',
         additionalProperties: false,
-        description: 'Appearance tokens. Sizes, spacing, layout and typography are not themeable.',
+        description: 'Appearance tokens. Sizes, spacing and layout are not themeable; fontFamilySans and fontFamilyMono choose font families only.',
         properties: themeTokenSchema(),
       },
     },

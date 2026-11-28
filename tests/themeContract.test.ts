@@ -32,12 +32,24 @@ describe('theme token contract', () => {
   });
   test('keeps every exposed token appearance-only and typed', () => {
     expect(tokenKeys.length).toBeGreaterThan(40);
-    for (const key of tokenKeys) expect(key).not.toMatch(/size|spacing|gap|height|font|line|padding|margin/i);
+    for (const key of tokenKeys) {
+      // Only font families are themeable; font sizes, weights and line heights stay out of the contract.
+      if (themeTokenDefinitions[key].kind === 'font-family') expect(key).toMatch(/^fontFamily(Sans|Mono)$/);
+      else expect(key).not.toMatch(/size|spacing|gap|height|font|line|padding|margin/i);
+    }
     expect(themeTokenDefinitions.cardBorderWidth.kind).toBe('border-width');
     expect(themeTokenDefinitions.radiusLarge.kind).toBe('radius');
     expect(themeTokenDefinitions.shadowDialog.kind).toBe('shadow');
     expect(themeTokenDefinitions.windowMaterialWorkspaceOpacity.kind).toBe('opacity');
     expect(themeTokenDefinitions.accent.kind).toBe('color');
+    expect(themeTokenDefinitions.fontFamilySans.kind).toBe('font-family');
+  });
+
+  test('validates font family stacks and rejects anything that could inject CSS or break the stack', () => {
+    for (const value of ["'Noto Sans SC', 'Microsoft YaHei', system-ui, sans-serif", 'Cascadia Code, monospace', '"思源黑体", sans-serif', 'Inter'])
+      expect(isValidThemeToken('fontFamilySans', value)).toBe(true);
+    for (const value of ['', '   ', 'url(x)', '@import "x"', 'Inter;color:red', 'a{b}', 'Inter\\', 'Inter, ', 'Inter,, sans-serif', '"Inter, sans-serif', 'x'.repeat(201), 42])
+      expect(isValidThemeToken('fontFamilyMono', value)).toBe(false);
   });
 
   test('validates values by kind and range', () => {
