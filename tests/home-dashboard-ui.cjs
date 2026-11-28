@@ -175,7 +175,10 @@ const base = process.env.HOME_DASHBOARD_TEST_BASE_URL || 'http://127.0.0.1:1421'
     assert.equal(await focusable.last().evaluate(node => node === document.activeElement), true, 'Shift+Tab must wrap inside the modal');
     await page.getByRole('button', { name: 'Check gpt-5.2-codex', exact: true }).click();
     await page.locator('.core-health-status.healthy').waitFor();
-    assert.deepEqual((await probes(page)).map(call => call.args), [{ model: 'gpt-5.2-codex', timeoutMs: 15000 }]);
+    assert.deepEqual(
+      (await probes(page)).map(call => ({ model: call.args.model, timeoutMs: call.args.timeoutMs })),
+      [{ model: 'gpt-5.2-codex', timeoutMs: 15000 }],
+    );
     assert.match(await page.locator('.core-health-table tbody tr').first().locator('.core-health-latency').innerText(), /184 ms.*642 ms/);
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'detached' });
@@ -212,10 +215,14 @@ const base = process.env.HOME_DASHBOARD_TEST_BASE_URL || 'http://127.0.0.1:1421'
     await page.waitForFunction(() => window.homeFixture.probeReleases.length === 4);
     assert.equal(await page.locator('.core-health-status.queued').count(), 2);
     await page.getByRole('button', { name: 'Stop Checking', exact: true }).click();
+    assert.equal(await checkAll(page).isDisabled(), false, 'stop must immediately unlock Check All without waiting for in-flight probes');
+    await page.evaluate(() => { window.homeFixture.holdProbes = false; });
+    await page.getByRole('button', { name: 'Check gpt-5.2-codex', exact: true }).click();
+    await page.locator('.core-health-status.healthy').waitFor();
     await page.evaluate(() => window.homeFixture.releaseProbes());
     await awaitIdle(page);
-    assert.equal((await probes(page)).length, 4, 'stop must not launch queued model requests');
-    assert.equal(await page.locator('.core-health-status.healthy').count(), 0, 'late probe results must not populate stopped checks');
+    assert.equal((await probes(page)).length, 5, 'stop must not launch queued model requests');
+    assert.equal(await page.locator('.core-health-status.healthy').count(), 1, 'late probe results must not populate stopped checks');
 
     await open();
     await page.getByRole('button', { name: 'Check gpt-5.2-codex', exact: true }).click();
@@ -305,8 +312,10 @@ const base = process.env.HOME_DASHBOARD_TEST_BASE_URL || 'http://127.0.0.1:1421'
     await timed.waitForFunction(() => document.querySelectorAll('.core-health-status.healthy').length === 6);
     assert.equal((await probes(timed)).length, 6, 'manual Check All must probe every model once');
     for (let cycle = 1; cycle <= 2; cycle += 1) {
+      await timed.evaluate(() => window.homeFixture.reverseModels());
       await timed.clock.runFor(301000);
       assert.equal((await probes(timed)).length, 6, `manual checks must not repeat after ${cycle} five-minute periods`);
+      assert.equal(await timed.locator('.core-health-status.healthy').count(), 6, 'reordered background model refreshes must not clear results');
     }
     await closeHealth(timed);
     await timed.clock.runFor(301000);
@@ -315,6 +324,22 @@ const base = process.env.HOME_DASHBOARD_TEST_BASE_URL || 'http://127.0.0.1:1421'
     assert.equal(await timed.locator('.core-health-status.healthy').count(), 6);
     await timed.clock.runFor(301000);
     assert.equal((await probes(timed)).length, 6, 'reopening must not schedule another check');
+
+    // Background model list reordering or addition mid-check must never abort or reset the active check.
+    await open('', timed);
+    await timed.evaluate(() => { window.homeFixture.holdProbes = true; });
+    await checkAll(timed).click();
+    await timed.waitForFunction(() => window.homeFixture.probeReleases.length === 4);
+    await timed.evaluate(() => {
+      window.homeFixture.reverseModels();
+      window.homeFixture.models = [...window.homeFixture.models, { name: 'newly-added-during-check' }];
+    });
+    await timed.clock.runFor(61000);
+    await timed.evaluate(() => window.homeFixture.releaseProbes());
+    await timed.waitForFunction(() => document.querySelectorAll('.core-health-status.healthy').length === 6);
+    assert.equal(await timed.locator('.core-health-table tbody tr').count(), 7);
+    assert.equal(await timed.locator('.core-health-table tbody tr').first().locator('.core-health-model-name').innerText(), 'gpt-5.2-codex');
+    await closeHealth(timed);
 
     // Also stress loading=true and fresh-but-equal arrays on every refresh.
     await open('view=panel', timed);

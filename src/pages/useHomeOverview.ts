@@ -1,6 +1,6 @@
 import { pollWhileActive } from '../services/windowActivity';
 import { useEffect, useState } from 'react';
-import { loadHomeOverview, type HomeOverviewSnapshot } from '../services/homeOverview';
+import { loadHomeOverview, reconcileHomeModels, type HomeOverviewSnapshot } from '../services/homeOverview';
 
 export function useHomeOverview(coreReady: boolean, contextKey: string) {
   const [state, setState] = useState<{ scope: string; snapshot: HomeOverviewSnapshot } | null>(null);
@@ -21,8 +21,9 @@ export function useHomeOverview(coreReady: boolean, contextKey: string) {
           scope,
           snapshot: {
             ...snapshot,
-            models: previous?.scope === scope && JSON.stringify(previous.snapshot.models) === JSON.stringify(snapshot.models)
-              ? previous.snapshot.models : snapshot.models,
+            models: previous?.scope === scope
+              ? reconcileHomeModels(previous.snapshot.models, snapshot.models)
+              : snapshot.models,
           },
         }));
       } finally {

@@ -39,6 +39,7 @@ const fixture = {
   refreshPanel: () => {},
   resolvePanel: () => {},
   changeConfig: () => { fixture.port += 1; return emit('config-files-changed', {}); },
+  reverseModels: () => { fixture.models = [...fixture.models].reverse(); },
   releaseModels: () => { fixture.holdModels = false; fixture.modelReleases.splice(0).forEach((release) => release()); },
   releaseProbes: () => { fixture.holdProbes = false; fixture.probeReleases.splice(0).forEach((release) => release()); },
 };

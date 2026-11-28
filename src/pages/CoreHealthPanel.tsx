@@ -37,25 +37,38 @@ export function CoreHealthPanel({
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const controllerRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
-  const modelIds = JSON.stringify(models.map((model) => model.name));
   const canCheck = coreReady && !modelsLoading && !modelsError && models.length > 0;
+
+  const abortChecks = useCallback(() => {
+    const controller = controllerRef.current;
+    controllerRef.current = null;
+    controller?.abort();
+    setRunning(false);
+    setPending(new Set());
+    setActive(new Set());
+  }, []);
+
+  const resetChecks = useCallback(() => {
+    abortChecks();
+    setResults({});
+    setProgress({ done: 0, total: 0 });
+    setStopped(false);
+  }, [abortChecks]);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      controllerRef.current?.abort();
+      const controller = controllerRef.current;
+      controllerRef.current = null;
+      controller?.abort();
     };
   }, []);
 
+  // 仅在内核就绪状态或目标实例上下文变化时中止并重置，绝不因后台模型列表刷新而中断检测或清空结果
   useEffect(() => {
-    controllerRef.current?.abort();
-    setResults({});
-    setPending(new Set());
-    setActive(new Set());
-    setProgress({ done: 0, total: 0 });
-    setStopped(false);
-  }, [coreReady, contextKey, modelIds]);
+    resetChecks();
+  }, [coreReady, contextKey, resetChecks]);
 
   const runChecks = useCallback(async (targets: CoreHealthModel[]) => {
     if (!open || !canCheck || controllerRef.current || targets.length === 0) return;
@@ -68,29 +81,30 @@ export function CoreHealthPanel({
     setActive(new Set());
     try {
       await checkCoreModelsHealth(targets, (result) => {
-        if (!mountedRef.current || controller.signal.aborted) return;
+        if (!mountedRef.current || controller.signal.aborted || controllerRef.current !== controller) return;
         setResults((current) => ({ ...current, [result.model]: { ...result, checkedAt: Date.now() } }));
         setPending((current) => { const next = new Set(current); next.delete(result.model); return next; });
         setActive((current) => { const next = new Set(current); next.delete(result.model); return next; });
         setProgress((current) => ({ ...current, done: current.done + 1 }));
       }, controller.signal, (model) => {
-        if (!controller.signal.aborted) setActive((current) => new Set(current).add(model.name));
+        if (!mountedRef.current || controller.signal.aborted || controllerRef.current !== controller) return;
+        setActive((current) => new Set(current).add(model.name));
       });
     } finally {
-      if (controllerRef.current === controller) controllerRef.current = null;
-      if (mountedRef.current) {
-        setRunning(false);
-        setPending(new Set());
-        setActive(new Set());
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+        if (mountedRef.current) {
+          setRunning(false);
+          setPending(new Set());
+          setActive(new Set());
+        }
       }
     }
   }, [canCheck, open]);
 
   const stopChecks = () => {
-    controllerRef.current?.abort();
+    abortChecks();
     setStopped(true);
-    setPending(new Set());
-    setActive(new Set());
   };
 
   const close = () => {
@@ -102,9 +116,14 @@ export function CoreHealthPanel({
     const query = search.trim().toLocaleLowerCase();
     return models.filter((model) => `${model.name} ${model.displayName ?? ''}`.toLocaleLowerCase().includes(query));
   }, [models, search]);
-  const healthy = Object.values(results).filter((result) => result.success).length;
-  const failed = Object.values(results).filter((result) => result.status === 'failed').length;
-  const exhausted = Object.values(results).filter((result) => result.status === 'budget-exhausted').length;
+  const activeModelNames = useMemo(() => new Set(models.map((model) => model.name)), [models]);
+  const visibleResults = useMemo(
+    () => Object.values(results).filter((result) => activeModelNames.has(result.model)),
+    [activeModelNames, results],
+  );
+  const healthy = visibleResults.filter((result) => result.success).length;
+  const failed = visibleResults.filter((result) => result.status === 'failed').length;
+  const exhausted = visibleResults.filter((result) => result.status === 'budget-exhausted').length;
   const time = (value: number) => formatDate(value, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const latency = (value?: number) => value === undefined ? '—' : `${formatNumber(value)} ms`;
 
