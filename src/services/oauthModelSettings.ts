@@ -77,7 +77,7 @@ export async function syncOAuthProviderExclusionsToCredentials(
       if (!isRecord(file)) continue;
       const fileProvider = (readString(file, 'provider', 'oauth_provider') || '').trim().toLowerCase();
       const fileName = readString(file, 'name', 'id');
-      if (fileName && (fileProvider === key || fileName.toLowerCase().startsWith(key))) {
+      if (fileName && (fileProvider === key || (!fileProvider && fileName.toLowerCase().startsWith(key)))) {
         await api.patch('/credentials/fields', {
           name: fileName,
           excluded_models: normalizedRules,
